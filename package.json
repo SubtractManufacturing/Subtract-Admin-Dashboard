@@ -37,7 +37,9 @@
     "vite": "^6.0.0",
     "vite-tsconfig-paths": "^4.3.1"
   },
-  "engines": {
+  "overrides": {
+  "rollup": "npm:@rollup/wasm-node" },  
+"engines": {
     "node": ">=20.0.0"
   }
 }
