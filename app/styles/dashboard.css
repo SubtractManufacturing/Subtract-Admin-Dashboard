@@ -1,0 +1,231 @@
+@import url('https://fonts.googleapis.com/css?family=Inter');
+
+body {
+  margin: 0;
+  font-family: "Inter", sans-serif;
+  background-color: #f0f0f0;
+}
+
+/* NAVBAR */
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #1f2937;
+  color: white;
+  padding: 15px 30px;
+}
+
+.navbar h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.nav-links a {
+  color: white;
+  text-decoration: none;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.nav-links a:hover {
+  opacity: 0.8;
+}
+
+.user-auth {
+  background-color: #374151;
+  padding: 8px 14px;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* BREADCRUMB + SEARCH ROW */
+.header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 40px 10px;
+}
+
+.breadcrumbs {
+  font-weight: 600;
+  color: #555;
+  font-size: 14px;
+}
+
+.search-container {
+  max-width: 400px;
+  flex-shrink: 0;
+}
+
+.search-box {
+  background-color: white;
+  border: 1px solid Gray;
+  border-radius: 5px;
+  padding: 8px 15px;
+  display: flex;
+  align-items: center;
+  box-shadow: -2px 2px 3px rgba(128, 128, 128, 0.5);
+}
+
+.search-icon {
+  color: Gray;
+  margin-right: 10px;
+}
+
+.search-input {
+  border: none;
+  outline: none;
+  width: 100%;
+  font-size: 14px;
+  font-weight: 600;
+  background-color: transparent;
+  color: #333;
+}
+
+.search-input::placeholder {
+  color: Gray;
+}
+
+/* STAT CARDS */
+.flex-container {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 20px 40px;
+}
+
+.card {
+  background-color: white;
+  border: 1px solid Gray;
+  border-radius: 10px;
+  padding: 0px 20px;
+  box-shadow: -2px 2px 3px Gray;
+  flex-grow: 1;
+  max-width: 250px;
+  min-width: 200px;
+  transition: transform 0.2s;
+}
+
+.card:hover {
+  background-color: #f7f7f7;
+  transform: scale(1.025);
+}
+
+.card-h1 {
+  font-size: 42px;
+  margin: 1px;
+  color: black;
+  font-weight: bold;
+}
+
+h4 {
+  margin: 24px 0px 12px 0px;
+}
+
+p {
+  font-weight: 600;
+  color: Gray;
+}
+
+.sidebyside {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+select {
+  font-weight: 600;
+  color: Gray;
+  background-color: white;
+  border: 1px solid Gray;
+  border-radius: 5px;
+  padding: 5px 15px;
+  font-size: 14px;
+}
+
+/* TABLES */
+.section {
+  padding: 30px 40px;
+}
+
+.section h2 {
+  margin-bottom: 15px;
+}
+
+.orders-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: white;
+  box-shadow: -2px 2px 5px rgba(128, 128, 128, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.orders-table th,
+.orders-table td {
+  padding: 15px;
+  text-align: left;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.orders-table th {
+  background-color: #f8f8f8;
+  font-weight: 600;
+}
+
+.orders-table td.status {
+  font-weight: bold;
+}
+
+.status-open {
+  color: green;
+}
+
+.status-closed {
+  color: gray;
+}
+
+.status-pending {
+  color: orange;
+}
+
+.status-accepted {
+  color: green;
+}
+
+.status-rejected {
+  color: red;
+}
+
+.status-draft {
+  color: gray;
+}
+
+.status-sent {
+  color: blue;
+}
+
+.status-expired {
+  color: red;
+}
+
+.status-in_production {
+  color: blue;
+}
+
+.status-completed {
+  color: green;
+}
+
+.status-cancelled {
+  color: red;
+}

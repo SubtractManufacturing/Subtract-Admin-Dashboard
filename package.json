@@ -14,6 +14,7 @@
     "@remix-run/node": "^2.16.8",
     "@remix-run/react": "^2.16.8",
     "@remix-run/serve": "^2.16.8",
+    "@supabase/supabase-js": "^2.50.3",
     "isbot": "^4.1.0",
     "match-sorter": "^6.3.1",
     "react": "^18.2.0",
@@ -38,8 +39,9 @@
     "vite-tsconfig-paths": "^4.3.1"
   },
   "overrides": {
-  "rollup": "npm:@rollup/wasm-node" },  
-"engines": {
+    "rollup": "npm:@rollup/wasm-node"
+  },
+  "engines": {
     "node": ">=20.0.0"
   }
 }
