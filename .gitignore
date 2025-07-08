@@ -114,5 +114,8 @@ secrets.json
 
 
 db_template.DBMl
+
 page_template.html
+
 CLAUDE.md
+./.claude
