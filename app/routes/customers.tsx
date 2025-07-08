@@ -1,0 +1,209 @@
+import { json, redirect } from "@remix-run/node"
+import { useLoaderData, useFetcher } from "@remix-run/react"
+import { useState } from "react"
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
+
+import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from "~/lib/customers"
+import type { Customer, CustomerInput } from "~/lib/customers"
+
+import Navbar from "~/components/Navbar"
+import SearchHeader from "~/components/SearchHeader"
+import Button from "~/components/shared/Button"
+import Modal from "~/components/shared/Modal"
+import { InputField } from "~/components/shared/FormField"
+
+export async function loader() {
+  const customers = await getCustomers()
+  return json({ customers })
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const formData = await request.formData()
+  const intent = formData.get("intent")
+
+  try {
+    switch (intent) {
+      case "create": {
+        const customerData: CustomerInput = {
+          display_name: formData.get("display_name") as string,
+          email: formData.get("email") as string || null,
+          phone: formData.get("phone") as string || null,
+        }
+        await createCustomer(customerData)
+        break
+      }
+      case "update": {
+        const id = parseInt(formData.get("id") as string)
+        const customerData: Partial<CustomerInput> = {
+          display_name: formData.get("display_name") as string,
+          email: formData.get("email") as string || null,
+          phone: formData.get("phone") as string || null,
+        }
+        await updateCustomer(id, customerData)
+        break
+      }
+      case "delete": {
+        const id = parseInt(formData.get("id") as string)
+        await deleteCustomer(id)
+        break
+      }
+    }
+    return redirect("/customers")
+  } catch (error) {
+    return json({ error: (error as Error).message }, { status: 400 })
+  }
+}
+
+export default function Customers() {
+  const { customers } = useLoaderData<typeof loader>()
+  const fetcher = useFetcher()
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  const filteredCustomers = customers.filter(customer =>
+    customer.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    customer.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    customer.phone?.includes(searchQuery)
+  )
+
+  const handleEdit = (customer: Customer) => {
+    setEditingCustomer(customer)
+    setIsModalOpen(true)
+  }
+
+  const handleAdd = () => {
+    setEditingCustomer(null)
+    setIsModalOpen(true)
+  }
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false)
+    setEditingCustomer(null)
+  }
+
+  const handleDelete = (customer: Customer) => {
+    if (confirm(`Are you sure you want to delete ${customer.display_name}?`)) {
+      fetcher.submit(
+        { intent: "delete", id: customer.id.toString() },
+        { method: "post" }
+      )
+    }
+  }
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    })
+  }
+
+  return (
+    <div>
+      <Navbar />
+      <SearchHeader 
+        breadcrumbs="Dashboard / Customers" 
+        onSearch={setSearchQuery}
+      />
+      
+      <div className="section">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h2>Customers ({filteredCustomers.length})</h2>
+          <Button onClick={handleAdd}>Add Customer</Button>
+        </div>
+
+        <table className="orders-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredCustomers.map((customer) => (
+              <tr key={customer.id}>
+                <td>{customer.id}</td>
+                <td>{customer.display_name}</td>
+                <td>{customer.email || '--'}</td>
+                <td>{customer.phone || '--'}</td>
+                <td>{formatDate(customer.created_at)}</td>
+                <td>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Button size="sm" onClick={() => handleEdit(customer)}>
+                      Edit
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="danger" 
+                      onClick={() => handleDelete(customer)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {filteredCustomers.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '40px', color: 'gray' }}>
+            {searchQuery ? 'No customers found matching your search.' : 'No customers found. Add one to get started.'}
+          </div>
+        )}
+      </div>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        title={editingCustomer ? 'Edit Customer' : 'Add Customer'}
+      >
+        <fetcher.Form method="post" onSubmit={handleCloseModal}>
+          <input 
+            type="hidden" 
+            name="intent" 
+            value={editingCustomer ? "update" : "create"} 
+          />
+          {editingCustomer && (
+            <input type="hidden" name="id" value={editingCustomer.id} />
+          )}
+          
+          <InputField
+            label="Name"
+            name="display_name"
+            defaultValue={editingCustomer?.display_name || ''}
+            required
+          />
+          
+          <InputField
+            label="Email"
+            name="email"
+            type="email"
+            defaultValue={editingCustomer?.email || ''}
+          />
+          
+          <InputField
+            label="Phone"
+            name="phone"
+            type="tel"
+            defaultValue={editingCustomer?.phone || ''}
+          />
+
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
+            <Button type="button" variant="secondary" onClick={handleCloseModal}>
+              Cancel
+            </Button>
+            <Button type="submit">
+              {editingCustomer ? 'Update' : 'Create'} Customer
+            </Button>
+          </div>
+        </fetcher.Form>
+      </Modal>
+    </div>
+  )
+}
