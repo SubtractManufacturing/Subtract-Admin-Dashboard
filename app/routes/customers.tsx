@@ -25,7 +25,7 @@ export async function action({ request }: ActionFunctionArgs) {
     switch (intent) {
       case "create": {
         const customerData: CustomerInput = {
-          display_name: formData.get("display_name") as string,
+          displayName: formData.get("displayName") as string,
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
         }
@@ -35,7 +35,7 @@ export async function action({ request }: ActionFunctionArgs) {
       case "update": {
         const id = parseInt(formData.get("id") as string)
         const customerData: Partial<CustomerInput> = {
-          display_name: formData.get("display_name") as string,
+          displayName: formData.get("displayName") as string,
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
         }
@@ -62,7 +62,7 @@ export default function Customers() {
   const [searchQuery, setSearchQuery] = useState("")
 
   const filteredCustomers = customers.filter(customer =>
-    customer.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    customer.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     customer.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     customer.phone?.includes(searchQuery)
   )
@@ -83,7 +83,7 @@ export default function Customers() {
   }
 
   const handleDelete = (customer: Customer) => {
-    if (confirm(`Are you sure you want to delete ${customer.display_name}?`)) {
+    if (confirm(`Are you sure you want to delete ${customer.displayName}?`)) {
       fetcher.submit(
         { intent: "delete", id: customer.id.toString() },
         { method: "post" }
@@ -91,8 +91,9 @@ export default function Customers() {
     }
   }
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date
+    return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -128,10 +129,10 @@ export default function Customers() {
             {filteredCustomers.map((customer) => (
               <tr key={customer.id}>
                 <td>{customer.id}</td>
-                <td>{customer.display_name}</td>
+                <td>{customer.displayName}</td>
                 <td>{customer.email || '--'}</td>
                 <td>{customer.phone || '--'}</td>
-                <td>{formatDate(customer.created_at)}</td>
+                <td>{formatDate(customer.createdAt)}</td>
                 <td>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <Button size="sm" onClick={() => handleEdit(customer)}>
@@ -175,8 +176,8 @@ export default function Customers() {
           
           <InputField
             label="Name"
-            name="display_name"
-            defaultValue={editingCustomer?.display_name || ''}
+            name="displayName"
+            defaultValue={editingCustomer?.displayName || ''}
             required
           />
           

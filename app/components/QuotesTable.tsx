@@ -5,16 +5,17 @@ interface QuotesTableProps {
 }
 
 export default function QuotesTable({ quotes }: QuotesTableProps) {
-  const formatCurrency = (amount: number | null) => {
+  const formatCurrency = (amount: string | null) => {
     if (!amount) return "--"
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(parseFloat(amount))
   }
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date
+    return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'

@@ -31,12 +31,12 @@ export async function action({ request }: ActionFunctionArgs) {
     switch (intent) {
       case "create": {
         const orderData: OrderInput = {
-          customer_id: formData.get("customer_id") ? parseInt(formData.get("customer_id") as string) : null,
-          vendor_id: formData.get("vendor_id") ? parseInt(formData.get("vendor_id") as string) : null,
-          status: formData.get("status") as any || 'Pending',
-          total_price: formData.get("total_price") ? parseFloat(formData.get("total_price") as string) : null,
-          vendor_pay: formData.get("vendor_pay") ? parseFloat(formData.get("vendor_pay") as string) : null,
-          ship_date: formData.get("ship_date") as string || null,
+          customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
+          vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
+          status: formData.get("status") as 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' || 'Pending',
+          totalPrice: formData.get("totalPrice") as string || null,
+          vendorPay: formData.get("vendorPay") as string || null,
+          shipDate: formData.get("shipDate") ? new Date(formData.get("shipDate") as string) : null,
         }
         await createOrder(orderData)
         break
@@ -44,12 +44,12 @@ export async function action({ request }: ActionFunctionArgs) {
       case "update": {
         const id = parseInt(formData.get("id") as string)
         const orderData: Partial<OrderInput> = {
-          customer_id: formData.get("customer_id") ? parseInt(formData.get("customer_id") as string) : null,
-          vendor_id: formData.get("vendor_id") ? parseInt(formData.get("vendor_id") as string) : null,
-          status: formData.get("status") as any,
-          total_price: formData.get("total_price") ? parseFloat(formData.get("total_price") as string) : null,
-          vendor_pay: formData.get("vendor_pay") ? parseFloat(formData.get("vendor_pay") as string) : null,
-          ship_date: formData.get("ship_date") as string || null,
+          customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
+          vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
+          status: formData.get("status") as 'Pending' | 'In_Production' | 'Completed' | 'Cancelled',
+          totalPrice: formData.get("totalPrice") as string || null,
+          vendorPay: formData.get("vendorPay") as string || null,
+          shipDate: formData.get("shipDate") ? new Date(formData.get("shipDate") as string) : null,
         }
         await updateOrder(id, orderData)
         break
@@ -75,8 +75,8 @@ export default function Orders() {
 
   const filteredOrders = orders.filter(order =>
     order.id.toString().includes(searchQuery) ||
-    order.customer?.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    order.vendor?.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    order.customer?.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    order.vendor?.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     order.status.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
@@ -112,8 +112,9 @@ export default function Orders() {
     }).format(amount)
   }
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date
+    return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -176,15 +177,15 @@ export default function Orders() {
             {filteredOrders.map((order) => (
               <tr key={order.id}>
                 <td>{order.id}</td>
-                <td>{order.customer?.display_name || '--'}</td>
-                <td>{order.vendor?.display_name || '--'}</td>
+                <td>{order.customer?.displayName || '--'}</td>
+                <td>{order.vendor?.displayName || '--'}</td>
                 <td className={`status ${getStatusClass(order.status)}`}>
                   {getStatusDisplay(order.status)}
                 </td>
-                <td>{formatCurrency(order.total_price)}</td>
-                <td>{formatCurrency(order.vendor_pay)}</td>
-                <td>{order.ship_date ? formatDate(order.ship_date) : '--'}</td>
-                <td>{formatDate(order.created_at)}</td>
+                <td>{formatCurrency(order.totalPrice)}</td>
+                <td>{formatCurrency(order.vendorPay)}</td>
+                <td>{order.shipDate ? formatDate(order.shipDate) : '--'}</td>
+                <td>{formatDate(order.createdAt)}</td>
                 <td>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <Button size="sm" onClick={() => handleEdit(order)}>
@@ -229,26 +230,26 @@ export default function Orders() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <SelectField
               label="Customer"
-              name="customer_id"
-              defaultValue={editingOrder?.customer_id?.toString() || ''}
+              name="customerId"
+              defaultValue={editingOrder?.customerId?.toString() || ''}
             >
               <option value="">Select Customer</option>
               {customers.map(customer => (
                 <option key={customer.id} value={customer.id}>
-                  {customer.display_name}
+                  {customer.displayName}
                 </option>
               ))}
             </SelectField>
             
             <SelectField
               label="Vendor"
-              name="vendor_id"
-              defaultValue={editingOrder?.vendor_id?.toString() || ''}
+              name="vendorId"
+              defaultValue={editingOrder?.vendorId?.toString() || ''}
             >
               <option value="">Select Vendor</option>
               {vendors.map(vendor => (
                 <option key={vendor.id} value={vendor.id}>
-                  {vendor.display_name}
+                  {vendor.displayName}
                 </option>
               ))}
             </SelectField>
@@ -269,26 +270,26 @@ export default function Orders() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <InputField
               label="Total Price"
-              name="total_price"
+              name="totalPrice"
               type="number"
               step="0.01"
-              defaultValue={editingOrder?.total_price?.toString() || ''}
+              defaultValue={editingOrder?.totalPrice?.toString() || ''}
             />
             
             <InputField
               label="Vendor Pay"
-              name="vendor_pay"
+              name="vendorPay"
               type="number"
               step="0.01"
-              defaultValue={editingOrder?.vendor_pay?.toString() || ''}
+              defaultValue={editingOrder?.vendorPay?.toString() || ''}
             />
           </div>
           
           <InputField
             label="Ship Date"
-            name="ship_date"
+            name="shipDate"
             type="date"
-            defaultValue={editingOrder?.ship_date || ''}
+            defaultValue={editingOrder?.shipDate || ''}
           />
 
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>

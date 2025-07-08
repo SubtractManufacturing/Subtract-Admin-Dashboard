@@ -25,14 +25,14 @@ export async function action({ request }: ActionFunctionArgs) {
     switch (intent) {
       case "create": {
         const vendorData: VendorInput = {
-          display_name: formData.get("display_name") as string,
-          company_name: formData.get("company_name") as string || null,
-          contact_name: formData.get("contact_name") as string || null,
+          displayName: formData.get("displayName") as string,
+          companyName: formData.get("companyName") as string || null,
+          contactName: formData.get("contactName") as string || null,
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
           address: formData.get("address") as string || null,
           notes: formData.get("notes") as string || null,
-          discord_id: formData.get("discord_id") as string || null,
+          discordId: formData.get("discordId") as string || null,
         }
         await createVendor(vendorData)
         break
@@ -40,14 +40,14 @@ export async function action({ request }: ActionFunctionArgs) {
       case "update": {
         const id = parseInt(formData.get("id") as string)
         const vendorData: Partial<VendorInput> = {
-          display_name: formData.get("display_name") as string,
-          company_name: formData.get("company_name") as string || null,
-          contact_name: formData.get("contact_name") as string || null,
+          displayName: formData.get("displayName") as string,
+          companyName: formData.get("companyName") as string || null,
+          contactName: formData.get("contactName") as string || null,
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
           address: formData.get("address") as string || null,
           notes: formData.get("notes") as string || null,
-          discord_id: formData.get("discord_id") as string || null,
+          discordId: formData.get("discordId") as string || null,
         }
         await updateVendor(id, vendorData)
         break
@@ -72,9 +72,9 @@ export default function Vendors() {
   const [searchQuery, setSearchQuery] = useState("")
 
   const filteredVendors = vendors.filter(vendor =>
-    vendor.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    vendor.company_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    vendor.contact_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    vendor.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    vendor.companyName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    vendor.contactName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     vendor.email?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
@@ -94,7 +94,7 @@ export default function Vendors() {
   }
 
   const handleDelete = (vendor: Vendor) => {
-    if (confirm(`Are you sure you want to delete ${vendor.display_name}?`)) {
+    if (confirm(`Are you sure you want to delete ${vendor.displayName}?`)) {
       fetcher.submit(
         { intent: "delete", id: vendor.id.toString() },
         { method: "post" }
@@ -102,8 +102,9 @@ export default function Vendors() {
     }
   }
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date
+    return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -141,12 +142,12 @@ export default function Vendors() {
             {filteredVendors.map((vendor) => (
               <tr key={vendor.id}>
                 <td>{vendor.id}</td>
-                <td>{vendor.display_name}</td>
-                <td>{vendor.company_name || '--'}</td>
-                <td>{vendor.contact_name || '--'}</td>
+                <td>{vendor.displayName}</td>
+                <td>{vendor.companyName || '--'}</td>
+                <td>{vendor.contactName || '--'}</td>
                 <td>{vendor.email || '--'}</td>
                 <td>{vendor.phone || '--'}</td>
-                <td>{formatDate(vendor.created_at)}</td>
+                <td>{formatDate(vendor.createdAt)}</td>
                 <td>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <Button size="sm" onClick={() => handleEdit(vendor)}>
@@ -191,23 +192,23 @@ export default function Vendors() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <InputField
               label="Display Name"
-              name="display_name"
-              defaultValue={editingVendor?.display_name || ''}
+              name="displayName"
+              defaultValue={editingVendor?.displayName || ''}
               required
             />
             
             <InputField
               label="Company Name"
-              name="company_name"
-              defaultValue={editingVendor?.company_name || ''}
+              name="companyName"
+              defaultValue={editingVendor?.companyName || ''}
             />
           </div>
           
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <InputField
               label="Contact Name"
-              name="contact_name"
-              defaultValue={editingVendor?.contact_name || ''}
+              name="contactName"
+              defaultValue={editingVendor?.contactName || ''}
             />
             
             <InputField
@@ -228,8 +229,8 @@ export default function Vendors() {
             
             <InputField
               label="Discord ID"
-              name="discord_id"
-              defaultValue={editingVendor?.discord_id || ''}
+              name="discordId"
+              defaultValue={editingVendor?.discordId || ''}
             />
           </div>
           
