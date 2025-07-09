@@ -80,8 +80,8 @@ export default function Orders() {
     order.status.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const handleEdit = (order: OrderWithRelations) => {
-    setEditingOrder(order)
+  const handleEdit = (order: typeof orders[0]) => {
+    setEditingOrder(order as any)
     setIsModalOpen(true)
   }
 
@@ -95,7 +95,7 @@ export default function Orders() {
     setEditingOrder(null)
   }
 
-  const handleDelete = (order: OrderWithRelations) => {
+  const handleDelete = (order: typeof orders[0]) => {
     if (confirm(`Are you sure you want to delete Order #${order.id}?`)) {
       fetcher.submit(
         { intent: "delete", id: order.id.toString() },
@@ -104,12 +104,13 @@ export default function Orders() {
     }
   }
 
-  const formatCurrency = (amount: number | null) => {
+  const formatCurrency = (amount: string | number | null) => {
     if (!amount) return "--"
+    const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(numAmount)
   }
 
   const formatDate = (date: Date | string) => {
@@ -289,7 +290,7 @@ export default function Orders() {
             label="Ship Date"
             name="shipDate"
             type="date"
-            defaultValue={editingOrder?.shipDate || ''}
+            defaultValue={editingOrder?.shipDate ? new Date(editingOrder.shipDate).toISOString().split('T')[0] : ''}
           />
 
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
