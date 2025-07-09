@@ -119,3 +119,6 @@ page_template.html
 
 CLAUDE.md
 ./.claude
+
+./drizzle
+/drizzle
