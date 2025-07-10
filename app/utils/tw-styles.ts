@@ -24,9 +24,9 @@ export const statusStyles = {
 }
 
 export const cardStyles = {
-  container: "bg-white border border-gray-400 rounded-lg p-5 shadow-md transition-transform hover:scale-105 hover:bg-gray-50",
+  container: "bg-white rounded-lg p-6 shadow-md transition-transform hover:scale-105 hover:bg-gray-50",
   title: "text-4xl font-bold text-black",
-  subtitle: "mt-6 mb-3 text-gray-700",
+  subtitle: "text-gray-700 mb-2",
   content: "font-semibold text-gray-500"
 }
 
