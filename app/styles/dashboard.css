@@ -229,3 +229,8 @@ select {
 .status-cancelled {
   color: red;
 }
+
+.status-archived {
+  color: #666;
+  font-style: italic;
+}

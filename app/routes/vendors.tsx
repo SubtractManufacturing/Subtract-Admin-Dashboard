@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
-import { getVendors, createVendor, updateVendor, deleteVendor } from "~/lib/vendors"
+import { getVendors, createVendor, updateVendor, archiveVendor } from "~/lib/vendors"
 import type { Vendor, VendorInput } from "~/lib/vendors"
 
 import Navbar from "~/components/Navbar"
@@ -54,7 +54,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
-        await deleteVendor(id)
+        await archiveVendor(id)
         break
       }
     }
@@ -94,7 +94,7 @@ export default function Vendors() {
   }
 
   const handleDelete = (vendor: Vendor) => {
-    if (confirm(`Are you sure you want to delete ${vendor.displayName}?`)) {
+    if (confirm(`Are you sure you want to archive ${vendor.displayName}? This will hide them from the list.`)) {
       fetcher.submit(
         { intent: "delete", id: vendor.id.toString() },
         { method: "post" }
@@ -158,7 +158,7 @@ export default function Vendors() {
                       variant="danger" 
                       onClick={() => handleDelete(vendor)}
                     >
-                      Delete
+                      Archive
                     </Button>
                   </div>
                 </td>

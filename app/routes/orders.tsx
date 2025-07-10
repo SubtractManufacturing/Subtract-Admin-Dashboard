@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
-import { getOrdersWithRelations, createOrder, updateOrder, deleteOrder } from "~/lib/orders"
+import { getOrdersWithRelations, createOrder, updateOrder, archiveOrder } from "~/lib/orders"
 import { getCustomers } from "~/lib/customers"
 import { getVendors } from "~/lib/vendors"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders"
@@ -33,7 +33,7 @@ export async function action({ request }: ActionFunctionArgs) {
         const orderData: OrderInput = {
           customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
           vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
-          status: formData.get("status") as 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' || 'Pending',
+          status: formData.get("status") as 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived' || 'Pending',
           totalPrice: formData.get("totalPrice") as string || null,
           vendorPay: formData.get("vendorPay") as string || null,
           shipDate: formData.get("shipDate") ? new Date(formData.get("shipDate") as string) : null,
@@ -46,7 +46,7 @@ export async function action({ request }: ActionFunctionArgs) {
         const orderData: Partial<OrderInput> = {
           customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
           vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
-          status: formData.get("status") as 'Pending' | 'In_Production' | 'Completed' | 'Cancelled',
+          status: formData.get("status") as 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived',
           totalPrice: formData.get("totalPrice") as string || null,
           vendorPay: formData.get("vendorPay") as string || null,
           shipDate: formData.get("shipDate") ? new Date(formData.get("shipDate") as string) : null,
@@ -56,7 +56,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
-        await deleteOrder(id)
+        await archiveOrder(id)
         break
       }
     }
@@ -96,7 +96,7 @@ export default function Orders() {
   }
 
   const handleDelete = (order: typeof orders[0]) => {
-    if (confirm(`Are you sure you want to delete Order #${order.id}?`)) {
+    if (confirm(`Are you sure you want to archive Order #${order.id}? This will hide it from the list.`)) {
       fetcher.submit(
         { intent: "delete", id: order.id.toString() },
         { method: "post" }
@@ -132,6 +132,8 @@ export default function Orders() {
         return 'status-completed'
       case 'cancelled':
         return 'status-cancelled'
+      case 'archived':
+        return 'status-archived'
       default:
         return ''
     }
@@ -197,7 +199,7 @@ export default function Orders() {
                       variant="danger" 
                       onClick={() => handleDelete(order)}
                     >
-                      Delete
+                      Archive
                     </Button>
                   </div>
                 </td>

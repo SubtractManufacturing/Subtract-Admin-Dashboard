@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
-import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from "~/lib/customers"
+import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
 import type { Customer, CustomerInput } from "~/lib/customers"
 
 import Navbar from "~/components/Navbar"
@@ -44,7 +44,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
-        await deleteCustomer(id)
+        await archiveCustomer(id)
         break
       }
     }
@@ -83,7 +83,7 @@ export default function Customers() {
   }
 
   const handleDelete = (customer: Customer) => {
-    if (confirm(`Are you sure you want to delete ${customer.displayName}?`)) {
+    if (confirm(`Are you sure you want to archive ${customer.displayName}? This will hide them from the list.`)) {
       fetcher.submit(
         { intent: "delete", id: customer.id.toString() },
         { method: "post" }
@@ -143,7 +143,7 @@ export default function Customers() {
                       variant="danger" 
                       onClick={() => handleDelete(customer)}
                     >
-                      Delete
+                      Archive
                     </Button>
                   </div>
                 </td>
