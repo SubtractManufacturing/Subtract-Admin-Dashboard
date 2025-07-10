@@ -67,8 +67,8 @@ export default function Customers() {
     customer.phone?.includes(searchQuery)
   )
 
-  const handleEdit = (customer: Customer) => {
-    setEditingCustomer(customer)
+  const handleEdit = (customer: typeof customers[0]) => {
+    setEditingCustomer(customer as any)
     setIsModalOpen(true)
   }
 
@@ -82,7 +82,7 @@ export default function Customers() {
     setEditingCustomer(null)
   }
 
-  const handleDelete = (customer: Customer) => {
+  const handleDelete = (customer: typeof customers[0]) => {
     if (confirm(`Are you sure you want to archive ${customer.displayName}? This will hide them from the list.`)) {
       fetcher.submit(
         { intent: "delete", id: customer.id.toString() },

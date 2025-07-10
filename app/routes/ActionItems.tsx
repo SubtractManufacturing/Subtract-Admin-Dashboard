@@ -5,10 +5,10 @@ export default function Quotes() {
   return (
     <div>
       <Navbar />
-      <SearchHeader breadcrumbs="Dashboard / Quoting" />
+      <SearchHeader breadcrumbs="Dashboard / Action Items" />
 
       <div className="section">
-        <h2>Quoting System</h2>
+        <h2>Items that require Input</h2>
         <div
           style={{
             backgroundColor: "white",
@@ -20,8 +20,8 @@ export default function Quotes() {
           }}
         >
           <h3 style={{ marginTop: 0 }}>Coming Soon</h3>
-          <p>The quoting system is under development</p>
-          <p>Please use the Orders section for now to manage your workflow.</p>
+          <p>This system is under development</p>
+          <p>Please use the Orders section for now to manage orders.</p>
         </div>
       </div>
     </div>

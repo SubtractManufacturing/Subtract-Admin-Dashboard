@@ -78,8 +78,8 @@ export default function Vendors() {
     vendor.email?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const handleEdit = (vendor: Vendor) => {
-    setEditingVendor(vendor)
+  const handleEdit = (vendor: typeof vendors[0]) => {
+    setEditingVendor(vendor as any)
     setIsModalOpen(true)
   }
 
@@ -93,7 +93,7 @@ export default function Vendors() {
     setEditingVendor(null)
   }
 
-  const handleDelete = (vendor: Vendor) => {
+  const handleDelete = (vendor: typeof vendors[0]) => {
     if (confirm(`Are you sure you want to archive ${vendor.displayName}? This will hide them from the list.`)) {
       fetcher.submit(
         { intent: "delete", id: vendor.id.toString() },
