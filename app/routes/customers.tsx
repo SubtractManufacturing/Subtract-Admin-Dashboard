@@ -11,6 +11,7 @@ import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
 import { InputField } from "~/components/shared/FormField"
+import { tableStyles } from "~/utils/tw-styles"
 
 export async function loader() {
   const customers = await getCustomers()
@@ -108,33 +109,33 @@ export default function Customers() {
         onSearch={setSearchQuery}
       />
       
-      <div className="section">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2>Customers ({filteredCustomers.length})</h2>
+      <div className="px-10 py-8">
+        <div className="flex justify-between items-center mb-5">
+          <h2 className="text-2xl font-semibold">Customers ({filteredCustomers.length})</h2>
           <Button onClick={handleAdd}>Add Customer</Button>
         </div>
 
-        <table className="orders-table">
-          <thead>
+        <table className={tableStyles.container}>
+          <thead className={tableStyles.header}>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Phone</th>
-              <th>Created</th>
-              <th>Actions</th>
+              <th className={tableStyles.headerCell}>ID</th>
+              <th className={tableStyles.headerCell}>Name</th>
+              <th className={tableStyles.headerCell}>Email</th>
+              <th className={tableStyles.headerCell}>Phone</th>
+              <th className={tableStyles.headerCell}>Created</th>
+              <th className={tableStyles.headerCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredCustomers.map((customer) => (
-              <tr key={customer.id}>
-                <td>{customer.id}</td>
-                <td>{customer.displayName}</td>
-                <td>{customer.email || '--'}</td>
-                <td>{customer.phone || '--'}</td>
-                <td>{formatDate(customer.createdAt)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: '8px' }}>
+              <tr key={customer.id} className={tableStyles.row}>
+                <td className={tableStyles.cell}>{customer.id}</td>
+                <td className={tableStyles.cell}>{customer.displayName}</td>
+                <td className={tableStyles.cell}>{customer.email || '--'}</td>
+                <td className={tableStyles.cell}>{customer.phone || '--'}</td>
+                <td className={tableStyles.cell}>{formatDate(customer.createdAt)}</td>
+                <td className={tableStyles.cell}>
+                  <div className="flex gap-2">
                     <Button size="sm" onClick={() => handleEdit(customer)}>
                       Edit
                     </Button>
@@ -153,7 +154,7 @@ export default function Customers() {
         </table>
 
         {filteredCustomers.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '40px', color: 'gray' }}>
+          <div className={tableStyles.emptyState}>
             {searchQuery ? 'No customers found matching your search.' : 'No customers found. Add one to get started.'}
           </div>
         )}
@@ -195,7 +196,7 @@ export default function Customers() {
             defaultValue={editingCustomer?.phone || ''}
           />
 
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
+          <div className="flex gap-3 justify-end mt-6">
             <Button type="button" variant="secondary" onClick={handleCloseModal}>
               Cancel
             </Button>

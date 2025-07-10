@@ -13,6 +13,7 @@ import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
 import { InputField, SelectField } from "~/components/shared/FormField"
+import { tableStyles, statusStyles } from "~/utils/tw-styles"
 
 export async function loader() {
   const [orders, customers, vendors] = await Promise.all([
@@ -125,15 +126,15 @@ export default function Orders() {
   const getStatusClass = (status: string) => {
     switch (status.toLowerCase()) {
       case 'pending':
-        return 'status-pending'
+        return statusStyles.pending
       case 'in_production':
-        return 'status-in_production'
+        return statusStyles.inProduction
       case 'completed':
-        return 'status-completed'
+        return statusStyles.completed
       case 'cancelled':
-        return 'status-cancelled'
+        return statusStyles.cancelled
       case 'archived':
-        return 'status-archived'
+        return statusStyles.archived
       default:
         return ''
     }
@@ -156,41 +157,41 @@ export default function Orders() {
         onSearch={setSearchQuery}
       />
       
-      <div className="section">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2>Orders ({filteredOrders.length})</h2>
+      <div className="px-10 py-8">
+        <div className="flex justify-between items-center mb-5">
+          <h2 className="text-2xl font-semibold">Orders ({filteredOrders.length})</h2>
           <Button onClick={handleAdd}>Add Order</Button>
         </div>
 
-        <table className="orders-table">
-          <thead>
+        <table className={tableStyles.container}>
+          <thead className={tableStyles.header}>
             <tr>
-              <th>Order #</th>
-              <th>Customer</th>
-              <th>Vendor</th>
-              <th>Status</th>
-              <th>Total Price</th>
-              <th>Vendor Pay</th>
-              <th>Ship Date</th>
-              <th>Created</th>
-              <th>Actions</th>
+              <th className={tableStyles.headerCell}>Order #</th>
+              <th className={tableStyles.headerCell}>Customer</th>
+              <th className={tableStyles.headerCell}>Vendor</th>
+              <th className={tableStyles.headerCell}>Status</th>
+              <th className={tableStyles.headerCell}>Total Price</th>
+              <th className={tableStyles.headerCell}>Vendor Pay</th>
+              <th className={tableStyles.headerCell}>Ship Date</th>
+              <th className={tableStyles.headerCell}>Created</th>
+              <th className={tableStyles.headerCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredOrders.map((order) => (
-              <tr key={order.id}>
-                <td>{order.id}</td>
-                <td>{order.customer?.displayName || '--'}</td>
-                <td>{order.vendor?.displayName || '--'}</td>
-                <td className={`status ${getStatusClass(order.status)}`}>
+              <tr key={order.id} className={tableStyles.row}>
+                <td className={tableStyles.cell}>{order.id}</td>
+                <td className={tableStyles.cell}>{order.customer?.displayName || '--'}</td>
+                <td className={tableStyles.cell}>{order.vendor?.displayName || '--'}</td>
+                <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusClass(order.status)}`}>
                   {getStatusDisplay(order.status)}
                 </td>
-                <td>{formatCurrency(order.totalPrice)}</td>
-                <td>{formatCurrency(order.vendorPay)}</td>
-                <td>{order.shipDate ? formatDate(order.shipDate) : '--'}</td>
-                <td>{formatDate(order.createdAt)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                <td className={tableStyles.cell}>{formatCurrency(order.totalPrice)}</td>
+                <td className={tableStyles.cell}>{formatCurrency(order.vendorPay)}</td>
+                <td className={tableStyles.cell}>{order.shipDate ? formatDate(order.shipDate) : '--'}</td>
+                <td className={tableStyles.cell}>{formatDate(order.createdAt)}</td>
+                <td className={tableStyles.cell}>
+                  <div className="flex gap-2">
                     <Button size="sm" onClick={() => handleEdit(order)}>
                       Edit
                     </Button>
@@ -209,7 +210,7 @@ export default function Orders() {
         </table>
 
         {filteredOrders.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '40px', color: 'gray' }}>
+          <div className={tableStyles.emptyState}>
             {searchQuery ? 'No orders found matching your search.' : 'No orders found. Add one to get started.'}
           </div>
         )}
@@ -230,7 +231,7 @@ export default function Orders() {
             <input type="hidden" name="id" value={editingOrder.id} />
           )}
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="grid grid-cols-2 gap-4">
             <SelectField
               label="Customer"
               name="customerId"
@@ -270,7 +271,7 @@ export default function Orders() {
             <option value="Cancelled">Cancelled</option>
           </SelectField>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="grid grid-cols-2 gap-4">
             <InputField
               label="Total Price"
               name="totalPrice"
@@ -295,7 +296,7 @@ export default function Orders() {
             defaultValue={editingOrder?.shipDate ? new Date(editingOrder.shipDate).toISOString().split('T')[0] : ''}
           />
 
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
+          <div className="flex gap-3 justify-end mt-6">
             <Button type="button" variant="secondary" onClick={handleCloseModal}>
               Cancel
             </Button>

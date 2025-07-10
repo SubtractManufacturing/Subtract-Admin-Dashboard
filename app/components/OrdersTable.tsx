@@ -1,4 +1,5 @@
 import type { Order } from "~/lib/dashboard"
+import { tableStyles, statusStyles } from "~/utils/tw-styles"
 
 interface OrdersTableProps {
   orders: Order[]
@@ -22,16 +23,18 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
     })
   }
 
-  const getStatusClass = (status: string) => {
+  const getStatusStyle = (status: string) => {
     switch (status.toLowerCase()) {
       case 'pending':
-        return 'status-pending'
+        return statusStyles.pending
       case 'in_production':
-        return 'status-in_production'
+        return statusStyles.inProduction
       case 'completed':
-        return 'status-completed'
+        return statusStyles.completed
       case 'cancelled':
-        return 'status-cancelled'
+        return statusStyles.cancelled
+      case 'archived':
+        return statusStyles.archived
       default:
         return ''
     }
@@ -47,34 +50,34 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
   }
 
   return (
-    <div className="section">
-      <h2>Orders</h2>
-      <table className="orders-table">
-        <thead>
+    <div className="px-10 py-8">
+      <h2 className="text-2xl font-semibold mb-4">Orders</h2>
+      <table className={tableStyles.container}>
+        <thead className={tableStyles.header}>
           <tr>
-            <th>Order #</th>
-            <th>Customer</th>
-            <th>Vendor</th>
-            <th>Status</th>
-            <th>Qty</th>
-            <th>PO Amount</th>
-            <th>Due Date</th>
-            <th>Date Created</th>
+            <th className={tableStyles.headerCell}>Order #</th>
+            <th className={tableStyles.headerCell}>Customer</th>
+            <th className={tableStyles.headerCell}>Vendor</th>
+            <th className={tableStyles.headerCell}>Status</th>
+            <th className={tableStyles.headerCell}>Qty</th>
+            <th className={tableStyles.headerCell}>PO Amount</th>
+            <th className={tableStyles.headerCell}>Due Date</th>
+            <th className={tableStyles.headerCell}>Date Created</th>
           </tr>
         </thead>
         <tbody>
           {orders.map((order) => (
-            <tr key={order.id}>
-              <td>{order.id}</td>
-              <td>{order.customer_name}</td>
-              <td>{order.vendor_name}</td>
-              <td className={`status ${getStatusClass(order.status)}`}>
+            <tr key={order.id} className={tableStyles.row}>
+              <td className={tableStyles.cell}>{order.id}</td>
+              <td className={tableStyles.cell}>{order.customer_name}</td>
+              <td className={tableStyles.cell}>{order.vendor_name}</td>
+              <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(order.status)}`}>
                 {getStatusDisplay(order.status)}
               </td>
-              <td>{order.quantity}</td>
-              <td>{formatCurrency(order.po_amount)}</td>
-              <td>{order.ship_date ? formatDate(order.ship_date) : '--'}</td>
-              <td>{formatDate(order.created_at)}</td>
+              <td className={tableStyles.cell}>{order.quantity}</td>
+              <td className={tableStyles.cell}>{formatCurrency(order.po_amount)}</td>
+              <td className={tableStyles.cell}>{order.ship_date ? formatDate(order.ship_date) : '--'}</td>
+              <td className={tableStyles.cell}>{formatDate(order.created_at)}</td>
             </tr>
           ))}
         </tbody>

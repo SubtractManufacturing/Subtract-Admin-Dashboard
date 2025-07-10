@@ -7,12 +7,12 @@ interface SearchHeaderProps {
 
 export default function SearchHeader({ breadcrumbs, onSearch }: SearchHeaderProps) {
   return (
-    <div className="header-row">
-      <div className="breadcrumbs">{breadcrumbs}</div>
-      <div className="search-container">
-        <Form className="search-box" method="get">
+    <div className="flex justify-between items-center px-10 py-2.5">
+      <div className="font-semibold text-gray-600 text-sm">{breadcrumbs}</div>
+      <div className="max-w-md flex-shrink-0">
+        <Form className="bg-white border border-gray-400 rounded flex items-center px-4 py-2 shadow-sm" method="get">
           <svg
-            className="search-icon"
+            className="text-gray-500 mr-2.5"
             xmlns="http://www.w3.org/2000/svg"
             width="16"
             height="16"
@@ -24,7 +24,7 @@ export default function SearchHeader({ breadcrumbs, onSearch }: SearchHeaderProp
           <input
             type="search"
             placeholder="Search"
-            className="search-input"
+            className="border-none outline-none w-full text-sm font-semibold bg-transparent text-gray-800 placeholder-gray-500"
             name="q"
             onChange={(e) => onSearch?.(e.target.value)}
           />
