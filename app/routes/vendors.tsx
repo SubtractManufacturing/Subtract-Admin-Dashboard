@@ -11,6 +11,7 @@ import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
 import { InputField, TextareaField } from "~/components/shared/FormField"
+import { tableStyles } from "~/utils/tw-styles"
 
 export async function loader() {
   const vendors = await getVendors()
@@ -119,37 +120,37 @@ export default function Vendors() {
         onSearch={setSearchQuery}
       />
       
-      <div className="section">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2>Vendors ({filteredVendors.length})</h2>
+      <div className="px-10 py-8">
+        <div className="flex justify-between items-center mb-5">
+          <h2 className="text-2xl font-semibold">Vendors ({filteredVendors.length})</h2>
           <Button onClick={handleAdd}>Add Vendor</Button>
         </div>
 
-        <table className="orders-table">
-          <thead>
+        <table className={tableStyles.container}>
+          <thead className={tableStyles.header}>
             <tr>
-              <th>ID</th>
-              <th>Display Name</th>
-              <th>Company</th>
-              <th>Contact</th>
-              <th>Email</th>
-              <th>Phone</th>
-              <th>Created</th>
-              <th>Actions</th>
+              <th className={tableStyles.headerCell}>ID</th>
+              <th className={tableStyles.headerCell}>Display Name</th>
+              <th className={tableStyles.headerCell}>Company</th>
+              <th className={tableStyles.headerCell}>Contact</th>
+              <th className={tableStyles.headerCell}>Email</th>
+              <th className={tableStyles.headerCell}>Phone</th>
+              <th className={tableStyles.headerCell}>Created</th>
+              <th className={tableStyles.headerCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredVendors.map((vendor) => (
-              <tr key={vendor.id}>
-                <td>{vendor.id}</td>
-                <td>{vendor.displayName}</td>
-                <td>{vendor.companyName || '--'}</td>
-                <td>{vendor.contactName || '--'}</td>
-                <td>{vendor.email || '--'}</td>
-                <td>{vendor.phone || '--'}</td>
-                <td>{formatDate(vendor.createdAt)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: '8px' }}>
+              <tr key={vendor.id} className={tableStyles.row}>
+                <td className={tableStyles.cell}>{vendor.id}</td>
+                <td className={tableStyles.cell}>{vendor.displayName}</td>
+                <td className={tableStyles.cell}>{vendor.companyName || '--'}</td>
+                <td className={tableStyles.cell}>{vendor.contactName || '--'}</td>
+                <td className={tableStyles.cell}>{vendor.email || '--'}</td>
+                <td className={tableStyles.cell}>{vendor.phone || '--'}</td>
+                <td className={tableStyles.cell}>{formatDate(vendor.createdAt)}</td>
+                <td className={tableStyles.cell}>
+                  <div className="flex gap-2">
                     <Button size="sm" onClick={() => handleEdit(vendor)}>
                       Edit
                     </Button>
@@ -168,7 +169,7 @@ export default function Vendors() {
         </table>
 
         {filteredVendors.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '40px', color: 'gray' }}>
+          <div className={tableStyles.emptyState}>
             {searchQuery ? 'No vendors found matching your search.' : 'No vendors found. Add one to get started.'}
           </div>
         )}
@@ -189,7 +190,7 @@ export default function Vendors() {
             <input type="hidden" name="id" value={editingVendor.id} />
           )}
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="grid grid-cols-2 gap-4">
             <InputField
               label="Display Name"
               name="displayName"
@@ -204,7 +205,7 @@ export default function Vendors() {
             />
           </div>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="grid grid-cols-2 gap-4">
             <InputField
               label="Contact Name"
               name="contactName"
@@ -219,7 +220,7 @@ export default function Vendors() {
             />
           </div>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="grid grid-cols-2 gap-4">
             <InputField
               label="Phone"
               name="phone"
@@ -247,7 +248,7 @@ export default function Vendors() {
             rows={3}
           />
 
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px' }}>
+          <div className="flex gap-3 justify-end mt-6">
             <Button type="button" variant="secondary" onClick={handleCloseModal}>
               Cancel
             </Button>

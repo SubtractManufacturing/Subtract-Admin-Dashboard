@@ -5,6 +5,7 @@ This project uses Drizzle ORM for database migrations with automatic migration s
 ## Automatic Migrations
 
 Migrations run automatically when you:
+
 - Start the development server: `npm run dev`
 - Start the production server: `npm start`
 
@@ -50,22 +51,17 @@ npx drizzle-kit generate --custom
 
 Then edit the generated SQL file in the `drizzle/` directory.
 
-## Archive Functionality
-
-The latest migrations add soft-delete functionality:
-- Orders use an 'Archived' status
-- Other entities (customers, vendors, quotes, parts) use an `is_archived` boolean field
-- Archived records are automatically filtered from queries
-
 ## Troubleshooting
 
 If migrations fail:
+
 1. Check your DATABASE_URL is correct
 2. Ensure the database user has schema modification permissions
 3. Review migration files in `drizzle/` directory
 4. Check logs for specific error messages
 
 For manual migration without the app:
+
 ```bash
 npx tsx app/lib/db/migrate.ts
 ```

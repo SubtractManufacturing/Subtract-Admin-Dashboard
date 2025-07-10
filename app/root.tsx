@@ -6,10 +6,10 @@ import {
   ScrollRestoration,
 } from "@remix-run/react";
 
-import dashboardStyles from "./styles/dashboard.css?url";
+import tailwindStyles from "./tailwind.css?url";
 
 export const links = () => [
-  { rel: "stylesheet", href: dashboardStyles },
+  { rel: "stylesheet", href: tailwindStyles },
 ];
 
 export default function App() {
@@ -21,7 +21,7 @@ export default function App() {
         <Meta />
         <Links />
       </head>
-      <body>
+      <body className="bg-gray-100">
         <Outlet />
         <ScrollRestoration />
         <Scripts />
