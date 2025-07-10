@@ -14,5 +14,6 @@ export default defineConfig({
     alias: {
       "~": path.resolve(__dirname, "./app"),
     },
+    extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
   },
 });
