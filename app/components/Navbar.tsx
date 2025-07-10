@@ -9,11 +9,18 @@ export default function Navbar() {
         </Link>
       </h1>
       <div className="nav-links">
+        <Link to="/ActionItems">Action Items</Link>
         <Link to="/orders">Orders</Link>
         <Link to="/customers">Customers</Link>
         <Link to="/vendors">Vendors</Link>
-        <Link to="/ActionItems">Action Items</Link>
-        <span className="user-auth">Admin User</span>
+        <div className="auth-widget">
+          <div className="dropdown-arrow"></div>
+          <span className="username">Admin</span>
+          <div className="profile-photo">
+            A{/* Or use an image: */}
+            {/* <img src="/profile-photo.jpg" alt="Admin" /> */}
+          </div>
+        </div>
       </div>
     </div>
   );
