@@ -33,10 +33,12 @@ export default function Index() {
   return (
     <div>
       <Navbar />
-      <SearchHeader breadcrumbs="Dashboard" />
-      <StatCards stats={stats} />
-      <OrdersTable orders={orders} />
-      <QuotesTable quotes={quotes} />
+      <div className="max-w-[1920px] mx-auto">
+        <SearchHeader breadcrumbs="Dashboard" />
+        <StatCards stats={stats} />
+        <OrdersTable orders={orders} />
+        <QuotesTable quotes={quotes} />
+      </div>
     </div>
   );
 }
