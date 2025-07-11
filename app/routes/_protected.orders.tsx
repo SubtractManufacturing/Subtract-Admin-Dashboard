@@ -7,6 +7,7 @@ import { getOrdersWithRelations, createOrder, updateOrder, archiveOrder } from "
 import { getCustomers } from "~/lib/customers"
 import { getVendors } from "~/lib/vendors"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders"
+import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
@@ -15,13 +16,26 @@ import Modal from "~/components/shared/Modal"
 import { InputField, SelectField } from "~/components/shared/FormField"
 import { tableStyles, statusStyles } from "~/utils/tw-styles"
 
-export async function loader() {
-  const [orders, customers, vendors] = await Promise.all([
-    getOrdersWithRelations(),
-    getCustomers(),
-    getVendors()
-  ])
-  return json({ orders, customers, vendors })
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { user, userDetails, headers } = await requireAuth(request)
+  
+  try {
+    const [orders, customers, vendors] = await Promise.all([
+      getOrdersWithRelations(),
+      getCustomers(),
+      getVendors()
+    ])
+    return withAuthHeaders(
+      json({ orders, customers, vendors, user, userDetails }),
+      headers
+    )
+  } catch (error) {
+    console.error("Orders loader error:", error)
+    return withAuthHeaders(
+      json({ orders: [], customers: [], vendors: [], user, userDetails }),
+      headers
+    )
+  }
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -68,7 +82,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Orders() {
-  const { orders, customers, vendors } = useLoaderData<typeof loader>()
+  const { orders, customers, vendors, user, userDetails } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(null)
@@ -151,7 +165,11 @@ export default function Orders() {
 
   return (
     <div>
-      <Navbar />
+      <Navbar 
+        userName={userDetails?.name || user.email} 
+        userEmail={user.email}
+        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+      />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
           breadcrumbs="Dashboard / Orders" 

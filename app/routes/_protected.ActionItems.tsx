@@ -1,10 +1,29 @@
+import { json, LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData } from "@remix-run/react";
+import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
 
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { user, userDetails, headers } = await requireAuth(request);
+  
+  return withAuthHeaders(
+    json({ user, userDetails }),
+    headers
+  );
+}
+
 export default function Quotes() {
+  const { user, userDetails } = useLoaderData<typeof loader>();
+  
   return (
     <div>
-      <Navbar />
+      <Navbar 
+        userName={userDetails?.name || user.email} 
+        userEmail={user.email}
+        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+      />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader breadcrumbs="Dashboard / Action Items" />
 

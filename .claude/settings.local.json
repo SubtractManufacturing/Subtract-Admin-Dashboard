@@ -4,7 +4,9 @@
       "Bash(npm install:*)",
       "Bash(npx drizzle-kit:*)",
       "Bash(rg:*)",
-      "Bash(npm run typecheck:*)"
+      "Bash(npm run typecheck:*)",
+      "Bash(mv:*)",
+      "Bash(npx tsx:*)"
     ],
     "deny": []
   }

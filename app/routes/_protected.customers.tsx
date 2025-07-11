@@ -5,6 +5,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
 import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
 import type { Customer, CustomerInput } from "~/lib/customers"
+import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
@@ -13,9 +14,22 @@ import Modal from "~/components/shared/Modal"
 import { InputField } from "~/components/shared/FormField"
 import { tableStyles } from "~/utils/tw-styles"
 
-export async function loader() {
-  const customers = await getCustomers()
-  return json({ customers })
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { user, userDetails, headers } = await requireAuth(request)
+  
+  try {
+    const customers = await getCustomers()
+    return withAuthHeaders(
+      json({ customers, user, userDetails }),
+      headers
+    )
+  } catch (error) {
+    console.error("Customers loader error:", error)
+    return withAuthHeaders(
+      json({ customers: [], user, userDetails }),
+      headers
+    )
+  }
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -56,7 +70,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers } = useLoaderData<typeof loader>()
+  const { customers, user, userDetails } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
@@ -103,7 +117,11 @@ export default function Customers() {
 
   return (
     <div>
-      <Navbar />
+      <Navbar 
+        userName={userDetails?.name || user.email} 
+        userEmail={user.email}
+        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+      />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
           breadcrumbs="Dashboard / Customers" 

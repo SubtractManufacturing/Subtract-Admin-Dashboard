@@ -5,6 +5,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
 import { getVendors, createVendor, updateVendor, archiveVendor } from "~/lib/vendors"
 import type { Vendor, VendorInput } from "~/lib/vendors"
+import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
@@ -13,9 +14,22 @@ import Modal from "~/components/shared/Modal"
 import { InputField, TextareaField } from "~/components/shared/FormField"
 import { tableStyles } from "~/utils/tw-styles"
 
-export async function loader() {
-  const vendors = await getVendors()
-  return json({ vendors })
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { user, userDetails, headers } = await requireAuth(request)
+  
+  try {
+    const vendors = await getVendors()
+    return withAuthHeaders(
+      json({ vendors, user, userDetails }),
+      headers
+    )
+  } catch (error) {
+    console.error("Vendors loader error:", error)
+    return withAuthHeaders(
+      json({ vendors: [], user, userDetails }),
+      headers
+    )
+  }
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -66,7 +80,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Vendors() {
-  const { vendors } = useLoaderData<typeof loader>()
+  const { vendors, user, userDetails } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
@@ -114,7 +128,11 @@ export default function Vendors() {
 
   return (
     <div>
-      <Navbar />
+      <Navbar 
+        userName={userDetails?.name || user.email} 
+        userEmail={user.email}
+        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+      />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
           breadcrumbs="Dashboard / Vendors" 
