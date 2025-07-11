@@ -152,14 +152,15 @@ export default function Orders() {
   return (
     <div>
       <Navbar />
-      <SearchHeader 
-        breadcrumbs="Dashboard / Orders" 
-        onSearch={setSearchQuery}
-      />
-      
-      <div className="px-10 py-8">
+      <div className="max-w-[1920px] mx-auto">
+        <SearchHeader 
+          breadcrumbs="Dashboard / Orders" 
+          onSearch={setSearchQuery}
+        />
+        
+        <div className="px-10 py-8">
         <div className="flex justify-between items-center mb-5">
-          <h2 className="text-2xl font-semibold">Orders ({filteredOrders.length})</h2>
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">Orders ({filteredOrders.length})</h2>
           <Button onClick={handleAdd}>Add Order</Button>
         </div>
 
@@ -214,6 +215,8 @@ export default function Orders() {
             {searchQuery ? 'No orders found matching your search.' : 'No orders found. Add one to get started.'}
           </div>
         )}
+      </div>
+
       </div>
 
       <Modal
