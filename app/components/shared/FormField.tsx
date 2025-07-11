@@ -22,7 +22,7 @@ export function InputField({ label, error, required, className = '', ...props }:
     <div className="mb-4">
       <label className={formStyles.label}>
         {label}
-        {required && <span className="text-red-600"> *</span>}
+        {required && <span className="text-red-600 dark:text-red-400"> *</span>}
       </label>
       <input
         className={`${formStyles.input} ${className}`}
@@ -38,7 +38,7 @@ export function TextareaField({ label, error, required, className = '', ...props
     <div className="mb-4">
       <label className={formStyles.label}>
         {label}
-        {required && <span className="text-red-600"> *</span>}
+        {required && <span className="text-red-600 dark:text-red-400"> *</span>}
       </label>
       <textarea
         className={`${formStyles.textarea} min-h-[80px] ${className}`}
@@ -54,7 +54,7 @@ export function SelectField({ label, error, required, className = '', children, 
     <div className="mb-4">
       <label className={formStyles.label}>
         {label}
-        {required && <span className="text-red-600"> *</span>}
+        {required && <span className="text-red-600 dark:text-red-400"> *</span>}
       </label>
       <select
         className={`${formStyles.select} ${className}`}

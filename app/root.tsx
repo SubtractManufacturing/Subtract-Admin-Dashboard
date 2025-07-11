@@ -7,6 +7,7 @@ import {
 } from "@remix-run/react";
 
 import tailwindStyles from "./tailwind.css?url";
+import { ThemeProvider, themeInitScript } from "./contexts/ThemeContext";
 
 export const links = () => [
   { rel: "stylesheet", href: tailwindStyles },
@@ -20,9 +21,12 @@ export default function App() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className="bg-gray-100">
-        <Outlet />
+      <body className="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+        <ThemeProvider>
+          <Outlet />
+        </ThemeProvider>
         <ScrollRestoration />
         <Scripts />
       </body>
