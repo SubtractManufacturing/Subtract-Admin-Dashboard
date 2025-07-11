@@ -48,9 +48,9 @@ export default function AccountDropdown({
   return (
     <div
       ref={dropdownRef}
-      className="absolute right-0 mt-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50"
+      className="absolute right-0 mt-2 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50 transition-colors duration-150"
     >
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 transition-colors duration-150">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white font-semibold text-lg overflow-hidden flex-shrink-0">
             {profilePhotoUrl ? (
@@ -60,8 +60,8 @@ export default function AccountDropdown({
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">{userName}</p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{userEmail}</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate transition-colors duration-150">{userName}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 truncate transition-colors duration-150">{userEmail}</p>
           </div>
         </div>
       </div>
@@ -92,7 +92,7 @@ export default function AccountDropdown({
         </Link>
       </div>
 
-      <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1">
+      <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1 transition-colors duration-150">
         <button
           onClick={() => {
             onClose();
@@ -108,9 +108,9 @@ export default function AccountDropdown({
         </button>
       </div>
 
-      <div className="border-t border-gray-200 dark:border-gray-700 mt-1 px-4 py-3">
+      <div className="border-t border-gray-200 dark:border-gray-700 mt-1 px-4 py-3 transition-colors duration-150">
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-700 dark:text-gray-300">Dark mode</span>
+          <span className="text-sm text-gray-700 dark:text-gray-300 transition-colors duration-150">Dark mode</span>
           <button
             onClick={toggleTheme}
             className="relative inline-flex items-center h-6 rounded-full w-11 transition-colors duration-200 focus:outline-none"
@@ -124,7 +124,7 @@ export default function AccountDropdown({
               <div className="relative w-4 h-4">
                 {/* Sun icon */}
                 <svg
-                  className={`absolute inset-0 w-4 h-4 text-yellow-500 transition-all duration-300 ${
+                  className={`absolute inset-0 w-4 h-4 text-yellow-500 transition-all duration-150 ${
                     theme === 'dark' ? 'opacity-0 rotate-90 scale-0' : 'opacity-100 rotate-0 scale-100'
                   }`}
                   fill="currentColor"
@@ -134,7 +134,7 @@ export default function AccountDropdown({
                 </svg>
                 {/* Moon icon */}
                 <svg
-                  className={`absolute inset-0 w-4 h-4 text-indigo-200 transition-all duration-300 ${
+                  className={`absolute inset-0 w-4 h-4 text-indigo-200 transition-all duration-150 ${
                     theme === 'dark' ? 'opacity-100 rotate-0 scale-100' : 'opacity-0 -rotate-90 scale-0'
                   }`}
                   fill="currentColor"

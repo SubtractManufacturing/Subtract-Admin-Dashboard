@@ -122,7 +122,7 @@ export default function Vendors() {
       
       <div className="px-10 py-8">
         <div className="flex justify-between items-center mb-5">
-          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Vendors ({filteredVendors.length})</h2>
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">Vendors ({filteredVendors.length})</h2>
           <Button onClick={handleAdd}>Add Vendor</Button>
         </div>
 

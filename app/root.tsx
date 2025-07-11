@@ -23,7 +23,7 @@ export default function App() {
         <Links />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+      <body className="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-150">
         <ThemeProvider>
           <Outlet />
         </ThemeProvider>
