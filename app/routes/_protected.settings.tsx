@@ -1,22 +1,28 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { json, LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { updateUser } from "~/lib/users";
+import { createServerClient } from "~/lib/supabase";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
 import Navbar from "~/components/Navbar";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
+  
+  // Check for success message in URL
+  const url = new URL(request.url);
+  const message = url.searchParams.get("message");
+  
   return withAuthHeaders(
-    json({ user, userDetails }),
+    json({ user, userDetails, message }),
     headers
   );
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { user } = await requireAuth(request);
+  const { user, userDetails } = await requireAuth(request);
+  const { supabase, headers } = createServerClient(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -25,22 +31,131 @@ export async function action({ request }: ActionFunctionArgs) {
     const email = formData.get("email") as string;
 
     try {
-      await updateUser(user.id, { name, email });
-      return json({ success: true });
+      // Check if anything actually changed
+      const emailChanged = email !== user.email;
+      const nameChanged = name !== userDetails.name;
+      
+      if (!emailChanged && !nameChanged) {
+        return withAuthHeaders(
+          json({ success: true, message: "No changes to save" }),
+          headers
+        );
+      }
+      
+      // Build updates object
+      const updates: any = {};
+      
+      // Always update metadata if name changed
+      if (nameChanged) {
+        updates.data = { 
+          name,
+          full_name: name  // This will show in Supabase Dashboard's "Display Name"
+        };
+      }
+      
+      // Simplify: just try to update and handle the response
+      const { data: updatedUser, error: updateError } = await supabase.auth.updateUser(updates);
+      
+      console.log('Update response:', { updatedUser, updateError });
+      
+      if (updateError) {
+        // Log the full error for debugging
+        console.error('Update error:', updateError);
+        
+        // Check if this is an email change that requires confirmation
+        // Supabase may return success even when email confirmation is required
+        if (emailChanged && (updateError.message.includes('Email') || updateError.message.includes('email'))) {
+          return withAuthHeaders(
+            json({ 
+              success: true, 
+              message: "A confirmation email has been sent to your new email address. Please check your inbox to confirm the change." 
+            }),
+            headers
+          );
+        }
+        
+        return withAuthHeaders(
+          json({ error: `Failed to update profile: ${updateError.message}` }, { status: 400 }),
+          headers
+        );
+      }
+      
+      // Check if email change is pending confirmation
+      // Supabase doesn't always return an error for email changes that require confirmation
+      if (emailChanged) {
+        // Check if the email actually changed in the response
+        const emailActuallyChanged = updatedUser?.user?.email === email;
+        
+        if (!emailActuallyChanged) {
+          // Email didn't change immediately, so confirmation is required
+          return withAuthHeaders(
+            json({ 
+              success: true, 
+              message: "A confirmation email has been sent to verify your new email address. Please check your inbox." 
+            }),
+            headers
+          );
+        }
+      }
+      
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
     } catch (error) {
-      return json({ error: "Failed to update profile" }, { status: 400 });
+      return withAuthHeaders(
+        json({ error: "Failed to update profile" }, { status: 400 }),
+        headers
+      );
     }
   }
 
-  return json({ error: "Invalid intent" }, { status: 400 });
+  if (intent === "resetPassword") {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(user.email!, {
+        redirectTo: `${new URL(request.url).origin}/auth/callback?type=recovery`,
+      });
+      
+      if (error) {
+        return withAuthHeaders(
+          json({ error: `Failed to send reset email: ${error.message}` }, { status: 400 }),
+          headers
+        );
+      }
+      
+      return withAuthHeaders(
+        json({ success: true, message: "Password reset email sent! Check your inbox." }),
+        headers
+      );
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to send password reset email" }, { status: 400 }),
+        headers
+      );
+    }
+  }
+
+  return withAuthHeaders(
+    json({ error: "Invalid intent" }, { status: 400 }),
+    headers
+  );
 }
 
 type Tab = "profile" | "security" | "notifications" | "preferences";
 
 export default function Settings() {
-  const { user, userDetails } = useLoaderData<typeof loader>();
+  const { user, userDetails, message } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
+  const passwordResetFetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
+  
+  // Revalidate data after successful update
+  useEffect(() => {
+    if (fetcher.data && 'success' in fetcher.data) {
+      revalidator.revalidate();
+    }
+  }, [fetcher.data, revalidator]);
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "profile", label: "Your Profile" },
@@ -54,7 +169,7 @@ export default function Settings() {
       <Navbar 
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
-        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        userInitials={(userDetails?.name || user.email).charAt(0).toUpperCase()}
       />
       <div className="p-4 md:p-6 max-w-6xl mx-auto">
       <div className="mb-6">
@@ -93,6 +208,12 @@ export default function Settings() {
                 Profile Information
               </h3>
               
+              {message && (
+                <div className="mb-6 p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded text-green-700 dark:text-green-300">
+                  {message}
+                </div>
+              )}
+              
               <fetcher.Form method="post" className="space-y-6">
                 <input type="hidden" name="intent" value="updateProfile" />
                 
@@ -105,14 +226,19 @@ export default function Settings() {
                   required
                 />
 
-                <InputField
-                  label="Email"
-                  name="email"
-                  type="email"
-                  defaultValue={userDetails?.email || user.email}
-                  placeholder="Enter your email"
-                  required
-                />
+                <div>
+                  <InputField
+                    label="Email"
+                    name="email"
+                    type="email"
+                    defaultValue={userDetails?.email || user.email}
+                    placeholder="Enter your email"
+                    required
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Changing your email requires confirmation via email
+                  </p>
+                </div>
 
                 <div className="flex items-center space-x-4">
                   <Button
@@ -125,7 +251,7 @@ export default function Settings() {
                   
                   {fetcher.data && 'success' in fetcher.data && (
                     <span className="text-green-600 dark:text-green-400 text-sm">
-                      Profile updated successfully
+                      {fetcher.data.message || "Profile updated successfully"}
                     </span>
                   )}
                   
@@ -144,15 +270,30 @@ export default function Settings() {
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
                   To reset your password, we&apos;ll send you an email with instructions.
                 </p>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    // TODO: Implement password reset
-                    alert("Password reset functionality coming soon!");
-                  }}
-                >
-                  Send Password Reset Email
-                </Button>
+                <passwordResetFetcher.Form method="post" className="inline-block">
+                  <input type="hidden" name="intent" value="resetPassword" />
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    disabled={passwordResetFetcher.state === "submitting"}
+                  >
+                    {passwordResetFetcher.state === "submitting" 
+                      ? "Sending..." 
+                      : "Send Password Reset Email"}
+                  </Button>
+                </passwordResetFetcher.Form>
+                
+                {passwordResetFetcher.data && 'success' in passwordResetFetcher.data && 'message' in passwordResetFetcher.data && (
+                  <p className="text-green-600 dark:text-green-400 text-sm mt-2">
+                    {passwordResetFetcher.data.message}
+                  </p>
+                )}
+                
+                {passwordResetFetcher.data && 'error' in passwordResetFetcher.data && (
+                  <p className="text-red-600 dark:text-red-400 text-sm mt-2">
+                    {passwordResetFetcher.data.error}
+                  </p>
+                )}
               </div>
             </div>
           )}

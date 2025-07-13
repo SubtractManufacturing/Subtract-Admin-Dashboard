@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Confirm Email Change</title>
+</head>
+<body>
+    <h2>Confirm your email change</h2>
+    <p>You requested to change your email address. Please click the link below to confirm this change:</p>
+    <p>
+        <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email_change">
+            Confirm Email Change
+        </a>
+    </p>
+    <p>If you didn't request this change, you can safely ignore this email.</p>
+    <p>This link will expire in 1 hour.</p>
+</body>
+</html>

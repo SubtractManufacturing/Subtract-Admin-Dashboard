@@ -1,8 +1,14 @@
-import { ActionFunctionArgs, json, redirect } from "@remix-run/node";
-import { Form, useActionData, useNavigation } from "@remix-run/react";
+import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
+import { Form, useActionData, useNavigation, useLoaderData } from "@remix-run/react";
 import { createServerClient } from "~/lib/supabase";
 import { withAuthHeaders } from "~/lib/auth.server";
 import { styles } from "~/utils/tw-styles";
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const error = url.searchParams.get("error");
+  return json({ error });
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
@@ -27,6 +33,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Login() {
+  const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -63,9 +70,9 @@ export default function Login() {
               className={styles.form.input}
             />
           </div>
-          {actionData?.error && (
+          {(loaderData?.error || actionData?.error) && (
             <div className="text-red-600 dark:text-red-400 text-sm">
-              {actionData.error}
+              {loaderData?.error || actionData?.error}
             </div>
           )}
           <button
