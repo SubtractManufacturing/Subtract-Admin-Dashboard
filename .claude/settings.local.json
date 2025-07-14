@@ -4,7 +4,9 @@
       "Bash(npm install:*)",
       "Bash(npx drizzle-kit:*)",
       "Bash(rg:*)",
-      "Bash(npm run typecheck:*)"
+      "Bash(npm run typecheck:*)",
+      "Bash(grep:*)",
+      "Bash(npm run lint)"
     ],
     "deny": []
   }

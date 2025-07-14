@@ -3,8 +3,8 @@ import { useLoaderData, useFetcher } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
-import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
-import type { Customer, CustomerInput } from "~/lib/customers"
+import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers.js"
+import type { Customer, CustomerInput } from "~/lib/customers.js"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
