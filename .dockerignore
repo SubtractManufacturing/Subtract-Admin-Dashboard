@@ -1,0 +1,67 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs (we'll build inside container)
+build
+dist
+.cache
+
+# Environment files (use --env-file or env vars instead)
+.env
+.env.*
+
+# Version control
+.git
+.gitignore
+
+# IDE and OS files
+.DS_Store
+.idea
+.vscode
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Documentation (not needed in production image)
+*.md
+docs
+docker/
+
+# Development files
+.eslintrc*
+.prettierrc*
+tsconfig.tsbuildinfo
+
+# Testing
+coverage
+.nyc_output
+**/*.test.*
+**/*.spec.*
+__tests__
+
+# Temporary files
+tmp
+temp
+*.tmp
+*.log
+
+# Planning and local development
+planning/
+drizzle/
+scripts/
+supabase/
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+pgdata/
+
+# Security (should use secrets management)
+*.pem
+*.key
+secrets.json
