@@ -8,12 +8,12 @@ import { getCustomers } from "~/lib/customers.js"
 import { getVendors } from "~/lib/vendors.js"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders.js"
 
-import Navbar from "~/components/Navbar"
-import SearchHeader from "~/components/SearchHeader"
-import Button from "~/components/shared/Button"
-import Modal from "~/components/shared/Modal"
-import { InputField, SelectField } from "~/components/shared/FormField"
-import { tableStyles, statusStyles } from "~/utils/tw-styles"
+import Navbar from "~/components/Navbar.js"
+import SearchHeader from "~/components/SearchHeader.js"
+import Button from "~/components/shared/Button.js"
+import Modal from "~/components/shared/Modal.js"
+import { InputField, SelectField } from "~/components/shared/FormField.js"
+import { tableStyles, statusStyles } from "~/utils/tw-styles.js"
 
 export async function loader() {
   const [orders, customers, vendors] = await Promise.all([

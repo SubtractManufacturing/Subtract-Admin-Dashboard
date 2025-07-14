@@ -6,12 +6,12 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 import { getVendors, createVendor, updateVendor, archiveVendor } from "~/lib/vendors.js"
 import type { Vendor, VendorInput } from "~/lib/vendors.js"
 
-import Navbar from "~/components/Navbar"
-import SearchHeader from "~/components/SearchHeader"
-import Button from "~/components/shared/Button"
-import Modal from "~/components/shared/Modal"
-import { InputField, TextareaField } from "~/components/shared/FormField"
-import { tableStyles } from "~/utils/tw-styles"
+import Navbar from "~/components/Navbar.js"
+import SearchHeader from "~/components/SearchHeader.js"
+import Button from "~/components/shared/Button.js"
+import Modal from "~/components/shared/Modal.js"
+import { InputField, TextareaField } from "~/components/shared/FormField.js"
+import { tableStyles } from "~/utils/tw-styles.js"
 
 export async function loader() {
   const vendors = await getVendors()
