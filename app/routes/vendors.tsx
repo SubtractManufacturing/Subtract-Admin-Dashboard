@@ -3,8 +3,8 @@ import { useLoaderData, useFetcher } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
-import { getVendors, createVendor, updateVendor, archiveVendor } from "~/lib/vendors"
-import type { Vendor, VendorInput } from "~/lib/vendors"
+import { getVendors, createVendor, updateVendor, archiveVendor } from "~/lib/vendors.js"
+import type { Vendor, VendorInput } from "~/lib/vendors.js"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
