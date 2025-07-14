@@ -1,5 +1,5 @@
 import type { InputHTMLAttributes, TextareaHTMLAttributes, SelectHTMLAttributes, ReactNode } from "react"
-import { formStyles } from "~/utils/tw-styles"
+import { formStyles } from "~/utils/tw-styles.js"
 
 interface BaseFieldProps {
   label: string

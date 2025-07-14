@@ -1,5 +1,5 @@
-import type { Quote } from "~/lib/dashboard"
-import { tableStyles, statusStyles } from "~/utils/tw-styles"
+import type { Quote } from "~/lib/dashboard.js"
+import { tableStyles, statusStyles } from "~/utils/tw-styles.js"
 
 interface QuotesTableProps {
   quotes: Quote[]

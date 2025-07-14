@@ -1,6 +1,6 @@
 import { Link } from "@remix-run/react";
 import { useState, useRef } from "react";
-import AccountDropdown from "./AccountDropdown";
+import AccountDropdown from "./AccountDropdown.js";
 
 export default function Navbar() {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);

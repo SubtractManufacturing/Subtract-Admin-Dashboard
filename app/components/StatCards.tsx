@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "@remix-run/react";
-import type { DashboardStats } from "~/lib/dashboard";
-import { cardStyles } from "~/utils/tw-styles";
+import type { DashboardStats } from "~/lib/dashboard.js";
+import { cardStyles } from "~/utils/tw-styles.js";
 
 interface StatCardsProps {
   stats: DashboardStats;

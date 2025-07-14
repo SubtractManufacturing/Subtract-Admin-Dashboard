@@ -7,7 +7,7 @@ import {
 } from "@remix-run/react";
 
 import tailwindStyles from "./tailwind.css?url";
-import { ThemeProvider, themeInitScript } from "./contexts/ThemeContext";
+import { ThemeProvider, themeInitScript } from "./contexts/ThemeContext.js";
 
 export const links = () => [
   { rel: "stylesheet", href: tailwindStyles },

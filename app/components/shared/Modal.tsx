@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { modalStyles } from "~/utils/tw-styles"
+import { modalStyles } from "~/utils/tw-styles.js"
 
 interface ModalProps {
   isOpen: boolean
