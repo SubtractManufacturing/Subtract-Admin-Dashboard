@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { getDashboardStats, getOrders, getQuotes } from "~/lib/dashboard.js";
+import { getDashboardStats, getOrders, getQuotes } from "~/lib/dashboard";
 
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
