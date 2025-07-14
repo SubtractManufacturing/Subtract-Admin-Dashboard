@@ -17,6 +17,12 @@ RUN npm ci && \
 # Copy application code
 COPY . .
 
+# Create symbolic links for TypeScript files to resolve .js imports
+RUN find app -name "*.ts" -not -name "*.d.ts" | while read tsfile; do \
+    jsfile="${tsfile%.ts}.js"; \
+    ln -sf "$(basename "$tsfile")" "$jsfile"; \
+    done
+
 # Build the application
 RUN npm run build
 
