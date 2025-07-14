@@ -1,5 +1,5 @@
-import Navbar from "~/components/Navbar.js";
-import SearchHeader from "~/components/SearchHeader.js";
+import Navbar from "~/components/Navbar";
+import SearchHeader from "~/components/SearchHeader";
 
 export default function Quotes() {
   return (

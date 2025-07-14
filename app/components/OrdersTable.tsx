@@ -1,5 +1,5 @@
-import type { Order } from "~/lib/dashboard.js"
-import { tableStyles, statusStyles } from "~/utils/tw-styles.js"
+import type { Order } from "~/lib/dashboard"
+import { tableStyles, statusStyles } from "~/utils/tw-styles"
 
 interface OrdersTableProps {
   orders: Order[]

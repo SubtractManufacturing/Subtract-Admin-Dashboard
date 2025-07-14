@@ -1,12 +1,12 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { getDashboardStats, getOrders, getQuotes } from "~/lib/dashboard.js";
+import { getDashboardStats, getOrders, getQuotes } from "~/lib/dashboard";
 
-import Navbar from "~/components/Navbar.js";
-import SearchHeader from "~/components/SearchHeader.js";
-import StatCards from "~/components/StatCards.js";
-import OrdersTable from "~/components/OrdersTable.js";
-import QuotesTable from "~/components/QuotesTable.js";
+import Navbar from "~/components/Navbar";
+import SearchHeader from "~/components/SearchHeader";
+import StatCards from "~/components/StatCards";
+import OrdersTable from "~/components/OrdersTable";
+import QuotesTable from "~/components/QuotesTable";
 
 export async function loader() {
   try {

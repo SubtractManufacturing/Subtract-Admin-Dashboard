@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Link } from "@remix-run/react";
-import { useTheme } from "~/contexts/ThemeContext.js";
+import { useTheme } from "~/contexts/ThemeContext";
 
 interface AccountDropdownProps {
   isOpen: boolean;

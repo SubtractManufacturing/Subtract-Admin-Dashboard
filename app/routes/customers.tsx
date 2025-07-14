@@ -3,15 +3,15 @@ import { useLoaderData, useFetcher } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
-import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers.js"
-import type { Customer, CustomerInput } from "~/lib/customers.js"
+import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
+import type { Customer, CustomerInput } from "~/lib/customers"
 
-import Navbar from "~/components/Navbar.js"
-import SearchHeader from "~/components/SearchHeader.js"
-import Button from "~/components/shared/Button.js"
-import Modal from "~/components/shared/Modal.js"
-import { InputField } from "~/components/shared/FormField.js"
-import { tableStyles } from "~/utils/tw-styles.js"
+import Navbar from "~/components/Navbar"
+import SearchHeader from "~/components/SearchHeader"
+import Button from "~/components/shared/Button"
+import Modal from "~/components/shared/Modal"
+import { InputField } from "~/components/shared/FormField"
+import { tableStyles } from "~/utils/tw-styles"
 
 export async function loader() {
   const customers = await getCustomers()
