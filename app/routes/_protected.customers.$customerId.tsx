@@ -141,7 +141,7 @@ export default function CustomerDetails() {
         
         <div className="px-10 py-8">
           {/* Customer Info Card */}
-          <div className={styles.card.container}>
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-md transition-colors duration-150">
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
@@ -208,7 +208,7 @@ export default function CustomerDetails() {
           </div>
 
           {/* Orders Section */}
-          <div className={`${styles.card.container} mt-6`}>
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-md transition-colors duration-150 mt-6">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
               Orders ({customerOrders.length})
             </h2>
