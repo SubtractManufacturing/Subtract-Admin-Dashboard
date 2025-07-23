@@ -135,7 +135,10 @@ export default function Vendors() {
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
-          breadcrumbs="Dashboard / Vendors" 
+          breadcrumbs={[
+            { label: "Dashboard", href: "/" },
+            { label: "Vendors" }
+          ]}
           onSearch={setSearchQuery}
         />
         

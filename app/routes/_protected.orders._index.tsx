@@ -245,7 +245,10 @@ export default function Orders() {
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
-          breadcrumbs="Dashboard / Orders" 
+          breadcrumbs={[
+            { label: "Dashboard", href: "/" },
+            { label: "Orders" }
+          ]}
           onSearch={setSearchQuery}
         />
         

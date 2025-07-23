@@ -35,7 +35,11 @@ export default function VendorDetails() {
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
       />
       <div className="max-w-[1920px] mx-auto">
-        <SearchHeader breadcrumbs={`Vendors / ${vendor.displayName}`} />
+        <SearchHeader breadcrumbs={[
+          { label: "Dashboard", href: "/" },
+          { label: "Vendors", href: "/vendors" },
+          { label: vendor.displayName }
+        ]} />
       </div>
     </div>
   );

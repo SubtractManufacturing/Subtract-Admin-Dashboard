@@ -6,6 +6,7 @@ import { getVendor } from "~/lib/vendors";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
+import Breadcrumbs from "~/components/Breadcrumbs";
 import { useState } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -121,9 +122,11 @@ export default function OrderDetails() {
       <div className="max-w-[1920px] mx-auto">
         {/* Custom breadcrumb bar with buttons */}
         <div className="flex justify-between items-center px-10 py-2.5">
-          <div className="font-semibold text-gray-600 dark:text-gray-400 text-sm transition-colors duration-150">
-            Dashboard / Orders / {order.orderNumber}
-          </div>
+          <Breadcrumbs items={[
+            { label: "Dashboard", href: "/" },
+            { label: "Orders", href: "/orders" },
+            { label: order.orderNumber }
+          ]} />
           <div className="flex flex-wrap gap-3">
             <Button variant="primary" className="bg-green-600 hover:bg-green-700">
               Update Status

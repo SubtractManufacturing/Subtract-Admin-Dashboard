@@ -49,7 +49,7 @@ export default function Index() {
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
       />
       <div className="max-w-[1920px] mx-auto">
-        <SearchHeader breadcrumbs="Dashboard" />
+        <SearchHeader breadcrumbs={[{ label: "Dashboard" }]} />
         <StatCards stats={stats} />
         <OrdersTable orders={orders} />
         <QuotesTable quotes={quotes} />

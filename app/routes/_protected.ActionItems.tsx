@@ -25,7 +25,10 @@ export default function Quotes() {
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
       />
       <div className="max-w-[1920px] mx-auto">
-        <SearchHeader breadcrumbs="Dashboard / Action Items" />
+        <SearchHeader breadcrumbs={[
+          { label: "Dashboard", href: "/" },
+          { label: "Action Items" }
+        ]} />
 
         <div className="px-10 py-8">
         <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150 mb-5">Items that require Input</h2>

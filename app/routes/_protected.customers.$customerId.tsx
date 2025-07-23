@@ -133,7 +133,11 @@ export default function CustomerDetails() {
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
       />
       <div className="max-w-[1920px] mx-auto">
-        <SearchHeader breadcrumbs={`Customers / ${customer.displayName}`} />
+        <SearchHeader breadcrumbs={[
+          { label: "Dashboard", href: "/" },
+          { label: "Customers", href: "/customers" },
+          { label: customer.displayName }
+        ]} />
         
         <div className="px-10 py-8">
           {/* Customer Info Card */}

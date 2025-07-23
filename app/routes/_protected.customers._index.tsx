@@ -124,7 +124,10 @@ export default function Customers() {
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
-          breadcrumbs="Dashboard / Customers" 
+          breadcrumbs={[
+            { label: "Dashboard", href: "/" },
+            { label: "Customers" }
+          ]}
           onSearch={setSearchQuery}
         />
         
