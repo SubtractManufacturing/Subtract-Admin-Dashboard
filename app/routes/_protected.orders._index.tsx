@@ -94,8 +94,8 @@ export default function Orders() {
     const query = searchQuery.toLowerCase()
     return (
       order.orderNumber?.toLowerCase().includes(query) ||
-      order.customer?.name?.toLowerCase().includes(query) ||
-      order.vendor?.name?.toLowerCase().includes(query) ||
+      order.customer?.displayName?.toLowerCase().includes(query) ||
+      order.vendor?.displayName?.toLowerCase().includes(query) ||
       order.status?.toLowerCase().includes(query)
     )
   })
@@ -200,42 +200,42 @@ export default function Orders() {
             {filteredOrders.map((order: any) => (
               <tr key={order.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.id}`} className="block">
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
                     {order.orderNumber}
                   </Link>
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.id}`} className="block">
-                    {order.customer?.name || '--'}
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
+                    {order.customer?.displayName || '--'}
                   </Link>
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.id}`} className="block">
-                    {order.vendor?.name || '--'}
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
+                    {order.vendor?.displayName || '--'}
                   </Link>
                 </td>
                 <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(order.status)}`}>
-                  <Link to={`/orders/${order.id}`} className="block">
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
                     {getStatusDisplay(order.status)}
                   </Link>
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.id}`} className="block">
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
                     {formatCurrency(order.totalPrice)}
                   </Link>
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.id}`} className="block">
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
                     {formatCurrency(order.vendorPay)}
                   </Link>
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.id}`} className="block">
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
                     {formatDate(order.shipDate)}
                   </Link>
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.id}`} className="block">
+                  <Link to={`/orders/${order.orderNumber}`} className="block">
                     {formatDate(order.createdAt)}
                   </Link>
                 </td>
@@ -299,7 +299,7 @@ export default function Orders() {
             <option value="">Select a customer...</option>
             {customers.map((customer: any) => (
               <option key={customer.id} value={customer.id}>
-                {customer.name}
+                {customer.displayName}
               </option>
             ))}
           </SelectField>
@@ -312,7 +312,7 @@ export default function Orders() {
             <option value="">Select a vendor...</option>
             {vendors.map((vendor: any) => (
               <option key={vendor.id} value={vendor.id}>
-                {vendor.name}
+                {vendor.displayName}
               </option>
             ))}
           </SelectField>

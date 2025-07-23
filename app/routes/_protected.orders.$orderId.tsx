@@ -1,6 +1,6 @@
 import { json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { getOrder } from "~/lib/orders";
+import { getOrderByNumber } from "~/lib/orders";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
@@ -8,12 +8,12 @@ import SearchHeader from "~/components/SearchHeader";
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   
-  const orderId = params.orderId;
-  if (!orderId) {
-    throw new Response("Order ID is required", { status: 400 });
+  const orderNumber = params.orderId; // Note: param name stays the same but now represents orderNumber
+  if (!orderNumber) {
+    throw new Response("Order number is required", { status: 400 });
   }
 
-  const order = await getOrder(parseInt(orderId));
+  const order = await getOrderByNumber(orderNumber);
   if (!order) {
     throw new Response("Order not found", { status: 404 });
   }
