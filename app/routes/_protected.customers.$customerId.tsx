@@ -222,7 +222,7 @@ export default function CustomerDetails() {
                   </tr>
                 </thead>
                 <tbody>
-                  {customerOrders.map((order) => (
+                  {customerOrders.map((order: any) => (
                     <tr key={order.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
                       <td className={tableStyles.cell}>
                         <Link to={`/orders/${order.orderNumber}`} className="block text-blue-600 hover:text-blue-800">

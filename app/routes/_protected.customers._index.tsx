@@ -76,14 +76,14 @@ export default function Customers() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
 
-  const filteredCustomers = customers.filter(customer =>
+  const filteredCustomers = customers.filter((customer: Customer) =>
     customer.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     customer.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     customer.phone?.includes(searchQuery)
   )
 
-  const handleEdit = (customer: typeof customers[0]) => {
-    setEditingCustomer(customer as any)
+  const handleEdit = (customer: Customer) => {
+    setEditingCustomer(customer)
     setIsModalOpen(true)
   }
 
@@ -97,7 +97,7 @@ export default function Customers() {
     setEditingCustomer(null)
   }
 
-  const handleDelete = (customer: typeof customers[0]) => {
+  const handleDelete = (customer: Customer) => {
     if (confirm(`Are you sure you want to archive ${customer.displayName}? This will hide them from the list.`)) {
       fetcher.submit(
         { intent: "delete", id: customer.id.toString() },
@@ -146,7 +146,7 @@ export default function Customers() {
             </tr>
           </thead>
           <tbody>
-            {filteredCustomers.map((customer) => (
+            {filteredCustomers.map((customer: Customer) => (
               <tr key={customer.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
                 <td className={tableStyles.cell}>
                   <Link to={`/customers/${customer.id}`} className="block">

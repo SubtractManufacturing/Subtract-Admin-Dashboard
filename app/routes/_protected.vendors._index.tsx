@@ -86,15 +86,15 @@ export default function Vendors() {
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
 
-  const filteredVendors = vendors.filter(vendor =>
+  const filteredVendors = vendors.filter((vendor: Vendor) =>
     vendor.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     vendor.companyName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     vendor.contactName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     vendor.email?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const handleEdit = (vendor: typeof vendors[0]) => {
-    setEditingVendor(vendor as any)
+  const handleEdit = (vendor: Vendor) => {
+    setEditingVendor(vendor)
     setIsModalOpen(true)
   }
 
@@ -108,7 +108,7 @@ export default function Vendors() {
     setEditingVendor(null)
   }
 
-  const handleDelete = (vendor: typeof vendors[0]) => {
+  const handleDelete = (vendor: Vendor) => {
     if (confirm(`Are you sure you want to archive ${vendor.displayName}? This will hide them from the list.`)) {
       fetcher.submit(
         { intent: "delete", id: vendor.id.toString() },
@@ -159,7 +159,7 @@ export default function Vendors() {
             </tr>
           </thead>
           <tbody>
-            {filteredVendors.map((vendor) => (
+            {filteredVendors.map((vendor: Vendor) => (
               <tr key={vendor.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
                 <td className={tableStyles.cell}>
                   <Link to={`/vendors/${vendor.id}`} className="block">
