@@ -1,6 +1,6 @@
 import { json, redirect } from "@remix-run/node"
 import { useLoaderData, useFetcher, Link } from "@remix-run/react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
 import { getOrdersWithRelations, createOrder, updateOrder, archiveOrder } from "~/lib/orders"
@@ -8,6 +8,7 @@ import { getCustomers } from "~/lib/customers"
 import { getVendors } from "~/lib/vendors"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
+import { getNextOrderNumber } from "~/lib/number-generator"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
@@ -44,8 +45,13 @@ export async function action({ request }: ActionFunctionArgs) {
 
   try {
     switch (intent) {
+      case "generateOrderNumber": {
+        const nextOrderNumber = await getNextOrderNumber()
+        return json({ orderNumber: nextOrderNumber })
+      }
       case "create": {
         const orderData: OrderInput = {
+          orderNumber: formData.get("orderNumber") as string || null,
           customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
           vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
@@ -89,6 +95,14 @@ export default function Orders() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [orderNumber, setOrderNumber] = useState("")
+
+  // Handle fetcher response for generated order number
+  useEffect(() => {
+    if (fetcher.data && typeof fetcher.data === 'object' && 'orderNumber' in fetcher.data) {
+      setOrderNumber(fetcher.data.orderNumber as string)
+    }
+  }, [fetcher.data])
 
   const filteredOrders = orders.filter((order: any) => {
     const query = searchQuery.toLowerCase()
@@ -102,12 +116,21 @@ export default function Orders() {
 
   const handleAdd = () => {
     setEditingOrder(null)
+    setOrderNumber("")
     setModalOpen(true)
   }
 
   const handleEdit = (order: OrderWithRelations) => {
     setEditingOrder(order)
+    setOrderNumber(order.orderNumber)
     setModalOpen(true)
+  }
+
+  const handleGenerateOrderNumber = () => {
+    fetcher.submit(
+      { intent: "generateOrderNumber" },
+      { method: "POST" }
+    )
   }
 
   const handleDelete = (orderId: number) => {
@@ -289,6 +312,31 @@ export default function Orders() {
           <input type="hidden" name="intent" value={editingOrder ? "update" : "create"} />
           {editingOrder && (
             <input type="hidden" name="orderId" value={editingOrder.id} />
+          )}
+
+          {!editingOrder && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Order Number
+              </label>
+              <div className="flex space-x-2">
+                <InputField
+                  label=""
+                  name="orderNumber"
+                  value={orderNumber}
+                  onChange={(e) => setOrderNumber(e.target.value)}
+                  placeholder="Enter order number or generate"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleGenerateOrderNumber}
+                  disabled={fetcher.state === "submitting"}
+                >
+                  Generate
+                </Button>
+              </div>
+            </div>
           )}
 
           <SelectField
