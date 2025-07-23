@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher, Link } from "@remix-run/react"
 import { useState, useEffect } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
-import { getOrdersWithRelations, createOrder, updateOrder, archiveOrder } from "~/lib/orders"
+import { getOrdersWithRelations, createOrder, updateOrder, archiveOrder, checkOrderNumberExists } from "~/lib/orders"
 import { getCustomers } from "~/lib/customers"
 import { getVendors } from "~/lib/vendors"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders"
@@ -49,9 +49,27 @@ export async function action({ request }: ActionFunctionArgs) {
         const nextOrderNumber = await getNextOrderNumber()
         return json({ orderNumber: nextOrderNumber })
       }
+      case "checkOrderNumber": {
+        const orderNumber = formData.get("orderNumber") as string
+        if (!orderNumber) {
+          return json({ exists: false })
+        }
+        const exists = await checkOrderNumberExists(orderNumber)
+        return json({ exists })
+      }
       case "create": {
+        const orderNumber = formData.get("orderNumber") as string || null
+        
+        // Check if order number exists before creating
+        if (orderNumber) {
+          const exists = await checkOrderNumberExists(orderNumber)
+          if (exists) {
+            return json({ error: "Order number already exists" }, { status: 400 })
+          }
+        }
+        
         const orderData: OrderInput = {
-          orderNumber: formData.get("orderNumber") as string || null,
+          orderNumber,
           customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
           vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
@@ -96,11 +114,22 @@ export default function Orders() {
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [orderNumber, setOrderNumber] = useState("")
+  const [orderNumberError, setOrderNumberError] = useState("")
+  const [isCheckingOrderNumber, setIsCheckingOrderNumber] = useState(false)
 
-  // Handle fetcher response for generated order number
+  // Handle fetcher response
   useEffect(() => {
-    if (fetcher.data && typeof fetcher.data === 'object' && 'orderNumber' in fetcher.data) {
-      setOrderNumber(fetcher.data.orderNumber as string)
+    if (fetcher.data && typeof fetcher.data === 'object') {
+      if ('orderNumber' in fetcher.data) {
+        setOrderNumber(fetcher.data.orderNumber as string)
+        setOrderNumberError("")
+      }
+      if ('exists' in fetcher.data && fetcher.data.exists === true) {
+        setOrderNumberError("This order number already exists")
+      }
+      if ('error' in fetcher.data) {
+        setOrderNumberError(fetcher.data.error as string)
+      }
     }
   }, [fetcher.data])
 
@@ -117,12 +146,14 @@ export default function Orders() {
   const handleAdd = () => {
     setEditingOrder(null)
     setOrderNumber("")
+    setOrderNumberError("")
     setModalOpen(true)
   }
 
   const handleEdit = (order: OrderWithRelations) => {
     setEditingOrder(order)
     setOrderNumber(order.orderNumber)
+    setOrderNumberError("")
     setModalOpen(true)
   }
 
@@ -131,6 +162,25 @@ export default function Orders() {
       { intent: "generateOrderNumber" },
       { method: "POST" }
     )
+  }
+
+  const handleOrderNumberChange = (value: string) => {
+    setOrderNumber(value)
+    setOrderNumberError("")
+    
+    // Debounce the check
+    if (value) {
+      setIsCheckingOrderNumber(true)
+      const timeoutId = setTimeout(() => {
+        fetcher.submit(
+          { intent: "checkOrderNumber", orderNumber: value },
+          { method: "POST" }
+        )
+        setIsCheckingOrderNumber(false)
+      }, 500)
+      
+      return () => clearTimeout(timeoutId)
+    }
   }
 
   const handleDelete = (orderId: number) => {
@@ -319,23 +369,44 @@ export default function Orders() {
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Order Number
               </label>
-              <div className="flex space-x-2">
-                <InputField
-                  label=""
+              <div className="relative">
+                <input
+                  type="text"
                   name="orderNumber"
                   value={orderNumber}
-                  onChange={(e) => setOrderNumber(e.target.value)}
-                  placeholder="Enter order number or generate"
+                  onChange={(e) => handleOrderNumberChange(e.target.value)}
+                  placeholder="Enter order number or click to generate"
+                  className={`w-full px-3 py-2 pr-12 border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100 ${
+                    orderNumberError 
+                      ? 'border-red-500 dark:border-red-500' 
+                      : 'border-gray-300 dark:border-gray-600'
+                  }`}
                 />
-                <Button
+                <button
                   type="button"
-                  variant="secondary"
                   onClick={handleGenerateOrderNumber}
                   disabled={fetcher.state === "submitting"}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Generate order number"
                 >
-                  Generate
-                </Button>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    fill="currentColor"
+                    viewBox="0 0 16 16"
+                  >
+                    <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/>
+                    <path fillRule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/>
+                  </svg>
+                </button>
               </div>
+              {orderNumberError && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{orderNumberError}</p>
+              )}
+              {isCheckingOrderNumber && (
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Checking availability...</p>
+              )}
             </div>
           )}
 
@@ -404,7 +475,10 @@ export default function Orders() {
             <Button variant="secondary" type="button" onClick={() => setModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit">
+            <Button 
+              type="submit"
+              disabled={!editingOrder && !!orderNumberError}
+            >
               {editingOrder ? 'Update' : 'Create'} Order
             </Button>
           </div>
