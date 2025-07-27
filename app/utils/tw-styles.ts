@@ -45,3 +45,19 @@ export const formStyles = {
   select: "w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 dark:text-white transition-colors duration-150",
   error: "text-red-600 dark:text-red-400 text-sm mt-1 transition-colors duration-150"
 }
+
+export const buttonStyles = {
+  primary: "bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150",
+  secondary: "bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150",
+  danger: "bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150"
+}
+
+// Combined styles export for convenience
+export const styles = {
+  table: tableStyles,
+  status: statusStyles,
+  card: cardStyles,
+  modal: modalStyles,
+  form: formStyles,
+  button: buttonStyles
+}

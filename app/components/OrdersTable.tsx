@@ -1,5 +1,6 @@
-import type { Order } from "~/lib/dashboard.js"
-import { tableStyles, statusStyles } from "~/utils/tw-styles.js"
+import type { Order } from "~/lib/dashboard"
+import { tableStyles, statusStyles } from "~/utils/tw-styles"
+import { Link } from "@remix-run/react"
 
 interface OrdersTableProps {
   orders: Order[]
@@ -67,17 +68,47 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
         </thead>
         <tbody>
           {orders.map((order) => (
-            <tr key={order.id} className={tableStyles.row}>
-              <td className={tableStyles.cell}>{order.id}</td>
-              <td className={tableStyles.cell}>{order.customer_name}</td>
-              <td className={tableStyles.cell}>{order.vendor_name}</td>
-              <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(order.status)}`}>
-                {getStatusDisplay(order.status)}
+            <tr key={order.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
+              <td className={tableStyles.cell}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {order.order_number}
+                </Link>
               </td>
-              <td className={tableStyles.cell}>{order.quantity}</td>
-              <td className={tableStyles.cell}>{formatCurrency(order.po_amount)}</td>
-              <td className={tableStyles.cell}>{order.ship_date ? formatDate(order.ship_date) : '--'}</td>
-              <td className={tableStyles.cell}>{formatDate(order.created_at)}</td>
+              <td className={tableStyles.cell}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {order.customer_name}
+                </Link>
+              </td>
+              <td className={tableStyles.cell}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {order.vendor_name}
+                </Link>
+              </td>
+              <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(order.status)}`}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {getStatusDisplay(order.status)}
+                </Link>
+              </td>
+              <td className={tableStyles.cell}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {order.quantity}
+                </Link>
+              </td>
+              <td className={tableStyles.cell}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {formatCurrency(order.po_amount)}
+                </Link>
+              </td>
+              <td className={tableStyles.cell}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {order.ship_date ? formatDate(order.ship_date) : '--'}
+                </Link>
+              </td>
+              <td className={tableStyles.cell}>
+                <Link to={`/orders/${order.order_number}`} className="block">
+                  {formatDate(order.created_at)}
+                </Link>
+              </td>
             </tr>
           ))}
         </tbody>

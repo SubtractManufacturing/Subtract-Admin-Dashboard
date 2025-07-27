@@ -1,8 +1,14 @@
 import { Link } from "@remix-run/react";
 import { useState, useRef } from "react";
-import AccountDropdown from "./AccountDropdown.js";
+import AccountDropdown from "./AccountDropdown";
 
-export default function Navbar() {
+interface NavbarProps {
+  userName?: string;
+  userEmail?: string;
+  userInitials?: string;
+}
+
+export default function Navbar({ userName, userEmail, userInitials }: NavbarProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -44,10 +50,9 @@ export default function Navbar() {
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
             className="flex items-center gap-3 px-3 py-2 rounded hover:bg-white/10 transition-colors ml-5"
           >
-            <span className="text-sm font-medium">Admin</span>
+            <span className="text-sm font-medium">{userName || "User"}</span>
             <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white font-semibold text-sm overflow-hidden">
-              A{/* Or use an image: */}
-              {/* <img src="/profile-photo.jpg" alt="Admin" className="w-full h-full object-cover" /> */}
+              {userInitials || "U"}
             </div>
             <svg
               className={`w-4 h-4 transition-transform ${
@@ -68,9 +73,9 @@ export default function Navbar() {
           <AccountDropdown
             isOpen={isDropdownOpen}
             onClose={() => setIsDropdownOpen(false)}
-            userName="Admin User" //Connect this to auth when implemented
-            userEmail="admin@subtract.com" //This too
-            userInitials="A" //And this
+            userName={userName || "User"}
+            userEmail={userEmail || "user@example.com"}
+            userInitials={userInitials || "U"}
             excludeRef={buttonRef}
           />
         </div>

@@ -13,7 +13,7 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "jsx": "react-jsx",
-    "moduleResolution": "node",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "target": "ES2022",
     "strict": true,
@@ -24,8 +24,6 @@
     "paths": {
       "~/*": ["./app/*"]
     },
-    "allowImportingTsExtensions": false,
-    "allowSyntheticDefaultImports": true,
 
     // Remix takes care of building everything in `remix build`.
     "noEmit": true

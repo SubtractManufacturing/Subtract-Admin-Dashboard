@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Link } from "@remix-run/react";
-import { useTheme } from "~/contexts/ThemeContext.js";
+import { Link, Form, useFetcher } from "@remix-run/react";
+import { useTheme } from "~/contexts/ThemeContext";
 
 interface AccountDropdownProps {
   isOpen: boolean;
@@ -23,6 +23,7 @@ export default function AccountDropdown({
 }: AccountDropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { theme, toggleTheme } = useTheme();
+  const logoutFetcher = useFetcher();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -93,19 +94,17 @@ export default function AccountDropdown({
       </div>
 
       <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1 transition-colors duration-150">
-        <button
-          onClick={() => {
-            onClose();
-            // Add logout logic here
-            window.location.href = "/logout";
-          }}
-          className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors w-full text-left"
-        >
-          <svg className="w-5 h-5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
-          <span>Log out</span>
-        </button>
+        <logoutFetcher.Form method="post" action="/logout">
+          <button
+            type="submit"
+            className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors w-full text-left"
+          >
+            <svg className="w-5 h-5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            <span>Log out</span>
+          </button>
+        </logoutFetcher.Form>
       </div>
 
       <div className="border-t border-gray-200 dark:border-gray-700 mt-1 px-4 py-3 transition-colors duration-150">

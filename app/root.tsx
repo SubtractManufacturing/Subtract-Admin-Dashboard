@@ -7,10 +7,12 @@ import {
 } from "@remix-run/react";
 
 import tailwindStyles from "./tailwind.css?url";
-import { ThemeProvider, themeInitScript } from "./contexts/ThemeContext.js";
+import { ThemeProvider, themeInitScript } from "./contexts/ThemeContext";
 
 export const links = () => [
   { rel: "stylesheet", href: tailwindStyles },
+  { rel: "icon", type: "image/png", sizes: "256x256", href: "/optimized_256x256_favi_cornerRound.png" },
+  { rel: "apple-touch-icon", href: "/optimized_256x256_favi_cornerRound.png" },
 ];
 
 export default function App() {

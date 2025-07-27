@@ -1,14 +1,25 @@
 import { Form } from "@remix-run/react"
+import Breadcrumbs from "./Breadcrumbs"
+
+interface BreadcrumbItem {
+  label: string;
+  href?: string;
+}
 
 interface SearchHeaderProps {
-  breadcrumbs: string
+  breadcrumbs: string | BreadcrumbItem[]
   onSearch?: (query: string) => void
 }
 
 export default function SearchHeader({ breadcrumbs, onSearch }: SearchHeaderProps) {
+  // Handle both string and array formats for backward compatibility
+  const breadcrumbItems: BreadcrumbItem[] = typeof breadcrumbs === 'string' 
+    ? breadcrumbs.split(' / ').map(label => ({ label }))
+    : breadcrumbs;
+
   return (
     <div className="flex justify-between items-center px-10 py-2.5">
-      <div className="font-semibold text-gray-600 dark:text-gray-400 text-sm transition-colors duration-150">{breadcrumbs}</div>
+      <Breadcrumbs items={breadcrumbItems} />
       <div className="max-w-md flex-shrink-0">
         <Form className="bg-white dark:bg-gray-800 border border-gray-400 dark:border-gray-600 rounded flex items-center px-4 py-2 shadow-sm transition-colors duration-150" method="get">
           <svg
