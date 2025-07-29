@@ -100,6 +100,11 @@ export default function OrderDetails() {
   const handleClosePdfModal = () => {
     setPdfModalOpen(false);
     setSelectedPdf(null);
+    
+    // Remove focus from any focused element (attachment row)
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
   };
 
   // Calculate days until ship date
@@ -399,9 +404,10 @@ export default function OrderDetails() {
                     <div 
                       key={attachment.id} 
                       className={`
-                        flex items-center justify-between p-4 rounded-lg transition-all duration-200
+                        flex items-center justify-between p-4 rounded-lg
+                        transition-all duration-300 ease-out
                         ${isPdfFile(attachment.fileName) 
-                          ? 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2' 
+                          ? 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:outline-none' 
                           : 'bg-gray-50 dark:bg-gray-700'
                         }
                       `}

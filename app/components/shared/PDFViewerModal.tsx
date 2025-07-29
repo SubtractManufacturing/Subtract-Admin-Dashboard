@@ -10,11 +10,17 @@ interface PDFViewerModalProps {
 export default function PDFViewerModal({ isOpen, onClose, pdfUrl, fileName }: PDFViewerModalProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [lastPdfUrl, setLastPdfUrl] = useState<string>('');
 
   useEffect(() => {
     if (isOpen) {
-      setLoading(true);
-      setError(false);
+      // Only set loading if PDF URL changed
+      if (pdfUrl !== lastPdfUrl) {
+        setLoading(true);
+        setError(false);
+        setLastPdfUrl(pdfUrl);
+      }
+      
       // Prevent body scroll when modal is open
       document.body.style.overflow = 'hidden';
       
@@ -34,7 +40,7 @@ export default function PDFViewerModal({ isOpen, onClose, pdfUrl, fileName }: PD
       // Re-enable body scroll when modal is closed
       document.body.style.overflow = 'unset';
     }
-  }, [isOpen, onClose, pdfUrl]);
+  }, [isOpen, onClose, pdfUrl, lastPdfUrl]);
 
   const handleIframeLoad = () => {
     setLoading(false);
@@ -53,11 +59,18 @@ export default function PDFViewerModal({ isOpen, onClose, pdfUrl, fileName }: PD
       onClick={onClose}
     >
       <div 
-        className="bg-gray-900 rounded-lg shadow-2xl w-full max-w-6xl h-full ring-1 ring-white/10 relative overflow-hidden"
+        className="bg-gray-900 rounded-lg shadow-2xl w-full max-w-6xl h-full ring-1 ring-white/10 relative overflow-hidden focus:outline-none"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Prevent spacebar from bubbling up
+          if (e.key === ' ') {
+            e.stopPropagation();
+          }
+        }}
         role="dialog"
         aria-modal="true"
         aria-label={`PDF Viewer - ${fileName}`}
+        tabIndex={-1}
       >
         <div className="relative w-full h-full">
           {loading && !error && (
