@@ -1,13 +1,15 @@
 import { json, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import { getOrderByNumber } from "~/lib/orders";
+import { useLoaderData, useFetcher } from "@remix-run/react";
+import { getOrderByNumberWithAttachments } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
 import { getVendor } from "~/lib/vendors";
+import type { Attachment } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
-import { useState } from "react";
+import PDFViewerModal from "~/components/shared/PDFViewerModal";
+import { useState, useRef } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -17,7 +19,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Order number is required", { status: 400 });
   }
 
-  const order = await getOrderByNumber(orderNumber);
+  const order = await getOrderByNumberWithAttachments(orderNumber);
   if (!order) {
     throw new Response("Order not found", { status: 404 });
   }
@@ -35,6 +37,70 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 export default function OrderDetails() {
   const { order, customer, vendor, user, userDetails } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [selectedPdf, setSelectedPdf] = useState<{ url: string; fileName: string } | null>(null);
+  const uploadFetcher = useFetcher();
+  const deleteFetcher = useFetcher();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("orderId", order.id.toString());
+      
+      uploadFetcher.submit(formData, {
+        method: "post",
+        action: "/api/attachments/upload",
+        encType: "multipart/form-data",
+      });
+      
+      // Reset the file input
+      event.target.value = "";
+    }
+  };
+
+  const handleDeleteAttachment = (attachmentId: string) => {
+    if (confirm("Are you sure you want to delete this attachment?")) {
+      const formData = new FormData();
+      formData.append("orderId", order.id.toString());
+      
+      deleteFetcher.submit(formData, {
+        method: "delete",
+        action: `/api/attachments/${attachmentId}/delete`,
+      });
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const isPdfFile = (fileName: string) => {
+    return fileName.toLowerCase().endsWith('.pdf');
+  };
+
+  const handleViewPdf = (attachmentId: string, fileName: string) => {
+    const pdfUrl = `/api/attachments/${attachmentId}/download`;
+    setSelectedPdf({ url: pdfUrl, fileName });
+    setPdfModalOpen(true);
+  };
+
+  const handleClosePdfModal = () => {
+    setPdfModalOpen(false);
+    setSelectedPdf(null);
+  };
 
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
@@ -312,8 +378,116 @@ export default function OrderDetails() {
               </div>
             </div>
           )}
+
+          {/* Attachments Card */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Attachments</h3>
+              <Button onClick={handleFileUpload}>Upload File</Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                accept="*/*"
+              />
+            </div>
+            <div className="p-6">
+              {order.attachments && order.attachments.length > 0 ? (
+                <div className="space-y-3">
+                  {order.attachments.map((attachment: Attachment) => (
+                    <div 
+                      key={attachment.id} 
+                      className={`
+                        flex items-center justify-between p-4 rounded-lg transition-all duration-200
+                        ${isPdfFile(attachment.fileName) 
+                          ? 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2' 
+                          : 'bg-gray-50 dark:bg-gray-700'
+                        }
+                      `}
+                      onClick={isPdfFile(attachment.fileName) ? () => handleViewPdf(attachment.id, attachment.fileName) : undefined}
+                      onKeyDown={isPdfFile(attachment.fileName) ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleViewPdf(attachment.id, attachment.fileName);
+                        }
+                      } : undefined}
+                      role={isPdfFile(attachment.fileName) ? "button" : undefined}
+                      tabIndex={isPdfFile(attachment.fileName) ? 0 : undefined}
+                    >
+                      <div className="flex-1 pointer-events-none">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{attachment.fileName}</p>
+                          {isPdfFile(attachment.fileName) && (
+                            <span className="text-xs bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
+                              PDF
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {formatFileSize(attachment.fileSize || 0)} • Uploaded {formatDate(attachment.createdAt)}
+                        </p>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <a
+                          href={`/api/attachments/${attachment.id}/download`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-2 text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/50 rounded transition-colors"
+                          title="Download"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            viewBox="0 0 16 16"
+                          >
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                          </svg>
+                        </a>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteAttachment(attachment.id);
+                          }}
+                          className="p-2 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/50 rounded transition-colors"
+                          title="Delete"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            viewBox="0 0 16 16"
+                          >
+                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                            <path fillRule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
+                  No attachments uploaded yet.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
+      
+      {/* PDF Viewer Modal */}
+      {selectedPdf && (
+        <PDFViewerModal
+          isOpen={pdfModalOpen}
+          onClose={handleClosePdfModal}
+          pdfUrl={selectedPdf.url}
+          fileName={selectedPdf.fileName}
+        />
+      )}
     </div>
   );
 }

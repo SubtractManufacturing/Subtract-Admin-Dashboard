@@ -3,6 +3,7 @@ import { orders, customers, vendors } from "./db/schema.js"
 import { eq, desc, ne } from 'drizzle-orm'
 import type { Order, NewOrder, Customer, Vendor } from "./db/schema.js"
 import { getNextOrderNumber } from "./number-generator.js"
+import { getOrderAttachments } from "./attachments.js"
 
 export type OrderWithRelations = {
   id: number
@@ -248,5 +249,29 @@ export async function archiveOrder(id: number): Promise<void> {
       .where(eq(orders.id, id))
   } catch (error) {
     throw new Error(`Failed to archive order: ${error}`)
+  }
+}
+
+export async function getOrderWithAttachments(id: number) {
+  const order = await getOrder(id)
+  if (!order) return null
+
+  const attachments = await getOrderAttachments(id)
+  
+  return {
+    ...order,
+    attachments
+  }
+}
+
+export async function getOrderByNumberWithAttachments(orderNumber: string) {
+  const order = await getOrderByNumber(orderNumber)
+  if (!order) return null
+
+  const attachments = await getOrderAttachments(order.id)
+  
+  return {
+    ...order,
+    attachments
   }
 }

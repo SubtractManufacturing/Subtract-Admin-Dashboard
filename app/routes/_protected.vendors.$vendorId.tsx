@@ -4,6 +4,7 @@ import { getVendor } from "~/lib/vendors";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
+import { cardStyles } from "~/utils/tw-styles";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -40,6 +41,61 @@ export default function VendorDetails() {
           { label: "Vendors", href: "/vendors" },
           { label: vendor.displayName }
         ]} />
+
+        <div className="px-10 py-8">
+          {/* Vendor Info Card */}
+          <div className={cardStyles.container}>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Vendor Information</h2>
+            <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Display Name</dt>
+                <dd className="mt-1 text-sm text-gray-900">{vendor.displayName}</dd>
+              </div>
+              {vendor.companyName && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Company Name</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{vendor.companyName}</dd>
+                </div>
+              )}
+              {vendor.contactName && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Contact Name</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{vendor.contactName}</dd>
+                </div>
+              )}
+              {vendor.email && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Email</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{vendor.email}</dd>
+                </div>
+              )}
+              {vendor.phone && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Phone</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{vendor.phone}</dd>
+                </div>
+              )}
+              {vendor.address && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Address</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{vendor.address}</dd>
+                </div>
+              )}
+              {vendor.discordId && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Discord ID</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{vendor.discordId}</dd>
+                </div>
+              )}
+              {vendor.notes && (
+                <div className="sm:col-span-2">
+                  <dt className="text-sm font-medium text-gray-500">Notes</dt>
+                  <dd className="mt-1 text-sm text-gray-900">{vendor.notes}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        </div>
       </div>
     </div>
   );
