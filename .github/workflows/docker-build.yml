@@ -38,7 +38,7 @@ jobs:
 
       - name: Check if tag already exists on GHCR
         run: |
-          GHCR_TOKEN=$(echo -n ${{ secrets.GITHUB_TOKEN }} | base64)
+          GHCR_TOKEN=$(echo -n ${{ secrets.GITHUB_TOKEN }} )
           VERSION=${{ steps.version.outputs.version }}
           IMAGE=ghcr.io/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}
           GHCR_URL="https://ghcr.io/v2/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}/manifests/$VERSION"
