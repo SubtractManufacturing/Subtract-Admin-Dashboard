@@ -43,7 +43,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       
       // Build updates object
-      const updates: any = {};
+      const updates: { data?: { name: string; full_name: string } } = {};
       
       // Always update metadata if name changed
       if (nameChanged) {
@@ -56,11 +56,7 @@ export async function action({ request }: ActionFunctionArgs) {
       // Simplify: just try to update and handle the response
       const { data: updatedUser, error: updateError } = await supabase.auth.updateUser(updates);
       
-      console.log('Update response:', { updatedUser, updateError });
-      
       if (updateError) {
-        // Log the full error for debugging
-        console.error('Update error:', updateError);
         
         // Check if this is an email change that requires confirmation
         // Supabase may return success even when email confirmation is required

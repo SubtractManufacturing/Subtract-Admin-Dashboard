@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
 import { orders, quotes } from "./db/schema.js"
-import { desc, like, sql } from 'drizzle-orm'
+import { desc, like } from 'drizzle-orm'
 
 type NumberType = 'order' | 'quote'
 
@@ -23,7 +23,6 @@ export async function generateHumanReadableNumber({ type, year }: GenerateNumber
   try {
     // Find the latest number for this year
     const table = type === 'order' ? orders : quotes
-    const numberField = type === 'order' ? 'orderNumber' : 'quoteNumber'
     
     const latestRecord = await db
       .select()
@@ -34,8 +33,8 @@ export async function generateHumanReadableNumber({ type, year }: GenerateNumber
     
     if (latestRecord.length > 0) {
       const latestNumber = type === 'order' 
-        ? (latestRecord[0] as any).orderNumber 
-        : (latestRecord[0] as any).quoteNumber
+        ? (latestRecord[0] as { orderNumber: string }).orderNumber 
+        : (latestRecord[0] as { quoteNumber: string }).quoteNumber
       
       // Parse the latest number (format: 25Z01001)
       const match = latestNumber.match(/^(\d{2})([A-Z])(\d{5})$/)

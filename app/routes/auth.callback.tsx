@@ -1,6 +1,7 @@
 import { LoaderFunctionArgs, redirect } from "@remix-run/node";
 import { createServerClient } from "~/lib/supabase";
 import { withAuthHeaders } from "~/lib/auth.server";
+import { getSafeRedirectUrl, isAllowedAuthRedirect } from "~/lib/url-validator";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
@@ -8,16 +9,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const token_hash = url.searchParams.get("token_hash");
   const token = url.searchParams.get("token"); // Some Supabase versions use 'token' instead
   const type = url.searchParams.get("type");
-  const next = url.searchParams.get("next") || "/";
+  const nextParam = url.searchParams.get("next");
   
-  // Debug logging
-  console.log("Auth callback received:", {
-    code: code ? "present" : "missing",
-    token_hash: token_hash ? "present" : "missing",
-    token: token ? "present" : "missing",
-    type,
-    fullUrl: url.toString()
-  });
+  // Validate and sanitize the redirect URL
+  const next = getSafeRedirectUrl(nextParam, request, "/");
+  
+  // Additional validation for auth redirects
+  if (!isAllowedAuthRedirect(next)) {
+    console.warn(`Blocked suspicious redirect attempt to: ${nextParam}`);
+  }
 
   const { supabase, headers } = createServerClient(request);
 
@@ -35,7 +35,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (verifyToken && type) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: verifyToken,
-      type: type as any,
+      type: type as "signup" | "invite" | "magiclink" | "recovery" | "email_change" | "email",
     });
 
     if (!error) {
@@ -51,7 +51,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
 
     // If verification failed, redirect with error
-    console.error("OTP verification failed:", error);
     return redirect(`/login?error=${encodeURIComponent(error.message)}`);
   }
 

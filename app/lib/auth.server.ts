@@ -1,15 +1,17 @@
-import { createServerClient } from "./supabase.js";
+import { createServerClient } from "./supabase";
 import { redirect } from "@remix-run/node";
-import type { User } from "@supabase/supabase-js";
 
 export async function requireAuth(request: Request) {
   const { supabase, headers } = createServerClient(request);
   
   // Use getUser() for security - it validates the session with Supabase
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
-  if (error || !user) {
-    throw redirect("/login", { headers });
+  if (!user) {
+    // Preserve the current URL for redirect after login, but validate it
+    const url = new URL(request.url);
+    const redirectTo = url.pathname + url.search;
+    throw redirect(`/login?next=${encodeURIComponent(redirectTo)}`, { headers });
   }
 
   // Build userDetails from Supabase auth metadata
@@ -32,7 +34,7 @@ export async function getOptionalAuth(request: Request) {
   const { supabase, headers } = createServerClient(request);
   
   // Use getUser() instead of getSession() for security
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
   
   // Build userDetails if user exists
   const userDetails = user ? {
