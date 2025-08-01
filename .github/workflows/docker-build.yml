@@ -42,15 +42,17 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
           IMAGE=ghcr.io/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}
+          GHCR_URL="https://ghcr.io/v2/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}/manifests/$VERSION"
           echo "Checking if GHCR tag $VERSION exists for $IMAGE..."
-          TAG_CHECK=$(curl -s -H "Authorization: Bearer $GHCR_TOKEN" \
-            https://ghcr.io/v2/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}/manifests/$VERSION)
-
-          if echo "$TAG_CHECK" | grep -q "errors"; then
-            echo "Tag $VERSION does not exist. Proceeding with build."
-          else
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: Bearer $GHCR_TOKEN" \
+                "$GHCR_URL")
+          echo "HTTP status code: $STATUS"
+          if [ "$STATUS" -eq 200 ]; then
             echo "::error::GHCR tag $VERSION already exists. Please bump the version in package.json."
             exit 1
+          else
+            echo "Tag $VERSION does not exist. Proceeding with build."
           fi
 
       - name: Set up Docker Buildx
