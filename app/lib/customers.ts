@@ -1,7 +1,7 @@
 import { db } from "./db/index.js"
 import { customers } from "./db/schema.js"
-import { eq, desc, ne } from 'drizzle-orm'
-import type { Customer, NewCustomer } from "./db/schema.js"
+import { eq, desc } from 'drizzle-orm'
+import type { Customer } from "./db/schema.js"
 
 export type { Customer }
 

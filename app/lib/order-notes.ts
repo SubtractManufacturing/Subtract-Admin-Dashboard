@@ -16,12 +16,12 @@ export interface OrderNotesData {
   notes: OrderNote[];
 }
 
-export interface OrderNoteWithUser extends OrderNote {
-  userName: string | null;
+export interface OrderNoteWithUser extends Omit<OrderNote, 'userName'> {
+  userName: string | null | undefined;
   userEmail: string;
 }
 
-export async function getOrderNotesWithUsers(order: any): Promise<OrderNoteWithUser[]> {
+export async function getOrderNotesWithUsers(order: { notes?: string }): Promise<OrderNoteWithUser[]> {
   try {
     if (!order.notes) {
       return [];
@@ -35,11 +35,15 @@ export async function getOrderNotesWithUsers(order: any): Promise<OrderNoteWithU
     }
     
     // Get unique user IDs
-    const userIds = [...new Set(notes.map((note: any) => note.userId))];
-    console.log("User IDs from notes:", userIds);
+    const userIds = [...new Set(notes.map((note: OrderNote) => note.userId))] as string[];
     
     // Fetch user information
-    let usersData = [];
+    interface UserData {
+      id: string;
+      name: string | null;
+      email: string;
+    }
+    let usersData: UserData[] = [];
     try {
       usersData = await db
         .select({
@@ -50,27 +54,23 @@ export async function getOrderNotesWithUsers(order: any): Promise<OrderNoteWithU
         .from(users)
         .where(inArray(users.id, userIds));
       
-      console.log("Users found:", usersData);
     } catch (dbError) {
       console.error("Failed to fetch users from database:", dbError);
       // Continue with empty users array, will use fallback display
     }
     
     // Create a map for quick lookup
-    const userMap = new Map(usersData.map(user => [user.id, user]));
+    const userMap = new Map<string, UserData>(usersData.map(user => [user.id, user]));
     
     // Combine notes with user information
-    return notes.map((note: any) => {
+    return notes.map((note: OrderNote): OrderNoteWithUser => {
       const user = userMap.get(note.userId);
-      console.log(`Note userId: ${note.userId}, Found user:`, user);
-      console.log(`Note data:`, note);
       
       // Check if note has old format with stored user info
       // If user not found, try to use stored info from old format
-      let userName = user?.name || note.userName || null;
+      const userName = user?.name || note.userName || null;
       let userEmail = user?.email || note.userEmail || null;
       
-      console.log(`Resolved userName: ${userName}, userEmail: ${userEmail}`);
       
       // If we still don't have user info, try to make it more informative
       if (!user && !userEmail) {
@@ -84,7 +84,7 @@ export async function getOrderNotesWithUsers(order: any): Promise<OrderNoteWithU
         note: note.note,
         createdAt: note.createdAt,
         userName,
-        userEmail
+        userEmail: userEmail || ''
       };
     });
   } catch (error) {
@@ -93,7 +93,7 @@ export async function getOrderNotesWithUsers(order: any): Promise<OrderNoteWithU
   }
 }
 
-export async function getOrderNotes(order: any): Promise<OrderNote[]> {
+export async function getOrderNotes(order: { notes?: string }): Promise<OrderNote[]> {
   try {
     if (!order.notes) {
       return [];
@@ -102,7 +102,6 @@ export async function getOrderNotes(order: any): Promise<OrderNote[]> {
     return notesData.notes || [];
   } catch (error) {
     console.error(`Failed to parse order notes: ${error}`);
-    console.error(`Order notes value:`, order.notes);
     return [];
   }
 }

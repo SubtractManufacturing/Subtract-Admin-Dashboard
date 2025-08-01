@@ -24,6 +24,11 @@ export function isValidRedirectUrl(url: string | null, request: Request): boolea
       /%0d/i,
       /%0a/i,
       /\\x/i,
+      /\0/,          // Null bytes
+      /%00/i,        // URL encoded null
+      // eslint-disable-next-line no-control-regex
+      /[\x00-\x1f]/, // Control characters
+      /on\w+=/i,     // Event handlers
     ];
 
     for (const pattern of suspiciousPatterns) {

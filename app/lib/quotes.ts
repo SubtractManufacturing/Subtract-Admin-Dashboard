@@ -1,7 +1,7 @@
 import { db } from "./db/index.js"
 import { quotes, customers, vendors } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
-import type { Quote, NewQuote, Customer, Vendor } from "./db/schema.js"
+import type { Customer, Vendor } from "./db/schema.js"
 import { getNextQuoteNumber } from "./number-generator.js"
 
 export type QuoteWithRelations = {

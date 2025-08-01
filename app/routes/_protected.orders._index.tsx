@@ -5,7 +5,9 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
 import { getOrdersWithRelations, createOrder, updateOrder, archiveOrder, checkOrderNumberExists } from "~/lib/orders"
 import { getCustomers } from "~/lib/customers"
+import type { Customer } from "~/lib/customers"
 import { getVendors } from "~/lib/vendors"
+import type { Vendor } from "~/lib/vendors"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 import { getNextOrderNumber } from "~/lib/number-generator"
@@ -133,7 +135,7 @@ export default function Orders() {
     }
   }, [fetcher.data])
 
-  const filteredOrders = orders.filter((order: any) => {
+  const filteredOrders = orders.filter((order: OrderWithRelations) => {
     const query = searchQuery.toLowerCase()
     return (
       order.orderNumber?.toLowerCase().includes(query) ||
@@ -273,7 +275,7 @@ export default function Orders() {
             </tr>
           </thead>
           <tbody>
-            {filteredOrders.map((order: any) => (
+            {filteredOrders.map((order: OrderWithRelations) => (
               <tr key={order.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
                 <td className={tableStyles.cell}>
                   <Link to={`/orders/${order.orderNumber}`} className="block">
@@ -369,11 +371,12 @@ export default function Orders() {
 
           {!editingOrder && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label htmlFor="orderNumber" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Order Number
               </label>
               <div className="relative">
                 <input
+                  id="orderNumber"
                   type="text"
                   name="orderNumber"
                   value={orderNumber}
@@ -419,7 +422,7 @@ export default function Orders() {
             defaultValue={editingOrder?.customerId?.toString() || ""}
           >
             <option value="">Select a customer...</option>
-            {customers.map((customer: any) => (
+            {customers.map((customer: Customer) => (
               <option key={customer.id} value={customer.id}>
                 {customer.displayName}
               </option>
@@ -432,7 +435,7 @@ export default function Orders() {
             defaultValue={editingOrder?.vendorId?.toString() || ""}
           >
             <option value="">Select a vendor...</option>
-            {vendors.map((vendor: any) => (
+            {vendors.map((vendor: Vendor) => (
               <option key={vendor.id} value={vendor.id}>
                 {vendor.displayName}
               </option>
