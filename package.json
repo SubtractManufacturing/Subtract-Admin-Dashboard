@@ -1,5 +1,7 @@
 {
-  "name": "",
+  "name": "subtrack-webapp",
+  "version": "0.1.1",
+  "description": "Subtrack Web Application",
   "private": true,
   "sideEffects": false,
   "type": "module",
