@@ -107,6 +107,6 @@ jobs:
           echo "**Image:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARYI
+          echo '```' >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARYI
