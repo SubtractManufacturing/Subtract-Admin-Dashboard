@@ -73,17 +73,32 @@ jobs:
             type=raw,value=latest
             type=sha
 
+      - name: Set Docker tags
+        id: tags
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          MAJOR=${{ steps.version.outputs.major }}
+          MINOR=${{ steps.version.outputs.minor }}
+          OWNER=${{ steps.repo.outputs.repo_owner }}
+          IMAGE=ghcr.io/${OWNER}/your-image-name
+
+          TAGS="${IMAGE}:${VERSION},${IMAGE}:${MAJOR},${IMAGE}:${MAJOR}.${MINOR}"
+          
+          # Optionally add 'latest' if on main
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+
       - name: Build and push Docker images
         uses: docker/build-push-action@v5
         with:
           context: .
           file: Dockerfile
           push: true
-          tags: |
-            ghcr.io/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}
-            ghcr.io/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}
-            ${{ github.ref == 'refs/heads/main' && format('ghcr.io/{0}/${{ env.IMAGE_NAME }}:latest', github.repository_owner) || '' }}
+          tags: ${{ steps.tags.outputs.tags }}
 
       - name: Generate summary
         run: |
