@@ -1,16 +1,17 @@
 import { json, LoaderFunctionArgs, redirect } from "@remix-run/node";
-import { useLoaderData, Link, useNavigate, useFetcher } from "@remix-run/react";
+import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState } from "react";
 import { getCustomer, updateCustomer, archiveCustomer } from "~/lib/customers";
 import type { CustomerInput } from "~/lib/customers";
 import { getOrdersWithRelations } from "~/lib/orders";
+import type { OrderWithRelations } from "~/lib/orders";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
 import { InputField } from "~/components/shared/FormField";
-import { styles, tableStyles, statusStyles } from "~/utils/tw-styles";
+import { tableStyles, statusStyles } from "~/utils/tw-styles";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -70,7 +71,6 @@ export async function action({ request, params }: LoaderFunctionArgs) {
 export default function CustomerDetails() {
   const { customer, customerOrders, user, userDetails } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
-  const navigate = useNavigate();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const handleArchive = () => {
@@ -226,7 +226,7 @@ export default function CustomerDetails() {
                   </tr>
                 </thead>
                 <tbody>
-                  {customerOrders.map((order: any) => (
+                  {customerOrders.map((order: OrderWithRelations) => (
                     <tr key={order.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
                       <td className={tableStyles.cell}>
                         <Link to={`/orders/${order.orderNumber}`} className="block text-blue-600 hover:text-blue-800">

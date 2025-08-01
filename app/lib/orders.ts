@@ -1,7 +1,7 @@
 import { db } from "./db/index.js"
 import { orders, customers, vendors } from "./db/schema.js"
 import { eq, desc, ne } from 'drizzle-orm'
-import type { Order, NewOrder, Customer, Vendor } from "./db/schema.js"
+import type { Customer, Vendor } from "./db/schema.js"
 import { getNextOrderNumber } from "./number-generator.js"
 
 export type OrderWithRelations = {
@@ -151,7 +151,8 @@ export async function createOrder(orderData: OrderInput): Promise<OrderWithRelat
     const orderNumber = orderData.orderNumber || await getNextOrderNumber()
     
     // Remove orderNumber from orderData to avoid duplication
-    const { orderNumber: _, ...orderDataWithoutNumber } = orderData
+    const { ...orderDataWithoutNumber } = orderData
+    delete orderDataWithoutNumber.orderNumber
     
     const insertResult = await db
       .insert(orders)
@@ -195,9 +196,15 @@ export async function createOrder(orderData: OrderInput): Promise<OrderWithRelat
 
 export async function updateOrder(id: number, orderData: Partial<OrderInput>): Promise<OrderWithRelations> {
   try {
+    // Filter out null values for orderNumber since it's required in the database
+    const { orderNumber, ...restData } = orderData;
+    const updateData = orderNumber === null 
+      ? restData 
+      : { ...restData, ...(orderNumber !== undefined && { orderNumber }) };
+    
     await db
       .update(orders)
-      .set(orderData)
+      .set(updateData)
       .where(eq(orders.id, id))
 
     const result = await db

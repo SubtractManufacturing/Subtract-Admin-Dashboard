@@ -17,13 +17,6 @@ export default function StatCards({ stats }: StatCardsProps) {
     }).format(amount);
   };
 
-  const getMonthOverMonthPercentage = (current: number, previous: number) => {
-    if (previous === 0) return "+100%";
-    const percentage = ((current - previous) / previous) * 100;
-    return percentage > 0
-      ? `+${percentage.toFixed(0)}%`
-      : `${percentage.toFixed(0)}%`;
-  };
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 px-10 py-8">
@@ -51,7 +44,7 @@ export default function StatCards({ stats }: StatCardsProps) {
         className="no-underline"
       >
         <div className={`${cardStyles.container} cursor-pointer h-full flex flex-col`}>
-          <h4 className={cardStyles.subtitle}>Open PO's</h4>
+          <h4 className={cardStyles.subtitle}>Open PO&apos;s</h4>
           <h1 className={cardStyles.title}>{stats.openPOs}</h1>
           <p className={cardStyles.content}>+33% month over month</p>
         </div>
@@ -59,7 +52,7 @@ export default function StatCards({ stats }: StatCardsProps) {
       <div
         className={`${cardStyles.container} h-full flex flex-col`}
       >
-        <h4 className={cardStyles.subtitle}>RFQ's</h4>
+        <h4 className={cardStyles.subtitle}>RFQ&apos;s</h4>
         <h1 className={cardStyles.title}>{stats.rfqs}</h1>
         <div className="flex items-center gap-2">
           <p className={cardStyles.content}>In the Last:</p>

@@ -1,7 +1,7 @@
 import { db } from "./db/index.js"
 import { orderLineItems, quoteLineItems, parts } from "./db/schema.js"
-import { eq, desc } from 'drizzle-orm'
-import type { OrderLineItem, NewOrderLineItem, QuoteLineItem, NewQuoteLineItem, Part } from "./db/schema.js"
+import { eq } from 'drizzle-orm'
+import type { OrderLineItem, QuoteLineItem, Part } from "./db/schema.js"
 
 export type OrderLineItemWithPart = OrderLineItem & {
   part?: Part | null

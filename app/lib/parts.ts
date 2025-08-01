@@ -1,7 +1,7 @@
 import { db } from "./db/index.js"
 import { parts } from "./db/schema.js"
 import { eq, desc, ilike, or, and } from 'drizzle-orm'
-import type { Part, NewPart } from "./db/schema.js"
+import type { Part } from "./db/schema.js"
 
 export type { Part }
 
