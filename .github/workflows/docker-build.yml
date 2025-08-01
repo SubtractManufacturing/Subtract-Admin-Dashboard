@@ -41,10 +41,10 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          IMAGE=ghcr.io/${{ github.repository_owner }}/your-image-name
+          IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           echo "Checking if GHCR tag $VERSION exists for $IMAGE..."
           TAG_CHECK=$(curl -s -H "Authorization: Bearer $GHCR_TOKEN" \
-            https://ghcr.io/v2/${{ github.repository_owner }}/your-image-name/manifests/$VERSION)
+            https://ghcr.io/v2/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/manifests/$VERSION)
 
           if echo "$TAG_CHECK" | grep -q "errors"; then
             echo "Tag $VERSION does not exist. Proceeding with build."
@@ -80,7 +80,7 @@ jobs:
           MAJOR=${{ steps.version.outputs.major }}
           MINOR=${{ steps.version.outputs.minor }}
           OWNER=${{ steps.repo.outputs.repo_owner }}
-          IMAGE=ghcr.io/${OWNER}/your-image-name
+          IMAGE=ghcr.io/${OWNER}/${{ env.IMAGE_NAME }}
 
           TAGS="${IMAGE}:${VERSION},${IMAGE}:${MAJOR},${IMAGE}:${MAJOR}.${MINOR}"
           
