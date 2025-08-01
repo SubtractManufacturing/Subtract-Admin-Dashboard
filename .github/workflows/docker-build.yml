@@ -43,6 +43,8 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           IMAGE=ghcr.io/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}
           GHCR_URL="https://ghcr.io/v2/${{ steps.repo.outputs.repo_owner }}/${{ env.IMAGE_NAME }}/manifests/$VERSION"
+          echo "GHCR_URL=$GHCR_URL"
+          echo "$GHCR_TOKEN"
           echo "Checking if GHCR tag $VERSION exists for $IMAGE..."
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
                 -H "Authorization: Bearer $GHCR_TOKEN" \
