@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Link, Form, useFetcher } from "@remix-run/react";
+import { Link, useFetcher } from "@remix-run/react";
 import { useTheme } from "~/contexts/ThemeContext";
 
 interface AccountDropdownProps {
@@ -42,7 +42,7 @@ export default function AccountDropdown({
         document.removeEventListener("mousedown", handleClickOutside);
       };
     }
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, excludeRef]);
 
   if (!isOpen) return null;
 

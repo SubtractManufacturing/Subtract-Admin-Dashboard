@@ -1,7 +1,7 @@
 import { db } from "./db/index.js"
 import { vendors } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
-import type { Vendor, NewVendor } from "./db/schema.js"
+import type { Vendor } from "./db/schema.js"
 
 export type { Vendor }
 
