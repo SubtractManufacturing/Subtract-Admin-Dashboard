@@ -45,9 +45,7 @@ jobs:
           echo "GHCR_URL=$GHCR_URL"
           echo "$GHCR_TOKEN"
           echo "Checking if GHCR tag $VERSION exists for $IMAGE..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                -H "Authorization: Bearer $GHCR_TOKEN" \
-                "$GHCR_URL")
+          STATUS=$(curl -H "Authorization: Bearer $GHCR_TOKEN" "$GHCR_URL")
           echo "HTTP status code: $STATUS"
           if [ "$STATUS" -eq 200 ]; then
             echo "::error::GHCR tag $VERSION already exists. Please bump the version in package.json."
