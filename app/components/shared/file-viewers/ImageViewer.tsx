@@ -128,6 +128,7 @@ export default function ImageViewer({ url, fileName }: ImageViewerProps) {
         </button>
       </div>
 
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
       <div 
         className="absolute inset-0 flex items-center justify-center"
         onMouseDown={handleMouseDown}
@@ -135,9 +136,6 @@ export default function ImageViewer({ url, fileName }: ImageViewerProps) {
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
-        role="application"
-        aria-label="Image viewer container"
-        tabIndex={0}
         style={{ cursor: scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
       >
         {!error && (

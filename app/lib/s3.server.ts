@@ -63,8 +63,8 @@ export async function uploadFile(params: UploadParams): Promise<UploadResult> {
 
   try {
     await getS3Client().send(command)
-  } catch (error: any) {
-    if (error.Code === 'NoSuchBucket') {
+  } catch (error) {
+    if (error instanceof Error && 'Code' in error && error.Code === 'NoSuchBucket') {
       throw new Error(`S3 bucket '${S3_BUCKET}' does not exist. Please create the bucket or update the S3_Bucket environment variable.`)
     }
     throw error

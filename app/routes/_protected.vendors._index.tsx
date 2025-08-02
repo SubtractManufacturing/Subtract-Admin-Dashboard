@@ -87,7 +87,7 @@ export default function Vendors() {
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
 
-  const filteredVendors = vendors.filter((vendor: any) =>
+  const filteredVendors = vendors.filter((vendor: Vendor) =>
     vendor.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     vendor.companyName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     vendor.contactName?.toLowerCase().includes(searchQuery.toLowerCase()) ||

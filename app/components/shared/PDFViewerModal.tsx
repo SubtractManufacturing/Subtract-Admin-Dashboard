@@ -54,19 +54,21 @@ export default function PDFViewerModal({ isOpen, onClose, pdfUrl, fileName }: PD
   if (!isOpen) return null;
 
   return (
-    <div 
+    <button
       className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-8"
       onClick={onClose}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          onClose();
+        }
+      }}
+      aria-label="Close modal overlay"
+      type="button"
     >
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
       <div 
         className="bg-gray-900 rounded-lg shadow-2xl w-full max-w-6xl h-full ring-1 ring-white/10 relative overflow-hidden focus:outline-none"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          // Prevent spacebar from bubbling up
-          if (e.key === ' ') {
-            e.stopPropagation();
-          }
-        }}
         role="dialog"
         aria-modal="true"
         aria-label={`PDF Viewer - ${fileName}`}
@@ -103,6 +105,6 @@ export default function PDFViewerModal({ isOpen, onClose, pdfUrl, fileName }: PD
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }

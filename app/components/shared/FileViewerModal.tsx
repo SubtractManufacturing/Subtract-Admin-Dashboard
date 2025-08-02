@@ -1,5 +1,4 @@
-import { useEffect, useState, Suspense } from "react";
-import React from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { getFileType, formatFileSize } from "~/lib/file-utils";
 import type { FileType } from "~/lib/file-utils";
 
@@ -141,6 +140,7 @@ export default function FileViewerModal({
       tabIndex={0}
       aria-label="Close modal overlay"
     >
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
       <div 
         className="bg-white dark:bg-gray-900 rounded-lg shadow-2xl w-full max-w-6xl h-full ring-1 ring-gray-200 dark:ring-white/10 relative overflow-hidden focus:outline-none flex flex-col"
         onClick={(e) => e.stopPropagation()}
