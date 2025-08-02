@@ -8,7 +8,8 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
-import PDFViewerModal from "~/components/shared/PDFViewerModal";
+import FileViewerModal from "~/components/shared/FileViewerModal";
+import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { useState, useRef } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -37,8 +38,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 export default function OrderDetails() {
   const { order, customer, vendor, user, userDetails } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
-  const [pdfModalOpen, setPdfModalOpen] = useState(false);
-  const [selectedPdf, setSelectedPdf] = useState<{ url: string; fileName: string } | null>(null);
+  const [fileModalOpen, setFileModalOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,33 +80,19 @@ export default function OrderDetails() {
     }
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+
+
+  const handleViewFile = (attachment: { id: string; fileName: string; contentType: string; fileSize: number | null }) => {
+    const fileUrl = `/api/attachments/${attachment.id}/download`;
+    setSelectedFile({ 
+      url: fileUrl, 
+      fileName: attachment.fileName,
+      contentType: attachment.contentType,
+      fileSize: attachment.fileSize || undefined
+    });
+    setFileModalOpen(true);
   };
 
-  const isPdfFile = (fileName: string) => {
-    return fileName.toLowerCase().endsWith('.pdf');
-  };
-
-  const handleViewPdf = (attachmentId: string, fileName: string) => {
-    const pdfUrl = `/api/attachments/${attachmentId}/download`;
-    setSelectedPdf({ url: pdfUrl, fileName });
-    setPdfModalOpen(true);
-  };
-
-  const handleClosePdfModal = () => {
-    setPdfModalOpen(false);
-    setSelectedPdf(null);
-    
-    // Remove focus from any focused element (attachment row)
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-  };
 
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
@@ -406,27 +393,27 @@ export default function OrderDetails() {
                       className={`
                         flex items-center justify-between p-4 rounded-lg
                         transition-all duration-300 ease-out
-                        ${isPdfFile(attachment.fileName) 
+                        ${isViewableFile(attachment.fileName, attachment.contentType) 
                           ? 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:outline-none' 
                           : 'bg-gray-50 dark:bg-gray-700'
                         }
                       `}
-                      onClick={isPdfFile(attachment.fileName) ? () => handleViewPdf(attachment.id, attachment.fileName) : undefined}
-                      onKeyDown={isPdfFile(attachment.fileName) ? (e) => {
+                      onClick={isViewableFile(attachment.fileName, attachment.contentType) ? () => handleViewFile(attachment) : undefined}
+                      onKeyDown={isViewableFile(attachment.fileName, attachment.contentType) ? (e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          handleViewPdf(attachment.id, attachment.fileName);
+                          handleViewFile(attachment);
                         }
                       } : undefined}
-                      role={isPdfFile(attachment.fileName) ? "button" : undefined}
-                      tabIndex={isPdfFile(attachment.fileName) ? 0 : undefined}
+                      role={isViewableFile(attachment.fileName, attachment.contentType) ? "button" : undefined}
+                      tabIndex={isViewableFile(attachment.fileName, attachment.contentType) ? 0 : undefined}
                     >
                       <div className="flex-1 pointer-events-none">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{attachment.fileName}</p>
-                          {isPdfFile(attachment.fileName) && (
+                          {isViewableFile(attachment.fileName, attachment.contentType) && (
                             <span className="text-xs bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
-                              PDF
+                              {getFileType(attachment.fileName, attachment.contentType).type.toUpperCase()}
                             </span>
                           )}
                         </div>
@@ -485,13 +472,18 @@ export default function OrderDetails() {
         </div>
       </div>
       
-      {/* PDF Viewer Modal */}
-      {selectedPdf && (
-        <PDFViewerModal
-          isOpen={pdfModalOpen}
-          onClose={handleClosePdfModal}
-          pdfUrl={selectedPdf.url}
-          fileName={selectedPdf.fileName}
+      {/* File Viewer Modal */}
+      {selectedFile && (
+        <FileViewerModal
+          isOpen={fileModalOpen}
+          onClose={() => {
+            setFileModalOpen(false);
+            setSelectedFile(null);
+          }}
+          fileUrl={selectedFile.url}
+          fileName={selectedFile.fileName}
+          contentType={selectedFile.contentType}
+          fileSize={selectedFile.fileSize}
         />
       )}
     </div>
