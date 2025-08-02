@@ -46,9 +46,9 @@ jobs:
           echo "Checking if GHCR tag $VERSION exists for $IMAGE..."
 
           STATUS=$(curl \
-            -H "Authorization: Bearer \
+            -H "Authorization: Bearer $GHCR_TOKEN" \
             -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
-            $GHCR_TOKEN" "$GHCR_URL")
+            "$GHCR_URL")
 
           echo "HTTP status code: $STATUS"
           if [ "$STATUS" -eq 200 ]; then
