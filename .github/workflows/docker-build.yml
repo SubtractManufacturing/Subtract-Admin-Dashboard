@@ -54,6 +54,9 @@ jobs:
           if [ "$STATUS" -eq 200 ]; then
             echo "::error::GHCR tag $VERSION already exists. Please bump the version in package.json."
             exit 1
+          elif [ "$STATUS" -gt 400 ]; then
+            echo "::error::Can't check for tag version"
+            exit 1
           else
             echo "Tag $VERSION does not exist. Proceeding with build."
           fi
