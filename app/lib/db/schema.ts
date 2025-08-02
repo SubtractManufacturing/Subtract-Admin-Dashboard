@@ -167,6 +167,17 @@ export const orderAttachments = pgTable("order_attachments", {
   pk: primaryKey({ columns: [table.orderId, table.attachmentId] }),
 }));
 
+export const loginAuditLogs = pgTable("login_audit_logs", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull(),
+  userId: text("user_id"),
+  ipAddress: text("ip_address").notNull(),
+  userAgent: text("user_agent"),
+  success: boolean("success").notNull(),
+  failureReason: text("failure_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Customer = typeof customers.$inferSelect;
@@ -191,3 +202,5 @@ export type QuoteLineItem = typeof quoteLineItems.$inferSelect;
 export type NewQuoteLineItem = typeof quoteLineItems.$inferInsert;
 export type OrderAttachment = typeof orderAttachments.$inferSelect;
 export type NewOrderAttachment = typeof orderAttachments.$inferInsert;
+export type LoginAuditLog = typeof loginAuditLogs.$inferSelect;
+export type NewLoginAuditLog = typeof loginAuditLogs.$inferInsert;

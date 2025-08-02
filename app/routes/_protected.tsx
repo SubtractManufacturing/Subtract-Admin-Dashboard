@@ -1,5 +1,5 @@
 import { LoaderFunctionArgs, ActionFunctionArgs, json, redirect } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
+import { Outlet } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { createServerClient } from "~/lib/supabase";
 
