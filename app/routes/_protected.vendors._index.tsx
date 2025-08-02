@@ -19,6 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   
   try {
     const vendors = await getVendors()
+    
     return withAuthHeaders(
       json({ vendors, user, userDetails }),
       headers

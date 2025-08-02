@@ -57,7 +57,6 @@ export const vendors = pgTable("vendors", {
   phone: text("phone"),
   address: text("address"),
   notes: text("notes"),
-  attachments: text("attachments"),
   discordId: text("discord_id"),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -160,6 +159,14 @@ export const quoteLineItems = pgTable("quote_line_items", {
   notes: text("notes"),
 });
 
+export const orderAttachments = pgTable("order_attachments", {
+  orderId: integer("order_id").notNull().references(() => orders.id),
+  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.orderId, table.attachmentId] }),
+}));
+
 export const loginAuditLogs = pgTable("login_audit_logs", {
   id: serial("id").primaryKey(),
   email: text("email").notNull(),
@@ -193,5 +200,7 @@ export type OrderLineItem = typeof orderLineItems.$inferSelect;
 export type NewOrderLineItem = typeof orderLineItems.$inferInsert;
 export type QuoteLineItem = typeof quoteLineItems.$inferSelect;
 export type NewQuoteLineItem = typeof quoteLineItems.$inferInsert;
+export type OrderAttachment = typeof orderAttachments.$inferSelect;
+export type NewOrderAttachment = typeof orderAttachments.$inferInsert;
 export type LoginAuditLog = typeof loginAuditLogs.$inferSelect;
 export type NewLoginAuditLog = typeof loginAuditLogs.$inferInsert;
