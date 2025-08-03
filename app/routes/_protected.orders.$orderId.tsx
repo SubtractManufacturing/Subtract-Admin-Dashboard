@@ -5,6 +5,7 @@ import { getCustomer } from "~/lib/customers";
 import { getVendor } from "~/lib/vendors";
 import type { Attachment } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { getAppConfig } from "~/lib/config.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -14,6 +15,7 @@ import { useState, useRef } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
+  const appConfig = getAppConfig();
   
   const orderNumber = params.orderId; // Note: param name stays the same but now represents orderNumber
   if (!orderNumber) {
@@ -30,13 +32,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const vendor = order.vendorId ? await getVendor(order.vendorId) : null;
 
   return withAuthHeaders(
-    json({ order, customer, vendor, user, userDetails }),
+    json({ order, customer, vendor, user, userDetails, appConfig }),
     headers
   );
 }
 
 export default function OrderDetails() {
-  const { order, customer, vendor, user, userDetails } = useLoaderData<typeof loader>();
+  const { order, customer, vendor, user, userDetails, appConfig } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
@@ -176,6 +178,8 @@ export default function OrderDetails() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="max-w-[1920px] mx-auto">
         {/* Custom breadcrumb bar with buttons */}

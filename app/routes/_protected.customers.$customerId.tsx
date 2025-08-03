@@ -6,6 +6,7 @@ import type { CustomerInput } from "~/lib/customers";
 import { getOrdersWithRelations } from "~/lib/orders";
 import type { OrderWithRelations } from "~/lib/orders";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { getAppConfig } from "~/lib/config.server";
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
@@ -15,6 +16,7 @@ import { tableStyles, statusStyles } from "~/utils/tw-styles";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
+  const appConfig = getAppConfig();
   
   const customerId = params.customerId;
   if (!customerId) {
@@ -31,7 +33,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const customerOrders = allOrders.filter(order => order.customerId === customer.id);
 
   return withAuthHeaders(
-    json({ customer, customerOrders, user, userDetails }),
+    json({ customer, customerOrders, user, userDetails, appConfig }),
     headers
   );
 }
@@ -69,7 +71,7 @@ export async function action({ request, params }: LoaderFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, customerOrders, user, userDetails } = useLoaderData<typeof loader>();
+  const { customer, customerOrders, user, userDetails, appConfig } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
@@ -131,6 +133,8 @@ export default function CustomerDetails() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader breadcrumbs={[

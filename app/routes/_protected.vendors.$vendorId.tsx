@@ -2,12 +2,14 @@ import { json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getVendor } from "~/lib/vendors";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { getAppConfig } from "~/lib/config.server";
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
 import { cardStyles } from "~/utils/tw-styles";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
+  const appConfig = getAppConfig();
   
   const vendorId = params.vendorId;
   if (!vendorId) {
@@ -20,13 +22,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   return withAuthHeaders(
-    json({ vendor, user, userDetails }),
+    json({ vendor, user, userDetails, appConfig }),
     headers
   );
 }
 
 export default function VendorDetails() {
-  const { vendor, user, userDetails } = useLoaderData<typeof loader>();
+  const { vendor, user, userDetails, appConfig } = useLoaderData<typeof loader>();
 
   return (
     <div>
@@ -34,6 +36,8 @@ export default function VendorDetails() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader breadcrumbs={[

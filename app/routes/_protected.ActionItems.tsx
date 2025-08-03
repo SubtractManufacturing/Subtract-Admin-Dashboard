@@ -1,21 +1,23 @@
 import { json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { getAppConfig } from "~/lib/config.server";
 
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
+  const appConfig = getAppConfig();
   
   return withAuthHeaders(
-    json({ user, userDetails }),
+    json({ user, userDetails, appConfig }),
     headers
   );
 }
 
 export default function Quotes() {
-  const { user, userDetails } = useLoaderData<typeof loader>();
+  const { user, userDetails, appConfig } = useLoaderData<typeof loader>();
   
   return (
     <div>
@@ -23,6 +25,8 @@ export default function Quotes() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader breadcrumbs={[
