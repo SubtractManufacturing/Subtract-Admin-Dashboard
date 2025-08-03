@@ -10,6 +10,7 @@ import { getVendors } from "~/lib/vendors"
 import type { Vendor } from "~/lib/vendors"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
+import { getAppConfig } from "~/lib/config.server"
 import { getNextOrderNumber } from "~/lib/number-generator"
 
 import Navbar from "~/components/Navbar"
@@ -21,6 +22,7 @@ import { tableStyles, statusStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
+  const appConfig = getAppConfig()
   
   try {
     const [orders, customers, vendors] = await Promise.all([
@@ -29,13 +31,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
       getVendors()
     ])
     return withAuthHeaders(
-      json({ orders, customers, vendors, user, userDetails }),
+      json({ orders, customers, vendors, user, userDetails, appConfig }),
       headers
     )
   } catch (error) {
     console.error("Orders loader error:", error)
     return withAuthHeaders(
-      json({ orders: [], customers: [], vendors: [], user, userDetails }),
+      json({ orders: [], customers: [], vendors: [], user, userDetails, appConfig }),
       headers
     )
   }
@@ -110,7 +112,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Orders() {
-  const { orders, customers, vendors, user, userDetails } = useLoaderData<typeof loader>()
+  const { orders, customers, vendors, user, userDetails, appConfig } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [modalOpen, setModalOpen] = useState(false)
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(null)
@@ -244,6 +246,8 @@ export default function Orders() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
