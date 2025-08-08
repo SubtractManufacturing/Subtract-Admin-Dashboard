@@ -2,6 +2,7 @@ import { db } from "./db/index.js"
 import { vendors, orders, customers } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
 import type { Vendor } from "./db/schema.js"
+import { getVendorAttachments } from "./attachments.js"
 
 export type { Vendor }
 
@@ -142,5 +143,22 @@ export async function getVendorStats(vendorId: number) {
       totalEarnings: 0,
       averageLeadTime: 0
     }
+  }
+}
+
+export async function getVendorWithAttachments(vendorId: number) {
+  try {
+    const vendor = await getVendor(vendorId)
+    if (!vendor) return null
+    
+    const attachments = await getVendorAttachments(vendorId)
+    
+    return {
+      ...vendor,
+      attachments
+    }
+  } catch (error) {
+    console.error('Error fetching vendor with attachments:', error)
+    return null
   }
 }

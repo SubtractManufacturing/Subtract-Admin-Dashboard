@@ -1,15 +1,19 @@
-import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect } from "@remix-run/node";
+import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
-import { useState } from "react";
-import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats } from "~/lib/customers";
+import { useState, useRef } from "react";
+import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
+import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, type Attachment } from "~/lib/attachments";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import Button from "~/components/shared/Button";
 import { InputField as FormField } from "~/components/shared/FormField";
 import { Notes } from "~/components/shared/Notes";
+import FileViewerModal from "~/components/shared/FileViewerModal";
+import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -20,7 +24,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Customer ID is required", { status: 400 });
   }
 
-  const customer = await getCustomer(parseInt(customerId));
+  const customer = await getCustomerWithAttachments(parseInt(customerId));
   if (!customer) {
     throw new Response("Customer not found", { status: 404 });
   }
@@ -38,6 +42,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
 export async function action({ request, params }: ActionFunctionArgs) {
   const { headers } = await requireAuth(request);
   
@@ -51,6 +57,60 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Customer not found" }, { status: 404 });
   }
 
+  // Handle file uploads separately
+  if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+    const uploadHandler = unstable_createMemoryUploadHandler({
+      maxPartSize: MAX_FILE_SIZE,
+    });
+
+    const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+    const file = formData.get("file") as File;
+
+    if (!file) {
+      return json({ error: "No file provided" }, { status: 400 });
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
+    }
+
+    try {
+      // Convert File to Buffer
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      // Generate S3 key
+      const key = generateFileKey(customer.id, file.name);
+
+      // Upload to S3
+      const uploadResult = await uploadFile({
+        key,
+        buffer,
+        contentType: file.type || 'application/octet-stream',
+        fileName: file.name,
+      });
+
+      // Create attachment record
+      const attachment = await createAttachment({
+        s3Bucket: uploadResult.bucket,
+        s3Key: uploadResult.key,
+        fileName: uploadResult.fileName,
+        contentType: uploadResult.contentType,
+        fileSize: uploadResult.size,
+      });
+
+      // Link to customer
+      await linkAttachmentToCustomer(customer.id, attachment.id);
+
+      // Return a redirect to refresh the page
+      return redirect(`/customers/${customerId}`);
+    } catch (error) {
+      console.error('Upload error:', error);
+      return json({ error: "Failed to upload file" }, { status: 500 });
+    }
+  }
+
+  // Handle other form submissions
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -121,6 +181,51 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return withAuthHeaders(json({ note }), headers);
       }
 
+      case "deleteAttachment": {
+        const attachmentId = formData.get("attachmentId") as string;
+
+        if (!attachmentId) {
+          return json({ error: "Missing attachment ID" }, { status: 400 });
+        }
+
+        // Get attachment details
+        const attachment = await getAttachment(attachmentId);
+        if (!attachment) {
+          return json({ error: "Attachment not found" }, { status: 404 });
+        }
+
+        // Unlink from customer first
+        await unlinkAttachmentFromCustomer(customer.id, attachmentId);
+
+        // Delete from S3
+        await deleteFile(attachment.s3Key);
+
+        // Delete database record
+        await deleteAttachment(attachmentId);
+
+        // Return a redirect to refresh the page
+        return redirect(`/customers/${customerId}`);
+      }
+
+      case "downloadAttachment": {
+        const attachmentId = formData.get("attachmentId") as string;
+
+        if (!attachmentId) {
+          return json({ error: "Missing attachment ID" }, { status: 400 });
+        }
+
+        const attachment = await getAttachment(attachmentId);
+        if (!attachment) {
+          return json({ error: "Attachment not found" }, { status: 404 });
+        }
+
+        // Generate a presigned URL for download
+        const downloadUrl = await getDownloadUrl(attachment.s3Key);
+        
+        // Return the URL for client-side redirect
+        return json({ downloadUrl });
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -134,7 +239,12 @@ export default function CustomerDetails() {
   const { customer, orders, stats, notes, user, userDetails, appConfig } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
+  const [fileModalOpen, setFileModalOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const updateFetcher = useFetcher();
+  const uploadFetcher = useFetcher();
+  const deleteFetcher = useFetcher();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSaveInfo = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -150,6 +260,51 @@ export default function CustomerDetails() {
     formData.append("intent", "updateCustomer");
     updateFetcher.submit(formData, { method: "post" });
     setIsEditingContact(false);
+  };
+
+  const handleFileUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      uploadFetcher.submit(formData, {
+        method: "post",
+        encType: "multipart/form-data",
+      });
+      
+      // Reset the file input
+      event.target.value = "";
+    }
+  };
+
+  const handleDeleteAttachment = (attachmentId: string) => {
+    if (confirm("Are you sure you want to delete this attachment?")) {
+      const formData = new FormData();
+      formData.append("intent", "deleteAttachment");
+      formData.append("attachmentId", attachmentId);
+      
+      deleteFetcher.submit(formData, {
+        method: "post",
+      });
+    }
+  };
+
+  const handleViewFile = (attachment: { id: string; fileName: string; contentType: string; fileSize: number | null }) => {
+    const fileUrl = `/attachments/${attachment.id}/download`;
+    setSelectedFile({ 
+      url: fileUrl, 
+      fileName: attachment.fileName,
+      contentType: attachment.contentType,
+      fileSize: attachment.fileSize || undefined
+    });
+    setFileModalOpen(true);
   };
 
   const formatCurrency = (amount: number) => {
@@ -417,6 +572,105 @@ export default function CustomerDetails() {
             </div>
           </div>
 
+          {/* Attachments Card */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Attachments</h3>
+              <Button onClick={handleFileUpload}>Upload File</Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                accept="*/*"
+              />
+            </div>
+            <div className="p-6">
+              {customer.attachments && customer.attachments.length > 0 ? (
+                <div className="space-y-3">
+                  {customer.attachments.map((attachment: Attachment) => (
+                    <div 
+                      key={attachment.id} 
+                      className={`
+                        flex items-center justify-between p-4 rounded-lg
+                        transition-all duration-300 ease-out
+                        ${isViewableFile(attachment.fileName, attachment.contentType) 
+                          ? 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:outline-none' 
+                          : 'bg-gray-50 dark:bg-gray-700'
+                        }
+                      `}
+                      onClick={isViewableFile(attachment.fileName, attachment.contentType) ? () => handleViewFile(attachment) : undefined}
+                      onKeyDown={isViewableFile(attachment.fileName, attachment.contentType) ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleViewFile(attachment);
+                        }
+                      } : undefined}
+                      role={isViewableFile(attachment.fileName, attachment.contentType) ? "button" : undefined}
+                      tabIndex={isViewableFile(attachment.fileName, attachment.contentType) ? 0 : undefined}
+                    >
+                      <div className="flex-1 pointer-events-none">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{attachment.fileName}</p>
+                          {isViewableFile(attachment.fileName, attachment.contentType) && (
+                            <span className="text-xs bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
+                              {getFileType(attachment.fileName, attachment.contentType).type.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {formatFileSize(attachment.fileSize || 0)} • Uploaded {formatDate(attachment.createdAt)}
+                        </p>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <a
+                          href={`/attachments/${attachment.id}/download`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-2 text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/50 rounded transition-colors"
+                          title="Download"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            viewBox="0 0 16 16"
+                          >
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                          </svg>
+                        </a>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteAttachment(attachment.id);
+                          }}
+                          className="p-2 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/50 rounded transition-colors"
+                          title="Delete"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            viewBox="0 0 16 16"
+                          >
+                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                            <path fillRule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
+                  No attachments uploaded yet.
+                </p>
+              )}
+            </div>
+          </div>
+
           {/* Notes Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
@@ -434,6 +688,21 @@ export default function CustomerDetails() {
           </div>
         </div>
       </div>
+      
+      {/* File Viewer Modal */}
+      {selectedFile && (
+        <FileViewerModal
+          isOpen={fileModalOpen}
+          onClose={() => {
+            setFileModalOpen(false);
+            setSelectedFile(null);
+          }}
+          fileUrl={selectedFile.url}
+          fileName={selectedFile.fileName}
+          contentType={selectedFile.contentType}
+          fileSize={selectedFile.fileSize}
+        />
+      )}
     </div>
   );
 }

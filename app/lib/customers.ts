@@ -2,6 +2,7 @@ import { db } from "./db/index.js"
 import { customers, orders, vendors } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
 import type { Customer } from "./db/schema.js"
+import { getCustomerAttachments } from "./attachments.js"
 
 export type { Customer }
 
@@ -135,5 +136,22 @@ export async function getCustomerStats(customerId: number) {
       completedOrders: 0,
       totalSpent: 0
     }
+  }
+}
+
+export async function getCustomerWithAttachments(customerId: number) {
+  try {
+    const customer = await getCustomer(customerId)
+    if (!customer) return null
+    
+    const attachments = await getCustomerAttachments(customerId)
+    
+    return {
+      ...customer,
+      attachments
+    }
+  } catch (error) {
+    console.error('Error fetching customer with attachments:', error)
+    return null
   }
 }
