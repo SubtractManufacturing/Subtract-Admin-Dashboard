@@ -178,6 +178,17 @@ export const loginAuditLogs = pgTable("login_audit_logs", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const notes = pgTable("notes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  content: text("content").notNull(),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  isArchived: boolean("is_archived").default(false).notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Customer = typeof customers.$inferSelect;
@@ -204,3 +215,5 @@ export type OrderAttachment = typeof orderAttachments.$inferSelect;
 export type NewOrderAttachment = typeof orderAttachments.$inferInsert;
 export type LoginAuditLog = typeof loginAuditLogs.$inferSelect;
 export type NewLoginAuditLog = typeof loginAuditLogs.$inferInsert;
+export type Note = typeof notes.$inferSelect;
+export type NewNote = typeof notes.$inferInsert;

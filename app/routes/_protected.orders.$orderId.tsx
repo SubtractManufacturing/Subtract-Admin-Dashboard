@@ -1,4 +1,4 @@
-import { json, LoaderFunctionArgs } from "@remix-run/node";
+import { json, LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { getOrderByNumberWithAttachments } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
@@ -11,6 +11,8 @@ import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
+import { Notes } from "~/components/shared/Notes";
+import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { useState, useRef } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -30,15 +32,90 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch customer and vendor details
   const customer = order.customerId ? await getCustomer(order.customerId) : null;
   const vendor = order.vendorId ? await getVendor(order.vendorId) : null;
+  
+  // Fetch notes for this order
+  const notes = await getNotes("order", order.id.toString());
 
   return withAuthHeaders(
-    json({ order, customer, vendor, user, userDetails, appConfig }),
+    json({ order, customer, vendor, notes, user, userDetails, appConfig }),
     headers
   );
 }
 
+export async function action({ request, params }: ActionFunctionArgs) {
+  const { headers } = await requireAuth(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  const orderNumber = params.orderId;
+  if (!orderNumber) {
+    return json({ error: "Order number is required" }, { status: 400 });
+  }
+
+  const order = await getOrderByNumberWithAttachments(orderNumber);
+  if (!order) {
+    return json({ error: "Order not found" }, { status: 404 });
+  }
+
+  try {
+    switch (intent) {
+      case "getNotes": {
+        const notes = await getNotes("order", order.id.toString());
+        return withAuthHeaders(json({ notes }), headers);
+      }
+
+      case "createNote": {
+        const content = formData.get("content") as string;
+        const createdBy = formData.get("createdBy") as string;
+
+        if (!content || !createdBy) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const note = await createNote({
+          entityType: "order",
+          entityId: order.id.toString(),
+          content,
+          createdBy,
+        });
+
+        return withAuthHeaders(json({ note }), headers);
+      }
+
+      case "updateNote": {
+        const noteId = formData.get("noteId") as string;
+        const content = formData.get("content") as string;
+
+        if (!noteId || !content) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const note = await updateNote(noteId, content);
+        return withAuthHeaders(json({ note }), headers);
+      }
+
+      case "deleteNote": {
+        const noteId = formData.get("noteId") as string;
+
+        if (!noteId) {
+          return json({ error: "Missing note ID" }, { status: 400 });
+        }
+
+        const note = await archiveNote(noteId);
+        return withAuthHeaders(json({ note }), headers);
+      }
+
+      default:
+        return json({ error: "Invalid intent" }, { status: 400 });
+    }
+  } catch (error) {
+    console.error("Notes action error:", error);
+    return json({ error: "Failed to process request" }, { status: 500 });
+  }
+}
+
 export default function OrderDetails() {
-  const { order, customer, vendor, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { order, customer, vendor, notes, user, userDetails, appConfig } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
@@ -323,22 +400,17 @@ export default function OrderDetails() {
 
           {/* Notes Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
-              <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-                Add Note
-              </Button>
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order Notes</h3>
             </div>
             <div className="p-6">
-              {order.notes ? (
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-                  <p className="text-gray-700 dark:text-gray-300">{order.notes}</p>
-                </div>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
-                  No notes available for this order
-                </p>
-              )}
+              <Notes 
+                entityType="order" 
+                entityId={order.id.toString()} 
+                initialNotes={notes}
+                currentUserId={user.id || user.email}
+                currentUserName={userDetails?.name || user.email}
+              />
             </div>
           </div>
 
