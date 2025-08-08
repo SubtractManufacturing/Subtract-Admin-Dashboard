@@ -1,11 +1,12 @@
-import { json, LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { getOrderByNumberWithAttachments } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
 import { getVendor } from "~/lib/vendors";
-import type { Attachment } from "~/lib/attachments";
+import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToOrder, unlinkAttachmentFromOrder, type Attachment } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -42,11 +43,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
 export async function action({ request, params }: ActionFunctionArgs) {
   const { headers } = await requireAuth(request);
-  const formData = await request.formData();
-  const intent = formData.get("intent");
-
+  
   const orderNumber = params.orderId;
   if (!orderNumber) {
     return json({ error: "Order number is required" }, { status: 400 });
@@ -56,6 +57,63 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!order) {
     return json({ error: "Order not found" }, { status: 404 });
   }
+
+  // Handle file uploads separately
+  if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+    const uploadHandler = unstable_createMemoryUploadHandler({
+      maxPartSize: MAX_FILE_SIZE,
+    });
+
+    const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+    const file = formData.get("file") as File;
+
+    if (!file) {
+      return json({ error: "No file provided" }, { status: 400 });
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
+    }
+
+    try {
+      // Convert File to Buffer
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      // Generate S3 key
+      const key = generateFileKey(order.id, file.name);
+
+      // Upload to S3
+      const uploadResult = await uploadFile({
+        key,
+        buffer,
+        contentType: file.type || 'application/octet-stream',
+        fileName: file.name,
+      });
+
+      // Create attachment record
+      const attachment = await createAttachment({
+        s3Bucket: uploadResult.bucket,
+        s3Key: uploadResult.key,
+        fileName: uploadResult.fileName,
+        contentType: uploadResult.contentType,
+        fileSize: uploadResult.size,
+      });
+
+      // Link to order
+      await linkAttachmentToOrder(order.id, attachment.id);
+
+      // Return a redirect to refresh the page
+      return redirect(`/orders/${orderNumber}`);
+    } catch (error) {
+      console.error('Upload error:', error);
+      return json({ error: "Failed to upload file" }, { status: 500 });
+    }
+  }
+
+  // Handle other form submissions
+  const formData = await request.formData();
+  const intent = formData.get("intent");
 
   try {
     switch (intent) {
@@ -105,6 +163,51 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return withAuthHeaders(json({ note }), headers);
       }
 
+      case "deleteAttachment": {
+        const attachmentId = formData.get("attachmentId") as string;
+
+        if (!attachmentId) {
+          return json({ error: "Missing attachment ID" }, { status: 400 });
+        }
+
+        // Get attachment details
+        const attachment = await getAttachment(attachmentId);
+        if (!attachment) {
+          return json({ error: "Attachment not found" }, { status: 404 });
+        }
+
+        // Unlink from order first
+        await unlinkAttachmentFromOrder(order.id, attachmentId);
+
+        // Delete from S3
+        await deleteFile(attachment.s3Key);
+
+        // Delete database record
+        await deleteAttachment(attachmentId);
+
+        // Return a redirect to refresh the page
+        return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "downloadAttachment": {
+        const attachmentId = formData.get("attachmentId") as string;
+
+        if (!attachmentId) {
+          return json({ error: "Missing attachment ID" }, { status: 400 });
+        }
+
+        const attachment = await getAttachment(attachmentId);
+        if (!attachment) {
+          return json({ error: "Attachment not found" }, { status: 404 });
+        }
+
+        // Generate a presigned URL for download
+        const downloadUrl = await getDownloadUrl(attachment.s3Key);
+        
+        // Return the URL for client-side redirect
+        return json({ downloadUrl });
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -134,11 +237,9 @@ export default function OrderDetails() {
     if (file) {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("orderId", order.id.toString());
       
       uploadFetcher.submit(formData, {
         method: "post",
-        action: "/api/attachments/upload",
         encType: "multipart/form-data",
       });
       
@@ -150,11 +251,11 @@ export default function OrderDetails() {
   const handleDeleteAttachment = (attachmentId: string) => {
     if (confirm("Are you sure you want to delete this attachment?")) {
       const formData = new FormData();
-      formData.append("orderId", order.id.toString());
+      formData.append("intent", "deleteAttachment");
+      formData.append("attachmentId", attachmentId);
       
       deleteFetcher.submit(formData, {
-        method: "delete",
-        action: `/api/attachments/${attachmentId}/delete`,
+        method: "post",
       });
     }
   };
@@ -162,7 +263,7 @@ export default function OrderDetails() {
 
 
   const handleViewFile = (attachment: { id: string; fileName: string; contentType: string; fileSize: number | null }) => {
-    const fileUrl = `/api/attachments/${attachment.id}/download`;
+    const fileUrl = `/attachments/${attachment.id}/download`;
     setSelectedFile({ 
       url: fileUrl, 
       fileName: attachment.fileName,
@@ -499,7 +600,7 @@ export default function OrderDetails() {
                       </div>
                       <div className="flex items-center space-x-2">
                         <a
-                          href={`/api/attachments/${attachment.id}/download`}
+                          href={`/attachments/${attachment.id}/download`}
                           onClick={(e) => e.stopPropagation()}
                           className="p-2 text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/50 rounded transition-colors"
                           title="Download"
