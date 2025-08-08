@@ -371,20 +371,6 @@ export default function VendorDetails() {
             { label: "Vendors", href: "/vendors" },
             { label: vendor.displayName }
           ]} />
-          <div className="flex flex-wrap gap-3">
-            <Button 
-              variant="danger"
-              onClick={() => {
-                if (confirm("Are you sure you want to archive this vendor?")) {
-                  const formData = new FormData();
-                  formData.append("intent", "archiveVendor");
-                  updateFetcher.submit(formData, { method: "post" });
-                }
-              }}
-            >
-              Archive
-            </Button>
-          </div>
         </div>
         
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
