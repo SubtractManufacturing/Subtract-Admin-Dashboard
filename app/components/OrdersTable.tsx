@@ -1,12 +1,14 @@
 import type { Order } from "~/lib/dashboard"
 import { tableStyles, statusStyles } from "~/utils/tw-styles"
-import { Link } from "@remix-run/react"
+import { Link, useNavigate } from "@remix-run/react"
 
 interface OrdersTableProps {
   orders: Order[]
 }
 
 export default function OrdersTable({ orders }: OrdersTableProps) {
+  const navigate = useNavigate()
+  
   const formatCurrency = (amount: string | null) => {
     if (!amount) return "--"
     return new Intl.NumberFormat('en-US', {
@@ -68,46 +70,58 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
         </thead>
         <tbody>
           {orders.map((order) => (
-            <tr key={order.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
+            <tr 
+              key={order.id} 
+              className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
+              onClick={() => navigate(`/orders/${order.order_number}`)}
+            >
               <td className={tableStyles.cell}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {order.order_number}
-                </Link>
+                {order.order_number}
               </td>
               <td className={tableStyles.cell}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {order.customer_name}
-                </Link>
+                {order.customer_id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigate(`/customers/${order.customer_id}`)
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                  >
+                    {order.customer_name}
+                  </button>
+                ) : (
+                  <span>{order.customer_name}</span>
+                )}
               </td>
               <td className={tableStyles.cell}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {order.vendor_name}
-                </Link>
+                {order.vendor_id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigate(`/vendors/${order.vendor_id}`)
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                  >
+                    {order.vendor_name}
+                  </button>
+                ) : (
+                  <span>{order.vendor_name}</span>
+                )}
               </td>
               <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(order.status)}`}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {getStatusDisplay(order.status)}
-                </Link>
+                {getStatusDisplay(order.status)}
               </td>
               <td className={tableStyles.cell}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {order.quantity}
-                </Link>
+                {order.quantity}
               </td>
               <td className={tableStyles.cell}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {formatCurrency(order.po_amount)}
-                </Link>
+                {formatCurrency(order.po_amount)}
               </td>
               <td className={tableStyles.cell}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {order.ship_date ? formatDate(order.ship_date) : '--'}
-                </Link>
+                {order.ship_date ? formatDate(order.ship_date) : '--'}
               </td>
               <td className={tableStyles.cell}>
-                <Link to={`/orders/${order.order_number}`} className="block">
-                  {formatDate(order.created_at)}
-                </Link>
+                {formatDate(order.created_at)}
               </td>
             </tr>
           ))}

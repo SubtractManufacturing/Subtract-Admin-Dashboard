@@ -1,6 +1,6 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, type Attachment } from "~/lib/attachments";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
@@ -262,6 +262,58 @@ export default function CustomerDetails() {
     setIsEditingContact(false);
   };
 
+  // Add keyboard shortcuts for editing forms
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Check if we're in an editing mode
+      if (!isEditingInfo && !isEditingContact) return;
+      
+      // Handle Escape key to cancel
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setIsEditingInfo(false);
+        setIsEditingContact(false);
+      }
+      
+      // Handle Enter key to save
+      // For textareas, require Ctrl+Enter or Cmd+Enter
+      // For other elements (inputs, buttons, etc.), just Enter works
+      if (event.key === 'Enter') {
+        const isTextarea = event.target instanceof HTMLTextAreaElement;
+        
+        // If it's a textarea, require Ctrl or Cmd to be pressed
+        if (isTextarea && !event.ctrlKey && !event.metaKey) {
+          return;
+        }
+        
+        event.preventDefault();
+        
+        if (isEditingInfo) {
+          const form = document.querySelector('form[data-editing="info"]') as HTMLFormElement;
+          if (form) {
+            const formData = new FormData(form);
+            formData.append("intent", "updateCustomer");
+            updateFetcher.submit(formData, { method: "post" });
+            setIsEditingInfo(false);
+          }
+        }
+        
+        if (isEditingContact) {
+          const form = document.querySelector('form[data-editing="contact"]') as HTMLFormElement;
+          if (form) {
+            const formData = new FormData(form);
+            formData.append("intent", "updateCustomer");
+            updateFetcher.submit(formData, { method: "post" });
+            setIsEditingContact(false);
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isEditingInfo, isEditingContact, updateFetcher]);
+
   const handleFileUpload = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -404,7 +456,7 @@ export default function CustomerDetails() {
               </div>
               <div className="p-6">
                 {isEditingInfo ? (
-                  <updateFetcher.Form onSubmit={handleSaveInfo}>
+                  <updateFetcher.Form onSubmit={handleSaveInfo} data-editing="info">
                     <div className="space-y-4">
                       <FormField
                         label="Display Name"
@@ -414,9 +466,12 @@ export default function CustomerDetails() {
                       />
                       <input type="hidden" name="email" value={customer.email || ""} />
                       <input type="hidden" name="phone" value={customer.phone || ""} />
-                      <div className="flex gap-2">
-                        <Button type="submit" variant="primary" size="sm">Save</Button>
-                        <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditingInfo(false)}>Cancel</Button>
+                      <div className="flex justify-between items-center">
+                        <div className="flex gap-2">
+                          <Button type="submit" variant="primary" size="sm">Save</Button>
+                          <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditingInfo(false)}>Cancel</Button>
+                        </div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">Press Enter to save, Esc to cancel</span>
                       </div>
                     </div>
                   </updateFetcher.Form>
@@ -455,7 +510,7 @@ export default function CustomerDetails() {
               </div>
               <div className="p-6">
                 {isEditingContact ? (
-                  <updateFetcher.Form onSubmit={handleSaveContact}>
+                  <updateFetcher.Form onSubmit={handleSaveContact} data-editing="contact">
                     <div className="space-y-4">
                       <input type="hidden" name="displayName" value={customer.displayName} />
                       <FormField
@@ -470,9 +525,12 @@ export default function CustomerDetails() {
                         type="tel"
                         defaultValue={customer.phone || ""}
                       />
-                      <div className="flex gap-2">
-                        <Button type="submit" variant="primary" size="sm">Save</Button>
-                        <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditingContact(false)}>Cancel</Button>
+                      <div className="flex justify-between items-center">
+                        <div className="flex gap-2">
+                          <Button type="submit" variant="primary" size="sm">Save</Button>
+                          <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditingContact(false)}>Cancel</Button>
+                        </div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">Press Enter to save, Esc to cancel</span>
                       </div>
                     </div>
                   </updateFetcher.Form>

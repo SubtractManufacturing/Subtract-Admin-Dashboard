@@ -1,11 +1,14 @@
 import type { Quote } from "~/lib/dashboard"
 import { tableStyles, statusStyles } from "~/utils/tw-styles"
+import { useNavigate } from "@remix-run/react"
 
 interface QuotesTableProps {
   quotes: Quote[]
 }
 
 export default function QuotesTable({ quotes }: QuotesTableProps) {
+  const navigate = useNavigate()
+  
   const formatCurrency = (amount: string | null) => {
     if (!amount) return "--"
     return new Intl.NumberFormat('en-US', {
@@ -58,10 +61,42 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
         </thead>
         <tbody>
           {quotes.map((quote) => (
-            <tr key={quote.id} className={tableStyles.row}>
+            <tr 
+              key={quote.id} 
+              className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
+              onClick={() => navigate(`/quotes/${quote.quote_number || quote.id}`)}
+            >
               <td className={tableStyles.cell}>Q-{quote.id}</td>
-              <td className={tableStyles.cell}>{quote.customer_name}</td>
-              <td className={tableStyles.cell}>{quote.vendor_name}</td>
+              <td className={tableStyles.cell}>
+                {quote.customer_id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigate(`/customers/${quote.customer_id}`)
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                  >
+                    {quote.customer_name}
+                  </button>
+                ) : (
+                  <span>{quote.customer_name}</span>
+                )}
+              </td>
+              <td className={tableStyles.cell}>
+                {quote.vendor_id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigate(`/vendors/${quote.vendor_id}`)
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                  >
+                    {quote.vendor_name}
+                  </button>
+                ) : (
+                  <span>{quote.vendor_name}</span>
+                )}
+              </td>
               <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(quote.status)}`}>
                 {quote.status}
               </td>
