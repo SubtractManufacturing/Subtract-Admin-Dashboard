@@ -14,6 +14,19 @@ import { InputField as FormField } from "~/components/shared/FormField";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
+
+type VendorOrder = {
+  id: number;
+  orderNumber: string;
+  customerId: number | null;
+  vendorId: number | null;
+  status: string;
+  totalPrice: string | null;
+  vendorPay: string | null;
+  shipDate: Date | null;
+  createdAt: Date;
+  customer: any;
+};
 import { useState, useRef, useEffect } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -638,7 +651,7 @@ export default function VendorDetails() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                      {orders
+                      {(orders as VendorOrder[])
                         .filter(order => showCompletedOrders || order.status.toLowerCase() !== 'completed')
                         .map(order => (
                         <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">

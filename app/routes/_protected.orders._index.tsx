@@ -294,7 +294,7 @@ export default function Orders() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        navigate(`/customers/${order.customer.id}`)
+                        navigate(`/customers/${order.customer!.id}`)
                       }}
                       className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                     >
@@ -309,7 +309,7 @@ export default function Orders() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        navigate(`/vendors/${order.vendor.id}`)
+                        navigate(`/vendors/${order.vendor!.id}`)
                       }}
                       className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                     >

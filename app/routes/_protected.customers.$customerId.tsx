@@ -16,6 +16,19 @@ import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
 
+type CustomerOrder = {
+  id: number;
+  orderNumber: string;
+  customerId: number | null;
+  vendorId: number | null;
+  status: string;
+  totalPrice: string | null;
+  vendorPay: string | null;
+  shipDate: Date | null;
+  createdAt: Date;
+  vendor: any;
+};
+
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
@@ -586,7 +599,7 @@ export default function CustomerDetails() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                      {orders
+                      {(orders as CustomerOrder[])
                         .filter(order => showCompletedOrders || order.status.toLowerCase() !== 'completed')
                         .map(order => (
                         <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
