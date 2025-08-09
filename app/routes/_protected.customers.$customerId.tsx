@@ -3,6 +3,7 @@ import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, type Attachment } from "~/lib/attachments";
+import type { Vendor } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
@@ -26,7 +27,7 @@ type CustomerOrder = {
   vendorPay: string | null;
   shipDate: Date | null;
   createdAt: Date;
-  vendor: any;
+  vendor: Vendor | null;
 };
 
 export async function loader({ request, params }: LoaderFunctionArgs) {

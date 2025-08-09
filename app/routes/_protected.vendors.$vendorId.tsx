@@ -2,6 +2,7 @@ import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseM
 import { useLoaderData, useFetcher, Link } from "@remix-run/react";
 import { getVendor, updateVendor, archiveVendor, getVendorOrders, getVendorStats, getVendorWithAttachments } from "~/lib/vendors";
 import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToVendor, unlinkAttachmentFromVendor, type Attachment } from "~/lib/attachments";
+import type { Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
@@ -25,7 +26,7 @@ type VendorOrder = {
   vendorPay: string | null;
   shipDate: Date | null;
   createdAt: Date;
-  customer: any;
+  customer: Customer | null;
 };
 import { useState, useRef, useEffect } from "react";
 
