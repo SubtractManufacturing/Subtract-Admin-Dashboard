@@ -122,9 +122,9 @@ export async function getCustomerStats(customerId: number) {
     
     const stats = {
       totalOrders: customerOrders.length,
-      activeOrders: customerOrders.filter((o: any) => o.status === 'In_Production' || o.status === 'Pending').length,
-      completedOrders: customerOrders.filter((o: any) => o.status === 'Completed').length,
-      totalSpent: customerOrders.reduce((sum: number, o: any) => sum + parseFloat(o.totalPrice || '0'), 0)
+      activeOrders: customerOrders.filter(o => o.status === 'In_Production' || o.status === 'Pending').length,
+      completedOrders: customerOrders.filter(o => o.status === 'Completed').length,
+      totalSpent: customerOrders.reduce((sum, o) => sum + parseFloat(o.totalPrice || '0'), 0)
     }
     
     return stats

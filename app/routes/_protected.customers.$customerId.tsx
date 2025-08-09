@@ -587,8 +587,8 @@ export default function CustomerDetails() {
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                       {orders
-                        .filter((order: any) => showCompletedOrders || order.status.toLowerCase() !== 'completed')
-                        .map((order: any) => (
+                        .filter(order => showCompletedOrders || order.status.toLowerCase() !== 'completed')
+                        .map(order => (
                         <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                           <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                             {order.orderNumber}

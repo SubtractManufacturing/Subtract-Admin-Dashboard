@@ -127,9 +127,9 @@ export async function getVendorStats(vendorId: number) {
     
     const stats = {
       totalOrders: vendorOrders.length,
-      activeOrders: vendorOrders.filter((o: any) => o.status === 'In_Production' || o.status === 'Pending').length,
-      completedOrders: vendorOrders.filter((o: any) => o.status === 'Completed').length,
-      totalEarnings: vendorOrders.reduce((sum: number, o: any) => sum + parseFloat(o.vendorPay || '0'), 0),
+      activeOrders: vendorOrders.filter(o => o.status === 'In_Production' || o.status === 'Pending').length,
+      completedOrders: vendorOrders.filter(o => o.status === 'Completed').length,
+      totalEarnings: vendorOrders.reduce((sum, o) => sum + parseFloat(o.vendorPay || '0'), 0),
       averageLeadTime: 0
     }
     
