@@ -1,6 +1,6 @@
 import type { Order } from "~/lib/dashboard"
 import { tableStyles, statusStyles } from "~/utils/tw-styles"
-import { Link, useNavigate } from "@remix-run/react"
+import { useNavigate } from "@remix-run/react"
 
 interface OrdersTableProps {
   orders: Order[]
