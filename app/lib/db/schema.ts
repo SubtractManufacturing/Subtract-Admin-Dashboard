@@ -57,7 +57,6 @@ export const vendors = pgTable("vendors", {
   phone: text("phone"),
   address: text("address"),
   notes: text("notes"),
-  attachments: text("attachments"),
   discordId: text("discord_id"),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -160,6 +159,30 @@ export const quoteLineItems = pgTable("quote_line_items", {
   notes: text("notes"),
 });
 
+export const orderAttachments = pgTable("order_attachments", {
+  orderId: integer("order_id").notNull().references(() => orders.id),
+  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.orderId, table.attachmentId] }),
+}));
+
+export const customerAttachments = pgTable("customer_attachments", {
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.customerId, table.attachmentId] }),
+}));
+
+export const vendorAttachments = pgTable("vendor_attachments", {
+  vendorId: integer("vendor_id").notNull().references(() => vendors.id),
+  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.vendorId, table.attachmentId] }),
+}));
+
 export const loginAuditLogs = pgTable("login_audit_logs", {
   id: serial("id").primaryKey(),
   email: text("email").notNull(),
@@ -169,6 +192,17 @@ export const loginAuditLogs = pgTable("login_audit_logs", {
   success: boolean("success").notNull(),
   failureReason: text("failure_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const notes = pgTable("notes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  content: text("content").notNull(),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  isArchived: boolean("is_archived").default(false).notNull(),
 });
 
 export type User = typeof users.$inferSelect;
@@ -193,5 +227,13 @@ export type OrderLineItem = typeof orderLineItems.$inferSelect;
 export type NewOrderLineItem = typeof orderLineItems.$inferInsert;
 export type QuoteLineItem = typeof quoteLineItems.$inferSelect;
 export type NewQuoteLineItem = typeof quoteLineItems.$inferInsert;
+export type OrderAttachment = typeof orderAttachments.$inferSelect;
+export type NewOrderAttachment = typeof orderAttachments.$inferInsert;
+export type CustomerAttachment = typeof customerAttachments.$inferSelect;
+export type NewCustomerAttachment = typeof customerAttachments.$inferInsert;
+export type VendorAttachment = typeof vendorAttachments.$inferSelect;
+export type NewVendorAttachment = typeof vendorAttachments.$inferInsert;
 export type LoginAuditLog = typeof loginAuditLogs.$inferSelect;
 export type NewLoginAuditLog = typeof loginAuditLogs.$inferInsert;
+export type Note = typeof notes.$inferSelect;
+export type NewNote = typeof notes.$inferInsert;

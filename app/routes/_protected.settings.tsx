@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { json, LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { getAppConfig } from "~/lib/config.server";
 import { createServerClient } from "~/lib/supabase";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
@@ -9,13 +10,14 @@ import Navbar from "~/components/Navbar";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
+  const appConfig = getAppConfig();
   
   // Check for success message in URL
   const url = new URL(request.url);
   const message = url.searchParams.get("message");
   
   return withAuthHeaders(
-    json({ user, userDetails, message }),
+    json({ user, userDetails, message, appConfig }),
     headers
   );
 }
@@ -140,7 +142,7 @@ export async function action({ request }: ActionFunctionArgs) {
 type Tab = "profile" | "security" | "notifications" | "preferences";
 
 export default function Settings() {
-  const { user, userDetails, message } = useLoaderData<typeof loader>();
+  const { user, userDetails, message, appConfig } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
   const passwordResetFetcher = useFetcher<typeof action>();
@@ -166,6 +168,8 @@ export default function Settings() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={(userDetails?.name || user.email).charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="p-4 md:p-6 max-w-6xl mx-auto">
       <div className="mb-6">

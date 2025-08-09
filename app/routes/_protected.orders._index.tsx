@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node"
-import { useLoaderData, useFetcher, Link } from "@remix-run/react"
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react"
 import { useState, useEffect } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
@@ -10,6 +10,7 @@ import { getVendors } from "~/lib/vendors"
 import type { Vendor } from "~/lib/vendors"
 import type { OrderWithRelations, OrderInput } from "~/lib/orders"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
+import { getAppConfig } from "~/lib/config.server"
 import { getNextOrderNumber } from "~/lib/number-generator"
 
 import Navbar from "~/components/Navbar"
@@ -21,6 +22,7 @@ import { tableStyles, statusStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
+  const appConfig = getAppConfig()
   
   try {
     const [orders, customers, vendors] = await Promise.all([
@@ -29,13 +31,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
       getVendors()
     ])
     return withAuthHeaders(
-      json({ orders, customers, vendors, user, userDetails }),
+      json({ orders, customers, vendors, user, userDetails, appConfig }),
       headers
     )
   } catch (error) {
     console.error("Orders loader error:", error)
     return withAuthHeaders(
-      json({ orders: [], customers: [], vendors: [], user, userDetails }),
+      json({ orders: [], customers: [], vendors: [], user, userDetails, appConfig }),
       headers
     )
   }
@@ -110,8 +112,9 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Orders() {
-  const { orders, customers, vendors, user, userDetails } = useLoaderData<typeof loader>()
+  const { orders, customers, vendors, user, userDetails, appConfig } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
+  const navigate = useNavigate()
   const [modalOpen, setModalOpen] = useState(false)
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -244,6 +247,8 @@ export default function Orders() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
@@ -276,51 +281,66 @@ export default function Orders() {
           </thead>
           <tbody>
             {filteredOrders.map((order: OrderWithRelations) => (
-              <tr key={order.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
+              <tr 
+                key={order.id} 
+                className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
+                onClick={() => navigate(`/orders/${order.orderNumber}`)}
+              >
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {order.orderNumber}
-                  </Link>
+                  {order.orderNumber}
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {order.customer?.displayName || '--'}
-                  </Link>
+                  {order.customer?.id ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigate(`/customers/${order.customer!.id}`)
+                      }}
+                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                    >
+                      {order.customer.displayName}
+                    </button>
+                  ) : (
+                    <span>{order.customer?.displayName || '--'}</span>
+                  )}
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {order.vendor?.displayName || '--'}
-                  </Link>
+                  {order.vendor?.id ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigate(`/vendors/${order.vendor!.id}`)
+                      }}
+                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                    >
+                      {order.vendor.displayName}
+                    </button>
+                  ) : (
+                    <span>{order.vendor?.displayName || '--'}</span>
+                  )}
                 </td>
                 <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(order.status)}`}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {getStatusDisplay(order.status)}
-                  </Link>
+                  {getStatusDisplay(order.status)}
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {formatCurrency(order.totalPrice)}
-                  </Link>
+                  {formatCurrency(order.totalPrice)}
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {formatCurrency(order.vendorPay)}
-                  </Link>
+                  {formatCurrency(order.vendorPay)}
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {formatDate(order.shipDate)}
-                  </Link>
+                  {formatDate(order.shipDate)}
                 </td>
                 <td className={tableStyles.cell}>
-                  <Link to={`/orders/${order.orderNumber}`} className="block">
-                    {formatDate(order.createdAt)}
-                  </Link>
+                  {formatDate(order.createdAt)}
                 </td>
                 <td className={tableStyles.cell}>
                   <div className="flex space-x-2">
                     <button
-                      onClick={() => handleEdit(order)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleEdit(order)
+                      }}
                       className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
                       title="Quick Edit"
                     >
@@ -335,7 +355,10 @@ export default function Orders() {
                       </svg>
                     </button>
                     <button
-                      onClick={() => handleDelete(order.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDelete(order.id)
+                      }}
                       className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
                       title="Archive"
                     >

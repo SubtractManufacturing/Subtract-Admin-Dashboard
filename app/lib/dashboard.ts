@@ -12,7 +12,9 @@ export type DashboardStats = {
 export type Order = {
   id: number
   order_number: string
+  customer_id: number | null
   customer_name: string
+  vendor_id: number | null
   vendor_name: string
   status: 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived'
   quantity: number
@@ -24,7 +26,9 @@ export type Order = {
 export type Quote = {
   id: number
   quote_number: string
+  customer_id: number | null
   customer_name: string
+  vendor_id: number | null
   vendor_name: string
   status: 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired'
   quantity: number
@@ -85,6 +89,8 @@ export async function getOrders(): Promise<Order[]> {
       .select({
         id: orders.id,
         order_number: orders.orderNumber,
+        customer_id: orders.customerId,
+        vendor_id: orders.vendorId,
         status: orders.status,
         total_price: orders.totalPrice,
         ship_date: orders.shipDate,
@@ -102,7 +108,9 @@ export async function getOrders(): Promise<Order[]> {
     return result.map(order => ({
       id: order.id,
       order_number: order.order_number,
+      customer_id: order.customer_id,
       customer_name: order.customer_name || 'Unknown',
+      vendor_id: order.vendor_id,
       vendor_name: order.vendor_name || 'Unknown',
       status: order.status,
       quantity: 0, // This would need to be calculated from order_line_items
@@ -122,6 +130,8 @@ export async function getQuotes(): Promise<Quote[]> {
       .select({
         id: quotes.id,
         quote_number: quotes.quoteNumber,
+        customer_id: quotes.customerId,
+        vendor_id: quotes.vendorId,
         status: quotes.status,
         total_price: quotes.totalPrice,
         valid_until: quotes.validUntil,
@@ -138,7 +148,9 @@ export async function getQuotes(): Promise<Quote[]> {
     return result.map(quote => ({
       id: quote.id,
       quote_number: quote.quote_number,
+      customer_id: quote.customer_id,
       customer_name: quote.customer_name || 'Unknown',
+      vendor_id: quote.vendor_id,
       vendor_name: quote.vendor_name || 'Unknown',
       status: quote.status,
       quantity: 0, // This would need to be calculated from quote_line_items

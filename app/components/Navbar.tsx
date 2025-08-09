@@ -6,18 +6,25 @@ interface NavbarProps {
   userName?: string;
   userEmail?: string;
   userInitials?: string;
+  version?: string;
+  isStaging?: boolean;
 }
 
-export default function Navbar({ userName, userEmail, userInitials }: NavbarProps) {
+export default function Navbar({ userName, userEmail, userInitials, version, isStaging }: NavbarProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div className="flex justify-between items-center bg-gray-800 text-white px-8 py-4">
-      <h1 className="text-2xl font-semibold m-0">
+      <h1 className="text-2xl font-semibold m-0 flex items-center gap-2">
         <Link to="/" className="text-white no-underline hover:opacity-80">
           Subtract Admin Dashboard
         </Link>
+        {isStaging && version && (
+          <span className="text-sm font-normal text-gray-300 bg-gray-700 px-2 py-0.5 rounded">
+            v{version}
+          </span>
+        )}
       </h1>
       <div className="flex items-center gap-5">
         <Link

@@ -6,6 +6,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
 import type { Customer, CustomerInput } from "~/lib/customers"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
+import { getAppConfig } from "~/lib/config.server"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
@@ -16,17 +17,18 @@ import { tableStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
+  const appConfig = getAppConfig()
   
   try {
     const customers = await getCustomers()
     return withAuthHeaders(
-      json({ customers, user, userDetails }),
+      json({ customers, user, userDetails, appConfig }),
       headers
     )
   } catch (error) {
     console.error("Customers loader error:", error)
     return withAuthHeaders(
-      json({ customers: [], user, userDetails }),
+      json({ customers: [], user, userDetails, appConfig }),
       headers
     )
   }
@@ -70,7 +72,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers, user, userDetails } = useLoaderData<typeof loader>()
+  const { customers, user, userDetails, appConfig } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
@@ -121,6 +123,8 @@ export default function Customers() {
         userName={userDetails?.name || user.email} 
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        version={appConfig.version}
+        isStaging={appConfig.isStaging}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 
