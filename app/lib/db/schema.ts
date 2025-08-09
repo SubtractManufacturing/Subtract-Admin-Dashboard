@@ -167,6 +167,22 @@ export const orderAttachments = pgTable("order_attachments", {
   pk: primaryKey({ columns: [table.orderId, table.attachmentId] }),
 }));
 
+export const customerAttachments = pgTable("customer_attachments", {
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.customerId, table.attachmentId] }),
+}));
+
+export const vendorAttachments = pgTable("vendor_attachments", {
+  vendorId: integer("vendor_id").notNull().references(() => vendors.id),
+  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.vendorId, table.attachmentId] }),
+}));
+
 export const loginAuditLogs = pgTable("login_audit_logs", {
   id: serial("id").primaryKey(),
   email: text("email").notNull(),
@@ -213,6 +229,10 @@ export type QuoteLineItem = typeof quoteLineItems.$inferSelect;
 export type NewQuoteLineItem = typeof quoteLineItems.$inferInsert;
 export type OrderAttachment = typeof orderAttachments.$inferSelect;
 export type NewOrderAttachment = typeof orderAttachments.$inferInsert;
+export type CustomerAttachment = typeof customerAttachments.$inferSelect;
+export type NewCustomerAttachment = typeof customerAttachments.$inferInsert;
+export type VendorAttachment = typeof vendorAttachments.$inferSelect;
+export type NewVendorAttachment = typeof vendorAttachments.$inferInsert;
 export type LoginAuditLog = typeof loginAuditLogs.$inferSelect;
 export type NewLoginAuditLog = typeof loginAuditLogs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
