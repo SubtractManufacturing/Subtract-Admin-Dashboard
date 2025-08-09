@@ -13,6 +13,7 @@ import { Notes } from "~/components/shared/Notes";
 import { InputField as FormField } from "~/components/shared/FormField";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
+import ToggleSlider from "~/components/shared/ToggleSlider";
 import { useState, useRef, useEffect } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -248,6 +249,7 @@ export default function VendorDetails() {
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
+  const [showCompletedOrders, setShowCompletedOrders] = useState(true);
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -601,8 +603,13 @@ export default function VendorDetails() {
 
           {/* Order History */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order History</h3>
+              <ToggleSlider
+                checked={showCompletedOrders}
+                onChange={setShowCompletedOrders}
+                label="Show completed"
+              />
             </div>
             <div className="p-6">
               {orders.length > 0 ? (
@@ -631,7 +638,9 @@ export default function VendorDetails() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                      {orders.map((order: any) => (
+                      {orders
+                        .filter((order: any) => showCompletedOrders || order.status.toLowerCase() !== 'completed')
+                        .map((order: any) => (
                         <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                           <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                             {order.orderNumber}
