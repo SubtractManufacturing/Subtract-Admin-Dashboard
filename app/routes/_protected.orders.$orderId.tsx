@@ -14,6 +14,9 @@ import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
+import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem } from "~/lib/lineItems";
+import LineItemModal from "~/components/LineItemModal";
+import type { OrderLineItem } from "~/lib/db/schema";
 import { useState, useRef } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -36,9 +39,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   
   // Fetch notes for this order
   const notes = await getNotes("order", order.id.toString());
+  
+  // Fetch line items for this order
+  const lineItems = await getLineItemsByOrderId(order.id);
 
   return withAuthHeaders(
-    json({ order, customer, vendor, notes, user, userDetails, appConfig }),
+    json({ order, customer, vendor, notes, lineItems, user, userDetails, appConfig }),
     headers
   );
 }
@@ -208,6 +214,61 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ downloadUrl });
       }
 
+      case "createLineItem": {
+        const name = formData.get("name") as string;
+        const description = formData.get("description") as string;
+        const quantity = parseInt(formData.get("quantity") as string);
+        const unitPrice = formData.get("unitPrice") as string;
+
+        if (!name || !quantity || !unitPrice) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const lineItem = await createLineItem({
+          orderId: order.id,
+          name,
+          description,
+          quantity,
+          unitPrice,
+          partId: null,
+          notes: null,
+        });
+
+        return withAuthHeaders(json({ lineItem }), headers);
+      }
+
+      case "updateLineItem": {
+        const lineItemId = parseInt(formData.get("lineItemId") as string);
+        const name = formData.get("name") as string;
+        const description = formData.get("description") as string;
+        const quantity = parseInt(formData.get("quantity") as string);
+        const unitPrice = formData.get("unitPrice") as string;
+
+        if (!lineItemId || !name || !quantity || !unitPrice) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const lineItem = await updateLineItem(lineItemId, {
+          name,
+          description,
+          quantity,
+          unitPrice,
+        });
+
+        return withAuthHeaders(json({ lineItem }), headers);
+      }
+
+      case "deleteLineItem": {
+        const lineItemId = parseInt(formData.get("lineItemId") as string);
+
+        if (!lineItemId) {
+          return json({ error: "Missing line item ID" }, { status: 400 });
+        }
+
+        await deleteLineItem(lineItemId);
+        return withAuthHeaders(json({ success: true }), headers);
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -218,12 +279,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function OrderDetails() {
-  const { order, customer, vendor, notes, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { order, customer, vendor, notes, lineItems, user, userDetails, appConfig } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
+  const [lineItemModalOpen, setLineItemModalOpen] = useState(false);
+  const [selectedLineItem, setSelectedLineItem] = useState<OrderLineItem | null>(null);
+  const [lineItemMode, setLineItemMode] = useState<"create" | "edit">("create");
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
+  const lineItemFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = () => {
@@ -271,6 +336,52 @@ export default function OrderDetails() {
       fileSize: attachment.fileSize || undefined
     });
     setFileModalOpen(true);
+  };
+
+  const handleAddLineItem = () => {
+    setSelectedLineItem(null);
+    setLineItemMode("create");
+    setLineItemModalOpen(true);
+  };
+
+  const handleEditLineItem = (lineItem: OrderLineItem) => {
+    setSelectedLineItem(lineItem);
+    setLineItemMode("edit");
+    setLineItemModalOpen(true);
+  };
+
+  const handleDeleteLineItem = (lineItemId: number) => {
+    if (confirm("Are you sure you want to delete this line item?")) {
+      const formData = new FormData();
+      formData.append("intent", "deleteLineItem");
+      formData.append("lineItemId", lineItemId.toString());
+      
+      lineItemFetcher.submit(formData, {
+        method: "post",
+      });
+    }
+  };
+
+  const handleLineItemSubmit = (data: {
+    name: string;
+    description: string;
+    quantity: number;
+    unitPrice: string;
+  }) => {
+    const formData = new FormData();
+    formData.append("intent", lineItemMode === "create" ? "createLineItem" : "updateLineItem");
+    formData.append("name", data.name);
+    formData.append("description", data.description);
+    formData.append("quantity", data.quantity.toString());
+    formData.append("unitPrice", data.unitPrice);
+    
+    if (lineItemMode === "edit" && selectedLineItem) {
+      formData.append("lineItemId", selectedLineItem.id.toString());
+    }
+    
+    lineItemFetcher.submit(formData, {
+      method: "post",
+    });
   };
 
 
@@ -499,6 +610,101 @@ export default function OrderDetails() {
             </div>
           </div>
 
+          {/* Line Items Section */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Line Items</h3>
+              <Button onClick={handleAddLineItem}>Add Line Item</Button>
+            </div>
+            <div className="p-6">
+              {lineItems && lineItems.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead className="bg-gray-50 dark:bg-gray-700">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Title
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Description
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Quantity
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Unit Price
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Total
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                      {lineItems.map((lineItem: OrderLineItem) => {
+                        const total = lineItem.quantity * parseFloat(lineItem.unitPrice || "0");
+                        return (
+                          <tr key={lineItem.id}>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                              {lineItem.name || "--"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                              {lineItem.description || "--"}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                              {lineItem.quantity}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                              {formatCurrency(lineItem.unitPrice)}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                              {formatCurrency(total.toString())}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                              <button
+                                onClick={() => handleEditLineItem(lineItem)}
+                                className="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 mr-3"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteLineItem(lineItem.id)}
+                                className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-gray-50 dark:bg-gray-700">
+                      <tr>
+                        <td colSpan={4} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
+                          Subtotal:
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
+                          {formatCurrency(
+                            lineItems.reduce((sum: number, item: OrderLineItem) => 
+                              sum + (item.quantity * parseFloat(item.unitPrice || "0")), 0
+                            ).toString()
+                          )}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
+                  No line items added yet.
+                </p>
+              )}
+            </div>
+          </div>
+
           {/* Notes Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
@@ -663,6 +869,15 @@ export default function OrderDetails() {
           fileSize={selectedFile.fileSize}
         />
       )}
+      
+      {/* Line Item Modal */}
+      <LineItemModal
+        isOpen={lineItemModalOpen}
+        onClose={() => setLineItemModalOpen(false)}
+        onSubmit={handleLineItemSubmit}
+        lineItem={selectedLineItem}
+        mode={lineItemMode}
+      />
     </div>
   );
 }
