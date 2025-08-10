@@ -27,31 +27,44 @@ export default function LineItemModal({
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    quantity: 1,
+    quantity: "1" as string | number,
     unitPrice: "",
   });
+  const [quantityError, setQuantityError] = useState(false);
 
   useEffect(() => {
     if (lineItem && mode === "edit") {
       setFormData({
         name: lineItem.name || "",
         description: lineItem.description || "",
-        quantity: lineItem.quantity,
+        quantity: lineItem.quantity.toString(),
         unitPrice: lineItem.unitPrice || "",
       });
     } else {
       setFormData({
         name: "",
         description: "",
-        quantity: 1,
+        quantity: "1",
         unitPrice: "",
       });
     }
+    setQuantityError(false);
   }, [lineItem, mode]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(formData);
+    
+    // Validate quantity
+    const qty = typeof formData.quantity === 'string' ? parseInt(formData.quantity) : formData.quantity;
+    if (!qty || qty < 1) {
+      setQuantityError(true);
+      return;
+    }
+    
+    onSubmit({
+      ...formData,
+      quantity: qty
+    });
     onClose();
   };
 
@@ -88,15 +101,22 @@ export default function LineItemModal({
         />
 
         <div className="grid grid-cols-2 gap-4">
-          <InputField
-            label="Quantity"
-            name="quantity"
-            type="number"
-            value={formData.quantity.toString()}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange("quantity", parseInt(e.target.value) || 1)}
-            required
-            min={1}
-          />
+          <div>
+            <InputField
+              label="Quantity"
+              name="quantity"
+              type="number"
+              value={formData.quantity.toString()}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                const value = e.target.value;
+                handleChange("quantity", value);
+                setQuantityError(value === "" || parseInt(value) < 1);
+              }}
+              required
+              min={1}
+              error={quantityError ? "Quantity must be at least 1" : undefined}
+            />
+          </div>
 
           <InputField
             label="Unit Price ($)"
