@@ -420,6 +420,11 @@ export default function OrderDetails() {
     });
   };
 
+  // Calculate total price from line items
+  const calculatedTotalPrice = lineItems.reduce((sum: number, item: OrderLineItem) => 
+    sum + (item.quantity * parseFloat(item.unitPrice || "0")), 0
+  ).toString();
+
   // Get status display
   const getStatusDisplay = (status: string) => {
     switch (status) {
@@ -529,7 +534,7 @@ export default function OrderDetails() {
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-6 transform transition-all hover:scale-105">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Order Value</h3>
               <p className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-                {formatCurrency(order.totalPrice)}
+                {formatCurrency(calculatedTotalPrice)}
               </p>
             </div>
 
@@ -686,11 +691,7 @@ export default function OrderDetails() {
                           Subtotal:
                         </td>
                         <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
-                          {formatCurrency(
-                            lineItems.reduce((sum: number, item: OrderLineItem) => 
-                              sum + (item.quantity * parseFloat(item.unitPrice || "0")), 0
-                            ).toString()
-                          )}
+                          {formatCurrency(calculatedTotalPrice)}
                         </td>
                         <td></td>
                       </tr>
