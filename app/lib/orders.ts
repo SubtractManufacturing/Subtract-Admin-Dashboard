@@ -31,6 +31,7 @@ export type OrderInput = {
   quoteId?: number | null
   status?: 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived'
   vendorPay?: string | null
+  vendorPayPercentage?: number
   shipDate?: Date | null
 }
 
@@ -166,15 +167,19 @@ export async function createOrder(orderData: OrderInput): Promise<OrderWithRelat
     // Use provided orderNumber or generate a new one
     const orderNumber = orderData.orderNumber || await getNextOrderNumber()
     
-    // Remove orderNumber from orderData to avoid duplication
-    const { ...orderDataWithoutNumber } = orderData
-    delete orderDataWithoutNumber.orderNumber
+    // Extract vendorPayPercentage and store it as vendorPay
+    const { vendorPayPercentage, ...orderDataWithoutPercentage } = orderData
+    delete orderDataWithoutPercentage.orderNumber
+    
+    // Store the percentage in vendorPay field (e.g., "70" for 70%)
+    const vendorPay = vendorPayPercentage ? vendorPayPercentage.toString() : "70"
     
     const insertResult = await db
       .insert(orders)
       .values({
-        ...orderDataWithoutNumber,
-        orderNumber: orderNumber as string
+        ...orderDataWithoutPercentage,
+        orderNumber: orderNumber as string,
+        vendorPay
       })
       .returning()
 
@@ -213,10 +218,16 @@ export async function createOrder(orderData: OrderInput): Promise<OrderWithRelat
 export async function updateOrder(id: number, orderData: Partial<OrderInput>): Promise<OrderWithRelations> {
   try {
     // Filter out null values for orderNumber since it's required in the database
-    const { orderNumber, ...restData } = orderData;
-    const updateData = orderNumber === null 
-      ? restData 
-      : { ...restData, ...(orderNumber !== undefined && { orderNumber }) };
+    const { orderNumber, vendorPayPercentage, ...restData } = orderData;
+    
+    // Convert vendorPayPercentage to vendorPay
+    const vendorPay = vendorPayPercentage ? vendorPayPercentage.toString() : undefined;
+    
+    const updateData = {
+      ...restData,
+      ...(orderNumber !== undefined && orderNumber !== null && { orderNumber }),
+      ...(vendorPay !== undefined && { vendorPay })
+    };
     
     await db
       .update(orders)

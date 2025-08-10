@@ -424,6 +424,10 @@ export default function OrderDetails() {
   const calculatedTotalPrice = lineItems.reduce((sum: number, item: OrderLineItem) => 
     sum + (item.quantity * parseFloat(item.unitPrice || "0")), 0
   ).toString();
+  
+  // Calculate vendor pay from percentage
+  const vendorPayPercentage = parseFloat(order.vendorPay || "70");
+  const calculatedVendorPay = (parseFloat(calculatedTotalPrice) * vendorPayPercentage / 100).toString();
 
   // Get status display
   const getStatusDisplay = (status: string) => {
@@ -578,6 +582,18 @@ export default function OrderDetails() {
                     <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Lead Time</p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
                       {order.leadTime ? `${order.leadTime} Business Days` : "--"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Vendor Pay</p>
+                    <p className="text-lg text-gray-900 dark:text-gray-100">
+                      {formatCurrency(calculatedVendorPay)} ({vendorPayPercentage}%)
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Profit Margin</p>
+                    <p className="text-lg text-gray-900 dark:text-gray-100">
+                      {formatCurrency((parseFloat(calculatedTotalPrice) - parseFloat(calculatedVendorPay)).toString())} ({100 - vendorPayPercentage}%)
                     </p>
                   </div>
                 </div>
