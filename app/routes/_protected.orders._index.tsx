@@ -77,7 +77,6 @@ export async function action({ request }: ActionFunctionArgs) {
           customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
           vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
-          totalPrice: formData.get("totalPrice") as string || null,
           vendorPay: formData.get("vendorPay") as string || null,
           shipDate: formData.get("shipDate") ? new Date(formData.get("shipDate") as string) : null
         }
@@ -90,7 +89,6 @@ export async function action({ request }: ActionFunctionArgs) {
           customerId: formData.get("customerId") ? parseInt(formData.get("customerId") as string) : null,
           vendorId: formData.get("vendorId") ? parseInt(formData.get("vendorId") as string) : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
-          totalPrice: formData.get("totalPrice") as string || null,
           vendorPay: formData.get("vendorPay") as string || null,
           shipDate: formData.get("shipDate") ? new Date(formData.get("shipDate") as string) : null
         }
@@ -323,7 +321,11 @@ export default function Orders() {
                   {getStatusDisplay(order.status)}
                 </td>
                 <td className={tableStyles.cell}>
-                  {formatCurrency(order.totalPrice)}
+                  {formatCurrency(
+                    order.lineItems?.reduce((sum, item) => 
+                      sum + (item.quantity * parseFloat(item.unitPrice || "0")), 0
+                    ).toString() || "0"
+                  )}
                 </td>
                 <td className={tableStyles.cell}>
                   {formatCurrency(order.vendorPay)}
@@ -477,13 +479,6 @@ export default function Orders() {
             <option value="Cancelled">Cancelled</option>
           </SelectField>
 
-          <InputField
-            label="Total Price"
-            name="totalPrice"
-            type="number"
-            step="0.01"
-            defaultValue={editingOrder?.totalPrice || ""}
-          />
 
           <InputField
             label="Vendor Pay"

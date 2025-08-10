@@ -1,7 +1,7 @@
 import { db } from "./db/index.js"
-import { orders, customers, vendors } from "./db/schema.js"
+import { orders, customers, vendors, orderLineItems } from "./db/schema.js"
 import { eq, desc, ne } from 'drizzle-orm'
-import type { Customer, Vendor } from "./db/schema.js"
+import type { Customer, Vendor, OrderLineItem } from "./db/schema.js"
 import { getNextOrderNumber } from "./number-generator.js"
 import { getOrderAttachments } from "./attachments.js"
 
@@ -21,6 +21,7 @@ export type OrderWithRelations = {
   updatedAt: Date
   customer?: Customer | null
   vendor?: Vendor | null
+  lineItems?: OrderLineItem[]
 }
 
 export type OrderInput = {
@@ -29,7 +30,6 @@ export type OrderInput = {
   vendorId?: number | null
   quoteId?: number | null
   status?: 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived'
-  totalPrice?: string | null
   vendorPay?: string | null
   shipDate?: Date | null
 }
@@ -60,7 +60,22 @@ export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
       .where(ne(orders.status, 'Archived'))
       .orderBy(desc(orders.createdAt))
 
-    return result
+    // Fetch line items for each order
+    const ordersWithLineItems = await Promise.all(
+      result.map(async (order) => {
+        const lineItems = await db
+          .select()
+          .from(orderLineItems)
+          .where(eq(orderLineItems.orderId, order.id))
+        
+        return {
+          ...order,
+          lineItems
+        }
+      })
+    )
+
+    return ordersWithLineItems
   } catch (error) {
     console.error('Error fetching orders:', error)
     return []
