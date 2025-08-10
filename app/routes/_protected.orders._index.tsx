@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate, useRevalidator } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
@@ -105,7 +105,7 @@ export async function action({ request }: ActionFunctionArgs) {
             : null,
         };
         await createOrder(orderData);
-        return redirect("/orders");
+        return json({ success: true });
       }
       case "update": {
         const orderId = parseInt(formData.get("orderId") as string);
@@ -125,12 +125,12 @@ export async function action({ request }: ActionFunctionArgs) {
             : null,
         };
         await updateOrder(orderId, orderData);
-        return redirect("/orders");
+        return json({ success: true });
       }
       case "delete": {
         const orderId = parseInt(formData.get("orderId") as string);
         await archiveOrder(orderId);
-        return redirect("/orders");
+        return json({ success: true });
       }
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
@@ -146,6 +146,7 @@ export default function Orders() {
     useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const navigate = useNavigate();
+  const revalidator = useRevalidator();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(
     null
@@ -168,6 +169,17 @@ export default function Orders() {
       }
       if ("error" in fetcher.data) {
         setOrderNumberError(fetcher.data.error as string);
+      }
+      // Close modal on successful create/update
+      if ("success" in fetcher.data && fetcher.data.success === true) {
+        setModalOpen(false);
+        // Reset form state
+        setEditingOrder(null);
+        setOrderNumber("");
+        setOrderNumberError("");
+        setVendorPayPercentage(70);
+        // Reload the page data
+        revalidator.revalidate();
       }
     }
   }, [fetcher.data]);
@@ -450,7 +462,16 @@ export default function Orders() {
         onClose={() => setModalOpen(false)}
         title={editingOrder ? "Quick Edit" : "Add New Order"}
       >
-        <fetcher.Form method="post" className="space-y-4">
+        <fetcher.Form 
+          method="post" 
+          className="space-y-4"
+          onSubmit={(e) => {
+            // Form will submit normally, just ensuring it works with Enter key
+            if (!editingOrder && orderNumberError) {
+              e.preventDefault();
+            }
+          }}
+        >
           <input
             type="hidden"
             name="intent"
