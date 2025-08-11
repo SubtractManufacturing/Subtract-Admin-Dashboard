@@ -792,6 +792,22 @@ export default function CustomerDetails() {
             </div>
           </div>
 
+          {/* Notes Section */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+            </div>
+            <div className="p-6">
+              <Notes 
+                entityType="customer" 
+                entityId={customer.id.toString()} 
+                initialNotes={notes}
+                currentUserId={user.id || user.email}
+                currentUserName={userDetails?.name || user.email}
+              />
+            </div>
+          </div>
+
           {/* Attachments Card */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
@@ -983,22 +999,6 @@ export default function CustomerDetails() {
                   No parts added yet.
                 </p>
               )}
-            </div>
-          </div>
-
-          {/* Notes Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
-            </div>
-            <div className="p-6">
-              <Notes 
-                entityType="customer" 
-                entityId={customer.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
             </div>
           </div>
         </div>

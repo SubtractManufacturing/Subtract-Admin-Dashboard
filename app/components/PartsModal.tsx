@@ -75,6 +75,28 @@ export default function PartsModal({
   };
 
   const handleChange = (field: string, value: string) => {
+    // Special handling for tolerance field to ensure ± is at the beginning
+    if (field === "tolerance") {
+      // If value is empty or user deleted everything, reset to just ±
+      if (!value || value === "") {
+        setFormData((prev) => ({
+          ...prev,
+          tolerance: "±",
+        }));
+        return;
+      }
+      
+      // If value doesn't start with ±, add it
+      if (!value.startsWith("±")) {
+        value = "±" + value;
+      }
+      
+      // Don't allow just the ± symbol to be deleted (keep at least ±)
+      if (value.length < 1) {
+        value = "±";
+      }
+    }
+    
     setFormData((prev) => ({
       ...prev,
       [field]: value,
@@ -292,6 +314,12 @@ export default function PartsModal({
             onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
               handleChange("tolerance", e.target.value)
             }
+            onFocus={() => {
+              // If field is empty when focused, add ± symbol
+              if (!formData.tolerance) {
+                handleChange("tolerance", "±");
+              }
+            }}
             placeholder="e.g., ±0.005"
           />
         </div>
