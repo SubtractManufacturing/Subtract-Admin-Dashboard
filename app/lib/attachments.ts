@@ -1,5 +1,5 @@
 import { db } from "./db/index.js"
-import { attachments, orderAttachments, customerAttachments, vendorAttachments } from "./db/schema.js"
+import { attachments, orderAttachments, customerAttachments, vendorAttachments, partModels } from "./db/schema.js"
 import { eq, and } from 'drizzle-orm'
 import type { Attachment, NewAttachment } from "./db/schema.js"
 
@@ -144,6 +144,21 @@ export async function linkAttachmentToVendor(vendorId: number, attachmentId: str
       })
   } catch (error) {
     throw new Error(`Failed to link attachment to vendor: ${error}`)
+  }
+}
+
+// Part attachment functions (for 3D models)
+export async function linkAttachmentToPart(partId: string, attachmentId: string): Promise<void> {
+  try {
+    await db
+      .insert(partModels)
+      .values({
+        partId,
+        attachmentId,
+        version: 1,
+      })
+  } catch (error) {
+    throw new Error(`Failed to link attachment to part: ${error}`)
   }
 }
 

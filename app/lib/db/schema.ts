@@ -99,6 +99,7 @@ export const orders = pgTable("orders", {
 
 export const parts = pgTable("parts", {
   id: uuid("id").primaryKey().defaultRandom(),
+  customerId: integer("customer_id").references(() => customers.id),
   partName: text("part_name"),
   notes: text("notes"),
   material: text("material"),

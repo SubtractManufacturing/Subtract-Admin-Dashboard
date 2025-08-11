@@ -2,9 +2,10 @@ import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseM
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, type Attachment } from "~/lib/attachments";
-import type { Vendor } from "~/lib/db/schema";
+import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
+import type { Vendor, Part } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
+import { getPartsByCustomerId, createPart, updatePart, archivePart } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
@@ -16,6 +17,7 @@ import { Notes } from "~/components/shared/Notes";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
+import PartsModal from "~/components/PartsModal";
 
 type CustomerOrder = {
   id: number;
@@ -45,14 +47,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes] = await Promise.all([
+  const [orders, stats, notes, parts] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
-    getNotes("customer", customer.id.toString())
+    getNotes("customer", customer.id.toString()),
+    getPartsByCustomerId(customer.id)
   ]);
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, user, userDetails, appConfig }),
+    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig }),
     headers
   );
 }
@@ -241,6 +244,96 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ downloadUrl });
       }
 
+      case "createPart": {
+        const partName = formData.get("partName") as string;
+        const material = formData.get("material") as string;
+        const tolerance = formData.get("tolerance") as string;
+        const finishing = formData.get("finishing") as string;
+        const notes = formData.get("notes") as string;
+        const modelFile = formData.get("modelFile") as File | null;
+
+        if (!partName) {
+          return json({ error: "Part name is required" }, { status: 400 });
+        }
+
+        // Create the part
+        const part = await createPart({
+          customerId: customer.id,
+          partName,
+          material: material || null,
+          tolerance: tolerance || null,
+          finishing: finishing || null,
+          notes: notes || null,
+        });
+
+        // Handle 3D model file upload if provided
+        if (modelFile && modelFile.size > 0) {
+          try {
+            const arrayBuffer = await modelFile.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const key = generateFileKey(customer.id, `part-${part.id}-${modelFile.name}`);
+
+            // Upload to S3
+            const uploadResult = await uploadFile({
+              key,
+              buffer,
+              contentType: modelFile.type || 'application/octet-stream',
+              fileName: modelFile.name,
+            });
+
+            // Create attachment record
+            const attachment = await createAttachment({
+              s3Bucket: uploadResult.bucket,
+              s3Key: uploadResult.key,
+              fileName: uploadResult.fileName,
+              contentType: uploadResult.contentType,
+              fileSize: uploadResult.size,
+            });
+
+            // Link to part as a 3D model
+            await linkAttachmentToPart(part.id, attachment.id);
+          } catch (error) {
+            console.error('Failed to upload 3D model:', error);
+          }
+        }
+
+        return withAuthHeaders(json({ part }), headers);
+      }
+
+      case "updatePart": {
+        const partId = formData.get("partId") as string;
+        const partName = formData.get("partName") as string;
+        const material = formData.get("material") as string;
+        const tolerance = formData.get("tolerance") as string;
+        const finishing = formData.get("finishing") as string;
+        const notes = formData.get("notes") as string;
+
+        if (!partId || !partName) {
+          return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const part = await updatePart(partId, {
+          partName,
+          material: material || null,
+          tolerance: tolerance || null,
+          finishing: finishing || null,
+          notes: notes || null,
+        });
+
+        return withAuthHeaders(json({ part }), headers);
+      }
+
+      case "deletePart": {
+        const partId = formData.get("partId") as string;
+
+        if (!partId) {
+          return json({ error: "Missing part ID" }, { status: 400 });
+        }
+
+        await archivePart(partId);
+        return withAuthHeaders(json({ success: true }), headers);
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -251,15 +344,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
+  const [partsModalOpen, setPartsModalOpen] = useState(false);
+  const [selectedPart, setSelectedPart] = useState<Part | null>(null);
+  const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
+  const partsFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSaveInfo = (event: React.FormEvent<HTMLFormElement>) => {
@@ -362,6 +459,62 @@ export default function CustomerDetails() {
         method: "post",
       });
     }
+  };
+
+  const handleAddPart = () => {
+    setSelectedPart(null);
+    setPartsMode("create");
+    setPartsModalOpen(true);
+  };
+
+  const handleEditPart = (part: Part) => {
+    setSelectedPart(part);
+    setPartsMode("edit");
+    setPartsModalOpen(true);
+  };
+
+  const handleDeletePart = (partId: string) => {
+    if (confirm("Are you sure you want to delete this part?")) {
+      const formData = new FormData();
+      formData.append("intent", "deletePart");
+      formData.append("partId", partId);
+      
+      partsFetcher.submit(formData, {
+        method: "post",
+      });
+    }
+  };
+
+  const handlePartSubmit = (data: {
+    partName: string;
+    material: string;
+    tolerance: string;
+    finishing: string;
+    notes: string;
+    modelFile?: File;
+  }) => {
+    const formData = new FormData();
+    formData.append("intent", partsMode === "create" ? "createPart" : "updatePart");
+    formData.append("partName", data.partName);
+    formData.append("material", data.material);
+    formData.append("tolerance", data.tolerance);
+    formData.append("finishing", data.finishing);
+    formData.append("notes", data.notes);
+    
+    if (partsMode === "edit" && selectedPart) {
+      formData.append("partId", selectedPart.id);
+    }
+    
+    if (data.modelFile) {
+      formData.append("modelFile", data.modelFile);
+    }
+    
+    partsFetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
+    
+    setPartsModalOpen(false);
   };
 
   const handleViewFile = (attachment: { id: string; fileName: string; contentType: string; fileSize: number | null }) => {
@@ -738,6 +891,101 @@ export default function CustomerDetails() {
             </div>
           </div>
 
+          {/* Parts Section */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Parts</h3>
+              <Button size="sm" onClick={handleAddPart}>Add Part</Button>
+            </div>
+            <div className="p-6">
+              {parts && parts.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead className="bg-gray-50 dark:bg-gray-700">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Part Name
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Material
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Tolerance
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Finishing
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Created
+                        </th>
+                        <th className="px-6 py-3 w-20"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                      {parts.map((part: Part) => (
+                        <tr key={part.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {part.partName || "--"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {part.material || "--"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {part.tolerance || "--"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {part.finishing || "--"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {new Date(part.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right">
+                            <div className="flex items-center justify-end space-x-2">
+                              <button
+                                onClick={() => handleEditPart(part)}
+                                className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                                title="Edit"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="16"
+                                  height="16"
+                                  fill="currentColor"
+                                  viewBox="0 0 16 16"
+                                >
+                                  <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => handleDeletePart(part.id)}
+                                className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                                title="Delete"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="16"
+                                  height="16"
+                                  fill="currentColor"
+                                  viewBox="0 0 16 16"
+                                >
+                                  <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
+                  No parts added yet.
+                </p>
+              )}
+            </div>
+          </div>
+
           {/* Notes Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
@@ -770,6 +1018,15 @@ export default function CustomerDetails() {
           fileSize={selectedFile.fileSize}
         />
       )}
+      
+      {/* Parts Modal */}
+      <PartsModal
+        isOpen={partsModalOpen}
+        onClose={() => setPartsModalOpen(false)}
+        onSubmit={handlePartSubmit}
+        part={selectedPart}
+        mode={partsMode}
+      />
     </div>
   );
 }
