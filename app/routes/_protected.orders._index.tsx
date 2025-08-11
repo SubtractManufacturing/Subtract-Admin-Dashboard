@@ -1,4 +1,4 @@
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { useLoaderData, useFetcher, useNavigate, useRevalidator } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
@@ -182,7 +182,7 @@ export default function Orders() {
         revalidator.revalidate();
       }
     }
-  }, [fetcher.data]);
+  }, [fetcher.data, revalidator]);
 
   const filteredOrders = orders.filter((order: OrderWithRelations) => {
     const query = searchQuery.toLowerCase();

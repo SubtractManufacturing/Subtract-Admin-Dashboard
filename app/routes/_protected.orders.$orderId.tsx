@@ -219,6 +219,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const description = formData.get("description") as string;
         const quantity = parseInt(formData.get("quantity") as string);
         const unitPrice = formData.get("unitPrice") as string;
+        const notes = formData.get("notes") as string;
 
         if (!name || !quantity || !unitPrice) {
           return json({ error: "Missing required fields" }, { status: 400 });
@@ -231,7 +232,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           quantity,
           unitPrice,
           partId: null,
-          notes: null,
+          notes: notes || null,
         });
 
         return withAuthHeaders(json({ lineItem }), headers);
@@ -243,6 +244,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const description = formData.get("description") as string;
         const quantity = parseInt(formData.get("quantity") as string);
         const unitPrice = formData.get("unitPrice") as string;
+        const notes = formData.get("notes") as string;
 
         if (!lineItemId || !name || !quantity || !unitPrice) {
           return json({ error: "Missing required fields" }, { status: 400 });
@@ -253,6 +255,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           description,
           quantity,
           unitPrice,
+          notes: notes || null,
         });
 
         return withAuthHeaders(json({ lineItem }), headers);
@@ -267,6 +270,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         await deleteLineItem(lineItemId);
         return withAuthHeaders(json({ success: true }), headers);
+      }
+
+      case "updateLineItemNote": {
+        const lineItemId = parseInt(formData.get("lineItemId") as string);
+        const notes = formData.get("notes") as string;
+
+        if (!lineItemId) {
+          return json({ error: "Missing line item ID" }, { status: 400 });
+        }
+
+        const lineItem = await updateLineItem(lineItemId, {
+          notes: notes || null,
+        });
+
+        return withAuthHeaders(json({ lineItem }), headers);
       }
 
       default:
@@ -286,9 +304,12 @@ export default function OrderDetails() {
   const [lineItemModalOpen, setLineItemModalOpen] = useState(false);
   const [selectedLineItem, setSelectedLineItem] = useState<OrderLineItem | null>(null);
   const [lineItemMode, setLineItemMode] = useState<"create" | "edit">("create");
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [editingNoteValue, setEditingNoteValue] = useState<string>("");
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const lineItemFetcher = useFetcher();
+  const notesFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = () => {
@@ -377,11 +398,40 @@ export default function OrderDetails() {
     
     if (lineItemMode === "edit" && selectedLineItem) {
       formData.append("lineItemId", selectedLineItem.id.toString());
+      // Preserve existing notes when editing (they're edited inline, not in the modal)
+      formData.append("notes", selectedLineItem.notes || "");
+    } else {
+      // For new line items, start with empty notes
+      formData.append("notes", "");
     }
     
     lineItemFetcher.submit(formData, {
       method: "post",
     });
+  };
+
+  const handleStartEditNote = (lineItemId: number, currentNote: string | null) => {
+    setEditingNoteId(lineItemId);
+    setEditingNoteValue(currentNote || "");
+  };
+
+  const handleSaveNote = (lineItemId: number) => {
+    const formData = new FormData();
+    formData.append("intent", "updateLineItemNote");
+    formData.append("lineItemId", lineItemId.toString());
+    formData.append("notes", editingNoteValue);
+    
+    notesFetcher.submit(formData, {
+      method: "post",
+    });
+    
+    setEditingNoteId(null);
+    setEditingNoteValue("");
+  };
+
+  const handleCancelEditNote = () => {
+    setEditingNoteId(null);
+    setEditingNoteValue("");
   };
 
 
@@ -640,30 +690,34 @@ export default function OrderDetails() {
             <div className="p-6">
               {lineItems && lineItems.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 table-fixed">
                     <thead className="bg-gray-50 dark:bg-gray-700">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">
                           Title
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[20%]">
                           Description
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%]">
+                          Notes
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[8%]">
                           Quantity
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%]">
                           Unit Price
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%]">
                           Total
                         </th>
-                        <th className="px-6 py-3 w-20"></th>
+                        <th className="px-6 py-3 w-[7%]"></th>
                       </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                       {lineItems.map((lineItem: OrderLineItem) => {
                         const total = lineItem.quantity * parseFloat(lineItem.unitPrice || "0");
+                        const isEditingNote = editingNoteId === lineItem.id;
                         return (
                           <tr key={lineItem.id}>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
@@ -671,6 +725,63 @@ export default function OrderDetails() {
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                               {lineItem.description || "--"}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 w-[30%] max-w-[30%]">
+                              {isEditingNote ? (
+                                <div className="flex items-center space-x-2">
+                                  <textarea
+                                    value={editingNoteValue}
+                                    onChange={(e) => setEditingNoteValue(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" && !e.shiftKey) {
+                                        e.preventDefault();
+                                        handleSaveNote(lineItem.id);
+                                      } else if (e.key === "Escape") {
+                                        handleCancelEditNote();
+                                      }
+                                    }}
+                                    className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                                    placeholder="Add note... (Shift+Enter for new line)"
+                                    rows={2}
+                                  />
+                                  <button
+                                    onClick={() => handleSaveNote(lineItem.id)}
+                                    className="p-1 text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                    title="Save (Enter)"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                      <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={handleCancelEditNote}
+                                    className="p-1 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                                    title="Cancel (Esc)"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                      <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+                                    </svg>
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleStartEditNote(lineItem.id, lineItem.notes)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      handleStartEditNote(lineItem.id, lineItem.notes);
+                                    }
+                                  }}
+                                  className="cursor-pointer min-h-[28px] px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left w-full"
+                                  title="Click to edit note"
+                                >
+                                  {lineItem.notes ? (
+                                    <span className="text-sm break-words whitespace-pre-wrap">{lineItem.notes}</span>
+                                  ) : (
+                                    <span className="text-sm text-gray-400 dark:text-gray-500 italic">Click to add note</span>
+                                  )}
+                                </button>
+                              )}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                               {lineItem.quantity}
@@ -721,7 +832,7 @@ export default function OrderDetails() {
                     </tbody>
                     <tfoot className="bg-gray-50 dark:bg-gray-700">
                       <tr>
-                        <td colSpan={4} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
+                        <td colSpan={5} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
                           Subtotal:
                         </td>
                         <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
