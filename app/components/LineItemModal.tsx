@@ -42,25 +42,41 @@ export default function LineItemModal({
   const [showPartSelection, setShowPartSelection] = useState(false);
 
   useEffect(() => {
-    if (lineItem && mode === "edit") {
-      setFormData({
-        name: lineItem.name || "",
-        description: lineItem.description || "",
-        quantity: lineItem.quantity.toString(),
-        unitPrice: lineItem.unitPrice || "",
-        partId: lineItem.partId || null,
-      });
-    } else {
-      setFormData({
-        name: "",
-        description: "",
-        quantity: "1",
-        unitPrice: "",
-        partId: null,
-      });
+    if (isOpen) {
+      if (lineItem && mode === "edit") {
+        setFormData({
+          name: lineItem.name || "",
+          description: lineItem.description || "",
+          quantity: lineItem.quantity.toString(),
+          unitPrice: lineItem.unitPrice || "",
+          partId: lineItem.partId || null,
+        });
+      } else {
+        setFormData({
+          name: "",
+          description: "",
+          quantity: "1",
+          unitPrice: "",
+          partId: null,
+        });
+      }
+      setQuantityError(false);
     }
+  }, [isOpen, lineItem, mode]);
+
+  const handleClose = () => {
+    // Reset form data when closing without saving
+    setFormData({
+      name: "",
+      description: "",
+      quantity: "1",
+      unitPrice: "",
+      partId: null,
+    });
     setQuantityError(false);
-  }, [lineItem, mode]);
+    setShowPartSelection(false);
+    onClose();
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,6 +92,15 @@ export default function LineItemModal({
       ...formData,
       quantity: qty
     });
+    // Also reset form after successful submission
+    setFormData({
+      name: "",
+      description: "",
+      quantity: "1",
+      unitPrice: "",
+      partId: null,
+    });
+    setQuantityError(false);
     onClose();
   };
 
@@ -109,7 +134,7 @@ export default function LineItemModal({
     <>
       <Modal
         isOpen={isOpen}
-        onClose={onClose}
+        onClose={handleClose}
         title={mode === "create" ? "Add Line Item" : "Edit Line Item"}
       >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -176,7 +201,7 @@ export default function LineItemModal({
         </div>
 
         <div className="flex justify-end space-x-3 pt-4">
-          <Button type="button" variant="secondary" onClick={onClose}>
+          <Button type="button" variant="secondary" onClick={handleClose}>
             Cancel
           </Button>
           <Button type="submit" variant="primary">

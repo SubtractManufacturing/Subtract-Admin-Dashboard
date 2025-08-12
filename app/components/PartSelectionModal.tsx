@@ -38,7 +38,8 @@ export default function PartSelectionModal({
     setFilteredParts(filtered);
   }, [searchTerm, parts, customerId]);
 
-  const handleSelectPart = (part: Part) => {
+  const handleSelectPart = (part: Part, e: React.MouseEvent) => {
+    e.stopPropagation();
     onSelectPart(part);
     onClose();
     setSearchTerm("");
@@ -49,6 +50,7 @@ export default function PartSelectionModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Select a Part"
+      zIndex={60}
     >
       <div className="space-y-4">
         <InputField
@@ -69,7 +71,7 @@ export default function PartSelectionModal({
               {filteredParts.map((part) => (
                 <button
                   key={part.id}
-                  onClick={() => handleSelectPart(part)}
+                  onClick={(e) => handleSelectPart(part, e)}
                   className="w-full text-left p-4 hover:bg-gray-50 transition-colors focus:bg-gray-50 focus:outline-none"
                 >
                   <div className="font-medium text-gray-900">
