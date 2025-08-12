@@ -15,6 +15,7 @@ import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem } from "~/lib/lineItems";
+import { getPartsByCustomerId } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
 import { useState, useRef } from "react";
@@ -42,9 +43,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   
   // Fetch line items for this order
   const lineItems = await getLineItemsByOrderId(order.id);
+  
+  // Fetch parts for the customer if available
+  const parts = order.customerId ? await getPartsByCustomerId(order.customerId) : [];
 
   return withAuthHeaders(
-    json({ order, customer, vendor, notes, lineItems, user, userDetails, appConfig }),
+    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig }),
     headers
   );
 }
@@ -220,6 +224,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const quantity = parseInt(formData.get("quantity") as string);
         const unitPrice = formData.get("unitPrice") as string;
         const notes = formData.get("notes") as string;
+        const partId = formData.get("partId") as string | null;
 
         if (!name || !quantity || !unitPrice) {
           return json({ error: "Missing required fields" }, { status: 400 });
@@ -231,7 +236,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           description,
           quantity,
           unitPrice,
-          partId: null,
+          partId: partId || null,
           notes: notes || null,
         });
 
@@ -245,6 +250,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const quantity = parseInt(formData.get("quantity") as string);
         const unitPrice = formData.get("unitPrice") as string;
         const notes = formData.get("notes") as string;
+        const partId = formData.get("partId") as string | null;
 
         if (!lineItemId || !name || !quantity || !unitPrice) {
           return json({ error: "Missing required fields" }, { status: 400 });
@@ -255,6 +261,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           description,
           quantity,
           unitPrice,
+          partId: partId || null,
           notes: notes || null,
         });
 
@@ -297,7 +304,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function OrderDetails() {
-  const { order, customer, vendor, notes, lineItems, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
@@ -388,6 +395,7 @@ export default function OrderDetails() {
     description: string;
     quantity: number;
     unitPrice: string;
+    partId?: string | null;
   }) => {
     const formData = new FormData();
     formData.append("intent", lineItemMode === "create" ? "createLineItem" : "updateLineItem");
@@ -395,6 +403,11 @@ export default function OrderDetails() {
     formData.append("description", data.description);
     formData.append("quantity", data.quantity.toString());
     formData.append("unitPrice", data.unitPrice);
+    
+    // Include partId if present
+    if (data.partId) {
+      formData.append("partId", data.partId);
+    }
     
     if (lineItemMode === "edit" && selectedLineItem) {
       formData.append("lineItemId", selectedLineItem.id.toString());
@@ -1023,6 +1036,8 @@ export default function OrderDetails() {
         onSubmit={handleLineItemSubmit}
         lineItem={selectedLineItem}
         mode={lineItemMode}
+        customerId={order.customerId}
+        parts={parts}
       />
     </div>
   );

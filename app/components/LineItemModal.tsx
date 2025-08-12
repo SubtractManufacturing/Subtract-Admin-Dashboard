@@ -2,7 +2,9 @@ import { useState, useEffect } from "react";
 import Modal from "./shared/Modal";
 import Button from "./shared/Button";
 import { InputField, TextareaField } from "./shared/FormField";
-import type { OrderLineItem } from "~/lib/db/schema";
+import PartSelectionModal from "./PartSelectionModal";
+import type { OrderLineItem, Part } from "~/lib/db/schema";
+import { Plus } from "lucide-react";
 
 interface LineItemModalProps {
   isOpen: boolean;
@@ -12,9 +14,12 @@ interface LineItemModalProps {
     description: string;
     quantity: number;
     unitPrice: string;
+    partId?: string | null;
   }) => void;
   lineItem?: OrderLineItem | null;
   mode: "create" | "edit";
+  customerId?: number | null;
+  parts?: Part[];
 }
 
 export default function LineItemModal({
@@ -23,14 +28,18 @@ export default function LineItemModal({
   onSubmit,
   lineItem,
   mode,
+  customerId,
+  parts = [],
 }: LineItemModalProps) {
   const [formData, setFormData] = useState({
     name: "",
     description: "",
     quantity: "1" as string | number,
     unitPrice: "",
+    partId: null as string | null,
   });
   const [quantityError, setQuantityError] = useState(false);
+  const [showPartSelection, setShowPartSelection] = useState(false);
 
   useEffect(() => {
     if (lineItem && mode === "edit") {
@@ -39,6 +48,7 @@ export default function LineItemModal({
         description: lineItem.description || "",
         quantity: lineItem.quantity.toString(),
         unitPrice: lineItem.unitPrice || "",
+        partId: lineItem.partId || null,
       });
     } else {
       setFormData({
@@ -46,6 +56,7 @@ export default function LineItemModal({
         description: "",
         quantity: "1",
         unitPrice: "",
+        partId: null,
       });
     }
     setQuantityError(false);
@@ -75,13 +86,46 @@ export default function LineItemModal({
     }));
   };
 
+  const handlePartSelect = (part: Part) => {
+    // Build description from material, tolerance, and finishing
+    const descriptionParts = [];
+    if (part.material) descriptionParts.push(`Material: ${part.material}`);
+    if (part.tolerance) descriptionParts.push(`Tolerance: ${part.tolerance}`);
+    if (part.finishing) descriptionParts.push(`Finishing: ${part.finishing}`);
+    
+    const description = descriptionParts.join("\n");
+    
+    setFormData((prev) => ({
+      ...prev,
+      name: part.partName || prev.name,
+      description: part.notes ? `${description}${description ? "\n" : ""}${part.notes}` : description,
+      partId: part.id,
+    }));
+    
+    setShowPartSelection(false);
+  };
+
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={mode === "create" ? "Add Line Item" : "Edit Line Item"}
-    >
+    <>
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={mode === "create" ? "Add Line Item" : "Edit Line Item"}
+      >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {mode === "create" && parts.length > 0 && (
+          <div className="flex justify-end -mt-2 mb-2">
+            <button
+              type="button"
+              onClick={() => setShowPartSelection(true)}
+              className="flex items-center gap-1 px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              title="Select from Parts"
+            >
+              <Plus className="h-4 w-4" />
+              Select from Parts
+            </button>
+          </div>
+        )}
         <InputField
           label="Title"
           name="name"
@@ -140,6 +184,15 @@ export default function LineItemModal({
           </Button>
         </div>
       </form>
-    </Modal>
+      </Modal>
+
+      <PartSelectionModal
+        isOpen={showPartSelection}
+        onClose={() => setShowPartSelection(false)}
+        onSelectPart={handlePartSelect}
+        customerId={customerId}
+        parts={parts}
+      />
+    </>
   );
 }
