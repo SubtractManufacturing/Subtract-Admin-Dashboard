@@ -36,6 +36,7 @@ export default function PartsModal({
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (part && mode === "edit") {
@@ -57,6 +58,44 @@ export default function PartsModal({
       setModelFile(null);
     }
   }, [part, mode]);
+
+  // Add keyboard event handler for Enter key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle events when modal is open
+      if (!isOpen) return;
+
+      // Check if target is the notes textarea
+      const isNotesTextarea = e.target instanceof HTMLTextAreaElement && 
+                              (e.target as HTMLTextAreaElement).name === 'notes';
+
+      // Handle Enter key
+      if (e.key === 'Enter') {
+        // In notes field: Shift+Enter creates new line, Enter alone saves
+        if (isNotesTextarea) {
+          if (!e.shiftKey) {
+            // Plain Enter in notes field - save the form
+            e.preventDefault();
+            if (formRef.current) {
+              const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
+              formRef.current.dispatchEvent(submitEvent);
+            }
+          }
+          // Shift+Enter will naturally create a new line, no need to handle
+        } else {
+          // In any other field, Enter saves the form
+          e.preventDefault();
+          if (formRef.current) {
+            const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
+            formRef.current.dispatchEvent(submitEvent);
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, formData, modelFile, mode]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -182,7 +221,7 @@ export default function PartsModal({
       onClose={onClose}
       title={mode === "create" ? "Add New Part" : "Edit Part"}
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
         {/* 3D File Upload - Moved to top */}
         {mode === "create" && (
           <div>
