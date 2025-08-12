@@ -105,6 +105,7 @@ export const parts = pgTable("parts", {
   material: text("material"),
   tolerance: text("tolerance"),
   finishing: text("finishing"),
+  thumbnailUrl: text("thumbnail_url"),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

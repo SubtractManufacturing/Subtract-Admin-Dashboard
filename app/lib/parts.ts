@@ -12,6 +12,7 @@ export type PartInput = {
   material?: string | null
   tolerance?: string | null
   finishing?: string | null
+  thumbnailUrl?: string | null
 }
 
 export type PartWithCounts = Part & {

@@ -5,7 +5,7 @@ import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCus
 import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
-import { getPartsByCustomerId, createPart, updatePart, archivePart } from "~/lib/parts";
+import { getPartsByCustomerId, createPart, updatePart, archivePart, type PartInput } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
@@ -76,12 +76,38 @@ async function handlePartsAction(
       const finishing = formData.get("finishing") as string;
       const notes = formData.get("notes") as string;
       const modelFile = formData.get("modelFile") as File | null;
+      const thumbnailFile = formData.get("thumbnailFile") as File | null;
 
       if (!partName) {
         return json({ error: "Part name is required" }, { status: 400 });
       }
 
-      // Create the part
+      let thumbnailUrl: string | null = null;
+
+      // Handle thumbnail upload first if provided
+      if (thumbnailFile && thumbnailFile.size > 0) {
+        try {
+          const arrayBuffer = await thumbnailFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-thumbnail-${Date.now()}-${thumbnailFile.name}`);
+
+          // Upload thumbnail to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: thumbnailFile.type || 'image/jpeg',
+            fileName: thumbnailFile.name,
+          });
+
+          // Create public URL for the thumbnail
+          thumbnailUrl = `/attachments/s3/${uploadResult.key}`;
+        } catch (error) {
+          console.error('Thumbnail upload error:', error);
+          // Continue without thumbnail on error
+        }
+      }
+
+      // Create the part with thumbnail URL
       const part = await createPart({
         customerId: customer.id,
         partName,
@@ -89,6 +115,7 @@ async function handlePartsAction(
         tolerance: tolerance || null,
         finishing: finishing || null,
         notes: notes || null,
+        thumbnailUrl,
       });
 
       // Handle 3D model file upload if provided
@@ -132,18 +159,51 @@ async function handlePartsAction(
       const tolerance = formData.get("tolerance") as string;
       const finishing = formData.get("finishing") as string;
       const notes = formData.get("notes") as string;
+      const thumbnailFile = formData.get("thumbnailFile") as File | null;
 
       if (!partId || !partName) {
         return json({ error: "Missing required fields" }, { status: 400 });
       }
 
-      await updatePart(partId, {
+      let thumbnailUrl: string | undefined = undefined;
+
+      // Handle thumbnail upload if provided
+      if (thumbnailFile && thumbnailFile.size > 0) {
+        try {
+          const arrayBuffer = await thumbnailFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-thumbnail-${Date.now()}-${thumbnailFile.name}`);
+
+          // Upload thumbnail to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: thumbnailFile.type || 'image/jpeg',
+            fileName: thumbnailFile.name,
+          });
+
+          // Create public URL for the thumbnail
+          thumbnailUrl = `/attachments/s3/${uploadResult.key}`;
+        } catch (error) {
+          console.error('Thumbnail upload error:', error);
+          // Continue without updating thumbnail on error
+        }
+      }
+
+      const updateData: Partial<PartInput> = {
         partName,
         material: material || null,
         tolerance: tolerance || null,
         finishing: finishing || null,
         notes: notes || null,
-      });
+      };
+
+      // Only update thumbnailUrl if a new one was uploaded
+      if (thumbnailUrl !== undefined) {
+        updateData.thumbnailUrl = thumbnailUrl;
+      }
+
+      await updatePart(partId, updateData);
 
       return redirect(`/customers/${customerId}`);
     }
@@ -519,6 +579,7 @@ export default function CustomerDetails() {
     finishing: string;
     notes: string;
     modelFile?: File;
+    thumbnailFile?: File;
   }) => {
     const formData = new FormData();
     const intent = partsMode === "create" ? "createPart" : "updatePart";
@@ -535,6 +596,10 @@ export default function CustomerDetails() {
     
     if (data.modelFile) {
       formData.append("modelFile", data.modelFile);
+    }
+    
+    if (data.thumbnailFile) {
+      formData.append("thumbnailFile", data.thumbnailFile);
     }
     
     partsFetcher.submit(formData, {
@@ -948,7 +1013,7 @@ export default function CustomerDetails() {
                     <thead className="bg-gray-50 dark:bg-gray-700">
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                          Part Name
+                          Part
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                           Material
@@ -968,8 +1033,35 @@ export default function CustomerDetails() {
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                       {parts.map((part: Part) => (
                         <tr key={part.id}>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
-                            {part.partName || "--"}
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              {part.thumbnailUrl ? (
+                                <img
+                                  src={part.thumbnailUrl}
+                                  alt={`${part.partName} thumbnail`}
+                                  className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0"
+                                />
+                              ) : (
+                                <div className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                                  <svg
+                                    className="h-5 w-5 text-gray-400 dark:text-gray-500"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                    />
+                                  </svg>
+                                </div>
+                              )}
+                              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                {part.partName || "--"}
+                              </span>
+                            </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                             {part.material || "--"}

@@ -14,6 +14,7 @@ interface PartsModalProps {
     finishing: string;
     notes: string;
     modelFile?: File;
+    thumbnailFile?: File;
   }) => void;
   part?: Part | null;
   mode: "create" | "edit";
@@ -34,8 +35,11 @@ export default function PartsModal({
     notes: "",
   });
   const [modelFile, setModelFile] = useState<File | null>(null);
+  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const thumbnailInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
@@ -47,6 +51,10 @@ export default function PartsModal({
         finishing: part.finishing || "",
         notes: part.notes || "",
       });
+      // Set existing thumbnail preview if available
+      if (part.thumbnailUrl) {
+        setThumbnailPreview(part.thumbnailUrl);
+      }
     } else {
       setFormData({
         partName: "",
@@ -56,6 +64,8 @@ export default function PartsModal({
         notes: "",
       });
       setModelFile(null);
+      setThumbnailFile(null);
+      setThumbnailPreview(null);
     }
   }, [part, mode]);
 
@@ -109,6 +119,7 @@ export default function PartsModal({
     onSubmit({
       ...formData,
       modelFile: modelFile || undefined,
+      thumbnailFile: thumbnailFile || undefined,
     });
     onClose();
   };
@@ -212,6 +223,64 @@ export default function PartsModal({
     setModelFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+  };
+
+  const handleThumbnailSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        alert("Please upload an image file (PNG, JPG, etc.)");
+        return;
+      }
+
+      setThumbnailFile(file);
+      
+      // Create preview URL
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setThumbnailPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeThumbnail = () => {
+    setThumbnailFile(null);
+    setThumbnailPreview(null);
+    if (thumbnailInputRef.current) {
+      thumbnailInputRef.current.value = "";
+    }
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      for (const clipboardItem of clipboardItems) {
+        for (const type of clipboardItem.types) {
+          if (type.startsWith('image/')) {
+            const blob = await clipboardItem.getType(type);
+            const file = new File([blob], `clipboard-image-${Date.now()}.png`, { type });
+            
+            setThumbnailFile(file);
+            
+            // Create preview URL
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              setThumbnailPreview(reader.result as string);
+            };
+            reader.readAsDataURL(file);
+            
+            return;
+          }
+        }
+      }
+      alert("No image found in clipboard. Please copy an image first.");
+    } catch (error) {
+      console.error('Clipboard paste error:', error);
+      alert("Unable to paste from clipboard. Please ensure you've copied an image and granted clipboard permissions.");
     }
   };
 
@@ -323,6 +392,92 @@ export default function PartsModal({
             </div>
           </div>
         )}
+
+        {/* Thumbnail Upload */}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <label
+              htmlFor="thumbnail"
+              className="text-sm font-medium text-gray-700 dark:text-gray-300"
+            >
+              Thumbnail Image (Optional)
+            </label>
+            <button
+              type="button"
+              onClick={() => thumbnailInputRef.current?.click()}
+              className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+              title="Upload from computer"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={handlePasteFromClipboard}
+              className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+              title="Paste from clipboard"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                />
+              </svg>
+            </button>
+          </div>
+          {thumbnailPreview && (
+            <div className="relative inline-block">
+              <img
+                src={thumbnailPreview}
+                alt="Part thumbnail"
+                className="w-32 h-32 object-cover rounded-lg border-2 border-gray-300 dark:border-gray-600"
+              />
+              <button
+                type="button"
+                onClick={removeThumbnail}
+                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+          )}
+          <input
+            ref={thumbnailInputRef}
+            id="thumbnail"
+            type="file"
+            onChange={handleThumbnailSelect}
+            accept="image/*"
+            className="hidden"
+          />
+        </div>
 
         <InputField
           label="Part Name"
