@@ -3,7 +3,7 @@ import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
-import type { Vendor, Part } from "~/lib/db/schema";
+import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
@@ -62,6 +62,98 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
+async function handlePartsAction(
+  formData: FormData,
+  intent: string,
+  customer: Customer,
+  customerId: string
+) {
+  try {
+    if (intent === "createPart") {
+      const partName = formData.get("partName") as string;
+      const material = formData.get("material") as string;
+      const tolerance = formData.get("tolerance") as string;
+      const finishing = formData.get("finishing") as string;
+      const notes = formData.get("notes") as string;
+      const modelFile = formData.get("modelFile") as File | null;
+
+      if (!partName) {
+        return json({ error: "Part name is required" }, { status: 400 });
+      }
+
+      // Create the part
+      const part = await createPart({
+        customerId: customer.id,
+        partName,
+        material: material || null,
+        tolerance: tolerance || null,
+        finishing: finishing || null,
+        notes: notes || null,
+      });
+
+      // Handle 3D model file upload if provided
+      if (modelFile && modelFile.size > 0) {
+        try {
+          const arrayBuffer = await modelFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-${part.id}-${modelFile.name}`);
+
+          // Upload to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: modelFile.type || 'application/octet-stream',
+            fileName: modelFile.name,
+          });
+
+          // Create attachment record
+          const attachment = await createAttachment({
+            s3Bucket: uploadResult.bucket,
+            s3Key: uploadResult.key,
+            fileName: uploadResult.fileName,
+            contentType: uploadResult.contentType,
+            fileSize: uploadResult.size,
+          });
+
+          // Link to part as a 3D model
+          await linkAttachmentToPart(part.id, attachment.id);
+        } catch (error) {
+          console.error('Failed to upload 3D model:', error);
+        }
+      }
+
+      return redirect(`/customers/${customerId}`);
+    }
+
+    if (intent === "updatePart") {
+      const partId = formData.get("partId") as string;
+      const partName = formData.get("partName") as string;
+      const material = formData.get("material") as string;
+      const tolerance = formData.get("tolerance") as string;
+      const finishing = formData.get("finishing") as string;
+      const notes = formData.get("notes") as string;
+
+      if (!partId || !partName) {
+        return json({ error: "Missing required fields" }, { status: 400 });
+      }
+
+      await updatePart(partId, {
+        partName,
+        material: material || null,
+        tolerance: tolerance || null,
+        finishing: finishing || null,
+        notes: notes || null,
+      });
+
+      return redirect(`/customers/${customerId}`);
+    }
+
+    return json({ error: "Invalid intent" }, { status: 400 });
+  } catch (error) {
+    return json({ error: `Failed to process part: ${error}` }, { status: 500 });
+  }
+}
+
 export async function action({ request, params }: ActionFunctionArgs) {
   const { headers } = await requireAuth(request);
   
@@ -82,6 +174,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
 
     const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+    const intent = formData.get("intent") as string;
+    
+    // Check if this is a parts-related action
+    if (intent === "createPart" || intent === "updatePart") {
+      // Handle parts actions with multipart data
+      return handlePartsAction(formData, intent, customer, customerId);
+    }
+    
+    // Otherwise, it's a regular file upload
     const file = formData.get("file") as File;
 
     if (!file) {
@@ -244,84 +345,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ downloadUrl });
       }
 
-      case "createPart": {
-        const partName = formData.get("partName") as string;
-        const material = formData.get("material") as string;
-        const tolerance = formData.get("tolerance") as string;
-        const finishing = formData.get("finishing") as string;
-        const notes = formData.get("notes") as string;
-        const modelFile = formData.get("modelFile") as File | null;
-
-        if (!partName) {
-          return json({ error: "Part name is required" }, { status: 400 });
-        }
-
-        // Create the part
-        const part = await createPart({
-          customerId: customer.id,
-          partName,
-          material: material || null,
-          tolerance: tolerance || null,
-          finishing: finishing || null,
-          notes: notes || null,
-        });
-
-        // Handle 3D model file upload if provided
-        if (modelFile && modelFile.size > 0) {
-          try {
-            const arrayBuffer = await modelFile.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            const key = generateFileKey(customer.id, `part-${part.id}-${modelFile.name}`);
-
-            // Upload to S3
-            const uploadResult = await uploadFile({
-              key,
-              buffer,
-              contentType: modelFile.type || 'application/octet-stream',
-              fileName: modelFile.name,
-            });
-
-            // Create attachment record
-            const attachment = await createAttachment({
-              s3Bucket: uploadResult.bucket,
-              s3Key: uploadResult.key,
-              fileName: uploadResult.fileName,
-              contentType: uploadResult.contentType,
-              fileSize: uploadResult.size,
-            });
-
-            // Link to part as a 3D model
-            await linkAttachmentToPart(part.id, attachment.id);
-          } catch (error) {
-            console.error('Failed to upload 3D model:', error);
-          }
-        }
-
-        return withAuthHeaders(json({ part }), headers);
-      }
-
-      case "updatePart": {
-        const partId = formData.get("partId") as string;
-        const partName = formData.get("partName") as string;
-        const material = formData.get("material") as string;
-        const tolerance = formData.get("tolerance") as string;
-        const finishing = formData.get("finishing") as string;
-        const notes = formData.get("notes") as string;
-
-        if (!partId || !partName) {
-          return json({ error: "Missing required fields" }, { status: 400 });
-        }
-
-        const part = await updatePart(partId, {
-          partName,
-          material: material || null,
-          tolerance: tolerance || null,
-          finishing: finishing || null,
-          notes: notes || null,
-        });
-
-        return withAuthHeaders(json({ part }), headers);
-      }
+      // Parts actions are now handled in the multipart section above
+      // since they include file uploads
 
       case "deletePart": {
         const partId = formData.get("partId") as string;
@@ -331,7 +356,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         await archivePart(partId);
-        return withAuthHeaders(json({ success: true }), headers);
+        // Return a redirect to refresh the page
+        return redirect(`/customers/${customerId}`);
       }
 
       default:
@@ -357,6 +383,7 @@ export default function CustomerDetails() {
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const partsFetcher = useFetcher();
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSaveInfo = (event: React.FormEvent<HTMLFormElement>) => {
@@ -494,7 +521,8 @@ export default function CustomerDetails() {
     modelFile?: File;
   }) => {
     const formData = new FormData();
-    formData.append("intent", partsMode === "create" ? "createPart" : "updatePart");
+    const intent = partsMode === "create" ? "createPart" : "updatePart";
+    formData.append("intent", intent);
     formData.append("partName", data.partName);
     formData.append("material", data.material);
     formData.append("tolerance", data.tolerance);

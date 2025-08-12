@@ -84,6 +84,7 @@ export async function createPart(partData: PartInput): Promise<Part> {
 
     return result[0]
   } catch (error) {
+    console.error("Error creating part:", error);
     throw new Error(`Failed to create part: ${error}`)
   }
 }
