@@ -14,10 +14,12 @@ interface PartsModalProps {
     finishing: string;
     notes: string;
     modelFile?: File;
+    meshFile?: File; // TEMPORARY
     thumbnailFile?: File;
   }) => void;
   part?: Part | null;
   mode: "create" | "edit";
+  canUploadMesh?: boolean;
 }
 
 export default function PartsModal({
@@ -26,6 +28,7 @@ export default function PartsModal({
   onSubmit,
   part,
   mode,
+  canUploadMesh = false,
 }: PartsModalProps) {
   const [formData, setFormData] = useState({
     partName: "",
@@ -35,10 +38,12 @@ export default function PartsModal({
     notes: "",
   });
   const [modelFile, setModelFile] = useState<File | null>(null);
+  const [meshFile, setMeshFile] = useState<File | null>(null); // TEMPORARY
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
   const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const meshInputRef = useRef<HTMLInputElement>(null); // TEMPORARY
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -64,6 +69,7 @@ export default function PartsModal({
         notes: "",
       });
       setModelFile(null);
+      setMeshFile(null); // TEMPORARY
       setThumbnailFile(null);
       setThumbnailPreview(null);
     }
@@ -110,15 +116,10 @@ export default function PartsModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate that 3D file is provided for new parts
-    if (mode === "create" && !modelFile) {
-      alert("Please upload a 3D model file");
-      return;
-    }
-
     onSubmit({
       ...formData,
       modelFile: modelFile || undefined,
+      meshFile: meshFile || undefined, // TEMPORARY
       thumbnailFile: thumbnailFile || undefined,
     });
     onClose();
@@ -227,6 +228,21 @@ export default function PartsModal({
     }
   };
 
+  // TEMPORARY mesh file handlers
+  const handleMeshFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setMeshFile(file);
+    }
+  };
+
+  const removeMeshFile = () => {
+    setMeshFile(null);
+    if (meshInputRef.current) {
+      meshInputRef.current.value = "";
+    }
+  };
+
   const handleThumbnailSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -292,61 +308,60 @@ export default function PartsModal({
       title={mode === "create" ? "Add New Part" : "Edit Part"}
     >
       <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
-        {/* 3D File Upload - Moved to top */}
-        {mode === "create" && (
-          <div>
-            <label
-              htmlFor="modelFile"
-              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-            >
-              3D Model File <span className="text-red-500">*</span>
-            </label>
-            <div
-              className={`relative border-2 border-dashed rounded-lg p-6 ${
-                dragActive
-                  ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                  : modelFile
-                  ? "border-green-500 bg-green-50 dark:bg-green-900/20"
-                  : "border-gray-300 dark:border-gray-600"
-              }`}
-              onDragEnter={handleDrag}
-              onDragLeave={handleDrag}
-              onDragOver={handleDrag}
-              onDrop={handleDrop}
-            >
-              <input
-                ref={fileInputRef}
-                id="modelFile"
-                type="file"
-                onChange={handleFileSelect}
-                accept=".stl,.step,.stp,.iges,.igs,.obj,.3mf"
-                className="hidden"
-              />
+        {/* 3D Model File Upload */}
+        <div>
+          <label
+            htmlFor="modelFile"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+          >
+            3D Model File
+          </label>
+          <div
+            className={`relative border-2 border-dashed rounded-lg p-4 ${
+              dragActive
+                ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                : modelFile
+                ? "border-green-500 bg-green-50 dark:bg-green-900/20"
+                : "border-gray-300 dark:border-gray-600"
+            }`}
+            onDragEnter={handleDrag}
+            onDragLeave={handleDrag}
+            onDragOver={handleDrag}
+            onDrop={handleDrop}
+          >
+            <input
+              ref={fileInputRef}
+              id="modelFile"
+              type="file"
+              onChange={handleFileSelect}
+              accept=".stl,.step,.stp,.iges,.igs,.obj,.3mf,.sldprt"
+              className="hidden"
+            />
 
-              {modelFile ? (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <svg
-                      className="w-8 h-8 text-blue-500"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path d="M9 2a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2V6.414A2 2 0 0016.414 5L14 2.586A2 2 0 0012.586 2H9z" />
-                    </svg>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        {modelFile.name}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {(modelFile.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={removeFile}
-                    className="text-red-500 hover:text-red-700"
+            {modelFile ? (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <svg
+                    className="w-6 h-6 text-blue-500"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
                   >
+                    <path d="M9 2a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2V6.414A2 2 0 0016.414 5L14 2.586A2 2 0 0012.586 2H9z" />
+                  </svg>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {modelFile.name}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {(modelFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={removeFile}
+                  className="text-red-500 hover:text-red-700"
+                >
                     <svg
                       className="w-5 h-5"
                       fill="currentColor"
@@ -391,6 +406,54 @@ export default function PartsModal({
                 </div>
               )}
             </div>
+          </div>
+
+        {/* TEMPORARY: Mesh File Upload - Only show if feature flag is enabled */}
+        {canUploadMesh && (
+          <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+            <label
+              htmlFor="meshFile"
+              className="block text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-2"
+            >
+              🚧 TEMPORARY: Mesh File (STL/OBJ/GLTF for 3D viewer)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                ref={meshInputRef}
+                id="meshFile"
+                type="file"
+                onChange={handleMeshFileSelect}
+                accept=".stl,.obj,.gltf,.glb"
+                className="hidden"
+              />
+              {meshFile ? (
+                <div className="flex items-center gap-2 flex-1">
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    {meshFile.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={removeMeshFile}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => meshInputRef.current?.click()}
+                  className="px-3 py-1 text-sm bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                >
+                  Choose Mesh File
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-1">
+              This is temporary for testing. Upload STL/OBJ/GLTF to view in 3D.
+            </p>
           </div>
         )}
 

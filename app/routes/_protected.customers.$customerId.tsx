@@ -8,6 +8,7 @@ import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, type PartInput } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { canUserUploadMesh } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -18,6 +19,7 @@ import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
 import PartsModal from "~/components/PartsModal";
+import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 
 type CustomerOrder = {
   id: number;
@@ -47,15 +49,16 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, parts] = await Promise.all([
+  const [orders, stats, notes, parts, canUploadMesh] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
-    getPartsByCustomerId(customer.id)
+    getPartsByCustomerId(customer.id),
+    canUserUploadMesh(userDetails.role)
   ]);
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig }),
+    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh }),
     headers
   );
 }
@@ -76,6 +79,7 @@ async function handlePartsAction(
       const finishing = formData.get("finishing") as string;
       const notes = formData.get("notes") as string;
       const modelFile = formData.get("modelFile") as File | null;
+      const meshFile = formData.get("meshFile") as File | null; // TEMPORARY
       const thumbnailFile = formData.get("thumbnailFile") as File | null;
 
       if (!partName) {
@@ -144,8 +148,35 @@ async function handlePartsAction(
 
           // Link to part as a 3D model
           await linkAttachmentToPart(part.id, attachment.id);
+          
+          // Store the file URL in partFileUrl (CAD files only)
+          const fileUrl = `/attachments/s3/${uploadResult.key}`;
+          await updatePart(part.id.toString(), { partFileUrl: fileUrl });
         } catch (error) {
           console.error('Failed to upload 3D model:', error);
+        }
+      }
+      
+      // TEMPORARY: Handle mesh file upload separately
+      if (meshFile && meshFile.size > 0) {
+        try {
+          const arrayBuffer = await meshFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-mesh-${part.id}-${meshFile.name}`);
+
+          // Upload to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: meshFile.type || 'model/stl',
+            fileName: meshFile.name,
+          });
+
+          // Store the mesh URL in partMeshUrl
+          const meshUrl = `/attachments/s3/${uploadResult.key}`;
+          await updatePart(part.id.toString(), { partMeshUrl: meshUrl });
+        } catch (error) {
+          console.error('Failed to upload mesh file:', error);
         }
       }
 
@@ -159,6 +190,7 @@ async function handlePartsAction(
       const tolerance = formData.get("tolerance") as string;
       const finishing = formData.get("finishing") as string;
       const notes = formData.get("notes") as string;
+      const meshFile = formData.get("meshFile") as File | null; // TEMPORARY
       const thumbnailFile = formData.get("thumbnailFile") as File | null;
 
       if (!partId || !partName) {
@@ -204,6 +236,29 @@ async function handlePartsAction(
       }
 
       await updatePart(partId, updateData);
+
+      // TEMPORARY: Handle mesh file upload separately for updates
+      if (meshFile && meshFile.size > 0) {
+        try {
+          const arrayBuffer = await meshFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-mesh-${partId}-${meshFile.name}`);
+
+          // Upload to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: meshFile.type || 'model/stl',
+            fileName: meshFile.name,
+          });
+
+          // Store the mesh URL in partMeshUrl
+          const meshUrl = `/attachments/s3/${uploadResult.key}`;
+          await updatePart(partId, { partMeshUrl: meshUrl });
+        } catch (error) {
+          console.error('Failed to upload mesh file:', error);
+        }
+      }
 
       return redirect(`/customers/${customerId}`);
     }
@@ -430,7 +485,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -439,6 +494,8 @@ export default function CustomerDetails() {
   const [partsModalOpen, setPartsModalOpen] = useState(false);
   const [selectedPart, setSelectedPart] = useState<Part | null>(null);
   const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
+  const [part3DViewerOpen, setPart3DViewerOpen] = useState(false);
+  const [selected3DPart, setSelected3DPart] = useState<Part | null>(null);
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -560,6 +617,13 @@ export default function CustomerDetails() {
     setPartsModalOpen(true);
   };
 
+  const handleView3DPart = (part: Part) => {
+    console.log('Part selected for 3D view:', part);
+    console.log('Part mesh URL:', part.partMeshUrl);
+    setSelected3DPart(part);
+    setPart3DViewerOpen(true);
+  };
+
   const handleDeletePart = (partId: string) => {
     if (confirm("Are you sure you want to delete this part?")) {
       const formData = new FormData();
@@ -579,6 +643,7 @@ export default function CustomerDetails() {
     finishing: string;
     notes: string;
     modelFile?: File;
+    meshFile?: File; // TEMPORARY
     thumbnailFile?: File;
   }) => {
     const formData = new FormData();
@@ -596,6 +661,10 @@ export default function CustomerDetails() {
     
     if (data.modelFile) {
       formData.append("modelFile", data.modelFile);
+    }
+    
+    if (data.meshFile) {
+      formData.append("meshFile", data.meshFile); // TEMPORARY
     }
     
     if (data.thumbnailFile) {
@@ -1078,6 +1147,21 @@ export default function CustomerDetails() {
                           <td className="px-6 py-4 whitespace-nowrap text-right">
                             <div className="flex items-center justify-end space-x-2">
                               <button
+                                onClick={() => handleView3DPart(part)}
+                                className="p-1.5 text-white bg-purple-600 rounded hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600 transition-colors duration-150"
+                                title="View 3D"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="16"
+                                  height="16"
+                                  fill="currentColor"
+                                  viewBox="0 0 16 16"
+                                >
+                                  <path d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0v6h8V1H4zm8 8H4v6h8V9zM1 1v2h2V1H1zm2 3H1v2h2V4zM1 7v2h2V7H1zm2 3H1v2h2v-2zm-2 3v2h2v-2H1zM15 1h-2v2h2V1zm-2 3v2h2V4h-2zm2 3h-2v2h2V7zm-2 3v2h2v-2h-2zm2 3h-2v2h2v-2z"/>
+                                </svg>
+                              </button>
+                              <button
                                 onClick={() => handleEditPart(part)}
                                 className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
                                 title="Edit"
@@ -1146,6 +1230,18 @@ export default function CustomerDetails() {
         onSubmit={handlePartSubmit}
         part={selectedPart}
         mode={partsMode}
+        canUploadMesh={canUploadMesh}
+      />
+      
+      {/* 3D Viewer Modal */}
+      <Part3DViewerModal
+        isOpen={part3DViewerOpen}
+        onClose={() => {
+          setPart3DViewerOpen(false);
+          setSelected3DPart(null);
+        }}
+        partName={selected3DPart?.partName || undefined}
+        modelUrl={selected3DPart?.partMeshUrl || undefined}
       />
     </div>
   );

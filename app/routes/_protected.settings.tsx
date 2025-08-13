@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { json, LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
@@ -7,17 +7,25 @@ import { createServerClient } from "~/lib/supabase";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
 import Navbar from "~/components/Navbar";
+import { getAllFeatureFlags, updateFeatureFlag, initializeFeatureFlags } from "~/lib/featureFlags";
+import type { FeatureFlag } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
+  
+  // Initialize feature flags if needed
+  await initializeFeatureFlags();
+  
+  // Get feature flags for developer users
+  const featureFlags = userDetails.role === "Dev" ? await getAllFeatureFlags() : [];
   
   // Check for success message in URL
   const url = new URL(request.url);
   const message = url.searchParams.get("message");
   
   return withAuthHeaders(
-    json({ user, userDetails, message, appConfig }),
+    json({ user, userDetails, message, appConfig, featureFlags }),
     headers
   );
 }
@@ -27,6 +35,29 @@ export async function action({ request }: ActionFunctionArgs) {
   const { supabase, headers } = createServerClient(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  if (intent === "saveFeatureFlags" && userDetails.role === "Dev") {
+    const flagsJson = formData.get("flags") as string;
+    
+    try {
+      const flags = JSON.parse(flagsJson);
+      
+      // Update all flags
+      for (const flag of flags) {
+        await updateFeatureFlag(flag.key, flag.enabled, user.id);
+      }
+      
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update feature flags" }, { status: 400 }),
+        headers
+      );
+    }
+  }
 
   if (intent === "updateProfile") {
     const name = formData.get("name") as string;
@@ -139,14 +170,70 @@ export async function action({ request }: ActionFunctionArgs) {
   );
 }
 
-type Tab = "profile" | "security" | "notifications" | "preferences";
+type Tab = "profile" | "security" | "notifications" | "preferences" | "admin" | "developer";
+
+function FeatureFlagItem({ flag, onToggle, disabled }: { flag: FeatureFlag; onToggle: (key: string) => void; disabled?: boolean }) {
+  return (
+    <div className="flex items-center gap-3 py-2 px-3 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
+      <button
+        type="button"
+        onClick={() => onToggle(flag.key)}
+        disabled={disabled}
+        className={`
+          relative inline-flex h-5 w-9 items-center rounded-full transition-colors
+          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
+          ${
+            flag.enabled
+              ? "bg-blue-600"
+              : "bg-gray-200 dark:bg-gray-700"
+          }
+          ${disabled ? "opacity-50 cursor-not-allowed" : ""}
+        `}
+      >
+        <span
+          className={`
+            inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform
+            ${flag.enabled ? "translate-x-[18px]" : "translate-x-1"}
+          `}
+        />
+      </button>
+      <div className="group relative flex-1">
+        <h5 className="text-sm text-gray-900 dark:text-white cursor-help">
+          {flag.name}
+        </h5>
+        <div className="absolute left-0 bottom-full mb-2 invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all duration-200 z-10 w-80 max-w-sm pointer-events-none">
+          <div className="bg-gray-900 dark:bg-gray-950 text-white text-xs rounded-lg p-3 shadow-lg">
+            <p className="mb-2">{flag.description}</p>
+            <p className="text-gray-400">
+              Key: <code className="bg-gray-800 px-1 rounded">{flag.key}</code>
+            </p>
+            <div className="absolute bottom-0 left-8 transform translate-y-1/2 rotate-45 w-2 h-2 bg-gray-900 dark:bg-gray-950"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function Settings() {
-  const { user, userDetails, message, appConfig } = useLoaderData<typeof loader>();
+  const { user, userDetails, message, appConfig, featureFlags: initialFeatureFlags } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
   const passwordResetFetcher = useFetcher<typeof action>();
+  const featureFlagsFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
+  
+  // Local state for feature flags
+  const [localFeatureFlags, setLocalFeatureFlags] = useState(initialFeatureFlags || []);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Update local flags when initial data changes (but not during saves)
+  useEffect(() => {
+    if (!isSaving && !hasUnsavedChanges) {
+      setLocalFeatureFlags(initialFeatureFlags || []);
+    }
+  }, [initialFeatureFlags, isSaving, hasUnsavedChanges]);
   
   // Revalidate data after successful update
   useEffect(() => {
@@ -154,13 +241,64 @@ export default function Settings() {
       revalidator.revalidate();
     }
   }, [fetcher.data, revalidator]);
+  
+  // Handle successful feature flags save
+  useEffect(() => {
+    if (featureFlagsFetcher.state === "submitting") {
+      setIsSaving(true);
+    } else if (featureFlagsFetcher.state === "idle" && isSaving) {
+      setIsSaving(false);
+      if (featureFlagsFetcher.data && 'success' in featureFlagsFetcher.data) {
+        setHasUnsavedChanges(false);
+        // Don't revalidate immediately to prevent flickering
+        setTimeout(() => {
+          revalidator.revalidate();
+        }, 100);
+      }
+    }
+  }, [featureFlagsFetcher.state, featureFlagsFetcher.data, isSaving, revalidator]);
+  
+  const handleFeatureFlagToggle = useCallback((key: string) => {
+    // Prevent toggling while saving
+    if (isSaving) return;
+    
+    setLocalFeatureFlags((flags: FeatureFlag[]) => 
+      flags.map((flag: FeatureFlag) => 
+        flag.key === key ? { ...flag, enabled: !flag.enabled } : flag
+      )
+    );
+    setHasUnsavedChanges(true);
+  }, [isSaving]);
+  
+  const handleSaveFeatureFlags = useCallback(() => {
+    featureFlagsFetcher.submit(
+      {
+        intent: "saveFeatureFlags",
+        flags: JSON.stringify(localFeatureFlags),
+      },
+      { method: "post" }
+    );
+  }, [localFeatureFlags, featureFlagsFetcher]);
 
-  const tabs: { id: Tab; label: string }[] = [
+  // Build tabs based on user role
+  const baseTabs: { id: Tab; label: string }[] = [
     { id: "profile", label: "Your Profile" },
     { id: "security", label: "Security" },
     { id: "notifications", label: "Notifications" },
     { id: "preferences", label: "Preferences" },
   ];
+  
+  const tabs = [...baseTabs];
+  
+  // Add Admin tab for Admin and Dev users
+  if (userDetails?.role === "Admin" || userDetails?.role === "Dev") {
+    tabs.push({ id: "admin", label: "Admin" });
+  }
+  
+  // Add Developer tab only for Dev users
+  if (userDetails?.role === "Dev") {
+    tabs.push({ id: "developer", label: "Developer" });
+  }
 
   return (
     <div>
@@ -201,7 +339,7 @@ export default function Settings() {
           </nav>
         </div>
 
-        <div className="p-6">
+        <div className="p-6 relative">
           {activeTab === "profile" && (
             <div className="max-w-2xl">
               <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
@@ -328,6 +466,112 @@ export default function Settings() {
               <p className="text-gray-600 dark:text-gray-400">
                 Application preferences coming soon...
               </p>
+            </div>
+          )}
+
+          {activeTab === "admin" && (userDetails?.role === "Admin" || userDetails?.role === "Dev") && (
+            <div className="max-w-2xl">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                Admin Settings
+              </h3>
+              <div className="space-y-6">
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                    System Information
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600 dark:text-gray-400">Application Version:</span>
+                      <span className="text-gray-900 dark:text-white font-mono">{appConfig.version}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600 dark:text-gray-400">Environment:</span>
+                      <span className="text-gray-900 dark:text-white">
+                        {appConfig.isStaging ? "Staging" : "Production"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600 dark:text-gray-400">Current User Role:</span>
+                      <span className="text-gray-900 dark:text-white font-medium">
+                        {userDetails?.role}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                    Admin Actions
+                  </h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    Administrative functions and system management tools.
+                  </p>
+                  <div className="space-y-3">
+                    <Button variant="secondary" disabled>
+                      User Management (Coming Soon)
+                    </Button>
+                    <Button variant="secondary" disabled>
+                      System Logs (Coming Soon)
+                    </Button>
+                    <Button variant="secondary" disabled>
+                      Backup & Restore (Coming Soon)
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "developer" && userDetails?.role === "Dev" && (
+            <div className="max-w-2xl">
+              <div className="flex items-center gap-3 mb-6">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                  Developer Tools
+                </h3>
+                <span className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1 rounded">
+                  ⚠️ Dev mode active
+                </span>
+              </div>
+              
+              <div className="space-y-6">
+                <div>
+                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
+                    Feature Flags
+                  </h4>
+                  <div>
+                    {localFeatureFlags?.sort((a: FeatureFlag, b: FeatureFlag) => a.key.localeCompare(b.key)).map((flag: FeatureFlag) => (
+                      <FeatureFlagItem 
+                        key={flag.id} 
+                        flag={flag} 
+                        onToggle={handleFeatureFlagToggle}
+                        disabled={isSaving}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Save button and indicator - positioned absolute to parent container */}
+          {activeTab === "developer" && userDetails?.role === "Dev" && (
+            <div className="absolute bottom-6 right-6 flex items-center gap-3">
+              {featureFlagsFetcher.state === "submitting" && (
+                <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-sm">Saving...</span>
+                </div>
+              )}
+              <Button
+                onClick={handleSaveFeatureFlags}
+                variant={hasUnsavedChanges ? "primary" : "secondary"}
+                disabled={!hasUnsavedChanges || featureFlagsFetcher.state === "submitting"}
+              >
+                Save Changes
+              </Button>
             </div>
           )}
         </div>

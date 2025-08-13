@@ -13,6 +13,8 @@ export type PartInput = {
   tolerance?: string | null
   finishing?: string | null
   thumbnailUrl?: string | null
+  partFileUrl?: string | null
+  partMeshUrl?: string | null
 }
 
 export type PartWithCounts = Part & {
