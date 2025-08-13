@@ -125,25 +125,26 @@ export default function PartsModal({
   };
 
   const handleChange = (field: string, value: string) => {
-    // Special handling for tolerance field to ensure ± is at the beginning
+    // Special handling for tolerance field
     if (field === "tolerance") {
-      // If value is empty or user deleted everything, reset to just ±
-      if (!value || value === "") {
-        setFormData((prev) => ({
-          ...prev,
-          tolerance: "±",
-        }));
-        return;
-      }
+      // Remove ± symbol from the value for processing
+      const cleanValue = value.replace(/±/g, "");
       
-      // If value doesn't start with ±, add it
-      if (!value.startsWith("±")) {
-        value = "±" + value;
-      }
+      // Check if the clean value contains any non-numeric characters (excluding decimal point, minus, and spaces)
+      const hasText = /[^0-9.\-\s]/.test(cleanValue);
       
-      // Don't allow just the ± symbol to be deleted (keep at least ±)
-      if (value.length < 1) {
-        value = "±";
+      if (hasText) {
+        // If there's text, don't add the ± symbol
+        value = cleanValue;
+      } else {
+        // If it's empty or only contains numbers/decimal/minus/spaces
+        if (cleanValue.trim() === "") {
+          // If empty, just show the ± symbol
+          value = "±";
+        } else {
+          // If it contains numbers, add ± at the beginning
+          value = "±" + cleanValue;
+        }
       }
     }
     

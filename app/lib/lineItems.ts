@@ -1,11 +1,20 @@
 import { db } from "./db/client";
-import { orderLineItems, type OrderLineItem, type NewOrderLineItem } from "./db/schema";
+import { orderLineItems, parts, type OrderLineItem, type NewOrderLineItem, type Part } from "./db/schema";
 import { eq } from "drizzle-orm";
 
-export async function getLineItemsByOrderId(orderId: number): Promise<OrderLineItem[]> {
+export type LineItemWithPart = {
+  lineItem: OrderLineItem;
+  part: Part | null;
+};
+
+export async function getLineItemsByOrderId(orderId: number): Promise<LineItemWithPart[]> {
   return await db
-    .select()
+    .select({
+      lineItem: orderLineItems,
+      part: parts
+    })
     .from(orderLineItems)
+    .leftJoin(parts, eq(orderLineItems.partId, parts.id))
     .where(eq(orderLineItems.orderId, orderId));
 }
 

@@ -14,7 +14,7 @@ import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
-import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem } from "~/lib/lineItems";
+import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart } from "~/lib/lineItems";
 import { getPartsByCustomerId } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
@@ -372,7 +372,8 @@ export default function OrderDetails() {
     setLineItemModalOpen(true);
   };
 
-  const handleEditLineItem = (lineItem: OrderLineItem) => {
+  const handleEditLineItem = (item: LineItemWithPart) => {
+    const lineItem = item.lineItem || item;
     setSelectedLineItem(lineItem);
     setLineItemMode("edit");
     setLineItemModalOpen(true);
@@ -706,13 +707,16 @@ export default function OrderDetails() {
                   <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 table-fixed">
                     <thead className="bg-gray-50 dark:bg-gray-700">
                       <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[8%]">
+                          Part
+                        </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">
                           Title
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[20%]">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[17%]">
                           Description
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%]">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[25%]">
                           Notes
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[8%]">
@@ -728,18 +732,40 @@ export default function OrderDetails() {
                       </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                      {lineItems.map((lineItem: OrderLineItem) => {
+                      {lineItems.map((item: LineItemWithPart) => {
+                        const lineItem = item.lineItem || item;
+                        const part = item.part;
                         const total = lineItem.quantity * parseFloat(lineItem.unitPrice || "0");
                         const isEditingNote = editingNoteId === lineItem.id;
                         return (
                           <tr key={lineItem.id}>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {part ? (
+                                part.thumbnailUrl ? (
+                                  <img 
+                                    src={part.thumbnailUrl} 
+                                    alt={part.partName || "Part thumbnail"}
+                                    className="w-12 h-12 object-cover rounded-lg border border-gray-200 dark:border-gray-600"
+                                    title={part.partName || "Part"}
+                                  />
+                                ) : (
+                                  <div className="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 flex items-center justify-center">
+                                    <span className="text-xs text-gray-400 dark:text-gray-500">No image</span>
+                                  </div>
+                                )
+                              ) : (
+                                <div className="w-12 h-12 flex items-center justify-center">
+                                  <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                                </div>
+                              )}
+                            </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                               {lineItem.name || "--"}
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                               {lineItem.description || "--"}
                             </td>
-                            <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 w-[30%] max-w-[30%]">
+                            <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 w-[25%] max-w-[25%]">
                               {isEditingNote ? (
                                 <div className="flex items-center space-x-2">
                                   <textarea
@@ -808,7 +834,7 @@ export default function OrderDetails() {
                             <td className="px-6 py-4 whitespace-nowrap text-right">
                               <div className="flex items-center justify-end space-x-2">
                                 <button
-                                  onClick={() => handleEditLineItem(lineItem)}
+                                  onClick={() => handleEditLineItem(item)}
                                   className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
                                   title="Edit"
                                 >
@@ -845,7 +871,7 @@ export default function OrderDetails() {
                     </tbody>
                     <tfoot className="bg-gray-50 dark:bg-gray-700">
                       <tr>
-                        <td colSpan={5} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
+                        <td colSpan={6} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
                           Subtotal:
                         </td>
                         <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
