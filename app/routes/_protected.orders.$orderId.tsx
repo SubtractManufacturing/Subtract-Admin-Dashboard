@@ -18,7 +18,7 @@ import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, 
 import { getPartsByCustomerId } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -391,7 +391,11 @@ export default function OrderDetails() {
     }
   };
 
-  const handleLineItemSubmit = (data: {
+  const handleCloseLineItemModal = useCallback(() => {
+    setLineItemModalOpen(false);
+  }, []);
+
+  const handleLineItemSubmit = useCallback((data: {
     name: string;
     description: string;
     quantity: number;
@@ -422,7 +426,7 @@ export default function OrderDetails() {
     lineItemFetcher.submit(formData, {
       method: "post",
     });
-  };
+  }, [lineItemMode, selectedLineItem, lineItemFetcher]);
 
   const handleStartEditNote = (lineItemId: number, currentNote: string | null) => {
     setEditingNoteId(lineItemId);
@@ -485,9 +489,10 @@ export default function OrderDetails() {
   };
 
   // Calculate total price from line items
-  const calculatedTotalPrice = lineItems.reduce((sum: number, item: OrderLineItem) => 
-    sum + (item.quantity * parseFloat(item.unitPrice || "0")), 0
-  ).toString();
+  const calculatedTotalPrice = lineItems.reduce((sum: number, item: LineItemWithPart) => {
+    const lineItem = item.lineItem || item;
+    return sum + (lineItem.quantity * parseFloat(lineItem.unitPrice || "0"));
+  }, 0).toString();
   
   // Calculate vendor pay from percentage
   const vendorPayPercentage = parseFloat(order.vendorPay || "70");
@@ -1071,7 +1076,7 @@ export default function OrderDetails() {
       {/* Line Item Modal */}
       <LineItemModal
         isOpen={lineItemModalOpen}
-        onClose={() => setLineItemModalOpen(false)}
+        onClose={handleCloseLineItemModal}
         onSubmit={handleLineItemSubmit}
         lineItem={selectedLineItem}
         mode={lineItemMode}

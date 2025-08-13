@@ -38,7 +38,11 @@ export default function LineItemModal({
     unitPrice: "",
     partId: null as string | null,
   });
-  const [quantityError, setQuantityError] = useState(false);
+  const [errors, setErrors] = useState({
+    name: "",
+    unitPrice: "",
+    quantity: "",
+  });
   const [showPartSelection, setShowPartSelection] = useState(false);
 
   useEffect(() => {
@@ -60,7 +64,7 @@ export default function LineItemModal({
           partId: null,
         });
       }
-      setQuantityError(false);
+      setErrors({ name: "", unitPrice: "", quantity: "" });
     }
   }, [isOpen, lineItem, mode]);
 
@@ -73,7 +77,7 @@ export default function LineItemModal({
       unitPrice: "",
       partId: null,
     });
-    setQuantityError(false);
+    setErrors({ name: "", unitPrice: "", quantity: "" });
     setShowPartSelection(false);
     onClose();
   };
@@ -81,10 +85,43 @@ export default function LineItemModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Validate all required fields
+    const newErrors = {
+      name: "",
+      unitPrice: "",
+      quantity: "",
+    };
+    
+    let hasErrors = false;
+    
+    // Validate name (title)
+    if (!formData.name || formData.name.trim() === "") {
+      newErrors.name = "Title is required";
+      hasErrors = true;
+    }
+    
+    // Validate unit price
+    if (!formData.unitPrice || formData.unitPrice === "") {
+      newErrors.unitPrice = "Unit price is required";
+      hasErrors = true;
+    } else if (parseFloat(formData.unitPrice) < 0) {
+      newErrors.unitPrice = "Unit price must be positive";
+      hasErrors = true;
+    }
+    
     // Validate quantity
     const qty = typeof formData.quantity === 'string' ? parseInt(formData.quantity) : formData.quantity;
-    if (!qty || qty < 1) {
-      setQuantityError(true);
+    if (!formData.quantity || formData.quantity === "") {
+      newErrors.quantity = "Quantity is required";
+      hasErrors = true;
+    } else if (!qty || qty < 1) {
+      newErrors.quantity = "Quantity must be at least 1";
+      hasErrors = true;
+    }
+    
+    setErrors(newErrors);
+    
+    if (hasErrors) {
       return;
     }
     
@@ -100,7 +137,7 @@ export default function LineItemModal({
       unitPrice: "",
       partId: null,
     });
-    setQuantityError(false);
+    setErrors({ name: "", unitPrice: "", quantity: "" });
     onClose();
   };
 
@@ -109,6 +146,14 @@ export default function LineItemModal({
       ...prev,
       [field]: value,
     }));
+    
+    // Clear error for this field when user starts typing
+    if (errors[field as keyof typeof errors]) {
+      setErrors((prev) => ({
+        ...prev,
+        [field]: "",
+      }));
+    }
   };
 
   const handlePartSelect = (part: Part) => {
@@ -158,6 +203,7 @@ export default function LineItemModal({
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange("name", e.target.value)}
           required
           placeholder="Enter line item title"
+          error={errors.name}
         />
 
         <TextareaField
@@ -176,14 +222,10 @@ export default function LineItemModal({
               name="quantity"
               type="number"
               value={formData.quantity.toString()}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                const value = e.target.value;
-                handleChange("quantity", value);
-                setQuantityError(value === "" || parseInt(value) < 1);
-              }}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange("quantity", e.target.value)}
               required
               min={1}
-              error={quantityError ? "Quantity must be at least 1" : undefined}
+              error={errors.quantity}
             />
           </div>
 
@@ -197,6 +239,7 @@ export default function LineItemModal({
             min={0}
             step="0.01"
             placeholder="0.00"
+            error={errors.unitPrice}
           />
         </div>
 

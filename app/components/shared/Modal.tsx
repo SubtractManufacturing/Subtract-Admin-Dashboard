@@ -14,6 +14,14 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50 }:
   const modalRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   
+  // Focus modal only when it first opens
+  useEffect(() => {
+    if (isOpen && modalRef.current) {
+      modalRef.current.focus()
+    }
+  }, [isOpen])
+  
+  // Handle events separately to avoid re-running on onClose changes
   useEffect(() => {
     if (!isOpen) return
     
@@ -46,9 +54,6 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50 }:
     
     document.addEventListener('keydown', handleEscape)
     document.addEventListener('mousedown', handleClickOutside)
-    
-    // Focus the modal when it opens
-    modalRef.current?.focus()
     
     return () => {
       document.removeEventListener('keydown', handleEscape)
