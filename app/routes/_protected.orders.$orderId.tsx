@@ -707,13 +707,10 @@ export default function OrderDetails() {
                   <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 table-fixed">
                     <thead className="bg-gray-50 dark:bg-gray-700">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[8%]">
-                          Part
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[25%]">
+                          Item
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">
-                          Title
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[17%]">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[20%]">
                           Description
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[25%]">
@@ -740,27 +737,43 @@ export default function OrderDetails() {
                         return (
                           <tr key={lineItem.id}>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              {part ? (
-                                part.thumbnailUrl ? (
-                                  <img 
-                                    src={part.thumbnailUrl} 
-                                    alt={part.partName || "Part thumbnail"}
-                                    className="w-12 h-12 object-cover rounded-lg border border-gray-200 dark:border-gray-600"
-                                    title={part.partName || "Part"}
-                                  />
-                                ) : (
-                                  <div className="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 flex items-center justify-center">
-                                    <span className="text-xs text-gray-400 dark:text-gray-500">No image</span>
-                                  </div>
-                                )
-                              ) : (
-                                <div className="w-12 h-12 flex items-center justify-center">
-                                  <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                              <div className="flex items-center gap-3">
+                                {part ? (
+                                  part.thumbnailUrl ? (
+                                    <img
+                                      src={part.thumbnailUrl}
+                                      alt={`${part.partName || lineItem.name} thumbnail`}
+                                      className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0"
+                                    />
+                                  ) : (
+                                    <div className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                                      <svg
+                                        className="h-5 w-5 text-gray-400 dark:text-gray-500"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                        />
+                                      </svg>
+                                    </div>
+                                  )
+                                ) : null}
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                    {lineItem.name || "--"}
+                                  </span>
+                                  {part && (
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      Part: {part.partName}
+                                    </span>
+                                  )}
                                 </div>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
-                              {lineItem.name || "--"}
+                              </div>
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                               {lineItem.description || "--"}
@@ -871,7 +884,7 @@ export default function OrderDetails() {
                     </tbody>
                     <tfoot className="bg-gray-50 dark:bg-gray-700">
                       <tr>
-                        <td colSpan={6} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
+                        <td colSpan={5} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
                           Subtotal:
                         </td>
                         <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
