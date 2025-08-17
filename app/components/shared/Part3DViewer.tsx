@@ -198,13 +198,74 @@ export function Part3DViewer({ partName, modelUrl, solidModelUrl }: Part3DViewer
     const downloadUrl = solidModelUrl || modelUrl;
     
     if (downloadUrl) {
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      const extension = downloadUrl.split(".").pop();
-      link.download = `${partName || "part"}.${extension}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Extract just the original filename from the URL
+      const urlParts = downloadUrl.split('/');
+      const fullFilename = urlParts[urlParts.length - 1];
+      
+      let originalFilename = fullFilename;
+      
+      // Pattern: timestamp-part-uuid-originalname.ext
+      // Example: 1755410533104-part-8afdac98-47f4-48fa-a091-6980b17553e7-ThinkNas.step
+      // Use regex to match: digits-part-uuid pattern and extract everything after
+      // Allow for case-insensitive UUID matching
+      const partFileRegex = /^\d+-part-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
+      const partMeshRegex = /^\d+-part-mesh-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
+      
+      let match = fullFilename.match(partFileRegex);
+      
+      if (match) {
+        originalFilename = match[1];
+      } else {
+        match = fullFilename.match(partMeshRegex);
+        if (match) {
+          originalFilename = match[1];
+        }
+      }
+      
+      // If regex didn't match, try simpler approach - look for last occurrence of UUID pattern
+      if (originalFilename === fullFilename) {
+        // UUID pattern: 8-4-4-4-12 hex characters (case-insensitive)
+        const uuidIndex = fullFilename.search(/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}/i);
+        if (uuidIndex > 0) {
+          // Find the end of UUID (36 chars) and skip the dash after it
+          const afterUuid = uuidIndex + 36 + 1;
+          if (afterUuid < fullFilename.length) {
+            originalFilename = fullFilename.substring(afterUuid);
+          }
+        }
+      }
+      
+      // Final fallback
+      if (!originalFilename || originalFilename === fullFilename) {
+        const extension = downloadUrl.split(".").pop();
+        originalFilename = `${partName || "part"}.${extension}`;
+      }
+      
+      // Fetch the file and create a blob URL to ensure the download attribute works
+      fetch(downloadUrl)
+        .then(response => response.blob())
+        .then(blob => {
+          const blobUrl = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = blobUrl;
+          link.download = originalFilename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          // Clean up the blob URL
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+        })
+        .catch(error => {
+          console.error("Download failed:", error);
+          // Fallback to direct download
+          const link = document.createElement("a");
+          link.href = downloadUrl;
+          link.download = originalFilename;
+          link.target = "_blank";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        });
     }
   };
 

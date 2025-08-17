@@ -21,6 +21,10 @@ export function Part3DViewerModal({
   useEffect(() => {
     if (!isOpen) return;
     
+    // Prevent body scroll when modal is open
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
@@ -28,7 +32,12 @@ export function Part3DViewerModal({
     };
     
     document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
+    
+    // Cleanup function
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = originalOverflow;
+    };
   }, [isOpen, onClose]);
   
   if (!isOpen) return null;
