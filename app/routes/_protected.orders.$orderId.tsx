@@ -315,7 +315,7 @@ export default function OrderDetails() {
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>("");
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
-  const [selectedPart3D, setSelectedPart3D] = useState<{ partName?: string; modelUrl?: string } | null>(null);
+  const [selectedPart3D, setSelectedPart3D] = useState<{ partName?: string; modelUrl?: string; solidModelUrl?: string } | null>(null);
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const lineItemFetcher = useFetcher();
@@ -459,7 +459,8 @@ export default function OrderDetails() {
     if (part) {
       setSelectedPart3D({
         partName: part.partName,
-        modelUrl: part.partMeshUrl
+        modelUrl: part.partMeshUrl,
+        solidModelUrl: part.partFileUrl
       });
       setPart3DModalOpen(true);
     }
@@ -1161,6 +1162,7 @@ export default function OrderDetails() {
           }}
           partName={selectedPart3D.partName}
           modelUrl={selectedPart3D.modelUrl}
+          solidModelUrl={selectedPart3D.solidModelUrl}
         />
       )}
     </div>

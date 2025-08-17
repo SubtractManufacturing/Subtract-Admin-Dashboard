@@ -1242,6 +1242,7 @@ export default function CustomerDetails() {
         }}
         partName={selected3DPart?.partName || undefined}
         modelUrl={selected3DPart?.partMeshUrl || undefined}
+        solidModelUrl={selected3DPart?.partFileUrl || undefined}
       />
     </div>
   );

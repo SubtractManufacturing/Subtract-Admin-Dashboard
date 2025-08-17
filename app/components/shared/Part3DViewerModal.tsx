@@ -6,13 +6,15 @@ interface Part3DViewerModalProps {
   onClose: () => void;
   partName?: string;
   modelUrl?: string;
+  solidModelUrl?: string;
 }
 
 export function Part3DViewerModal({ 
   isOpen, 
   onClose, 
   partName,
-  modelUrl
+  modelUrl,
+  solidModelUrl
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   
@@ -63,7 +65,7 @@ export function Part3DViewerModal({
           </svg>
         </button>
         
-        <Part3DViewer partName={partName} modelUrl={modelUrl} />
+        <Part3DViewer partName={partName} modelUrl={modelUrl} solidModelUrl={solidModelUrl} />
       </div>
     </div>
   );
