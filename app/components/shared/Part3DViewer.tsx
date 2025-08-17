@@ -125,15 +125,15 @@ function Scene({ modelUrl, onLoad, onError }: { modelUrl?: string; onLoad?: () =
       <directionalLight position={[-10, -10, -5]} intensity={0.3} />
 
       <Grid
-        args={[20, 20]}
+        args={[40, 40]}
         cellSize={1}
         cellThickness={0.5}
         cellColor="#6b7280"
         sectionSize={5}
         sectionThickness={1}
         sectionColor="#374151"
-        fadeDistance={30}
-        fadeStrength={1}
+        fadeDistance={100}
+        fadeStrength={0.5}
         followCamera={false}
         infiniteGrid={true}
       />
