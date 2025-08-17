@@ -19,6 +19,7 @@ import { getPartsByCustomerId } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
 import { useState, useRef, useCallback } from "react";
+import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -313,6 +314,8 @@ export default function OrderDetails() {
   const [lineItemMode, setLineItemMode] = useState<"create" | "edit">("create");
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>("");
+  const [part3DModalOpen, setPart3DModalOpen] = useState(false);
+  const [selectedPart3D, setSelectedPart3D] = useState<{ partName?: string; modelUrl?: string } | null>(null);
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const lineItemFetcher = useFetcher();
@@ -450,6 +453,16 @@ export default function OrderDetails() {
   const handleCancelEditNote = () => {
     setEditingNoteId(null);
     setEditingNoteValue("");
+  };
+
+  const handleView3DModel = (part: any) => {
+    if (part) {
+      setSelectedPart3D({
+        partName: part.partName,
+        modelUrl: part.modelUrl
+      });
+      setPart3DModalOpen(true);
+    }
   };
 
 
@@ -671,8 +684,25 @@ export default function OrderDetails() {
 
             {/* Customer Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Customer Information</h3>
+                {customer && (
+                  <a
+                    href={`/customers/${customer.id}`}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 rounded-md transition-colors"
+                  >
+                    View Customer
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      fill="currentColor"
+                      viewBox="0 0 16 16"
+                    >
+                      <path fillRule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                    </svg>
+                  </a>
+                )}
               </div>
               <div className="p-6">
                 {customer ? (
@@ -748,10 +778,32 @@ export default function OrderDetails() {
                                     <img
                                       src={part.thumbnailUrl}
                                       alt={`${part.partName || lineItem.name} thumbnail`}
-                                      className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0"
+                                      className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                      onClick={() => handleView3DModel(part)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          handleView3DModel(part);
+                                        }
+                                      }}
+                                      role="button"
+                                      tabIndex={0}
+                                      title="Click to view 3D model"
                                     />
                                   ) : (
-                                    <div className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                                    <div 
+                                      className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                                      onClick={() => handleView3DModel(part)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          handleView3DModel(part);
+                                        }
+                                      }}
+                                      role="button"
+                                      tabIndex={0}
+                                      title="Click to view 3D model"
+                                    >
                                       <svg
                                         className="h-5 w-5 text-gray-400 dark:text-gray-500"
                                         fill="none"
@@ -927,8 +979,23 @@ export default function OrderDetails() {
           {/* Vendor Information */}
           {vendor && (
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Vendor Information</h3>
+                <a
+                  href={`/vendors/${vendor.id}`}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 rounded-md transition-colors"
+                >
+                  View Vendor
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    fill="currentColor"
+                    viewBox="0 0 16 16"
+                  >
+                    <path fillRule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                  </svg>
+                </a>
               </div>
               <div className="p-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -1083,6 +1150,19 @@ export default function OrderDetails() {
         customerId={order.customerId}
         parts={parts}
       />
+      
+      {/* 3D Viewer Modal */}
+      {selectedPart3D && (
+        <Part3DViewerModal
+          isOpen={part3DModalOpen}
+          onClose={() => {
+            setPart3DModalOpen(false);
+            setSelectedPart3D(null);
+          }}
+          partName={selectedPart3D.partName}
+          modelUrl={selectedPart3D.modelUrl}
+        />
+      )}
     </div>
   );
 }
