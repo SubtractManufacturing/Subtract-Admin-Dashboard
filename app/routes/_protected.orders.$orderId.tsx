@@ -459,7 +459,7 @@ export default function OrderDetails() {
     if (part) {
       setSelectedPart3D({
         partName: part.partName,
-        modelUrl: part.modelUrl
+        modelUrl: part.partMeshUrl
       });
       setPart3DModalOpen(true);
     }
