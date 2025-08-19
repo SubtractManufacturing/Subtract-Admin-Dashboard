@@ -1108,10 +1108,16 @@ export default function CustomerDetails() {
                                 <img
                                   src={part.thumbnailUrl}
                                   alt={`${part.partName} thumbnail`}
-                                  className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0"
+                                  className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => handleView3DPart(part)}
+                                  title="View 3D model"
                                 />
                               ) : (
-                                <div className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <div 
+                                  className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                                  onClick={() => handleView3DPart(part)}
+                                  title="View 3D model"
+                                >
                                   <svg
                                     className="h-5 w-5 text-gray-400 dark:text-gray-500"
                                     fill="none"
@@ -1146,21 +1152,6 @@ export default function CustomerDetails() {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right">
                             <div className="flex items-center justify-end space-x-2">
-                              <button
-                                onClick={() => handleView3DPart(part)}
-                                className="p-1.5 text-white bg-purple-600 rounded hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600 transition-colors duration-150"
-                                title="View 3D"
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  width="16"
-                                  height="16"
-                                  fill="currentColor"
-                                  viewBox="0 0 16 16"
-                                >
-                                  <path d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0v6h8V1H4zm8 8H4v6h8V9zM1 1v2h2V1H1zm2 3H1v2h2V4zM1 7v2h2V7H1zm2 3H1v2h2v-2zm-2 3v2h2v-2H1zM15 1h-2v2h2V1zm-2 3v2h2V4h-2zm2 3h-2v2h2V7zm-2 3v2h2v-2h-2zm2 3h-2v2h2v-2z"/>
-                                </svg>
-                              </button>
                               <button
                                 onClick={() => handleEditPart(part)}
                                 className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
