@@ -9,7 +9,7 @@ import {
   Bounds,
   useBounds,
 } from "@react-three/drei";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, useRef } from "react";
 import { useTheme } from "~/contexts/ThemeContext";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -20,6 +20,8 @@ interface Part3DViewerProps {
   partName?: string;
   modelUrl?: string;
   solidModelUrl?: string;
+  partId?: string;
+  onThumbnailUpdate?: (thumbnailUrl: string) => void;
 }
 
 function Model3D({
@@ -146,7 +148,7 @@ function Scene({
         enableZoom={true}
         enableRotate={true}
         minDistance={2}
-        maxDistance={50}
+        maxDistance={200}
         target={[0, 0, 0]}
       />
 
@@ -183,12 +185,15 @@ function Scene({
   );
 }
 
-export function Part3DViewer({ partName, modelUrl, solidModelUrl }: Part3DViewerProps) {
+export function Part3DViewer({ partName, modelUrl, solidModelUrl, partId, onThumbnailUpdate }: Part3DViewerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
+  const [isCameraMode, setIsCameraMode] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
   const { theme } = useTheme();
   const isLightMode = theme === "light";
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // If no mesh URL, show empty state
   if (!modelUrl) {
@@ -203,6 +208,60 @@ export function Part3DViewer({ partName, modelUrl, solidModelUrl }: Part3DViewer
       </div>
     );
   }
+
+  const handleCaptureThumbnail = async () => {
+    if (!canvasRef.current || !partId) {
+      console.error("Cannot capture thumbnail: missing canvas or partId");
+      return;
+    }
+
+    setIsCapturing(true);
+
+    try {
+      // Get the canvas element and capture it as a blob
+      const canvas = canvasRef.current;
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          console.error("Failed to capture screenshot");
+          setIsCapturing(false);
+          return;
+        }
+
+        // Create FormData for upload
+        const formData = new FormData();
+        const filename = `thumbnail-${partId || 'part'}-${Date.now()}.png`;
+        formData.append('file', blob, filename);
+
+        // Upload the thumbnail using Remix resource route
+        const response = await fetch(`/parts/${partId}/thumbnail`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (response.ok) {
+          const { thumbnailUrl } = await response.json();
+          
+          // Call the callback to update the part's thumbnail
+          if (onThumbnailUpdate) {
+            onThumbnailUpdate(thumbnailUrl);
+          }
+          
+          // Exit camera mode after successful capture
+          setIsCameraMode(false);
+          setIsCapturing(false);
+          
+          // Show success feedback (you might want to add a toast notification here)
+          console.log('Thumbnail captured and uploaded successfully');
+        } else {
+          console.error('Failed to upload thumbnail');
+          setIsCapturing(false);
+        }
+      }, 'image/png');
+    } catch (error) {
+      console.error('Error capturing thumbnail:', error);
+      setIsCapturing(false);
+    }
+  };
 
   const handleDownload = () => {
     // Prefer solid model for download, fall back to mesh if not available
@@ -301,6 +360,25 @@ export function Part3DViewer({ partName, modelUrl, solidModelUrl }: Part3DViewer
             <path d="M0 0h5v5H0V0zm6 0h5v5H6V0zm6 0h4v5h-4V0zM0 6h5v5H0V6zm6 0h5v5H6V6zm6 0h4v5h-4V6zM0 12h5v4H0v-4zm6 0h5v4H6v-4zm6 0h4v4h-4v-4z"/>
           </svg>
         </button>
+        {partId && (
+          <button
+            onClick={() => setIsCameraMode(!isCameraMode)}
+            disabled={isCapturing}
+            className={`p-1.5 ${isCameraMode ? 'bg-red-600 text-white' : isLightMode ? 'bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900' : 'bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white'} backdrop-blur-sm rounded transition-colors ${isCapturing ? 'opacity-50 cursor-not-allowed' : ''}`}
+            title={isCameraMode ? "Exit camera mode" : "Capture thumbnail"}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              fill="currentColor"
+              viewBox="0 0 16 16"
+            >
+              <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
+              <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/>
+            </svg>
+          </button>
+        )}
         <button
           onClick={handleDownload}
           className={`p-1.5 ${isLightMode ? 'text-blue-600 hover:bg-blue-50' : 'text-blue-400 hover:bg-blue-900/50'} rounded transition-colors`}
@@ -318,6 +396,41 @@ export function Part3DViewer({ partName, modelUrl, solidModelUrl }: Part3DViewer
           </svg>
         </button>
       </div>
+
+      {/* Camera Mode Capture Button */}
+      {isCameraMode && (
+        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20">
+          <button
+            onClick={handleCaptureThumbnail}
+            disabled={isCapturing}
+            className={`px-6 py-3 ${isCapturing ? 'bg-gray-600 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'} text-white font-semibold rounded-full shadow-lg transition-all transform ${!isCapturing && 'hover:scale-105'} flex items-center gap-2`}
+          >
+            {isCapturing ? (
+              <>
+                <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                Uploading...
+              </>
+            ) : (
+              <>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  fill="currentColor"
+                  viewBox="0 0 16 16"
+                >
+                  <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
+                  <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/>
+                </svg>
+                Capture Thumbnail
+              </>
+            )}
+          </button>
+          <div className="text-center mt-2 text-sm text-gray-400">
+            {isCapturing ? 'Processing thumbnail...' : 'Position the model and click to capture'}
+          </div>
+        </div>
+      )}
 
       {/* Loading overlay */}
       {isLoading && (
@@ -340,6 +453,7 @@ export function Part3DViewer({ partName, modelUrl, solidModelUrl }: Part3DViewer
       )}
 
       <Canvas 
+        ref={canvasRef}
         shadows 
         dpr={[1, 2]} 
         className="touch-none"
@@ -352,6 +466,12 @@ export function Part3DViewer({ partName, modelUrl, solidModelUrl }: Part3DViewer
           background: isLightMode 
             ? 'linear-gradient(to bottom, #f9fafb, #f3f4f6)' 
             : '#111827'
+        }}
+        onCreated={({ gl }) => {
+          // Store the renderer for screenshot capture
+          if (canvasRef.current) {
+            (canvasRef.current as unknown as HTMLCanvasElement) = gl.domElement;
+          }
         }}
       >
         <Suspense fallback={null}>

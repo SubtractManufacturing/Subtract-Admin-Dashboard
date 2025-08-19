@@ -1105,18 +1105,24 @@ export default function CustomerDetails() {
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center gap-3">
                               {part.thumbnailUrl ? (
-                                <img
-                                  src={part.thumbnailUrl}
-                                  alt={`${part.partName} thumbnail`}
-                                  className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                <button
                                   onClick={() => handleView3DPart(part)}
+                                  className="h-10 w-10 p-0 border-0 bg-transparent cursor-pointer"
                                   title="View 3D model"
-                                />
+                                  type="button"
+                                >
+                                  <img
+                                    src={part.thumbnailUrl}
+                                    alt={`${part.partName} thumbnail`}
+                                    className="h-full w-full object-cover rounded-lg border border-gray-200 dark:border-gray-600 hover:opacity-80 transition-opacity"
+                                  />
+                                </button>
                               ) : (
-                                <div 
-                                  className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                                <button
                                   onClick={() => handleView3DPart(part)}
+                                  className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0"
                                   title="View 3D model"
+                                  type="button"
                                 >
                                   <svg
                                     className="h-5 w-5 text-gray-400 dark:text-gray-500"
@@ -1131,7 +1137,7 @@ export default function CustomerDetails() {
                                       d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                                     />
                                   </svg>
-                                </div>
+                                </button>
                               )}
                               <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
                                 {part.partName || "--"}
@@ -1234,6 +1240,11 @@ export default function CustomerDetails() {
         partName={selected3DPart?.partName || undefined}
         modelUrl={selected3DPart?.partMeshUrl || undefined}
         solidModelUrl={selected3DPart?.partFileUrl || undefined}
+        partId={selected3DPart?.id}
+        onThumbnailUpdate={() => {
+          // Refresh the page to show the updated thumbnail
+          window.location.reload();
+        }}
       />
     </div>
   );

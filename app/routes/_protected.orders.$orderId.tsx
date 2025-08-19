@@ -315,7 +315,7 @@ export default function OrderDetails() {
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>("");
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
-  const [selectedPart3D, setSelectedPart3D] = useState<{ partName?: string; modelUrl?: string; solidModelUrl?: string } | null>(null);
+  const [selectedPart3D, setSelectedPart3D] = useState<{ partId?: string; partName?: string; modelUrl?: string; solidModelUrl?: string } | null>(null);
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const lineItemFetcher = useFetcher();
@@ -455,12 +455,13 @@ export default function OrderDetails() {
     setEditingNoteValue("");
   };
 
-  const handleView3DModel = (part: any) => {
+  const handleView3DModel = (part: { id: string; partName: string | null; partMeshUrl?: string | null; partFileUrl?: string | null }) => {
     if (part) {
       setSelectedPart3D({
-        partName: part.partName,
-        modelUrl: part.partMeshUrl,
-        solidModelUrl: part.partFileUrl
+        partId: part.id,
+        partName: part.partName || undefined,
+        modelUrl: part.partMeshUrl || undefined,
+        solidModelUrl: part.partFileUrl || undefined
       });
       setPart3DModalOpen(true);
     }
@@ -776,34 +777,24 @@ export default function OrderDetails() {
                               <div className="flex items-center gap-3">
                                 {part ? (
                                   part.thumbnailUrl ? (
-                                    <img
-                                      src={part.thumbnailUrl}
-                                      alt={`${part.partName || lineItem.name} thumbnail`}
-                                      className="h-10 w-10 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                    <button
                                       onClick={() => handleView3DModel(part)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter' || e.key === ' ') {
-                                          e.preventDefault();
-                                          handleView3DModel(part);
-                                        }
-                                      }}
-                                      role="button"
-                                      tabIndex={0}
+                                      className="h-10 w-10 p-0 border-0 bg-transparent cursor-pointer"
                                       title="Click to view 3D model"
-                                    />
+                                      type="button"
+                                    >
+                                      <img
+                                        src={part.thumbnailUrl}
+                                        alt={`${part.partName || lineItem.name} thumbnail`}
+                                        className="h-full w-full object-cover rounded-lg border border-gray-200 dark:border-gray-600 hover:opacity-80 transition-opacity"
+                                      />
+                                    </button>
                                   ) : (
-                                    <div 
-                                      className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                                    <button
                                       onClick={() => handleView3DModel(part)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter' || e.key === ' ') {
-                                          e.preventDefault();
-                                          handleView3DModel(part);
-                                        }
-                                      }}
-                                      role="button"
-                                      tabIndex={0}
+                                      className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0"
                                       title="Click to view 3D model"
+                                      type="button"
                                     >
                                       <svg
                                         className="h-5 w-5 text-gray-400 dark:text-gray-500"
@@ -818,7 +809,7 @@ export default function OrderDetails() {
                                           d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                                         />
                                       </svg>
-                                    </div>
+                                    </button>
                                   )
                                 ) : null}
                                 <div className="flex flex-col">
@@ -1163,6 +1154,11 @@ export default function OrderDetails() {
           partName={selectedPart3D.partName}
           modelUrl={selectedPart3D.modelUrl}
           solidModelUrl={selectedPart3D.solidModelUrl}
+          partId={selectedPart3D.partId}
+          onThumbnailUpdate={() => {
+            // Refresh the page to show the updated thumbnail
+            window.location.reload();
+          }}
         />
       )}
     </div>
