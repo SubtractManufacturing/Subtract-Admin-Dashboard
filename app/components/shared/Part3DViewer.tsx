@@ -9,7 +9,7 @@ import {
   Bounds,
   useBounds,
 } from "@react-three/drei";
-import { Suspense, useEffect, useState, useRef } from "react";
+import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useTheme } from "~/contexts/ThemeContext";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -22,6 +22,8 @@ interface Part3DViewerProps {
   solidModelUrl?: string;
   partId?: string;
   onThumbnailUpdate?: (thumbnailUrl: string) => void;
+  autoGenerateThumbnail?: boolean;
+  existingThumbnailUrl?: string;
 }
 
 function Model3D({
@@ -185,17 +187,80 @@ function Scene({
   );
 }
 
-export function Part3DViewer({ partName, modelUrl, solidModelUrl, partId, onThumbnailUpdate }: Part3DViewerProps) {
+export function Part3DViewer({ 
+  partName, 
+  modelUrl, 
+  solidModelUrl, 
+  partId, 
+  onThumbnailUpdate,
+  autoGenerateThumbnail = false,
+  existingThumbnailUrl
+}: Part3DViewerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [isCameraMode, setIsCameraMode] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [hasGeneratedThumbnail, setHasGeneratedThumbnail] = useState(false);
   const { theme } = useTheme();
   const isLightMode = theme === "light";
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // If no mesh URL, show empty state
+  const generateThumbnailSilently = useCallback(async () => {
+    if (!canvasRef.current || !partId) return;
+    
+    setHasGeneratedThumbnail(true);
+    
+    try {
+      const canvas = canvasRef.current;
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          console.error("Failed to capture automatic thumbnail");
+          return;
+        }
+
+        const formData = new FormData();
+        const filename = `thumbnail-${partId}-auto-${Date.now()}.png`;
+        formData.append('file', blob, filename);
+
+        const response = await fetch(`/parts/${partId}/thumbnail`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (response.ok) {
+          const { thumbnailUrl } = await response.json();
+          if (onThumbnailUpdate) {
+            onThumbnailUpdate(thumbnailUrl);
+          }
+          console.log('Automatic thumbnail generated successfully');
+        } else {
+          console.error('Failed to upload automatic thumbnail');
+        }
+      }, 'image/png');
+    } catch (error) {
+      console.error('Error generating automatic thumbnail:', error);
+    }
+  }, [partId, onThumbnailUpdate]);
+
+  // Auto-generate thumbnail after model loads if needed
+  useEffect(() => {
+    if (!isLoading && 
+        !hasGeneratedThumbnail && 
+        autoGenerateThumbnail && 
+        !existingThumbnailUrl && 
+        partId && 
+        canvasRef.current) {
+      // Wait a bit for the model to render properly
+      const timer = setTimeout(() => {
+        generateThumbnailSilently();
+      }, 1000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, hasGeneratedThumbnail, autoGenerateThumbnail, existingThumbnailUrl, partId, generateThumbnailSilently]);
+
+  // If no mesh URL, show empty state (moved after hooks)
   if (!modelUrl) {
     return (
       <div className="relative w-full h-full bg-gray-900 flex items-center justify-center">

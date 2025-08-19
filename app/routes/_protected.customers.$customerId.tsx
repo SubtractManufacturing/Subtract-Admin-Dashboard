@@ -2,10 +2,10 @@ import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseM
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
+import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
-import { getPartsByCustomerId, createPart, updatePart, archivePart, type PartInput } from "~/lib/parts";
+import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserUploadMesh } from "~/lib/featureFlags";
@@ -20,6 +20,7 @@ import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
 import PartsModal from "~/components/PartsModal";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 
 type CustomerOrder = {
   id: number;
@@ -192,12 +193,37 @@ async function handlePartsAction(
       const notes = formData.get("notes") as string;
       const meshFile = formData.get("meshFile") as File | null; // TEMPORARY
       const thumbnailFile = formData.get("thumbnailFile") as File | null;
+      const deleteThumbnail = formData.get("deleteThumbnail") === "true";
 
       if (!partId || !partName) {
         return json({ error: "Missing required fields" }, { status: 400 });
       }
 
-      let thumbnailUrl: string | undefined = undefined;
+      let thumbnailUrl: string | null | undefined = undefined;
+      
+      // Handle thumbnail deletion
+      if (deleteThumbnail) {
+        // Get the existing part to find the thumbnail URL
+        const existingPart = await getPart(partId);
+        if (existingPart?.thumbnailUrl) {
+          try {
+            // Extract S3 key from the thumbnail URL
+            const match = existingPart.thumbnailUrl.match(/part-thumbnails\/[^?]+/);
+            if (match) {
+              const s3Key = match[0];
+              // Delete from S3
+              await deleteFile(s3Key);
+              // Delete attachment record
+              await deleteAttachmentByS3Key(s3Key);
+              console.log(`Deleted thumbnail from S3: ${s3Key}`);
+            }
+          } catch (error) {
+            console.error('Failed to delete old thumbnail:', error);
+          }
+        }
+        // Set thumbnailUrl to null to clear it from the part
+        thumbnailUrl = null;
+      }
 
       // Handle thumbnail upload if provided
       if (thumbnailFile && thumbnailFile.size > 0) {
@@ -496,12 +522,28 @@ export default function CustomerDetails() {
   const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
   const [part3DViewerOpen, setPart3DViewerOpen] = useState(false);
   const [selected3DPart, setSelected3DPart] = useState<Part | null>(null);
+  const [thumbnailGeneratorData, setThumbnailGeneratorData] = useState<{ modelUrl: string; partId: string } | null>(null);
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const partsFetcher = useFetcher();
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check for parts that need thumbnail generation
+  useEffect(() => {
+    // Find the first part with a mesh but no thumbnail
+    const partNeedingThumbnail = parts.find(
+      (part: Part) => part.partMeshUrl && !part.thumbnailUrl && !thumbnailGeneratorData
+    );
+    
+    if (partNeedingThumbnail && partNeedingThumbnail.partMeshUrl) {
+      setThumbnailGeneratorData({
+        modelUrl: partNeedingThumbnail.partMeshUrl,
+        partId: partNeedingThumbnail.id
+      });
+    }
+  }, [parts, thumbnailGeneratorData]);
 
   const handleSaveInfo = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -645,6 +687,7 @@ export default function CustomerDetails() {
     modelFile?: File;
     meshFile?: File; // TEMPORARY
     thumbnailFile?: File;
+    deleteThumbnail?: boolean;
   }) => {
     const formData = new FormData();
     const intent = partsMode === "create" ? "createPart" : "updatePart";
@@ -669,6 +712,10 @@ export default function CustomerDetails() {
     
     if (data.thumbnailFile) {
       formData.append("thumbnailFile", data.thumbnailFile);
+    }
+    
+    if (data.deleteThumbnail) {
+      formData.append("deleteThumbnail", "true");
     }
     
     partsFetcher.submit(formData, {
@@ -1245,7 +1292,26 @@ export default function CustomerDetails() {
           // Refresh the page to show the updated thumbnail
           window.location.reload();
         }}
+        autoGenerateThumbnail={true}
+        existingThumbnailUrl={selected3DPart?.thumbnailUrl || undefined}
       />
+      
+      {/* Hidden Thumbnail Generator */}
+      {thumbnailGeneratorData && (
+        <HiddenThumbnailGenerator
+          modelUrl={thumbnailGeneratorData.modelUrl}
+          partId={thumbnailGeneratorData.partId}
+          onComplete={() => {
+            setThumbnailGeneratorData(null);
+            // Reload the page to show the new thumbnail
+            window.location.reload();
+          }}
+          onError={(error) => {
+            console.error('Thumbnail generation failed:', error);
+            setThumbnailGeneratorData(null);
+          }}
+        />
+      )}
     </div>
   );
 }

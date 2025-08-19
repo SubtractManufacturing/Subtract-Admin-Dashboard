@@ -315,7 +315,7 @@ export default function OrderDetails() {
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>("");
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
-  const [selectedPart3D, setSelectedPart3D] = useState<{ partId?: string; partName?: string; modelUrl?: string; solidModelUrl?: string } | null>(null);
+  const [selectedPart3D, setSelectedPart3D] = useState<{ partId?: string; partName?: string; modelUrl?: string; solidModelUrl?: string; thumbnailUrl?: string } | null>(null);
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const lineItemFetcher = useFetcher();
@@ -455,13 +455,14 @@ export default function OrderDetails() {
     setEditingNoteValue("");
   };
 
-  const handleView3DModel = (part: { id: string; partName: string | null; partMeshUrl?: string | null; partFileUrl?: string | null }) => {
+  const handleView3DModel = (part: { id: string; partName: string | null; partMeshUrl?: string | null; partFileUrl?: string | null; thumbnailUrl?: string | null }) => {
     if (part) {
       setSelectedPart3D({
         partId: part.id,
         partName: part.partName || undefined,
         modelUrl: part.partMeshUrl || undefined,
-        solidModelUrl: part.partFileUrl || undefined
+        solidModelUrl: part.partFileUrl || undefined,
+        thumbnailUrl: part.thumbnailUrl || undefined
       });
       setPart3DModalOpen(true);
     }
@@ -1159,6 +1160,8 @@ export default function OrderDetails() {
             // Refresh the page to show the updated thumbnail
             window.location.reload();
           }}
+          autoGenerateThumbnail={true}
+          existingThumbnailUrl={selectedPart3D.thumbnailUrl}
         />
       )}
     </div>

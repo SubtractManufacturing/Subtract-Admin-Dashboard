@@ -16,6 +16,7 @@ interface PartsModalProps {
     modelFile?: File;
     meshFile?: File; // TEMPORARY
     thumbnailFile?: File;
+    deleteThumbnail?: boolean;
   }) => void;
   part?: Part | null;
   mode: "create" | "edit";
@@ -41,6 +42,7 @@ export default function PartsModal({
   const [meshFile, setMeshFile] = useState<File | null>(null); // TEMPORARY
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
   const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
+  const [shouldDeleteThumbnail, setShouldDeleteThumbnail] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const meshInputRef = useRef<HTMLInputElement>(null); // TEMPORARY
@@ -60,6 +62,7 @@ export default function PartsModal({
       if (part.thumbnailUrl) {
         setThumbnailPreview(part.thumbnailUrl);
       }
+      setShouldDeleteThumbnail(false);
     } else {
       setFormData({
         partName: "",
@@ -72,6 +75,7 @@ export default function PartsModal({
       setMeshFile(null); // TEMPORARY
       setThumbnailFile(null);
       setThumbnailPreview(null);
+      setShouldDeleteThumbnail(false);
     }
   }, [part, mode]);
 
@@ -121,6 +125,7 @@ export default function PartsModal({
       modelFile: modelFile || undefined,
       meshFile: meshFile || undefined, // TEMPORARY
       thumbnailFile: thumbnailFile || undefined,
+      deleteThumbnail: shouldDeleteThumbnail,
     });
     onClose();
   };
@@ -269,6 +274,10 @@ export default function PartsModal({
     setThumbnailPreview(null);
     if (thumbnailInputRef.current) {
       thumbnailInputRef.current.value = "";
+    }
+    // If we're editing and there was an existing thumbnail, mark it for deletion
+    if (mode === "edit" && part?.thumbnailUrl) {
+      setShouldDeleteThumbnail(true);
     }
   };
 
