@@ -57,7 +57,7 @@ jobs:
             type=sha
 
       - name: Set Docker tags
-        id: tags
+        id: doctag
         run: |
           VERSION=${{ steps.version.outputs.version }}
           MAJOR=${{ steps.version.outputs.major }}
@@ -81,7 +81,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.doctag.outputs.tags }}
 
       - name: Generate summary
         run: |
@@ -91,5 +91,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.doctag.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
