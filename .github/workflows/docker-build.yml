@@ -81,7 +81,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: ${{ github.run_id }}
+          tags: ${{ steps.meta.outputs.tags }}
 
       - name: Generate summary
         run: |
@@ -91,5 +91,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
