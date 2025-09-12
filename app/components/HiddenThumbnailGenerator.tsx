@@ -203,7 +203,9 @@ export function HiddenThumbnailGenerator({
           <Center>
             <Model3D
               url={modelUrl}
-              onLoad={() => setIsModelLoaded(true)}
+              onLoad={() => {
+                setIsModelLoaded(true);
+              }}
               onError={(error) => {
                 console.error("Model loading error:", error);
                 onError?.(error);

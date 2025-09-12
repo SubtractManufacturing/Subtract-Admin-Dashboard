@@ -523,6 +523,7 @@ export default function CustomerDetails() {
   const [part3DViewerOpen, setPart3DViewerOpen] = useState(false);
   const [selected3DPart, setSelected3DPart] = useState<Part | null>(null);
   const [thumbnailGeneratorData, setThumbnailGeneratorData] = useState<{ modelUrl: string; partId: string } | null>(null);
+  const [failedThumbnailParts, setFailedThumbnailParts] = useState<Set<string>>(new Set());
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -532,18 +533,29 @@ export default function CustomerDetails() {
 
   // Check for parts that need thumbnail generation
   useEffect(() => {
-    // Find the first part with a mesh but no thumbnail
+    // Only check if we're not currently generating a thumbnail
+    if (thumbnailGeneratorData) return;
+    
+    // Find the first part with a mesh but no thumbnail that hasn't failed
+    // Only process parts with S3-based mesh URLs (starting with /attachments/)
+    // Supabase storage URLs require authentication and won't work for automatic generation
     const partNeedingThumbnail = parts.find(
-      (part: Part) => part.partMeshUrl && !part.thumbnailUrl && !thumbnailGeneratorData
+      (part: Part) => 
+        part.partMeshUrl && 
+        !part.thumbnailUrl && 
+        !failedThumbnailParts.has(part.id) &&
+        part.partMeshUrl.startsWith('/attachments/')
     );
     
     if (partNeedingThumbnail && partNeedingThumbnail.partMeshUrl) {
+      // For S3 URLs, we need to use the full URL with the domain
+      const fullUrl = `${window.location.origin}${partNeedingThumbnail.partMeshUrl}`;
       setThumbnailGeneratorData({
-        modelUrl: partNeedingThumbnail.partMeshUrl,
+        modelUrl: fullUrl,
         partId: partNeedingThumbnail.id
       });
     }
-  }, [parts, thumbnailGeneratorData]);
+  }, [parts, thumbnailGeneratorData, failedThumbnailParts]);
 
   const handleSaveInfo = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1308,6 +1320,10 @@ export default function CustomerDetails() {
           }}
           onError={(error) => {
             console.error('Thumbnail generation failed:', error);
+            // Add this part to the failed set to prevent retry
+            if (thumbnailGeneratorData) {
+              setFailedThumbnailParts(prev => new Set(prev).add(thumbnailGeneratorData.partId));
+            }
             setThumbnailGeneratorData(null);
           }}
         />
