@@ -2,6 +2,8 @@ import { db } from "./db/index.js"
 import { parts, partModels, partDrawings, attachments } from "./db/schema.js"
 import { eq, desc, ilike, or, and } from 'drizzle-orm'
 import type { Part } from "./db/schema.js"
+import { detectFileFormat, isConversionEnabled } from "./conversion-service.server.js"
+import { convertPartToMesh } from "./mesh-converter.server.js"
 
 export type { Part }
 
@@ -85,7 +87,14 @@ export async function createPart(partData: PartInput): Promise<Part> {
       })
       .returning()
 
-    return result[0]
+    const newPart = result[0]
+
+    // Trigger mesh conversion if applicable
+    if (newPart.partFileUrl && !newPart.partMeshUrl) {
+      await triggerMeshConversion(newPart.id, newPart.partFileUrl)
+    }
+
+    return newPart
   } catch (error) {
     console.error("Error creating part:", error);
     throw new Error(`Failed to create part: ${error}`)
@@ -103,7 +112,14 @@ export async function updatePart(id: string, partData: Partial<PartInput>): Prom
       .where(eq(parts.id, id))
       .returning()
 
-    return result[0]
+    const updatedPart = result[0]
+
+    // Trigger mesh conversion if model file was updated and no mesh exists
+    if (partData.partFileUrl && !updatedPart.partMeshUrl) {
+      await triggerMeshConversion(updatedPart.id, partData.partFileUrl)
+    }
+
+    return updatedPart
   } catch (error) {
     throw new Error(`Failed to update part: ${error}`)
   }
@@ -184,4 +200,30 @@ export async function getPartWithAttachments(partId: string) {
     console.error('Error fetching part with attachments:', error)
     return null
   }
+}
+
+/**
+ * Trigger mesh conversion for a part (non-blocking)
+ */
+async function triggerMeshConversion(partId: string, fileUrl: string) {
+  // Check if conversion is enabled
+  if (!isConversionEnabled()) {
+    console.log("Mesh conversion service not configured - skipping")
+    return
+  }
+
+  // Check if file is a BREP format
+  const filename = fileUrl.split('/').pop() || ''
+  const format = detectFileFormat(filename)
+  
+  if (format !== "brep") {
+    console.log(`File ${filename} is not a BREP format - skipping conversion`)
+    return
+  }
+
+  // Start conversion asynchronously
+  console.log(`Triggering mesh conversion for part ${partId}`)
+  convertPartToMesh(partId, fileUrl).catch((error) => {
+    console.error(`Failed to convert mesh for part ${partId}:`, error)
+  })
 }

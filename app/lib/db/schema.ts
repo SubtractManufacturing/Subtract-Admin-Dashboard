@@ -100,6 +100,15 @@ export const orders = pgTable("orders", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const meshConversionStatusEnum = pgEnum("mesh_conversion_status", [
+  "pending",
+  "queued", 
+  "in_progress",
+  "completed",
+  "failed",
+  "skipped"
+]);
+
 export const parts = pgTable("parts", {
   id: uuid("id").primaryKey().defaultRandom(),
   customerId: integer("customer_id").references(() => customers.id),
@@ -111,6 +120,11 @@ export const parts = pgTable("parts", {
   thumbnailUrl: text("thumbnail_url"),
   partFileUrl: text("part_file_url"), // Original CAD file (STEP, SLDPRT, etc.)
   partMeshUrl: text("part_mesh_url"), // Web-friendly 3D mesh (STL, OBJ, GLTF)
+  meshConversionStatus: text("mesh_conversion_status").default("pending"),
+  meshConversionError: text("mesh_conversion_error"),
+  meshConversionJobId: text("mesh_conversion_job_id"),
+  meshConversionStartedAt: timestamp("mesh_conversion_started_at"),
+  meshConversionCompletedAt: timestamp("mesh_conversion_completed_at"),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

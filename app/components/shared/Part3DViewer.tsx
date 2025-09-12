@@ -6,8 +6,6 @@ import {
   Environment,
   PerspectiveCamera,
   Center,
-  Bounds,
-  useBounds,
 } from "@react-three/drei";
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useTheme } from "~/contexts/ThemeContext";
@@ -39,13 +37,19 @@ function Model3D({
 }) {
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const bounds = useBounds();
 
   useEffect(() => {
     const loadModel = async () => {
       try {
         setError(null);
-        const extension = url.split(".").pop()?.toLowerCase();
+        // Extract the actual file extension, ignoring query parameters
+        let extension = url.split("?")[0].split(".").pop()?.toLowerCase();
+        
+        // If no extension found, try to extract from the path before query params
+        if (!extension) {
+          const pathMatch = url.match(/\.([a-z0-9]+)(?:\?|$)/i);
+          extension = pathMatch ? pathMatch[1].toLowerCase() : undefined;
+        }
 
         let loader;
         switch (extension) {
@@ -60,7 +64,7 @@ function Model3D({
             loader = new GLTFLoader();
             break;
           default:
-            throw new Error(`Unsupported file format: ${extension}`);
+            throw new Error(`Unsupported file format: ${extension || 'unknown'}`);
         }
 
         loader.load(
@@ -76,18 +80,24 @@ function Model3D({
                 setGeometry(mesh.geometry);
               }
             } else if (extension === "gltf" || extension === "glb") {
-              // GLTF loader returns a scene, extract the first mesh
-              const mesh = result.scene.children[0];
-              if (mesh && mesh.geometry) {
-                setGeometry(mesh.geometry);
+              // GLTF loader returns a scene with the full model
+              // Instead of extracting geometry, we'll render the entire scene
+              // For now, find the first mesh in the scene hierarchy
+              let foundMesh: any = null;
+              result.scene.traverse((child: any) => {
+                if (!foundMesh && child.isMesh && child.geometry) {
+                  foundMesh = child;
+                }
+              });
+              
+              if (foundMesh && foundMesh.geometry) {
+                setGeometry(foundMesh.geometry);
+              } else {
+                throw new Error("No mesh found in GLTF/GLB file");
               }
             }
 
-            // Fit camera to object with bounds
-            setTimeout(() => {
-              bounds.refresh().fit();
-              onLoad?.();
-            }, 100);
+            onLoad?.();
           },
           undefined,
           (error) => {
@@ -107,7 +117,7 @@ function Model3D({
     };
 
     loadModel();
-  }, [url, bounds, onLoad, onError]);
+  }, [url, onLoad, onError]);
 
   if (error) {
     // Display error as HTML text in Three.js scene
@@ -144,14 +154,19 @@ function Scene({
 }) {
   return (
     <>
-      <PerspectiveCamera makeDefault position={[5, 5, 5]} fov={50} />
+      <PerspectiveCamera makeDefault position={[10, 10, 10]} fov={50} />
       <OrbitControls
         enablePan={true}
         enableZoom={true}
         enableRotate={true}
-        minDistance={2}
-        maxDistance={200}
+        minDistance={1}
+        maxDistance={500}
         target={[0, 0, 0]}
+        makeDefault
+        dampingFactor={0.05}
+        enableDamping={true}
+        rotateSpeed={0.5}
+        panSpeed={0.5}
       />
 
       <ambientLight intensity={isLightMode ? 0.8 : 0.5} />
@@ -175,11 +190,9 @@ function Scene({
       )}
 
       {modelUrl && (
-        <Bounds fit clip observe margin={1.2}>
-          <Center>
-            <Model3D url={modelUrl} onLoad={onLoad} onError={onError} isLightMode={isLightMode} />
-          </Center>
-        </Bounds>
+        <Center>
+          <Model3D url={modelUrl} onLoad={onLoad} onError={onError} isLightMode={isLightMode} />
+        </Center>
       )}
 
       <Environment preset={isLightMode ? "city" : "studio"} />
@@ -202,9 +215,41 @@ export function Part3DViewer({
   const [isCameraMode, setIsCameraMode] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [hasGeneratedThumbnail, setHasGeneratedThumbnail] = useState(false);
+  const [signedModelUrl, setSignedModelUrl] = useState<string | undefined>();
   const { theme } = useTheme();
   const isLightMode = theme === "light";
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Fetch signed URL for mesh model if needed
+  useEffect(() => {
+    const fetchSignedUrl = async () => {
+      if (!modelUrl || !partId) {
+        setSignedModelUrl(modelUrl);
+        return;
+      }
+
+      // Check if this is a mesh URL that needs signing
+      if (modelUrl.includes('partMeshUrl') || modelUrl.includes('/mesh/') || modelUrl.includes('supabase')) {
+        try {
+          const response = await fetch(`/api/parts/${partId}/mesh`);
+          if (response.ok) {
+            const data = await response.json();
+            setSignedModelUrl(data.url);
+          } else {
+            console.error('Failed to get signed mesh URL');
+            setSignedModelUrl(modelUrl); // Fallback to original URL
+          }
+        } catch (error) {
+          console.error('Error fetching signed URL:', error);
+          setSignedModelUrl(modelUrl); // Fallback to original URL
+        }
+      } else {
+        setSignedModelUrl(modelUrl);
+      }
+    };
+
+    fetchSignedUrl();
+  }, [modelUrl, partId]);
 
   const generateThumbnailSilently = useCallback(async () => {
     if (!canvasRef.current || !partId) return;
@@ -274,6 +319,18 @@ export function Part3DViewer({
     );
   }
 
+  // Wait for signed URL to be fetched
+  if (!signedModelUrl) {
+    return (
+      <div className={`relative w-full h-full ${isLightMode ? 'bg-gray-50' : 'bg-gray-900'} flex items-center justify-center`}>
+        <div className="text-center">
+          <div className={`inline-block animate-spin rounded-full h-8 w-8 border-b-2 ${isLightMode ? 'border-gray-600' : 'border-gray-300'}`}></div>
+          <p className={`${isLightMode ? 'text-gray-600' : 'text-gray-400'} text-sm mt-2`}>Loading model...</p>
+        </div>
+      </div>
+    );
+  }
+
   const handleCaptureThumbnail = async () => {
     if (!canvasRef.current || !partId) {
       console.error("Cannot capture thumbnail: missing canvas or partId");
@@ -330,7 +387,7 @@ export function Part3DViewer({
 
   const handleDownload = () => {
     // Prefer solid model for download, fall back to mesh if not available
-    const downloadUrl = solidModelUrl || modelUrl;
+    const downloadUrl = solidModelUrl || signedModelUrl || modelUrl;
     
     if (downloadUrl) {
       // Extract just the original filename from the URL
@@ -541,7 +598,7 @@ export function Part3DViewer({
       >
         <Suspense fallback={null}>
           <Scene
-            modelUrl={modelUrl}
+            modelUrl={signedModelUrl}
             onLoad={() => setIsLoading(false)}
             onError={setLoadError}
             showGrid={showGrid}
