@@ -69,13 +69,13 @@ function Model3D({
 
         loader.load(
           url,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (result: any) => {
+          (result: THREE.BufferGeometry | THREE.Group | { scene: THREE.Group }) => {
             if (extension === "stl") {
-              setGeometry(result);
+              setGeometry(result as THREE.BufferGeometry);
             } else if (extension === "obj") {
               // OBJ loader returns a Group, extract the first mesh
-              const mesh = result.children[0];
+              const resultGroup = result as THREE.Group;
+              const mesh = resultGroup.children[0] as THREE.Mesh;
               if (mesh && mesh.geometry) {
                 setGeometry(mesh.geometry);
               }
@@ -83,15 +83,16 @@ function Model3D({
               // GLTF loader returns a scene with the full model
               // Instead of extracting geometry, we'll render the entire scene
               // For now, find the first mesh in the scene hierarchy
-              let foundMesh: any = null;
-              result.scene.traverse((child: any) => {
-                if (!foundMesh && child.isMesh && child.geometry) {
-                  foundMesh = child;
+              let foundGeometry: THREE.BufferGeometry | null = null;
+              (result as { scene: THREE.Group }).scene.traverse((child: THREE.Object3D) => {
+                if (!foundGeometry && 'isMesh' in child && child.isMesh && 'geometry' in child) {
+                  const mesh = child as THREE.Mesh;
+                  foundGeometry = mesh.geometry;
                 }
               });
               
-              if (foundMesh && foundMesh.geometry) {
-                setGeometry(foundMesh.geometry);
+              if (foundGeometry) {
+                setGeometry(foundGeometry);
               } else {
                 throw new Error("No mesh found in GLTF/GLB file");
               }

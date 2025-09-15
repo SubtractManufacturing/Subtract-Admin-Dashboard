@@ -1,7 +1,7 @@
 /* eslint-disable react/no-unknown-property */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
 import {
   Environment,
   Center,
@@ -184,7 +184,7 @@ export function HiddenThumbnailGenerator({
           antialias: true,
           preserveDrawingBuffer: true,
         }}
-        onCreated={({ gl, camera }) => {
+        onCreated={({ gl }) => {
           if (canvasRef.current) {
             (canvasRef.current as any) = gl.domElement;
           }

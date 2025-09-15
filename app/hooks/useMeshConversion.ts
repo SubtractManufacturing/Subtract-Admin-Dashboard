@@ -18,13 +18,28 @@ interface UseMeshConversionOptions {
   onError?: (error: string) => void;
 }
 
+interface ConversionStatus {
+  status: string | null;
+  error: string | null;
+  jobId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+interface ConversionResult {
+  success: boolean;
+  error?: string;
+  meshUrl?: string;
+  jobId?: string;
+}
+
 interface FetcherData {
-  conversion?: any;
+  conversion?: ConversionStatus;
   part?: {
     meshUrl?: string;
   };
   stats?: Record<string, number>;
-  results?: Record<string, any>;
+  results?: Record<string, ConversionResult>;
 }
 
 /**
@@ -57,12 +72,42 @@ export function useMeshConversion({
     onErrorRef.current = onError;
   }, [onComplete, onError]);
 
+  const startPolling = useCallback(() => {
+    if (!pollingIntervalRef.current) {
+      setState(prev => ({ ...prev, isPolling: true }));
+      
+      pollingIntervalRef.current = setInterval(() => {
+        fetcher.load(`/api/mesh-conversion/${partId}`);
+      }, pollingInterval);
+    }
+  }, [partId, pollingInterval, fetcher]);
+
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+      setState(prev => ({ ...prev, isPolling: false }));
+    }
+  }, []);
+
+  const startConversion = useCallback(() => {
+    const formData = new FormData();
+    formData.append("action", "convert");
+    
+    fetcher.submit(formData, {
+      method: "post",
+      action: `/api/mesh-conversion/${partId}`,
+    });
+
+    setState(prev => ({ ...prev, status: "queued" }));
+  }, [partId, fetcher]);
+
   // Load initial status
   useEffect(() => {
     if (partId) {
       fetcher.load(`/api/mesh-conversion/${partId}`);
     }
-  }, [partId]);
+  }, [partId, fetcher]);
 
   // Handle fetcher data updates
   useEffect(() => {
@@ -101,44 +146,14 @@ export function useMeshConversion({
         }
       }
     }
-  }, [fetcher.data]);
+  }, [fetcher.data, startPolling, stopPolling]);
 
   // Auto-start conversion if enabled
   useEffect(() => {
     if (autoStart && state.status === "pending" && fetcher.state === "idle") {
       startConversion();
     }
-  }, [autoStart, state.status, fetcher.state]);
-
-  const startPolling = useCallback(() => {
-    if (!pollingIntervalRef.current) {
-      setState(prev => ({ ...prev, isPolling: true }));
-      
-      pollingIntervalRef.current = setInterval(() => {
-        fetcher.load(`/api/mesh-conversion/${partId}`);
-      }, pollingInterval);
-    }
-  }, [partId, pollingInterval]);
-
-  const stopPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-      setState(prev => ({ ...prev, isPolling: false }));
-    }
-  }, []);
-
-  const startConversion = useCallback(() => {
-    const formData = new FormData();
-    formData.append("action", "convert");
-    
-    fetcher.submit(formData, {
-      method: "post",
-      action: `/api/mesh-conversion/${partId}`,
-    });
-
-    setState(prev => ({ ...prev, status: "queued" }));
-  }, [partId]);
+  }, [autoStart, state.status, fetcher.state, startConversion]);
 
   const retryConversion = useCallback(() => {
     const formData = new FormData();
@@ -154,11 +169,11 @@ export function useMeshConversion({
       status: "queued",
       error: null,
     }));
-  }, [partId]);
+  }, [partId, fetcher]);
 
   const checkStatus = useCallback(() => {
     fetcher.load(`/api/mesh-conversion/${partId}`);
-  }, [partId]);
+  }, [partId, fetcher]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -204,7 +219,7 @@ function calculateProgress(status: string | null): number {
 export function useBatchMeshConversion() {
   const fetcher = useFetcher<FetcherData>();
   const [stats, setStats] = useState<Record<string, number>>({});
-  const [results, setResults] = useState<Record<string, any>>({});
+  const [results, setResults] = useState<Record<string, ConversionResult>>({});
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
@@ -237,7 +252,7 @@ export function useBatchMeshConversion() {
       method: "post",
       action: "/api/mesh-conversion/batch",
     });
-  }, []);
+  }, [fetcher]);
 
   const convertPending = useCallback(() => {
     setIsProcessing(true);
@@ -250,7 +265,7 @@ export function useBatchMeshConversion() {
       method: "post",
       action: "/api/mesh-conversion/batch",
     });
-  }, []);
+  }, [fetcher]);
 
   const refreshStats = useCallback(() => {
     const formData = new FormData();
@@ -260,7 +275,7 @@ export function useBatchMeshConversion() {
       method: "post",
       action: "/api/mesh-conversion/batch",
     });
-  }, []);
+  }, [fetcher]);
 
   return {
     stats,

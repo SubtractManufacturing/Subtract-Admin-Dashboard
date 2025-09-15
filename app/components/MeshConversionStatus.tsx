@@ -1,13 +1,21 @@
 import { useEffect, useState } from "react";
 import { useFetcher } from "@remix-run/react";
 
+interface ConversionResponse {
+  job_id: string;
+  status: "pending" | "in_progress" | "completed" | "failed";
+  message?: string | null;
+  output_file?: string | null; 
+  error?: string | null;
+}
+
 interface ConversionStatus {
   status: string | null;
   error: string | null;
   jobId: string | null;
   startedAt: string | null;
   completedAt: string | null;
-  liveStatus?: any;
+  liveStatus?: ConversionResponse | null;
 }
 
 interface FetcherData {
@@ -84,7 +92,7 @@ export function MeshConversionStatus({
         clearInterval(interval);
       };
     }
-  }, [status.status, partId]);
+  }, [status.status, partId, fetcher]);
 
   // Cleanup on unmount
   useEffect(() => {

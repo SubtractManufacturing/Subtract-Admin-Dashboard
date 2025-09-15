@@ -16,9 +16,16 @@ interface BatchMeshConversionProps {
   className?: string;
 }
 
+interface ConversionResult {
+  success: boolean;
+  error?: string;
+  meshUrl?: string;
+  jobId?: string;
+}
+
 interface FetcherData {
   stats?: ConversionStats;
-  results?: Record<string, any>;
+  results?: Record<string, ConversionResult>;
   message?: string;
   success?: boolean;
 }
@@ -31,7 +38,7 @@ export function BatchMeshConversion({
   const fetcher = useFetcher<FetcherData>();
   const [isProcessing, setIsProcessing] = useState(false);
   const [stats, setStats] = useState<ConversionStats>({});
-  const [results, setResults] = useState<Record<string, any>>({});
+  const [results, setResults] = useState<Record<string, ConversionResult>>({});
 
   const handleConvertSelected = () => {
     if (!selectedPartIds || selectedPartIds.length === 0) {

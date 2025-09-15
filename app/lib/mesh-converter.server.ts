@@ -192,7 +192,14 @@ async function updatePartConversionStatus(
   jobId?: string,
   meshUrl?: string
 ) {
-  const updates: Record<string, any> = {
+  const updates: {
+    meshConversionStatus: string;
+    meshConversionError?: string | null;
+    meshConversionJobId?: string;
+    partMeshUrl?: string;
+    meshConversionStartedAt?: Date;
+    meshConversionCompletedAt?: Date;
+  } = {
     meshConversionStatus: status,
     meshConversionError: error,
   };

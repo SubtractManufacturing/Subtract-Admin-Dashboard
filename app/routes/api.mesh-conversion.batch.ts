@@ -2,10 +2,16 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { 
   batchConvertParts,
   findPartsNeedingConversion,
-  getConversionStats 
+  getConversionStats,
+  type MeshConversionResult 
 } from "~/lib/mesh-converter.server";
 import { isConversionEnabled } from "~/lib/conversion-service.server";
 import { requireAuth } from "~/lib/auth.server";
+
+interface PartRecord {
+  id: string;
+  [key: string]: unknown;
+}
 
 /**
  * POST /api/mesh-conversion/batch
@@ -54,7 +60,7 @@ export async function action({ request }: ActionFunctionArgs) {
         const results = await batchConvertParts(partIds);
         
         // Convert Map to object for JSON serialization
-        const resultsObj: Record<string, any> = {};
+        const resultsObj: Record<string, MeshConversionResult> = {};
         for (const [partId, result] of results) {
           resultsObj[partId] = result;
         }
@@ -79,11 +85,11 @@ export async function action({ request }: ActionFunctionArgs) {
           });
         }
 
-        const partIds = pendingParts.map((p: any) => p.id);
+        const partIds = pendingParts.map((p: PartRecord) => p.id);
         const results = await batchConvertParts(partIds);
 
         // Convert Map to object for JSON serialization
-        const resultsObj: Record<string, any> = {};
+        const resultsObj: Record<string, MeshConversionResult> = {};
         for (const [partId, result] of results) {
           resultsObj[partId] = result;
         }
