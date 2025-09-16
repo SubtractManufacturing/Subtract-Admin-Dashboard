@@ -17,8 +17,8 @@ RUN npm ci && \
 # Copy application code
 COPY . .
 
-# Build the application
-RUN npm run build
+# Clean any existing build artifacts and build fresh
+RUN rm -rf build && npm run build
 
 # Production stage
 FROM node:20-alpine AS production
