@@ -44,25 +44,13 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const { timeout = 5000, ...fetchOptions } = options;
 
-  // Create a promise that rejects after timeout
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => {
-      reject(new Error(`Request timeout after ${timeout}ms`));
-    }, timeout);
-  });
-
-  // Race between fetch and timeout
+  // For now, just use regular fetch without timeout
+  // The timeout was causing issues with the polyfill
   try {
-    const response = await Promise.race([
-      fetch(url, fetchOptions),
-      timeoutPromise
-    ]);
-    return response as Response;
+    const response = await fetch(url, fetchOptions);
+    return response;
   } catch (error) {
-    // If it's a timeout error, log it appropriately
-    if (error instanceof Error && error.message.includes('timeout')) {
-      console.error(`Request to ${url} timed out after ${timeout}ms`);
-    }
+    console.error(`Request to ${url} failed:`, error);
     throw error;
   }
 }
