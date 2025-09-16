@@ -2,11 +2,13 @@ import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseM
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, type Attachment } from "~/lib/attachments";
-import type { Vendor } from "~/lib/db/schema";
+import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
+import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
+import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { canUserUploadMesh } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -16,6 +18,9 @@ import { Notes } from "~/components/shared/Notes";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
+import PartsModal from "~/components/PartsModal";
+import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 
 type CustomerOrder = {
   id: number;
@@ -45,19 +50,250 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes] = await Promise.all([
+  const [orders, stats, notes, parts, canUploadMesh] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
-    getNotes("customer", customer.id.toString())
+    getNotes("customer", customer.id.toString()),
+    getPartsByCustomerId(customer.id),
+    canUserUploadMesh(userDetails.role)
   ]);
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, user, userDetails, appConfig }),
+    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh }),
     headers
   );
 }
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
+async function handlePartsAction(
+  formData: FormData,
+  intent: string,
+  customer: Customer,
+  customerId: string
+) {
+  try {
+    if (intent === "createPart") {
+      const partName = formData.get("partName") as string;
+      const material = formData.get("material") as string;
+      const tolerance = formData.get("tolerance") as string;
+      const finishing = formData.get("finishing") as string;
+      const notes = formData.get("notes") as string;
+      const modelFile = formData.get("modelFile") as File | null;
+      const meshFile = formData.get("meshFile") as File | null; // TEMPORARY
+      const thumbnailFile = formData.get("thumbnailFile") as File | null;
+
+      if (!partName) {
+        return json({ error: "Part name is required" }, { status: 400 });
+      }
+
+      let thumbnailUrl: string | null = null;
+
+      // Handle thumbnail upload first if provided
+      if (thumbnailFile && thumbnailFile.size > 0) {
+        try {
+          const arrayBuffer = await thumbnailFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-thumbnail-${Date.now()}-${thumbnailFile.name}`);
+
+          // Upload thumbnail to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: thumbnailFile.type || 'image/jpeg',
+            fileName: thumbnailFile.name,
+          });
+
+          // Create public URL for the thumbnail
+          thumbnailUrl = `/attachments/s3/${uploadResult.key}`;
+        } catch (error) {
+          console.error('Thumbnail upload error:', error);
+          // Continue without thumbnail on error
+        }
+      }
+
+      // Create the part with thumbnail URL
+      const part = await createPart({
+        customerId: customer.id,
+        partName,
+        material: material || null,
+        tolerance: tolerance || null,
+        finishing: finishing || null,
+        notes: notes || null,
+        thumbnailUrl,
+      });
+
+      // Handle 3D model file upload if provided
+      if (modelFile && modelFile.size > 0) {
+        try {
+          const arrayBuffer = await modelFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-${part.id}-${modelFile.name}`);
+
+          // Upload to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: modelFile.type || 'application/octet-stream',
+            fileName: modelFile.name,
+          });
+
+          // Create attachment record
+          const attachment = await createAttachment({
+            s3Bucket: uploadResult.bucket,
+            s3Key: uploadResult.key,
+            fileName: uploadResult.fileName,
+            contentType: uploadResult.contentType,
+            fileSize: uploadResult.size,
+          });
+
+          // Link to part as a 3D model
+          await linkAttachmentToPart(part.id, attachment.id);
+          
+          // Store the file URL in partFileUrl (CAD files only)
+          const fileUrl = `/attachments/s3/${uploadResult.key}`;
+          await updatePart(part.id.toString(), { partFileUrl: fileUrl });
+        } catch (error) {
+          console.error('Failed to upload 3D model:', error);
+        }
+      }
+      
+      // TEMPORARY: Handle mesh file upload separately
+      if (meshFile && meshFile.size > 0) {
+        try {
+          const arrayBuffer = await meshFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-mesh-${part.id}-${meshFile.name}`);
+
+          // Upload to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: meshFile.type || 'model/stl',
+            fileName: meshFile.name,
+          });
+
+          // Store the mesh URL in partMeshUrl
+          const meshUrl = `/attachments/s3/${uploadResult.key}`;
+          await updatePart(part.id.toString(), { partMeshUrl: meshUrl });
+        } catch (error) {
+          console.error('Failed to upload mesh file:', error);
+        }
+      }
+
+      return redirect(`/customers/${customerId}`);
+    }
+
+    if (intent === "updatePart") {
+      const partId = formData.get("partId") as string;
+      const partName = formData.get("partName") as string;
+      const material = formData.get("material") as string;
+      const tolerance = formData.get("tolerance") as string;
+      const finishing = formData.get("finishing") as string;
+      const notes = formData.get("notes") as string;
+      const meshFile = formData.get("meshFile") as File | null; // TEMPORARY
+      const thumbnailFile = formData.get("thumbnailFile") as File | null;
+      const deleteThumbnail = formData.get("deleteThumbnail") === "true";
+
+      if (!partId || !partName) {
+        return json({ error: "Missing required fields" }, { status: 400 });
+      }
+
+      let thumbnailUrl: string | null | undefined = undefined;
+      
+      // Handle thumbnail deletion
+      if (deleteThumbnail) {
+        // Get the existing part to find the thumbnail URL
+        const existingPart = await getPart(partId);
+        if (existingPart?.thumbnailUrl) {
+          try {
+            // Extract S3 key from the thumbnail URL
+            const match = existingPart.thumbnailUrl.match(/part-thumbnails\/[^?]+/);
+            if (match) {
+              const s3Key = match[0];
+              // Delete from S3
+              await deleteFile(s3Key);
+              // Delete attachment record
+              await deleteAttachmentByS3Key(s3Key);
+              console.log(`Deleted thumbnail from S3: ${s3Key}`);
+            }
+          } catch (error) {
+            console.error('Failed to delete old thumbnail:', error);
+          }
+        }
+        // Set thumbnailUrl to null to clear it from the part
+        thumbnailUrl = null;
+      }
+
+      // Handle thumbnail upload if provided
+      if (thumbnailFile && thumbnailFile.size > 0) {
+        try {
+          const arrayBuffer = await thumbnailFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-thumbnail-${Date.now()}-${thumbnailFile.name}`);
+
+          // Upload thumbnail to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: thumbnailFile.type || 'image/jpeg',
+            fileName: thumbnailFile.name,
+          });
+
+          // Create public URL for the thumbnail
+          thumbnailUrl = `/attachments/s3/${uploadResult.key}`;
+        } catch (error) {
+          console.error('Thumbnail upload error:', error);
+          // Continue without updating thumbnail on error
+        }
+      }
+
+      const updateData: Partial<PartInput> = {
+        partName,
+        material: material || null,
+        tolerance: tolerance || null,
+        finishing: finishing || null,
+        notes: notes || null,
+      };
+
+      // Only update thumbnailUrl if a new one was uploaded
+      if (thumbnailUrl !== undefined) {
+        updateData.thumbnailUrl = thumbnailUrl;
+      }
+
+      await updatePart(partId, updateData);
+
+      // TEMPORARY: Handle mesh file upload separately for updates
+      if (meshFile && meshFile.size > 0) {
+        try {
+          const arrayBuffer = await meshFile.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const key = generateFileKey(customer.id, `part-mesh-${partId}-${meshFile.name}`);
+
+          // Upload to S3
+          const uploadResult = await uploadFile({
+            key,
+            buffer,
+            contentType: meshFile.type || 'model/stl',
+            fileName: meshFile.name,
+          });
+
+          // Store the mesh URL in partMeshUrl
+          const meshUrl = `/attachments/s3/${uploadResult.key}`;
+          await updatePart(partId, { partMeshUrl: meshUrl });
+        } catch (error) {
+          console.error('Failed to upload mesh file:', error);
+        }
+      }
+
+      return redirect(`/customers/${customerId}`);
+    }
+
+    return json({ error: "Invalid intent" }, { status: 400 });
+  } catch (error) {
+    return json({ error: `Failed to process part: ${error}` }, { status: 500 });
+  }
+}
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { headers } = await requireAuth(request);
@@ -79,6 +315,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
 
     const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+    const intent = formData.get("intent") as string;
+    
+    // Check if this is a parts-related action
+    if (intent === "createPart" || intent === "updatePart") {
+      // Handle parts actions with multipart data
+      return handlePartsAction(formData, intent, customer, customerId);
+    }
+    
+    // Otherwise, it's a regular file upload
     const file = formData.get("file") as File;
 
     if (!file) {
@@ -241,6 +486,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ downloadUrl });
       }
 
+      // Parts actions are now handled in the multipart section above
+      // since they include file uploads
+
+      case "deletePart": {
+        const partId = formData.get("partId") as string;
+
+        if (!partId) {
+          return json({ error: "Missing part ID" }, { status: 400 });
+        }
+
+        await archivePart(partId);
+        // Return a redirect to refresh the page
+        return redirect(`/customers/${customerId}`);
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -251,16 +511,51 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
+  const [partsModalOpen, setPartsModalOpen] = useState(false);
+  const [selectedPart, setSelectedPart] = useState<Part | null>(null);
+  const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
+  const [part3DViewerOpen, setPart3DViewerOpen] = useState(false);
+  const [selected3DPart, setSelected3DPart] = useState<Part | null>(null);
+  const [thumbnailGeneratorData, setThumbnailGeneratorData] = useState<{ modelUrl: string; partId: string } | null>(null);
+  const [failedThumbnailParts, setFailedThumbnailParts] = useState<Set<string>>(new Set());
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
+  const partsFetcher = useFetcher();
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check for parts that need thumbnail generation
+  useEffect(() => {
+    // Only check if we're not currently generating a thumbnail
+    if (thumbnailGeneratorData) return;
+    
+    // Find the first part with a mesh but no thumbnail that hasn't failed
+    // Only process parts with S3-based mesh URLs (starting with /attachments/)
+    // Supabase storage URLs require authentication and won't work for automatic generation
+    const partNeedingThumbnail = parts.find(
+      (part: Part) => 
+        part.partMeshUrl && 
+        !part.thumbnailUrl && 
+        !failedThumbnailParts.has(part.id) &&
+        part.partMeshUrl.startsWith('/attachments/')
+    );
+    
+    if (partNeedingThumbnail && partNeedingThumbnail.partMeshUrl) {
+      // For S3 URLs, we need to use the full URL with the domain
+      const fullUrl = `${window.location.origin}${partNeedingThumbnail.partMeshUrl}`;
+      setThumbnailGeneratorData({
+        modelUrl: fullUrl,
+        partId: partNeedingThumbnail.id
+      });
+    }
+  }, [parts, thumbnailGeneratorData, failedThumbnailParts]);
 
   const handleSaveInfo = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -362,6 +657,85 @@ export default function CustomerDetails() {
         method: "post",
       });
     }
+  };
+
+  const handleAddPart = () => {
+    setSelectedPart(null);
+    setPartsMode("create");
+    setPartsModalOpen(true);
+  };
+
+  const handleEditPart = (part: Part) => {
+    setSelectedPart(part);
+    setPartsMode("edit");
+    setPartsModalOpen(true);
+  };
+
+  const handleView3DPart = (part: Part) => {
+    console.log('Part selected for 3D view:', part);
+    console.log('Part mesh URL:', part.partMeshUrl);
+    setSelected3DPart(part);
+    setPart3DViewerOpen(true);
+  };
+
+  const handleDeletePart = (partId: string) => {
+    if (confirm("Are you sure you want to delete this part?")) {
+      const formData = new FormData();
+      formData.append("intent", "deletePart");
+      formData.append("partId", partId);
+      
+      partsFetcher.submit(formData, {
+        method: "post",
+      });
+    }
+  };
+
+  const handlePartSubmit = (data: {
+    partName: string;
+    material: string;
+    tolerance: string;
+    finishing: string;
+    notes: string;
+    modelFile?: File;
+    meshFile?: File; // TEMPORARY
+    thumbnailFile?: File;
+    deleteThumbnail?: boolean;
+  }) => {
+    const formData = new FormData();
+    const intent = partsMode === "create" ? "createPart" : "updatePart";
+    formData.append("intent", intent);
+    formData.append("partName", data.partName);
+    formData.append("material", data.material);
+    formData.append("tolerance", data.tolerance);
+    formData.append("finishing", data.finishing);
+    formData.append("notes", data.notes);
+    
+    if (partsMode === "edit" && selectedPart) {
+      formData.append("partId", selectedPart.id);
+    }
+    
+    if (data.modelFile) {
+      formData.append("modelFile", data.modelFile);
+    }
+    
+    if (data.meshFile) {
+      formData.append("meshFile", data.meshFile); // TEMPORARY
+    }
+    
+    if (data.thumbnailFile) {
+      formData.append("thumbnailFile", data.thumbnailFile);
+    }
+    
+    if (data.deleteThumbnail) {
+      formData.append("deleteThumbnail", "true");
+    }
+    
+    partsFetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
+    
+    setPartsModalOpen(false);
   };
 
   const handleViewFile = (attachment: { id: string; fileName: string; contentType: string; fileSize: number | null }) => {
@@ -639,11 +1013,27 @@ export default function CustomerDetails() {
             </div>
           </div>
 
+          {/* Notes Section */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+            </div>
+            <div className="p-6">
+              <Notes 
+                entityType="customer" 
+                entityId={customer.id.toString()} 
+                initialNotes={notes}
+                currentUserId={user.id || user.email}
+                currentUserName={userDetails?.name || user.email}
+              />
+            </div>
+          </div>
+
           {/* Attachments Card */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Attachments</h3>
-              <Button onClick={handleFileUpload}>Upload File</Button>
+              <Button size="sm" onClick={handleFileUpload}>Upload File</Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -738,19 +1128,137 @@ export default function CustomerDetails() {
             </div>
           </div>
 
-          {/* Notes Section */}
+          {/* Parts Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Parts</h3>
+              <Button size="sm" onClick={handleAddPart}>Add Part</Button>
             </div>
             <div className="p-6">
-              <Notes 
-                entityType="customer" 
-                entityId={customer.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
+              {parts && parts.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead className="bg-gray-50 dark:bg-gray-700">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Part
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Material
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Tolerance
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Finishing
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                          Created
+                        </th>
+                        <th className="px-6 py-3 w-20"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                      {parts.map((part: Part) => (
+                        <tr key={part.id}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              {part.thumbnailUrl ? (
+                                <button
+                                  onClick={() => handleView3DPart(part)}
+                                  className="h-10 w-10 p-0 border-0 bg-transparent cursor-pointer"
+                                  title="View 3D model"
+                                  type="button"
+                                >
+                                  <img
+                                    src={part.thumbnailUrl}
+                                    alt={`${part.partName} thumbnail`}
+                                    className="h-full w-full object-cover rounded-lg border border-gray-200 dark:border-gray-600 hover:opacity-80 transition-opacity"
+                                  />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleView3DPart(part)}
+                                  className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0"
+                                  title="View 3D model"
+                                  type="button"
+                                >
+                                  <svg
+                                    className="h-5 w-5 text-gray-400 dark:text-gray-500"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                    />
+                                  </svg>
+                                </button>
+                              )}
+                              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                {part.partName || "--"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {part.material || "--"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {part.tolerance || "--"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {part.finishing || "--"}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {new Date(part.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right">
+                            <div className="flex items-center justify-end space-x-2">
+                              <button
+                                onClick={() => handleEditPart(part)}
+                                className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                                title="Edit"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="16"
+                                  height="16"
+                                  fill="currentColor"
+                                  viewBox="0 0 16 16"
+                                >
+                                  <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => handleDeletePart(part.id)}
+                                className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                                title="Delete"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="16"
+                                  height="16"
+                                  fill="currentColor"
+                                  viewBox="0 0 16 16"
+                                >
+                                  <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
+                  No parts added yet.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -768,6 +1276,56 @@ export default function CustomerDetails() {
           fileName={selectedFile.fileName}
           contentType={selectedFile.contentType}
           fileSize={selectedFile.fileSize}
+        />
+      )}
+      
+      {/* Parts Modal */}
+      <PartsModal
+        isOpen={partsModalOpen}
+        onClose={() => setPartsModalOpen(false)}
+        onSubmit={handlePartSubmit}
+        part={selectedPart}
+        mode={partsMode}
+        canUploadMesh={canUploadMesh}
+      />
+      
+      {/* 3D Viewer Modal */}
+      <Part3DViewerModal
+        isOpen={part3DViewerOpen}
+        onClose={() => {
+          setPart3DViewerOpen(false);
+          setSelected3DPart(null);
+        }}
+        partName={selected3DPart?.partName || undefined}
+        modelUrl={selected3DPart?.partMeshUrl || undefined}
+        solidModelUrl={selected3DPart?.partFileUrl || undefined}
+        partId={selected3DPart?.id}
+        onThumbnailUpdate={() => {
+          // Refresh the page to show the updated thumbnail
+          window.location.reload();
+        }}
+        autoGenerateThumbnail={true}
+        existingThumbnailUrl={selected3DPart?.thumbnailUrl || undefined}
+      />
+      
+      {/* Hidden Thumbnail Generator */}
+      {thumbnailGeneratorData && (
+        <HiddenThumbnailGenerator
+          modelUrl={thumbnailGeneratorData.modelUrl}
+          partId={thumbnailGeneratorData.partId}
+          onComplete={() => {
+            setThumbnailGeneratorData(null);
+            // Reload the page to show the new thumbnail
+            window.location.reload();
+          }}
+          onError={(error) => {
+            console.error('Thumbnail generation failed:', error);
+            // Add this part to the failed set to prevent retry
+            if (thumbnailGeneratorData) {
+              setFailedThumbnailParts(prev => new Set(prev).add(thumbnailGeneratorData.partId));
+            }
+            setThumbnailGeneratorData(null);
+          }}
         />
       )}
     </div>

@@ -1,5 +1,5 @@
 import { db } from "./db/index.js"
-import { attachments, orderAttachments, customerAttachments, vendorAttachments } from "./db/schema.js"
+import { attachments, orderAttachments, customerAttachments, vendorAttachments, partModels } from "./db/schema.js"
 import { eq, and } from 'drizzle-orm'
 import type { Attachment, NewAttachment } from "./db/schema.js"
 
@@ -39,6 +39,30 @@ export async function deleteAttachment(id: string): Promise<void> {
       .where(eq(attachments.id, id))
   } catch (error) {
     throw new Error(`Failed to delete attachment: ${error}`)
+  }
+}
+
+export async function getAttachmentByS3Key(s3Key: string): Promise<Attachment | null> {
+  try {
+    const result = await db
+      .select()
+      .from(attachments)
+      .where(eq(attachments.s3Key, s3Key))
+      .limit(1)
+
+    return result[0] || null
+  } catch (error) {
+    throw new Error(`Failed to get attachment by S3 key: ${error}`)
+  }
+}
+
+export async function deleteAttachmentByS3Key(s3Key: string): Promise<void> {
+  try {
+    await db
+      .delete(attachments)
+      .where(eq(attachments.s3Key, s3Key))
+  } catch (error) {
+    throw new Error(`Failed to delete attachment by S3 key: ${error}`)
   }
 }
 
@@ -144,6 +168,21 @@ export async function linkAttachmentToVendor(vendorId: number, attachmentId: str
       })
   } catch (error) {
     throw new Error(`Failed to link attachment to vendor: ${error}`)
+  }
+}
+
+// Part attachment functions (for 3D models)
+export async function linkAttachmentToPart(partId: string, attachmentId: string): Promise<void> {
+  try {
+    await db
+      .insert(partModels)
+      .values({
+        partId,
+        attachmentId,
+        version: 1,
+      })
+  } catch (error) {
+    throw new Error(`Failed to link attachment to part: ${error}`)
   }
 }
 

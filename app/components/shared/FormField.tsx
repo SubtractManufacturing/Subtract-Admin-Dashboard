@@ -25,7 +25,7 @@ export function InputField({ label, error, required, className = '', ...props }:
         {required && <span className="text-red-600 dark:text-red-400"> *</span>}
       </label>
       <input
-        className={`${formStyles.input} ${className}`}
+        className={`${formStyles.input} ${error ? 'border-red-500 dark:border-red-500 focus:ring-red-500 focus:border-red-500' : ''} ${className}`}
         {...props}
       />
       {error && <div className={formStyles.error}>{error}</div>}
