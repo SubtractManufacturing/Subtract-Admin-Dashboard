@@ -156,13 +156,24 @@ export async function submitConversion(
       timeout: CONVERSION_API_TIMEOUT,
     });
 
+    console.log(`Conversion API responded with status: ${response.status}`);
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Conversion failed:", response.status, errorText);
       return null;
     }
 
-    return await response.json();
+    // Read response text first to avoid stream issues
+    const responseText = await response.text();
+    console.log(`Conversion API response: ${responseText.substring(0, 200)}`);
+
+    try {
+      return JSON.parse(responseText);
+    } catch (e) {
+      console.error("Failed to parse conversion response:", e);
+      return null;
+    }
   } catch (error) {
     console.error("Conversion service error:", error);
     return null;
