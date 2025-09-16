@@ -35,6 +35,24 @@ const CONVERSION_API_TIMEOUT = parseInt(process.env.CONVERSION_API_TIMEOUT || "6
 const CONVERSION_POLLING_INTERVAL = parseInt(process.env.CONVERSION_POLLING_INTERVAL || "2000");
 
 /**
+ * Create a timeout signal for fetch requests
+ * This is a workaround for AbortSignal.timeout() compatibility issues with @remix-run/web-fetch
+ */
+function createTimeoutSignal(ms: number): AbortSignal {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Request timeout after ${ms}ms`));
+  }, ms);
+
+  // Clean up timeout if signal is aborted for other reasons
+  controller.signal.addEventListener('abort', () => {
+    clearTimeout(timeoutId);
+  });
+
+  return controller.signal;
+}
+
+/**
  * Check if conversion service is configured
  */
 export const isConversionEnabled = (): boolean => {
@@ -49,7 +67,7 @@ export async function checkConversionHealth(): Promise<boolean> {
 
   try {
     const response = await fetch(`${CONVERSION_API_URL}/health`, {
-      signal: AbortSignal.timeout(5000),
+      signal: createTimeoutSignal(5000),
     });
     return response.ok;
   } catch (error) {
@@ -66,7 +84,7 @@ export async function getSupportedFormats(): Promise<SupportedFormats | null> {
 
   try {
     const response = await fetch(`${CONVERSION_API_URL}/formats`, {
-      signal: AbortSignal.timeout(5000),
+      signal: createTimeoutSignal(5000),
     });
     
     if (!response.ok) {
@@ -132,7 +150,7 @@ export async function submitConversion(
     const response = await fetch(url, {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(CONVERSION_API_TIMEOUT),
+      signal: createTimeoutSignal(CONVERSION_API_TIMEOUT),
     });
 
     if (!response.ok) {
@@ -158,7 +176,7 @@ export async function checkConversionStatus(
 
   try {
     const response = await fetch(`${CONVERSION_API_URL}/status/${jobId}`, {
-      signal: AbortSignal.timeout(5000),
+      signal: createTimeoutSignal(5000),
     });
     
     if (!response.ok) {
@@ -183,7 +201,7 @@ export async function downloadConversionResult(
 
   try {
     const response = await fetch(`${CONVERSION_API_URL}/download/${jobId}`, {
-      signal: AbortSignal.timeout(CONVERSION_API_TIMEOUT),
+      signal: createTimeoutSignal(CONVERSION_API_TIMEOUT),
     });
     
     if (!response.ok) {
