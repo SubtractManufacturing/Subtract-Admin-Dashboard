@@ -41,7 +41,8 @@ const CONVERSION_POLLING_INTERVAL = parseInt(process.env.CONVERSION_POLLING_INTE
 function createTimeoutSignal(ms: number): AbortSignal {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    controller.abort(new Error(`Request timeout after ${ms}ms`));
+    // Don't pass an Error object - it causes issues with @remix-run/web-fetch
+    controller.abort();
   }, ms);
 
   // Clean up timeout if signal is aborted for other reasons
