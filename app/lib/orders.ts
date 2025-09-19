@@ -4,6 +4,7 @@ import { eq, desc, ne } from 'drizzle-orm'
 import type { Customer, Vendor, OrderLineItem } from "./db/schema.js"
 import { getNextOrderNumber } from "./number-generator.js"
 import { getOrderAttachments } from "./attachments.js"
+import { createEvent } from "./events.js"
 
 export type OrderWithRelations = {
   id: number
@@ -33,6 +34,11 @@ export type OrderInput = {
   vendorPay?: string | null
   vendorPayPercentage?: number
   shipDate?: Date | null
+}
+
+export type OrderEventContext = {
+  userId?: string
+  userEmail?: string
 }
 
 export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
@@ -162,18 +168,18 @@ export async function checkOrderNumberExists(orderNumber: string): Promise<boole
   }
 }
 
-export async function createOrder(orderData: OrderInput): Promise<OrderWithRelations> {
+export async function createOrder(orderData: OrderInput, eventContext?: OrderEventContext): Promise<OrderWithRelations> {
   try {
     // Use provided orderNumber or generate a new one
     const orderNumber = orderData.orderNumber || await getNextOrderNumber()
-    
+
     // Extract vendorPayPercentage and store it as vendorPay
     const { vendorPayPercentage, ...orderDataWithoutPercentage } = orderData
     delete orderDataWithoutPercentage.orderNumber
-    
+
     // Store the percentage in vendorPay field (e.g., "70" for 70%)
     const vendorPay = vendorPayPercentage ? vendorPayPercentage.toString() : "70"
-    
+
     const insertResult = await db
       .insert(orders)
       .values({
@@ -184,6 +190,24 @@ export async function createOrder(orderData: OrderInput): Promise<OrderWithRelat
       .returning()
 
     const newOrder = insertResult[0]
+
+    // Log event for order creation
+    await createEvent({
+      entityType: "order",
+      entityId: newOrder.id.toString(),
+      eventType: "order_created",
+      eventCategory: "system",
+      title: `Order #${orderNumber} created`,
+      description: `New order created with status: ${newOrder.status}`,
+      metadata: {
+        orderNumber,
+        status: newOrder.status,
+        customerId: newOrder.customerId,
+        vendorId: newOrder.vendorId
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
 
     const result = await db
       .select({
@@ -215,24 +239,68 @@ export async function createOrder(orderData: OrderInput): Promise<OrderWithRelat
   }
 }
 
-export async function updateOrder(id: number, orderData: Partial<OrderInput>): Promise<OrderWithRelations> {
+export async function updateOrder(id: number, orderData: Partial<OrderInput>, eventContext?: OrderEventContext): Promise<OrderWithRelations> {
   try {
+    // Get the current order for comparison
+    const currentOrder = await getOrder(id);
+    if (!currentOrder) {
+      throw new Error('Order not found');
+    }
+
     // Filter out null values for orderNumber since it's required in the database
     const { orderNumber, vendorPayPercentage, ...restData } = orderData;
-    
+
     // Convert vendorPayPercentage to vendorPay
     const vendorPay = vendorPayPercentage ? vendorPayPercentage.toString() : undefined;
-    
+
     const updateData = {
       ...restData,
       ...(orderNumber !== undefined && orderNumber !== null && { orderNumber }),
       ...(vendorPay !== undefined && { vendorPay })
     };
-    
+
     await db
       .update(orders)
       .set(updateData)
       .where(eq(orders.id, id))
+
+    // Log status change event if status was updated
+    if (orderData.status && orderData.status !== currentOrder.status) {
+      await createEvent({
+        entityType: "order",
+        entityId: id.toString(),
+        eventType: "status_change",
+        eventCategory: "status",
+        title: `Order status changed to ${orderData.status}`,
+        description: `Status changed from ${currentOrder.status} to ${orderData.status}`,
+        metadata: {
+          orderNumber: currentOrder.orderNumber,
+          previousStatus: currentOrder.status,
+          newStatus: orderData.status
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail,
+      })
+    }
+
+    // Log vendor assignment event
+    if (orderData.vendorId && orderData.vendorId !== currentOrder.vendorId) {
+      await createEvent({
+        entityType: "order",
+        entityId: id.toString(),
+        eventType: "vendor_assigned",
+        eventCategory: "manufacturing",
+        title: `Vendor assigned to order`,
+        description: `Vendor ID ${orderData.vendorId} assigned to order #${currentOrder.orderNumber}`,
+        metadata: {
+          orderNumber: currentOrder.orderNumber,
+          vendorId: orderData.vendorId,
+          previousVendorId: currentOrder.vendorId
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail,
+      })
+    }
 
     const result = await db
       .select({
@@ -274,12 +342,28 @@ export async function deleteOrder(id: number): Promise<void> {
   }
 }
 
-export async function archiveOrder(id: number): Promise<void> {
+export async function archiveOrder(id: number, eventContext?: OrderEventContext): Promise<void> {
   try {
-    await db
+    const [order] = await db
       .update(orders)
       .set({ status: 'Archived' })
       .where(eq(orders.id, id))
+      .returning()
+
+    // Log event for order archival
+    await createEvent({
+      entityType: "order",
+      entityId: id.toString(),
+      eventType: "order_archived",
+      eventCategory: "system",
+      title: `Order #${order.orderNumber} archived`,
+      description: `Order has been archived`,
+      metadata: {
+        orderNumber: order.orderNumber
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
   } catch (error) {
     throw new Error(`Failed to archive order: ${error}`)
   }

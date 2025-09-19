@@ -4,7 +4,7 @@ import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
 import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
-import type { Customer, CustomerInput } from "~/lib/customers"
+import type { Customer, CustomerInput, CustomerEventContext } from "~/lib/customers"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 import { getAppConfig } from "~/lib/config.server"
 
@@ -35,8 +35,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const { user, userDetails } = await requireAuth(request)
   const formData = await request.formData()
   const intent = formData.get("intent")
+
+  const eventContext: CustomerEventContext = {
+    userId: user?.id,
+    userEmail: user?.email || userDetails?.name || undefined,
+  }
 
   try {
     switch (intent) {
@@ -46,7 +52,7 @@ export async function action({ request }: ActionFunctionArgs) {
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
         }
-        await createCustomer(customerData)
+        await createCustomer(customerData, eventContext)
         break
       }
       case "update": {
@@ -56,12 +62,12 @@ export async function action({ request }: ActionFunctionArgs) {
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
         }
-        await updateCustomer(id, customerData)
+        await updateCustomer(id, customerData, eventContext)
         break
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
-        await archiveCustomer(id)
+        await archiveCustomer(id, eventContext)
         break
       }
     }

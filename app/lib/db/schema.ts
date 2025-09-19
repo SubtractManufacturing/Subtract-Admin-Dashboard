@@ -9,6 +9,8 @@ import {
   uuid,
   primaryKey,
   boolean,
+  jsonb,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const quoteStatusEnum = pgEnum("quote_status", [
@@ -237,6 +239,47 @@ export const featureFlags = pgTable("feature_flags", {
   updatedBy: text("updated_by"),
 });
 
+export const eventCategoryEnum = pgEnum("event_category", [
+  "status",
+  "document",
+  "financial",
+  "communication",
+  "system",
+  "quality",
+  "manufacturing",
+]);
+
+
+export const eventLogs = pgTable("event_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  // Polymorphic association
+  entityType: text("entity_type").notNull(), // 'order', 'customer', 'vendor', 'part', 'quote'
+  entityId: text("entity_id").notNull(),
+
+  // Event details
+  eventType: text("event_type").notNull(),
+  eventCategory: eventCategoryEnum("event_category").notNull(),
+
+  // Event data
+  title: text("title").notNull(),
+  description: text("description"),
+  metadata: jsonb("metadata"), // Additional structured data
+
+  // User tracking
+  userId: text("user_id").references(() => users.id),
+  userEmail: text("user_email"),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  entityIdx: index("event_logs_entity_idx").on(table.entityType, table.entityId),
+  timestampIdx: index("event_logs_timestamp_idx").on(table.createdAt),
+  categoryIdx: index("event_logs_category_idx").on(table.eventCategory),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Customer = typeof customers.$inferSelect;
@@ -271,3 +314,5 @@ export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
 export type NewFeatureFlag = typeof featureFlags.$inferInsert;
+export type EventLog = typeof eventLogs.$inferSelect;
+export type NewEventLog = typeof eventLogs.$inferInsert;

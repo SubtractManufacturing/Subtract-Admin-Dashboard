@@ -3,6 +3,7 @@ import { vendors, orders, customers } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
 import type { Vendor } from "./db/schema.js"
 import { getVendorAttachments } from "./attachments.js"
+import { createEvent } from "./events.js"
 
 export type { Vendor }
 
@@ -15,6 +16,11 @@ export type VendorInput = {
   address?: string | null
   notes?: string | null
   discordId?: string | null
+}
+
+export type VendorEventContext = {
+  userId?: string
+  userEmail?: string
 }
 
 export async function getVendors(): Promise<Vendor[]> {
@@ -46,20 +52,40 @@ export async function getVendor(id: number): Promise<Vendor | null> {
   }
 }
 
-export async function createVendor(vendorData: VendorInput): Promise<Vendor> {
+export async function createVendor(vendorData: VendorInput, eventContext?: VendorEventContext): Promise<Vendor> {
   try {
     const result = await db
       .insert(vendors)
       .values(vendorData)
       .returning()
 
-    return result[0]
+    const vendor = result[0]
+
+    // Log event for vendor creation
+    await createEvent({
+      entityType: "vendor",
+      entityId: vendor.id.toString(),
+      eventType: "vendor_created",
+      eventCategory: "system",
+      title: `Vendor "${vendor.displayName}" created`,
+      description: `New vendor added to the system`,
+      metadata: {
+        displayName: vendor.displayName,
+        companyName: vendor.companyName,
+        email: vendor.email,
+        phone: vendor.phone
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
+
+    return vendor
   } catch (error) {
     throw new Error(`Failed to create vendor: ${error}`)
   }
 }
 
-export async function updateVendor(id: number, vendorData: Partial<VendorInput>): Promise<Vendor> {
+export async function updateVendor(id: number, vendorData: Partial<VendorInput>, eventContext?: VendorEventContext): Promise<Vendor> {
   try {
     const result = await db
       .update(vendors)
@@ -67,7 +93,22 @@ export async function updateVendor(id: number, vendorData: Partial<VendorInput>)
       .where(eq(vendors.id, id))
       .returning()
 
-    return result[0]
+    const vendor = result[0]
+
+    // Log event for vendor update
+    await createEvent({
+      entityType: "vendor",
+      entityId: id.toString(),
+      eventType: "vendor_updated",
+      eventCategory: "system",
+      title: `Vendor information updated`,
+      description: `Vendor "${vendor.displayName}" details were updated`,
+      metadata: vendorData,
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
+
+    return vendor
   } catch (error) {
     throw new Error(`Failed to update vendor: ${error}`)
   }
@@ -83,12 +124,28 @@ export async function deleteVendor(id: number): Promise<void> {
   }
 }
 
-export async function archiveVendor(id: number): Promise<void> {
+export async function archiveVendor(id: number, eventContext?: VendorEventContext): Promise<void> {
   try {
-    await db
+    const [vendor] = await db
       .update(vendors)
       .set({ isArchived: true })
       .where(eq(vendors.id, id))
+      .returning()
+
+    // Log event for vendor archival
+    await createEvent({
+      entityType: "vendor",
+      entityId: id.toString(),
+      eventType: "vendor_archived",
+      eventCategory: "system",
+      title: `Vendor archived`,
+      description: `Vendor "${vendor.displayName}" has been archived`,
+      metadata: {
+        displayName: vendor.displayName
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
   } catch (error) {
     throw new Error(`Failed to archive vendor: ${error}`)
   }

@@ -51,6 +51,12 @@ export default function Navbar({ userName, userEmail, userInitials, version, isS
         >
           Vendors
         </Link>
+        <Link
+          to="/events"
+          className="text-white no-underline font-semibold transition-opacity hover:opacity-80"
+        >
+          Events
+        </Link>
         <div className="relative">
           <button
             ref={buttonRef}

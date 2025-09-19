@@ -4,7 +4,7 @@ import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
 import { getVendors, createVendor, updateVendor, archiveVendor } from "~/lib/vendors"
-import type { Vendor, VendorInput } from "~/lib/vendors"
+import type { Vendor, VendorInput, VendorEventContext } from "~/lib/vendors"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 import { getAppConfig } from "~/lib/config.server"
 
@@ -36,8 +36,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const { user, userDetails } = await requireAuth(request)
   const formData = await request.formData()
   const intent = formData.get("intent")
+
+  const eventContext: VendorEventContext = {
+    userId: user?.id,
+    userEmail: user?.email || userDetails?.name || undefined,
+  }
 
   try {
     switch (intent) {
@@ -52,7 +58,7 @@ export async function action({ request }: ActionFunctionArgs) {
           notes: formData.get("notes") as string || null,
           discordId: formData.get("discordId") as string || null,
         }
-        await createVendor(vendorData)
+        await createVendor(vendorData, eventContext)
         break
       }
       case "update": {
@@ -67,12 +73,12 @@ export async function action({ request }: ActionFunctionArgs) {
           notes: formData.get("notes") as string || null,
           discordId: formData.get("discordId") as string || null,
         }
-        await updateVendor(id, vendorData)
+        await updateVendor(id, vendorData, eventContext)
         break
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
-        await archiveVendor(id)
+        await archiveVendor(id, eventContext)
         break
       }
     }
