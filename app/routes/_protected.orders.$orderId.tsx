@@ -3,7 +3,7 @@ import { useLoaderData, useFetcher } from "@remix-run/react";
 import { getOrderByNumberWithAttachments } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
 import { getVendor } from "~/lib/vendors";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToOrder, unlinkAttachmentFromOrder, type Attachment } from "~/lib/attachments";
+import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToOrder, unlinkAttachmentFromOrder, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { shouldShowEventsInNav } from "~/lib/featureFlags";
@@ -14,7 +14,7 @@ import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
-import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
+import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart, type LineItemEventContext } from "~/lib/lineItems";
 import { getPartsByCustomerId } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
@@ -106,6 +106,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: file.name,
       });
 
+      // Create event context for attachment operations
+      const eventContext: AttachmentEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
       // Create attachment record
       const attachment = await createAttachment({
         s3Bucket: uploadResult.bucket,
@@ -113,10 +119,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: uploadResult.fileName,
         contentType: uploadResult.contentType,
         fileSize: uploadResult.size,
-      });
+      }, eventContext);
 
       // Link to order
-      await linkAttachmentToOrder(order.id, attachment.id);
+      await linkAttachmentToOrder(order.id, attachment.id, eventContext);
 
       // Return a redirect to refresh the page
       return redirect(`/orders/${orderNumber}`);
@@ -145,12 +151,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const note = await createNote({
           entityType: "order",
           entityId: order.id.toString(),
           content,
           createdBy,
-        });
+        }, noteEventContext);
 
         return withAuthHeaders(json({ note }), headers);
       }
@@ -163,7 +174,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        const note = await updateNote(noteId, content);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await updateNote(noteId, content, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -174,7 +190,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing note ID" }, { status: 400 });
         }
 
-        const note = await archiveNote(noteId);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await archiveNote(noteId, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -191,14 +212,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Attachment not found" }, { status: 404 });
         }
 
+        const eventContext: AttachmentEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         // Unlink from order first
-        await unlinkAttachmentFromOrder(order.id, attachmentId);
+        await unlinkAttachmentFromOrder(order.id, attachmentId, eventContext);
 
         // Delete from S3
         await deleteFile(attachment.s3Key);
 
         // Delete database record
-        await deleteAttachment(attachmentId);
+        await deleteAttachment(attachmentId, eventContext);
 
         // Return a redirect to refresh the page
         return redirect(`/orders/${orderNumber}`);

@@ -31,6 +31,11 @@ export type QuoteInput = {
   validUntil?: Date | null
 }
 
+export type QuoteEventContext = {
+  userId?: string
+  userEmail?: string
+}
+
 export async function getQuotesWithRelations(): Promise<QuoteWithRelations[]> {
   try {
     const result = await db
@@ -92,7 +97,7 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
   }
 }
 
-export async function createQuote(quoteData: QuoteInput): Promise<QuoteWithRelations> {
+export async function createQuote(quoteData: QuoteInput, eventContext?: QuoteEventContext): Promise<QuoteWithRelations> {
   try {
     const quoteNumber = await getNextQuoteNumber()
     
@@ -120,7 +125,9 @@ export async function createQuote(quoteData: QuoteInput): Promise<QuoteWithRelat
         vendorId: quoteData.vendorId,
         status: quoteData.status,
         totalPrice: quoteData.totalPrice
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     })
 
     const result = await db
@@ -151,7 +158,7 @@ export async function createQuote(quoteData: QuoteInput): Promise<QuoteWithRelat
   }
 }
 
-export async function updateQuote(id: number, quoteData: Partial<QuoteInput>): Promise<QuoteWithRelations> {
+export async function updateQuote(id: number, quoteData: Partial<QuoteInput>, eventContext?: QuoteEventContext): Promise<QuoteWithRelations> {
   try {
     await db
       .update(quotes)
@@ -169,7 +176,9 @@ export async function updateQuote(id: number, quoteData: Partial<QuoteInput>): P
       metadata: {
         updatedFields: Object.keys(quoteData),
         ...quoteData
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     })
 
     const result = await db
@@ -200,7 +209,7 @@ export async function updateQuote(id: number, quoteData: Partial<QuoteInput>): P
   }
 }
 
-export async function deleteQuote(id: number): Promise<void> {
+export async function deleteQuote(id: number, eventContext?: QuoteEventContext): Promise<void> {
   try {
     // Get quote details before deletion
     const quote = await getQuote(id)
@@ -222,7 +231,9 @@ export async function deleteQuote(id: number): Promise<void> {
           quoteNumber: quote.quoteNumber,
           customerId: quote.customerId,
           vendorId: quote.vendorId
-        }
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
       })
     }
   } catch (error) {
@@ -230,7 +241,7 @@ export async function deleteQuote(id: number): Promise<void> {
   }
 }
 
-export async function archiveQuote(id: number): Promise<void> {
+export async function archiveQuote(id: number, eventContext?: QuoteEventContext): Promise<void> {
   try {
     // Get quote details before archiving
     const quote = await getQuote(id)
@@ -253,7 +264,9 @@ export async function archiveQuote(id: number): Promise<void> {
           quoteNumber: quote.quoteNumber,
           customerId: quote.customerId,
           vendorId: quote.vendorId
-        }
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
       })
     }
   } catch (error) {

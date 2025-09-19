@@ -2,9 +2,9 @@ import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseM
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext } from "~/lib/customers";
-import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
+import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
-import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
+import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
@@ -147,13 +147,17 @@ async function handlePartsAction(
           });
 
           // Create attachment record
+          const attachmentEventContext: AttachmentEventContext = {
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          };
           const attachment = await createAttachment({
             s3Bucket: uploadResult.bucket,
             s3Key: uploadResult.key,
             fileName: uploadResult.fileName,
             contentType: uploadResult.contentType,
             fileSize: uploadResult.size,
-          });
+          }, attachmentEventContext);
 
           // Link to part as a 3D model
           await linkAttachmentToPart(part.id, attachment.id);
@@ -222,7 +226,11 @@ async function handlePartsAction(
               // Delete from S3
               await deleteFile(s3Key);
               // Delete attachment record
-              await deleteAttachmentByS3Key(s3Key);
+              const attachmentEventContext: AttachmentEventContext = {
+                userId: user?.id,
+                userEmail: user?.email || userDetails?.name || undefined,
+              };
+              await deleteAttachmentByS3Key(s3Key, attachmentEventContext);
               console.log(`Deleted thumbnail from S3: ${s3Key}`);
             }
           } catch (error) {
@@ -363,6 +371,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: file.name,
       });
 
+      // Create event context for attachment operations
+      const eventContext: AttachmentEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
       // Create attachment record
       const attachment = await createAttachment({
         s3Bucket: uploadResult.bucket,
@@ -370,10 +384,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: uploadResult.fileName,
         contentType: uploadResult.contentType,
         fileSize: uploadResult.size,
-      });
+      }, eventContext);
 
       // Link to customer
-      await linkAttachmentToCustomer(customer.id, attachment.id);
+      await linkAttachmentToCustomer(customer.id, attachment.id, eventContext);
 
       // Return a redirect to refresh the page
       return redirect(`/customers/${customerId}`);
@@ -431,12 +445,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const note = await createNote({
           entityType: "customer",
           entityId: customer.id.toString(),
           content,
           createdBy,
-        });
+        }, noteEventContext);
 
         return withAuthHeaders(json({ note }), headers);
       }
@@ -449,7 +468,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        const note = await updateNote(noteId, content);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await updateNote(noteId, content, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -460,7 +484,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing note ID" }, { status: 400 });
         }
 
-        const note = await archiveNote(noteId);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await archiveNote(noteId, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -477,14 +506,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Attachment not found" }, { status: 404 });
         }
 
+        const eventContext: AttachmentEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         // Unlink from customer first
-        await unlinkAttachmentFromCustomer(customer.id, attachmentId);
+        await unlinkAttachmentFromCustomer(customer.id, attachmentId, eventContext);
 
         // Delete from S3
         await deleteFile(attachment.s3Key);
 
         // Delete database record
-        await deleteAttachment(attachmentId);
+        await deleteAttachment(attachmentId, eventContext);
 
         // Return a redirect to refresh the page
         return redirect(`/customers/${customerId}`);

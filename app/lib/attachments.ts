@@ -6,7 +6,12 @@ import { createEvent } from "./events.js"
 
 export type { Attachment }
 
-export async function createAttachment(attachmentData: NewAttachment): Promise<Attachment> {
+export type AttachmentEventContext = {
+  userId?: string
+  userEmail?: string
+}
+
+export async function createAttachment(attachmentData: NewAttachment, eventContext?: AttachmentEventContext): Promise<Attachment> {
   try {
     const result = await db
       .insert(attachments)
@@ -27,7 +32,9 @@ export async function createAttachment(attachmentData: NewAttachment): Promise<A
         fileName: attachment.fileName,
         contentType: attachment.contentType,
         fileSize: attachment.fileSize
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     })
 
     return attachment
@@ -50,7 +57,7 @@ export async function getAttachment(id: string): Promise<Attachment | null> {
   }
 }
 
-export async function deleteAttachment(id: string): Promise<void> {
+export async function deleteAttachment(id: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     // Get attachment details before deletion
     const attachment = await getAttachment(id)
@@ -72,7 +79,9 @@ export async function deleteAttachment(id: string): Promise<void> {
           fileName: attachment.fileName,
           contentType: attachment.contentType,
           s3Key: attachment.s3Key
-        }
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
       })
     }
   } catch (error) {
@@ -94,7 +103,7 @@ export async function getAttachmentByS3Key(s3Key: string): Promise<Attachment | 
   }
 }
 
-export async function deleteAttachmentByS3Key(s3Key: string): Promise<void> {
+export async function deleteAttachmentByS3Key(s3Key: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     // Get attachment details before deletion
     const attachment = await getAttachmentByS3Key(s3Key)
@@ -116,7 +125,9 @@ export async function deleteAttachmentByS3Key(s3Key: string): Promise<void> {
           fileName: attachment.fileName,
           contentType: attachment.contentType,
           s3Key: attachment.s3Key
-        }
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
       })
     }
   } catch (error) {
@@ -124,7 +135,7 @@ export async function deleteAttachmentByS3Key(s3Key: string): Promise<void> {
   }
 }
 
-export async function linkAttachmentToOrder(orderId: number, attachmentId: string): Promise<void> {
+export async function linkAttachmentToOrder(orderId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
       .insert(orderAttachments)
@@ -143,14 +154,16 @@ export async function linkAttachmentToOrder(orderId: number, attachmentId: strin
       description: `Linked attachment to order`,
       metadata: {
         attachmentId
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     })
   } catch (error) {
     throw new Error(`Failed to link attachment to order: ${error}`)
   }
 }
 
-export async function unlinkAttachmentFromOrder(orderId: number, attachmentId: string): Promise<void> {
+export async function unlinkAttachmentFromOrder(orderId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
       .delete(orderAttachments)
@@ -171,7 +184,9 @@ export async function unlinkAttachmentFromOrder(orderId: number, attachmentId: s
       description: `Unlinked attachment from order`,
       metadata: {
         attachmentId
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     })
   } catch (error) {
     throw new Error(`Failed to unlink attachment from order: ${error}`)
@@ -196,7 +211,7 @@ export async function getOrderAttachments(orderId: number): Promise<Attachment[]
 }
 
 // Customer attachment functions
-export async function linkAttachmentToCustomer(customerId: number, attachmentId: string): Promise<void> {
+export async function linkAttachmentToCustomer(customerId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
       .insert(customerAttachments)
@@ -204,12 +219,27 @@ export async function linkAttachmentToCustomer(customerId: number, attachmentId:
         customerId,
         attachmentId,
       })
+
+    // Log event
+    await createEvent({
+      entityType: "customer",
+      entityId: customerId.toString(),
+      eventType: "attachment_linked",
+      eventCategory: "document",
+      title: "Attachment Linked to Customer",
+      description: `Linked attachment to customer`,
+      metadata: {
+        attachmentId
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
   } catch (error) {
     throw new Error(`Failed to link attachment to customer: ${error}`)
   }
 }
 
-export async function unlinkAttachmentFromCustomer(customerId: number, attachmentId: string): Promise<void> {
+export async function unlinkAttachmentFromCustomer(customerId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
       .delete(customerAttachments)
@@ -219,6 +249,21 @@ export async function unlinkAttachmentFromCustomer(customerId: number, attachmen
           eq(customerAttachments.attachmentId, attachmentId)
         )
       )
+
+    // Log event
+    await createEvent({
+      entityType: "customer",
+      entityId: customerId.toString(),
+      eventType: "attachment_unlinked",
+      eventCategory: "document",
+      title: "Attachment Unlinked from Customer",
+      description: `Unlinked attachment from customer`,
+      metadata: {
+        attachmentId
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
   } catch (error) {
     throw new Error(`Failed to unlink attachment from customer: ${error}`)
   }
@@ -242,7 +287,7 @@ export async function getCustomerAttachments(customerId: number): Promise<Attach
 }
 
 // Vendor attachment functions
-export async function linkAttachmentToVendor(vendorId: number, attachmentId: string): Promise<void> {
+export async function linkAttachmentToVendor(vendorId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
       .insert(vendorAttachments)
@@ -250,6 +295,21 @@ export async function linkAttachmentToVendor(vendorId: number, attachmentId: str
         vendorId,
         attachmentId,
       })
+
+    // Log event
+    await createEvent({
+      entityType: "vendor",
+      entityId: vendorId.toString(),
+      eventType: "attachment_linked",
+      eventCategory: "document",
+      title: "Attachment Linked to Vendor",
+      description: `Linked attachment to vendor`,
+      metadata: {
+        attachmentId
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
   } catch (error) {
     throw new Error(`Failed to link attachment to vendor: ${error}`)
   }
@@ -270,7 +330,7 @@ export async function linkAttachmentToPart(partId: string, attachmentId: string)
   }
 }
 
-export async function unlinkAttachmentFromVendor(vendorId: number, attachmentId: string): Promise<void> {
+export async function unlinkAttachmentFromVendor(vendorId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
       .delete(vendorAttachments)
@@ -280,6 +340,21 @@ export async function unlinkAttachmentFromVendor(vendorId: number, attachmentId:
           eq(vendorAttachments.attachmentId, attachmentId)
         )
       )
+
+    // Log event
+    await createEvent({
+      entityType: "vendor",
+      entityId: vendorId.toString(),
+      eventType: "attachment_unlinked",
+      eventCategory: "document",
+      title: "Attachment Unlinked from Vendor",
+      description: `Unlinked attachment from vendor`,
+      metadata: {
+        attachmentId
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
   } catch (error) {
     throw new Error(`Failed to unlink attachment from vendor: ${error}`)
   }
