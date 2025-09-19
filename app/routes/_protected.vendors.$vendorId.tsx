@@ -61,7 +61,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { user, userDetails, headers } = await requireAuth(request);
   
   const vendorId = params.vendorId;
   if (!vendorId) {
@@ -141,6 +141,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const address = formData.get("address") as string;
         const discordId = formData.get("discordId") as string;
 
+        const eventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const updated = await updateVendor(vendor.id, {
           displayName,
           companyName: companyName || null,
@@ -149,13 +154,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
           phone: phone || null,
           address: address || null,
           discordId: discordId || null
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ vendor: updated }), headers);
       }
 
       case "archiveVendor": {
-        await archiveVendor(vendor.id);
+        const eventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await archiveVendor(vendor.id, eventContext);
         return redirect("/vendors");
       }
 

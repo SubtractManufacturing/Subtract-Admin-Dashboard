@@ -8,6 +8,11 @@ export type LineItemWithPart = {
   part: Part | null;
 };
 
+export type LineItemEventContext = {
+  userId?: string;
+  userEmail?: string;
+};
+
 export async function getLineItemsByOrderId(orderId: number): Promise<LineItemWithPart[]> {
   return await db
     .select({
@@ -19,7 +24,7 @@ export async function getLineItemsByOrderId(orderId: number): Promise<LineItemWi
     .where(eq(orderLineItems.orderId, orderId));
 }
 
-export async function createLineItem(data: NewOrderLineItem): Promise<OrderLineItem> {
+export async function createLineItem(data: NewOrderLineItem, eventContext?: LineItemEventContext): Promise<OrderLineItem> {
   const [lineItem] = await db.insert(orderLineItems).values(data).returning();
 
   // Log event
@@ -35,13 +40,15 @@ export async function createLineItem(data: NewOrderLineItem): Promise<OrderLineI
       partId: data.partId,
       quantity: data.quantity,
       unitPrice: data.unitPrice
-    }
+    },
+    userId: eventContext?.userId,
+    userEmail: eventContext?.userEmail
   });
 
   return lineItem;
 }
 
-export async function updateLineItem(id: number, data: Partial<NewOrderLineItem>): Promise<OrderLineItem> {
+export async function updateLineItem(id: number, data: Partial<NewOrderLineItem>, eventContext?: LineItemEventContext): Promise<OrderLineItem> {
   const [updated] = await db
     .update(orderLineItems)
     .set(data)
@@ -60,13 +67,15 @@ export async function updateLineItem(id: number, data: Partial<NewOrderLineItem>
       lineItemId: id,
       updatedFields: Object.keys(data),
       ...data
-    }
+    },
+    userId: eventContext?.userId,
+    userEmail: eventContext?.userEmail
   });
 
   return updated;
 }
 
-export async function deleteLineItem(id: number): Promise<void> {
+export async function deleteLineItem(id: number, eventContext?: LineItemEventContext): Promise<void> {
   // Get line item details before deletion for logging
   const lineItem = await getLineItem(id);
 
@@ -86,7 +95,9 @@ export async function deleteLineItem(id: number): Promise<void> {
         partId: lineItem.partId,
         quantity: lineItem.quantity,
         unitPrice: lineItem.unitPrice
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     });
   }
 }

@@ -20,6 +20,11 @@ export type PartInput = {
   partMeshUrl?: string | null
 }
 
+export type PartEventContext = {
+  userId?: string
+  userEmail?: string
+}
+
 export type PartWithCounts = Part & {
   orderLineItemsCount: number
   quoteLineItemsCount: number
@@ -78,7 +83,7 @@ export async function getPart(id: string): Promise<Part | null> {
   }
 }
 
-export async function createPart(partData: PartInput): Promise<Part> {
+export async function createPart(partData: PartInput, eventContext?: PartEventContext): Promise<Part> {
   try {
     const result = await db
       .insert(parts)
@@ -104,7 +109,9 @@ export async function createPart(partData: PartInput): Promise<Part> {
         material: newPart.material,
         tolerance: newPart.tolerance,
         finishing: newPart.finishing
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     })
 
     // Trigger mesh conversion if applicable
@@ -119,7 +126,7 @@ export async function createPart(partData: PartInput): Promise<Part> {
   }
 }
 
-export async function updatePart(id: string, partData: Partial<PartInput>): Promise<Part> {
+export async function updatePart(id: string, partData: Partial<PartInput>, eventContext?: PartEventContext): Promise<Part> {
   try {
     const result = await db
       .update(parts)
@@ -143,7 +150,9 @@ export async function updatePart(id: string, partData: Partial<PartInput>): Prom
       metadata: {
         updatedFields: Object.keys(partData),
         ...partData
-      }
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
     })
 
     // Trigger mesh conversion if model file was updated and no mesh exists
@@ -157,7 +166,7 @@ export async function updatePart(id: string, partData: Partial<PartInput>): Prom
   }
 }
 
-export async function deletePart(id: string): Promise<void> {
+export async function deletePart(id: string, eventContext?: PartEventContext): Promise<void> {
   try {
     // Get part details before deletion
     const part = await getPart(id)
@@ -178,7 +187,9 @@ export async function deletePart(id: string): Promise<void> {
         metadata: {
           partName: part.partName,
           customerId: part.customerId
-        }
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
       })
     }
   } catch (error) {
@@ -186,7 +197,7 @@ export async function deletePart(id: string): Promise<void> {
   }
 }
 
-export async function archivePart(id: string): Promise<void> {
+export async function archivePart(id: string, eventContext?: PartEventContext): Promise<void> {
   try {
     // Get part details before archiving
     const part = await getPart(id)
@@ -208,7 +219,9 @@ export async function archivePart(id: string): Promise<void> {
         metadata: {
           partName: part.partName,
           customerId: part.customerId
-        }
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
       })
     }
   } catch (error) {

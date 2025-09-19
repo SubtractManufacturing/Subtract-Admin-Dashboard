@@ -1,11 +1,11 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
-import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
+import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
-import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput } from "~/lib/parts";
+import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";
@@ -71,7 +71,9 @@ async function handlePartsAction(
   formData: FormData,
   intent: string,
   customer: Customer,
-  customerId: string
+  customerId: string,
+  user: { id?: string; email?: string } | null,
+  userDetails: { name?: string | null } | null
 ) {
   try {
     if (intent === "createPart") {
@@ -114,6 +116,11 @@ async function handlePartsAction(
       }
 
       // Create the part with thumbnail URL
+      const eventContext: PartEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
       const part = await createPart({
         customerId: customer.id,
         partName,
@@ -122,7 +129,7 @@ async function handlePartsAction(
         finishing: finishing || null,
         notes: notes || null,
         thumbnailUrl,
-      });
+      }, eventContext);
 
       // Handle 3D model file upload if provided
       if (modelFile && modelFile.size > 0) {
@@ -153,7 +160,7 @@ async function handlePartsAction(
           
           // Store the file URL in partFileUrl (CAD files only)
           const fileUrl = `/attachments/s3/${uploadResult.key}`;
-          await updatePart(part.id.toString(), { partFileUrl: fileUrl });
+          await updatePart(part.id.toString(), { partFileUrl: fileUrl }, eventContext);
         } catch (error) {
           console.error('Failed to upload 3D model:', error);
         }
@@ -176,7 +183,7 @@ async function handlePartsAction(
 
           // Store the mesh URL in partMeshUrl
           const meshUrl = `/attachments/s3/${uploadResult.key}`;
-          await updatePart(part.id.toString(), { partMeshUrl: meshUrl });
+          await updatePart(part.id.toString(), { partMeshUrl: meshUrl }, eventContext);
         } catch (error) {
           console.error('Failed to upload mesh file:', error);
         }
@@ -262,7 +269,12 @@ async function handlePartsAction(
         updateData.thumbnailUrl = thumbnailUrl;
       }
 
-      await updatePart(partId, updateData);
+      const eventContext: PartEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
+      await updatePart(partId, updateData, eventContext);
 
       // TEMPORARY: Handle mesh file upload separately for updates
       if (meshFile && meshFile.size > 0) {
@@ -281,7 +293,7 @@ async function handlePartsAction(
 
           // Store the mesh URL in partMeshUrl
           const meshUrl = `/attachments/s3/${uploadResult.key}`;
-          await updatePart(partId, { partMeshUrl: meshUrl });
+          await updatePart(partId, { partMeshUrl: meshUrl }, eventContext);
         } catch (error) {
           console.error('Failed to upload mesh file:', error);
         }
@@ -297,7 +309,7 @@ async function handlePartsAction(
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { user, userDetails, headers } = await requireAuth(request);
   
   const customerId = params.customerId;
   if (!customerId) {
@@ -321,7 +333,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Check if this is a parts-related action
     if (intent === "createPart" || intent === "updatePart") {
       // Handle parts actions with multipart data
-      return handlePartsAction(formData, intent, customer, customerId);
+      return handlePartsAction(formData, intent, customer, customerId, user, userDetails);
     }
     
     // Otherwise, it's a regular file upload
@@ -382,17 +394,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const email = formData.get("email") as string;
         const phone = formData.get("phone") as string;
 
+        const eventContext: CustomerEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const updated = await updateCustomer(customer.id, {
           displayName,
           email: email || null,
           phone: phone || null
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ customer: updated }), headers);
       }
 
       case "archiveCustomer": {
-        await archiveCustomer(customer.id);
+        const eventContext: CustomerEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await archiveCustomer(customer.id, eventContext);
         return redirect("/customers");
       }
 
@@ -497,7 +519,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing part ID" }, { status: 400 });
         }
 
-        await archivePart(partId);
+        const eventContext: PartEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await archivePart(partId, eventContext);
         // Return a redirect to refresh the page
         return redirect(`/customers/${customerId}`);
       }

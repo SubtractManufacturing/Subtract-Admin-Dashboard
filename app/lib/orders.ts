@@ -264,7 +264,57 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       .set(updateData)
       .where(eq(orders.id, id))
 
-    // Log status change event if status was updated
+    // Track all changes
+    const changes: Record<string, string | number | null> = {};
+    const changedFields: string[] = [];
+
+    // Check each field for changes
+    if (orderData.status && orderData.status !== currentOrder.status) {
+      changes.previousStatus = currentOrder.status;
+      changes.newStatus = orderData.status;
+      changedFields.push('status');
+    }
+    if (orderData.vendorId !== undefined && orderData.vendorId !== currentOrder.vendorId) {
+      changes.previousVendorId = currentOrder.vendorId;
+      changes.newVendorId = orderData.vendorId;
+      changedFields.push('vendor');
+    }
+    if (orderData.customerId !== undefined && orderData.customerId !== currentOrder.customerId) {
+      changes.previousCustomerId = currentOrder.customerId;
+      changes.newCustomerId = orderData.customerId;
+      changedFields.push('customer');
+    }
+    if (orderData.shipDate !== undefined) {
+      const newShipDate = orderData.shipDate ? new Date(orderData.shipDate).toISOString() : null;
+      const currentShipDate = currentOrder.shipDate ? new Date(currentOrder.shipDate).toISOString() : null;
+      if (newShipDate !== currentShipDate) {
+        changes.previousShipDate = currentShipDate;
+        changes.newShipDate = newShipDate;
+        changedFields.push('shipDate');
+      }
+    }
+    if ('totalPrice' in restData && restData.totalPrice !== currentOrder.totalPrice) {
+      changes.previousTotalPrice = currentOrder.totalPrice;
+      changes.newTotalPrice = restData.totalPrice as string | null;
+      changedFields.push('totalPrice');
+    }
+    if (vendorPay !== undefined && vendorPay !== currentOrder.vendorPay) {
+      changes.previousVendorPay = currentOrder.vendorPay;
+      changes.newVendorPay = vendorPay;
+      changedFields.push('vendorPay');
+    }
+    if ('leadTime' in restData && restData.leadTime !== currentOrder.leadTime) {
+      changes.previousLeadTime = currentOrder.leadTime;
+      changes.newLeadTime = restData.leadTime as number | null;
+      changedFields.push('leadTime');
+    }
+    if ('notes' in restData && restData.notes !== currentOrder.notes) {
+      changes.previousNotes = currentOrder.notes;
+      changes.newNotes = restData.notes as string | null;
+      changedFields.push('notes');
+    }
+
+    // Log specific status change event for better visibility
     if (orderData.status && orderData.status !== currentOrder.status) {
       await createEvent({
         entityType: "order",
@@ -283,7 +333,7 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       })
     }
 
-    // Log vendor assignment event
+    // Log vendor assignment event for better visibility
     if (orderData.vendorId && orderData.vendorId !== currentOrder.vendorId) {
       await createEvent({
         entityType: "order",
@@ -296,6 +346,25 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
           orderNumber: currentOrder.orderNumber,
           vendorId: orderData.vendorId,
           previousVendorId: currentOrder.vendorId
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail,
+      })
+    }
+
+    // Log general update event if there were any changes
+    if (changedFields.length > 0) {
+      await createEvent({
+        entityType: "order",
+        entityId: id.toString(),
+        eventType: "order_updated",
+        eventCategory: "system",
+        title: `Order #${currentOrder.orderNumber} updated`,
+        description: `Updated fields: ${changedFields.join(', ')}`,
+        metadata: {
+          orderNumber: currentOrder.orderNumber,
+          updatedFields: changedFields,
+          changes: changes
         },
         userId: eventContext?.userId,
         userEmail: eventContext?.userEmail,

@@ -15,7 +15,7 @@ import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
-import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart } from "~/lib/lineItems";
+import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart, type LineItemEventContext } from "~/lib/lineItems";
 import { getPartsByCustomerId } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
@@ -61,7 +61,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { user, userDetails, headers } = await requireAuth(request);
   
   const orderNumber = params.orderId;
   if (!orderNumber) {
@@ -235,6 +235,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const lineItem = await createLineItem({
           orderId: order.id,
           name,
@@ -243,7 +248,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           unitPrice,
           partId: partId || null,
           notes: notes || null,
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
@@ -261,6 +266,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const lineItem = await updateLineItem(lineItemId, {
           name,
           description,
@@ -268,7 +278,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           unitPrice,
           partId: partId || null,
           notes: notes || null,
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
@@ -280,7 +290,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
-        await deleteLineItem(lineItemId);
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await deleteLineItem(lineItemId, eventContext);
         return withAuthHeaders(json({ success: true }), headers);
       }
 
@@ -292,9 +307,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const lineItem = await updateLineItem(lineItemId, {
           notes: notes || null,
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
