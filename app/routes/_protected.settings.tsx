@@ -7,7 +7,12 @@ import { createServerClient } from "~/lib/supabase";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
 import Navbar from "~/components/Navbar";
-import { getAllFeatureFlags, updateFeatureFlag, initializeFeatureFlags, shouldShowEventsInNav } from "~/lib/featureFlags";
+import {
+  getAllFeatureFlags,
+  updateFeatureFlag,
+  initializeFeatureFlags,
+  shouldShowEventsInNav,
+} from "~/lib/featureFlags";
 import type { FeatureFlag } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -18,9 +23,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   await initializeFeatureFlags();
 
   // Get feature flags for developer and admin users
-  const featureFlags = (userDetails.role === "Dev" || userDetails.role === "Admin")
-    ? await getAllFeatureFlags()
-    : [];
+  const featureFlags =
+    userDetails.role === "Dev" || userDetails.role === "Admin"
+      ? await getAllFeatureFlags()
+      : [];
 
   // Check for success message in URL
   const url = new URL(request.url);
@@ -30,7 +36,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const showEventsLink = await shouldShowEventsInNav();
 
   return withAuthHeaders(
-    json({ user, userDetails, message, appConfig, featureFlags, showEventsLink }),
+    json({
+      user,
+      userDetails,
+      message,
+      appConfig,
+      featureFlags,
+      showEventsLink,
+    }),
     headers
   );
 }
@@ -41,7 +54,10 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  if (intent === "saveFeatureFlags" && (userDetails.role === "Dev" || userDetails.role === "Admin")) {
+  if (
+    intent === "saveFeatureFlags" &&
+    (userDetails.role === "Dev" || userDetails.role === "Admin")
+  ) {
     const flagsJson = formData.get("flags") as string;
 
     try {
@@ -52,10 +68,7 @@ export async function action({ request }: ActionFunctionArgs) {
         await updateFeatureFlag(flag.key, flag.enabled, user.id);
       }
 
-      return withAuthHeaders(
-        json({ success: true }),
-        headers
-      );
+      return withAuthHeaders(json({ success: true }), headers);
     } catch (error) {
       return withAuthHeaders(
         json({ error: "Failed to update feature flags" }, { status: 400 }),
@@ -72,70 +85,76 @@ export async function action({ request }: ActionFunctionArgs) {
       // Check if anything actually changed
       const emailChanged = email !== user.email;
       const nameChanged = name !== userDetails.name;
-      
+
       if (!emailChanged && !nameChanged) {
         return withAuthHeaders(
           json({ success: true, message: "No changes to save" }),
           headers
         );
       }
-      
+
       // Build updates object
       const updates: { data?: { name: string; full_name: string } } = {};
-      
+
       // Always update metadata if name changed
       if (nameChanged) {
-        updates.data = { 
+        updates.data = {
           name,
-          full_name: name  // This will show in Supabase Dashboard's "Display Name"
+          full_name: name, // This will show in Supabase Dashboard's "Display Name"
         };
       }
-      
+
       // Simplify: just try to update and handle the response
-      const { data: updatedUser, error: updateError } = await supabase.auth.updateUser(updates);
-      
+      const { data: updatedUser, error: updateError } =
+        await supabase.auth.updateUser(updates);
+
       if (updateError) {
-        
         // Check if this is an email change that requires confirmation
         // Supabase may return success even when email confirmation is required
-        if (emailChanged && (updateError.message.includes('Email') || updateError.message.includes('email'))) {
+        if (
+          emailChanged &&
+          (updateError.message.includes("Email") ||
+            updateError.message.includes("email"))
+        ) {
           return withAuthHeaders(
-            json({ 
-              success: true, 
-              message: "A confirmation email has been sent to your new email address. Please check your inbox to confirm the change." 
+            json({
+              success: true,
+              message:
+                "A confirmation email has been sent to your new email address. Please check your inbox to confirm the change.",
             }),
             headers
           );
         }
-        
+
         return withAuthHeaders(
-          json({ error: `Failed to update profile: ${updateError.message}` }, { status: 400 }),
+          json(
+            { error: `Failed to update profile: ${updateError.message}` },
+            { status: 400 }
+          ),
           headers
         );
       }
-      
+
       // Check if email change is pending confirmation
       // Supabase doesn't always return an error for email changes that require confirmation
       if (emailChanged) {
         // Check if the email actually changed in the response
         const emailActuallyChanged = updatedUser?.user?.email === email;
-        
+
         if (!emailActuallyChanged) {
           // Email didn't change immediately, so confirmation is required
           return withAuthHeaders(
-            json({ 
-              success: true, 
-              message: "A confirmation email has been sent to verify your new email address. Please check your inbox." 
+            json({
+              success: true,
+              message:
+                "A confirmation email has been sent to verify your new email address. Please check your inbox.",
             }),
             headers
           );
         }
       }
-      
-      return withAuthHeaders(
-        json({ success: true }),
-        headers
-      );
+
+      return withAuthHeaders(json({ success: true }), headers);
     } catch (error) {
       return withAuthHeaders(
         json({ error: "Failed to update profile" }, { status: 400 }),
@@ -147,18 +166,26 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "resetPassword") {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(user.email!, {
-        redirectTo: `${new URL(request.url).origin}/auth/callback?type=recovery`,
+        redirectTo: `${
+          new URL(request.url).origin
+        }/auth/callback?type=recovery`,
       });
-      
+
       if (error) {
         return withAuthHeaders(
-          json({ error: `Failed to send reset email: ${error.message}` }, { status: 400 }),
+          json(
+            { error: `Failed to send reset email: ${error.message}` },
+            { status: 400 }
+          ),
           headers
         );
       }
-      
+
       return withAuthHeaders(
-        json({ success: true, message: "Password reset email sent! Check your inbox." }),
+        json({
+          success: true,
+          message: "Password reset email sent! Check your inbox.",
+        }),
         headers
       );
     } catch (error) {
@@ -175,9 +202,23 @@ export async function action({ request }: ActionFunctionArgs) {
   );
 }
 
-type Tab = "profile" | "security" | "notifications" | "preferences" | "admin" | "developer";
+type Tab =
+  | "profile"
+  | "security"
+  | "notifications"
+  | "preferences"
+  | "admin"
+  | "developer";
 
-function FeatureFlagItem({ flag, onToggle, disabled }: { flag: FeatureFlag; onToggle: (key: string) => void; disabled?: boolean }) {
+function FeatureFlagItem({
+  flag,
+  onToggle,
+  disabled,
+}: {
+  flag: FeatureFlag;
+  onToggle: (key: string) => void;
+  disabled?: boolean;
+}) {
   return (
     <div className="flex items-center gap-3 py-2 px-3 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
       <button
@@ -187,11 +228,7 @@ function FeatureFlagItem({ flag, onToggle, disabled }: { flag: FeatureFlag; onTo
         className={`
           relative inline-flex h-5 w-9 items-center rounded-full transition-colors
           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1
-          ${
-            flag.enabled
-              ? "bg-blue-600"
-              : "bg-gray-200 dark:bg-gray-700"
-          }
+          ${flag.enabled ? "bg-blue-600" : "bg-gray-200 dark:bg-gray-700"}
           ${disabled ? "opacity-50 cursor-not-allowed" : ""}
         `}
       >
@@ -221,39 +258,48 @@ function FeatureFlagItem({ flag, onToggle, disabled }: { flag: FeatureFlag; onTo
 }
 
 export default function Settings() {
-  const { user, userDetails, message, appConfig, featureFlags: initialFeatureFlags, showEventsLink } = useLoaderData<typeof loader>();
+  const {
+    user,
+    userDetails,
+    message,
+    appConfig,
+    featureFlags: initialFeatureFlags,
+    showEventsLink,
+  } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
   const passwordResetFetcher = useFetcher<typeof action>();
   const featureFlagsFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
-  
+
   // Local state for feature flags
-  const [localFeatureFlags, setLocalFeatureFlags] = useState(initialFeatureFlags || []);
+  const [localFeatureFlags, setLocalFeatureFlags] = useState(
+    initialFeatureFlags || []
+  );
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  
+
   // Update local flags when initial data changes (but not during saves)
   useEffect(() => {
     if (!isSaving && !hasUnsavedChanges) {
       setLocalFeatureFlags(initialFeatureFlags || []);
     }
   }, [initialFeatureFlags, isSaving, hasUnsavedChanges]);
-  
+
   // Revalidate data after successful update
   useEffect(() => {
-    if (fetcher.data && 'success' in fetcher.data) {
+    if (fetcher.data && "success" in fetcher.data) {
       revalidator.revalidate();
     }
   }, [fetcher.data, revalidator]);
-  
+
   // Handle successful feature flags save
   useEffect(() => {
     if (featureFlagsFetcher.state === "submitting") {
       setIsSaving(true);
     } else if (featureFlagsFetcher.state === "idle" && isSaving) {
       setIsSaving(false);
-      if (featureFlagsFetcher.data && 'success' in featureFlagsFetcher.data) {
+      if (featureFlagsFetcher.data && "success" in featureFlagsFetcher.data) {
         setHasUnsavedChanges(false);
         // Don't revalidate immediately to prevent flickering
         setTimeout(() => {
@@ -261,20 +307,28 @@ export default function Settings() {
         }, 100);
       }
     }
-  }, [featureFlagsFetcher.state, featureFlagsFetcher.data, isSaving, revalidator]);
-  
-  const handleFeatureFlagToggle = useCallback((key: string) => {
-    // Prevent toggling while saving
-    if (isSaving) return;
-    
-    setLocalFeatureFlags((flags: FeatureFlag[]) => 
-      flags.map((flag: FeatureFlag) => 
-        flag.key === key ? { ...flag, enabled: !flag.enabled } : flag
-      )
-    );
-    setHasUnsavedChanges(true);
-  }, [isSaving]);
-  
+  }, [
+    featureFlagsFetcher.state,
+    featureFlagsFetcher.data,
+    isSaving,
+    revalidator,
+  ]);
+
+  const handleFeatureFlagToggle = useCallback(
+    (key: string) => {
+      // Prevent toggling while saving
+      if (isSaving) return;
+
+      setLocalFeatureFlags((flags: FeatureFlag[]) =>
+        flags.map((flag: FeatureFlag) =>
+          flag.key === key ? { ...flag, enabled: !flag.enabled } : flag
+        )
+      );
+      setHasUnsavedChanges(true);
+    },
+    [isSaving]
+  );
+
   const handleSaveFeatureFlags = useCallback(() => {
     featureFlagsFetcher.submit(
       {
@@ -292,14 +346,14 @@ export default function Settings() {
     { id: "notifications", label: "Notifications" },
     { id: "preferences", label: "Preferences" },
   ];
-  
+
   const tabs = [...baseTabs];
-  
+
   // Add Admin tab for Admin and Dev users
   if (userDetails?.role === "Admin" || userDetails?.role === "Dev") {
     tabs.push({ id: "admin", label: "Admin" });
   }
-  
+
   // Add Developer tab only for Dev users
   if (userDetails?.role === "Dev") {
     tabs.push({ id: "developer", label: "Developer" });
@@ -316,21 +370,23 @@ export default function Settings() {
         showEventsLink={showEventsLink}
       />
       <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-1">
-          Manage your account settings and preferences
-        </p>
-      </div>
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Settings
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mt-1">
+            Manage your account settings and preferences
+          </p>
+        </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-        <div className="border-b border-gray-200 dark:border-gray-700">
-          <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+          <div className="border-b border-gray-200 dark:border-gray-700">
+            <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`
                   py-4 px-1 border-b-2 font-medium text-sm transition-colors
                   ${
                     activeTab === tab.id
@@ -338,274 +394,326 @@ export default function Settings() {
                       : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
                   }
                 `}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        </div>
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
 
-        <div className="p-6 relative">
-          {activeTab === "profile" && (
-            <div className="max-w-2xl">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
-                Profile Information
-              </h3>
-              
-              {message && (
-                <div className="mb-6 p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded text-green-700 dark:text-green-300">
-                  {message}
-                </div>
-              )}
-              
-              <fetcher.Form method="post" className="space-y-6">
-                <input type="hidden" name="intent" value="updateProfile" />
-                
-                <InputField
-                  label="Name"
-                  name="name"
-                  type="text"
-                  defaultValue={userDetails?.name || ""}
-                  placeholder="Enter your name"
-                  required
-                />
+          <div className="p-6 relative">
+            {activeTab === "profile" && (
+              <div className="max-w-2xl">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                  Profile Information
+                </h3>
 
-                <div>
+                {message && (
+                  <div className="mb-6 p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded text-green-700 dark:text-green-300">
+                    {message}
+                  </div>
+                )}
+
+                <fetcher.Form method="post" className="space-y-6">
+                  <input type="hidden" name="intent" value="updateProfile" />
+
                   <InputField
-                    label="Email"
-                    name="email"
-                    type="email"
-                    defaultValue={userDetails?.email || user.email}
-                    placeholder="Enter your email"
+                    label="Name"
+                    name="name"
+                    type="text"
+                    defaultValue={userDetails?.name || ""}
+                    placeholder="Enter your name"
                     required
                   />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Changing your email requires confirmation via email
-                  </p>
-                </div>
 
-                <div className="flex items-center space-x-4">
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    disabled={fetcher.state === "submitting"}
-                  >
-                    {fetcher.state === "submitting" ? "Saving..." : "Save Changes"}
-                  </Button>
-                  
-                  {fetcher.data && 'success' in fetcher.data && (
-                    <span className="text-green-600 dark:text-green-400 text-sm">
-                      {fetcher.data.message || "Profile updated successfully"}
-                    </span>
-                  )}
-                  
-                  {fetcher.data && 'error' in fetcher.data && (
-                    <span className="text-red-600 dark:text-red-400 text-sm">
-                      {fetcher.data.error}
-                    </span>
-                  )}
-                </div>
-              </fetcher.Form>
-
-              <div className="mt-12 pt-6 border-t border-gray-200 dark:border-gray-700">
-                <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
-                  Password
-                </h4>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  To reset your password, we&apos;ll send you an email with instructions.
-                </p>
-                <passwordResetFetcher.Form method="post" className="inline-block">
-                  <input type="hidden" name="intent" value="resetPassword" />
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    disabled={passwordResetFetcher.state === "submitting"}
-                  >
-                    {passwordResetFetcher.state === "submitting" 
-                      ? "Sending..." 
-                      : "Send Password Reset Email"}
-                  </Button>
-                </passwordResetFetcher.Form>
-                
-                {passwordResetFetcher.data && 'success' in passwordResetFetcher.data && 'message' in passwordResetFetcher.data && (
-                  <p className="text-green-600 dark:text-green-400 text-sm mt-2">
-                    {passwordResetFetcher.data.message}
-                  </p>
-                )}
-                
-                {passwordResetFetcher.data && 'error' in passwordResetFetcher.data && (
-                  <p className="text-red-600 dark:text-red-400 text-sm mt-2">
-                    {passwordResetFetcher.data.error}
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === "security" && (
-            <div className="max-w-2xl">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
-                Security Settings
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Security settings coming soon...
-              </p>
-            </div>
-          )}
-
-          {activeTab === "notifications" && (
-            <div className="max-w-2xl">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
-                Notification Preferences
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Notification preferences coming soon...
-              </p>
-            </div>
-          )}
-
-          {activeTab === "preferences" && (
-            <div className="max-w-2xl">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
-                Application Preferences
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Application preferences coming soon...
-              </p>
-            </div>
-          )}
-
-          {activeTab === "admin" && (userDetails?.role === "Admin" || userDetails?.role === "Dev") && (
-            <div className="max-w-2xl">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
-                Admin Settings
-              </h3>
-              <div className="space-y-6">
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
-                    System Information
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Application Version:</span>
-                      <span className="text-gray-900 dark:text-white font-mono">{appConfig.version}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Environment:</span>
-                      <span className="text-gray-900 dark:text-white">
-                        {appConfig.isStaging ? "Staging" : "Production"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Current User Role:</span>
-                      <span className="text-gray-900 dark:text-white font-medium">
-                        {userDetails?.role}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
-                    Access Control (RBAC)
-                  </h4>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                    Control access to features for all users. Admin and Dev users always have access to Events.
-                  </p>
-                  <div className="space-y-2">
-                    {localFeatureFlags?.filter((flag: FeatureFlag) =>
-                      flag.key === "events_access_all" || flag.key === "events_nav_visible"
-                    ).map((flag: FeatureFlag) => (
-                      <FeatureFlagItem
-                        key={flag.id}
-                        flag={flag}
-                        onToggle={handleFeatureFlagToggle}
-                        disabled={isSaving}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
-                    Admin Actions
-                  </h4>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                    Administrative functions and system management tools.
-                  </p>
-                  <div className="space-y-3">
-                    <Button variant="secondary" disabled>
-                      User Management (Coming Soon)
-                    </Button>
-                    <Button variant="secondary" disabled>
-                      System Logs (Coming Soon)
-                    </Button>
-                    <Button variant="secondary" disabled>
-                      Backup & Restore (Coming Soon)
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "developer" && userDetails?.role === "Dev" && (
-            <div className="max-w-2xl">
-              <div className="flex items-center gap-3 mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                  Developer Tools
-                </h3>
-                <span className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1 rounded">
-                  ⚠️ Dev mode active
-                </span>
-              </div>
-              
-              <div className="space-y-6">
-                <div>
-                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
-                    Feature Flags
-                  </h4>
                   <div>
-                    {localFeatureFlags?.filter((flag: FeatureFlag) =>
-                      flag.key !== "events_access_all" && flag.key !== "events_nav_visible"
-                    ).sort((a: FeatureFlag, b: FeatureFlag) => a.key.localeCompare(b.key)).map((flag: FeatureFlag) => (
-                      <FeatureFlagItem
-                        key={flag.id}
-                        flag={flag}
-                        onToggle={handleFeatureFlagToggle}
-                        disabled={isSaving}
-                      />
-                    ))}
+                    <InputField
+                      label="Email"
+                      name="email"
+                      type="email"
+                      defaultValue={userDetails?.email || user.email}
+                      placeholder="Enter your email"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Changing your email requires confirmation via email
+                    </p>
                   </div>
+
+                  <div className="flex items-center space-x-4">
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      disabled={fetcher.state === "submitting"}
+                    >
+                      {fetcher.state === "submitting"
+                        ? "Saving..."
+                        : "Save Changes"}
+                    </Button>
+
+                    {fetcher.data && "success" in fetcher.data && (
+                      <span className="text-green-600 dark:text-green-400 text-sm">
+                        {fetcher.data.message || "Profile updated successfully"}
+                      </span>
+                    )}
+
+                    {fetcher.data && "error" in fetcher.data && (
+                      <span className="text-red-600 dark:text-red-400 text-sm">
+                        {fetcher.data.error}
+                      </span>
+                    )}
+                  </div>
+                </fetcher.Form>
+
+                <div className="mt-12 pt-6 border-t border-gray-200 dark:border-gray-700">
+                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
+                    Password
+                  </h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    To reset your password, we&apos;ll send you an email with
+                    instructions.
+                  </p>
+                  <passwordResetFetcher.Form
+                    method="post"
+                    className="inline-block"
+                  >
+                    <input type="hidden" name="intent" value="resetPassword" />
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      disabled={passwordResetFetcher.state === "submitting"}
+                    >
+                      {passwordResetFetcher.state === "submitting"
+                        ? "Sending..."
+                        : "Send Password Reset Email"}
+                    </Button>
+                  </passwordResetFetcher.Form>
+
+                  {passwordResetFetcher.data &&
+                    "success" in passwordResetFetcher.data &&
+                    "message" in passwordResetFetcher.data && (
+                      <p className="text-green-600 dark:text-green-400 text-sm mt-2">
+                        {passwordResetFetcher.data.message}
+                      </p>
+                    )}
+
+                  {passwordResetFetcher.data &&
+                    "error" in passwordResetFetcher.data && (
+                      <p className="text-red-600 dark:text-red-400 text-sm mt-2">
+                        {passwordResetFetcher.data.error}
+                      </p>
+                    )}
                 </div>
               </div>
-            </div>
-          )}
-          
-          {/* Save button and indicator - positioned absolute to parent container */}
-          {((activeTab === "developer" && userDetails?.role === "Dev") ||
-            (activeTab === "admin" && (userDetails?.role === "Admin" || userDetails?.role === "Dev"))) && (
-            <div className="absolute bottom-6 right-6 flex items-center gap-3">
-              {featureFlagsFetcher.state === "submitting" && (
-                <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
-                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <span className="text-sm">Saving...</span>
+            )}
+
+            {activeTab === "security" && (
+              <div className="max-w-2xl">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                  Security Settings
+                </h3>
+                <p className="text-gray-600 dark:text-gray-400">
+                  Security settings coming soon...
+                </p>
+              </div>
+            )}
+
+            {activeTab === "notifications" && (
+              <div className="max-w-2xl">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                  Notification Preferences
+                </h3>
+                <p className="text-gray-600 dark:text-gray-400">
+                  Notification preferences coming soon...
+                </p>
+              </div>
+            )}
+
+            {activeTab === "preferences" && (
+              <div className="max-w-2xl">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                  Application Preferences
+                </h3>
+                <p className="text-gray-600 dark:text-gray-400">
+                  Application preferences coming soon...
+                </p>
+              </div>
+            )}
+
+            {activeTab === "admin" &&
+              (userDetails?.role === "Admin" ||
+                userDetails?.role === "Dev") && (
+                <div className="max-w-2xl">
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                    Admin Settings
+                  </h3>
+                  <div className="space-y-6">
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        System Information
+                      </h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Application Version:
+                          </span>
+                          <span className="text-gray-900 dark:text-white font-mono">
+                            {appConfig.version}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Environment:
+                          </span>
+                          <span className="text-gray-900 dark:text-white">
+                            {appConfig.isStaging ? "Staging" : "Production"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600 dark:text-gray-400">
+                            Current User Role:
+                          </span>
+                          <span className="text-gray-900 dark:text-white font-medium">
+                            {userDetails?.role}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
+                        Access Control
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Control access to features for all users. Admin and Dev
+                        users always have access to Events.
+                      </p>
+                      <div className="space-y-2">
+                        {localFeatureFlags
+                          ?.filter(
+                            (flag: FeatureFlag) =>
+                              flag.key === "events_access_all" ||
+                              flag.key === "events_nav_visible"
+                          )
+                          .map((flag: FeatureFlag) => (
+                            <FeatureFlagItem
+                              key={flag.id}
+                              flag={flag}
+                              onToggle={handleFeatureFlagToggle}
+                              disabled={isSaving}
+                            />
+                          ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        Admin Actions
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Administrative functions and system management tools.
+                      </p>
+                      <div className="space-y-2">
+                        <Button variant="secondary" size="sm" disabled className="mr-2">
+                          User Management (Coming Soon)
+                        </Button>
+                        <a href="/events" className="block mr-2">
+                          <Button variant="secondary" size="sm">System Logs</Button>
+                        </a>
+                        <Button variant="secondary" size="sm" disabled className="mr-2">
+                          Backup & Restore (Coming Soon)
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
-              <Button
-                onClick={handleSaveFeatureFlags}
-                variant={hasUnsavedChanges ? "primary" : "secondary"}
-                disabled={!hasUnsavedChanges || featureFlagsFetcher.state === "submitting"}
-              >
-                Save Changes
-              </Button>
-            </div>
-          )}
+
+            {activeTab === "developer" && userDetails?.role === "Dev" && (
+              <div className="max-w-2xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                    Developer Tools
+                  </h3>
+                  <span className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1 rounded">
+                    ⚠️ Dev mode active
+                  </span>
+                </div>
+
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
+                      Feature Flags
+                    </h4>
+                    <div>
+                      {localFeatureFlags
+                        ?.filter(
+                          (flag: FeatureFlag) =>
+                            flag.key !== "events_access_all" &&
+                            flag.key !== "events_nav_visible"
+                        )
+                        .sort((a: FeatureFlag, b: FeatureFlag) =>
+                          a.key.localeCompare(b.key)
+                        )
+                        .map((flag: FeatureFlag) => (
+                          <FeatureFlagItem
+                            key={flag.id}
+                            flag={flag}
+                            onToggle={handleFeatureFlagToggle}
+                            disabled={isSaving}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Save button and indicator - positioned absolute to parent container */}
+            {((activeTab === "developer" && userDetails?.role === "Dev") ||
+              (activeTab === "admin" &&
+                (userDetails?.role === "Admin" ||
+                  userDetails?.role === "Dev"))) && (
+              <div className="absolute bottom-6 right-6 flex items-center gap-3">
+                {featureFlagsFetcher.state === "submitting" && (
+                  <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+                    <svg
+                      className="animate-spin h-4 w-4"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
+                    </svg>
+                    <span className="text-sm">Saving...</span>
+                  </div>
+                )}
+                <Button
+                  onClick={handleSaveFeatureFlags}
+                  variant={hasUnsavedChanges ? "primary" : "secondary"}
+                  disabled={
+                    !hasUnsavedChanges ||
+                    featureFlagsFetcher.state === "submitting"
+                  }
+                >
+                  Save Changes
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
       </div>
     </div>
   );

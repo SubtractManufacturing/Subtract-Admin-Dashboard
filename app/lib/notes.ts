@@ -1,6 +1,7 @@
 import { eq, and, desc } from "drizzle-orm";
 import { db } from "./db";
 import { notes, type Note, type NewNote } from "./db/schema";
+import { createEvent } from "./events";
 
 export async function getNotes(entityType: string, entityId: string): Promise<Note[]> {
   const result = await db
@@ -26,7 +27,22 @@ export async function createNote(data: Omit<NewNote, "id" | "createdAt" | "updat
       updatedAt: new Date(),
     })
     .returning();
-  
+
+  // Log event
+  await createEvent({
+    entityType: data.entityType,
+    entityId: data.entityId,
+    eventType: "note_added",
+    eventCategory: "communication",
+    title: "Note Added",
+    description: `Added note to ${data.entityType}`,
+    metadata: {
+      noteId: newNote.id,
+      content: data.content.substring(0, 100), // First 100 chars
+      createdBy: data.createdBy
+    }
+  });
+
   return newNote;
 }
 
@@ -39,7 +55,21 @@ export async function updateNote(id: string, content: string): Promise<Note> {
     })
     .where(eq(notes.id, id))
     .returning();
-  
+
+  // Log event
+  await createEvent({
+    entityType: updatedNote.entityType,
+    entityId: updatedNote.entityId,
+    eventType: "note_updated",
+    eventCategory: "communication",
+    title: "Note Updated",
+    description: `Updated note`,
+    metadata: {
+      noteId: id,
+      content: content.substring(0, 100) // First 100 chars
+    }
+  });
+
   return updatedNote;
 }
 
@@ -52,7 +82,21 @@ export async function archiveNote(id: string): Promise<Note> {
     })
     .where(eq(notes.id, id))
     .returning();
-  
+
+  // Log event
+  await createEvent({
+    entityType: archivedNote.entityType,
+    entityId: archivedNote.entityId,
+    eventType: "note_archived",
+    eventCategory: "communication",
+    title: "Note Archived",
+    description: `Archived note`,
+    metadata: {
+      noteId: id,
+      createdBy: archivedNote.createdBy
+    }
+  });
+
   return archivedNote;
 }
 

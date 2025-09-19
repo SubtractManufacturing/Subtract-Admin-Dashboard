@@ -2,6 +2,7 @@ import { db } from "./db/index.js"
 import { attachments, orderAttachments, customerAttachments, vendorAttachments, partModels } from "./db/schema.js"
 import { eq, and } from 'drizzle-orm'
 import type { Attachment, NewAttachment } from "./db/schema.js"
+import { createEvent } from "./events.js"
 
 export type { Attachment }
 
@@ -12,7 +13,24 @@ export async function createAttachment(attachmentData: NewAttachment): Promise<A
       .values(attachmentData)
       .returning()
 
-    return result[0]
+    const attachment = result[0]
+
+    // Log event
+    await createEvent({
+      entityType: "attachment",
+      entityId: attachment.id,
+      eventType: "attachment_created",
+      eventCategory: "document",
+      title: "Attachment Created",
+      description: `Created attachment: ${attachment.fileName}`,
+      metadata: {
+        fileName: attachment.fileName,
+        contentType: attachment.contentType,
+        fileSize: attachment.fileSize
+      }
+    })
+
+    return attachment
   } catch (error) {
     throw new Error(`Failed to create attachment: ${error}`)
   }
@@ -34,9 +52,29 @@ export async function getAttachment(id: string): Promise<Attachment | null> {
 
 export async function deleteAttachment(id: string): Promise<void> {
   try {
+    // Get attachment details before deletion
+    const attachment = await getAttachment(id)
+
     await db
       .delete(attachments)
       .where(eq(attachments.id, id))
+
+    // Log event if attachment existed
+    if (attachment) {
+      await createEvent({
+        entityType: "attachment",
+        entityId: id,
+        eventType: "attachment_deleted",
+        eventCategory: "document",
+        title: "Attachment Deleted",
+        description: `Deleted attachment: ${attachment.fileName}`,
+        metadata: {
+          fileName: attachment.fileName,
+          contentType: attachment.contentType,
+          s3Key: attachment.s3Key
+        }
+      })
+    }
   } catch (error) {
     throw new Error(`Failed to delete attachment: ${error}`)
   }
@@ -58,9 +96,29 @@ export async function getAttachmentByS3Key(s3Key: string): Promise<Attachment | 
 
 export async function deleteAttachmentByS3Key(s3Key: string): Promise<void> {
   try {
+    // Get attachment details before deletion
+    const attachment = await getAttachmentByS3Key(s3Key)
+
     await db
       .delete(attachments)
       .where(eq(attachments.s3Key, s3Key))
+
+    // Log event if attachment existed
+    if (attachment) {
+      await createEvent({
+        entityType: "attachment",
+        entityId: attachment.id,
+        eventType: "attachment_deleted",
+        eventCategory: "document",
+        title: "Attachment Deleted by S3 Key",
+        description: `Deleted attachment: ${attachment.fileName}`,
+        metadata: {
+          fileName: attachment.fileName,
+          contentType: attachment.contentType,
+          s3Key: attachment.s3Key
+        }
+      })
+    }
   } catch (error) {
     throw new Error(`Failed to delete attachment by S3 key: ${error}`)
   }
@@ -74,6 +132,19 @@ export async function linkAttachmentToOrder(orderId: number, attachmentId: strin
         orderId,
         attachmentId,
       })
+
+    // Log event
+    await createEvent({
+      entityType: "order",
+      entityId: orderId.toString(),
+      eventType: "attachment_linked",
+      eventCategory: "document",
+      title: "Attachment Linked to Order",
+      description: `Linked attachment to order`,
+      metadata: {
+        attachmentId
+      }
+    })
   } catch (error) {
     throw new Error(`Failed to link attachment to order: ${error}`)
   }
@@ -89,6 +160,19 @@ export async function unlinkAttachmentFromOrder(orderId: number, attachmentId: s
           eq(orderAttachments.attachmentId, attachmentId)
         )
       )
+
+    // Log event
+    await createEvent({
+      entityType: "order",
+      entityId: orderId.toString(),
+      eventType: "attachment_unlinked",
+      eventCategory: "document",
+      title: "Attachment Unlinked from Order",
+      description: `Unlinked attachment from order`,
+      metadata: {
+        attachmentId
+      }
+    })
   } catch (error) {
     throw new Error(`Failed to unlink attachment from order: ${error}`)
   }
