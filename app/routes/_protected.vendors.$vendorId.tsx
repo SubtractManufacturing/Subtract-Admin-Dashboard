@@ -6,6 +6,7 @@ import type { Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { shouldShowEventsInNav } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
@@ -44,14 +45,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Vendor not found", { status: 404 });
   }
 
-  const [orders, stats, notes] = await Promise.all([
+  const [orders, stats, notes, showEventsLink] = await Promise.all([
     getVendorOrders(vendor.id),
     getVendorStats(vendor.id),
-    getNotes("vendor", vendor.id.toString())
+    getNotes("vendor", vendor.id.toString()),
+    shouldShowEventsInNav(),
   ]);
 
   return withAuthHeaders(
-    json({ vendor, orders, stats, notes, user, userDetails, appConfig }),
+    json({ vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink }),
     headers
   );
 }
@@ -258,7 +260,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function VendorDetails() {
-  const { vendor, orders, stats, notes, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -425,12 +427,13 @@ export default function VendorDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         <div className="flex justify-between items-center px-10 py-2.5">

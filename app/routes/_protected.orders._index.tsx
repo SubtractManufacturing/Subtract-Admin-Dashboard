@@ -18,6 +18,7 @@ import type { OrderWithRelations, OrderInput, OrderEventContext } from "~/lib/or
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { getNextOrderNumber } from "~/lib/number-generator";
+import { shouldShowEventsInNav } from "~/lib/featureFlags";
 
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
@@ -31,13 +32,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const appConfig = getAppConfig();
 
   try {
-    const [orders, customers, vendors] = await Promise.all([
+    const [orders, customers, vendors, showEventsLink] = await Promise.all([
       getOrdersWithRelations(),
       getCustomers(),
       getVendors(),
+      shouldShowEventsInNav(),
     ]);
     return withAuthHeaders(
-      json({ orders, customers, vendors, user, userDetails, appConfig }),
+      json({ orders, customers, vendors, user, userDetails, appConfig, showEventsLink }),
       headers
     );
   } catch (error) {
@@ -50,6 +52,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         user,
         userDetails,
         appConfig,
+        showEventsLink: true,
       }),
       headers
     );
@@ -148,7 +151,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Orders() {
-  const { orders, customers, vendors, user, userDetails, appConfig } =
+  const { orders, customers, vendors, user, userDetails, appConfig, showEventsLink } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const navigate = useNavigate();
@@ -305,6 +308,7 @@ export default function Orders() {
         }
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader

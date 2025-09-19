@@ -8,7 +8,7 @@ import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh } from "~/lib/featureFlags";
+import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -50,16 +50,17 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, parts, canUploadMesh] = await Promise.all([
+  const [orders, stats, notes, parts, canUploadMesh, showEventsLink] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
     getPartsByCustomerId(customer.id),
-    canUserUploadMesh(userDetails.role)
+    canUserUploadMesh(userDetails.role),
+    shouldShowEventsInNav(),
   ]);
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh }),
+    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink }),
     headers
   );
 }
@@ -511,7 +512,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -792,12 +793,13 @@ export default function CustomerDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         <div className="flex justify-between items-center px-10 py-2.5">

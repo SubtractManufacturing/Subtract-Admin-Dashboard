@@ -6,6 +6,7 @@ import { getVendor } from "~/lib/vendors";
 import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToOrder, unlinkAttachmentFromOrder, type Attachment } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { shouldShowEventsInNav } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
@@ -48,8 +49,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch parts for the customer if available
   const parts = order.customerId ? await getPartsByCustomerId(order.customerId) : [];
 
+  // Get feature flags
+  const showEventsLink = await shouldShowEventsInNav();
+
   return withAuthHeaders(
-    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig }),
+    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink }),
     headers
   );
 }
@@ -305,7 +309,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function OrderDetails() {
-  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
@@ -557,12 +561,13 @@ export default function OrderDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         {/* Custom breadcrumb bar with buttons */}

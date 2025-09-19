@@ -15,6 +15,7 @@ import { getVendors } from "~/lib/vendors";
 import { getOrdersWithRelations } from "~/lib/orders";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { canUserAccessEvents, shouldShowEventsInNav } from "~/lib/featureFlags";
 
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
@@ -25,6 +26,12 @@ import { tableStyles } from "~/utils/tw-styles";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
+
+  // Check if user has access to events
+  const hasAccess = await canUserAccessEvents(userDetails?.role);
+  if (!hasAccess) {
+    throw new Response("Access Denied", { status: 403 });
+  }
 
   const url = new URL(request.url);
   const searchParams = url.searchParams;
@@ -50,10 +57,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   try {
     const { events, totalCount } = await getRecentEvents(filters);
-    const [customers, vendors, orders] = await Promise.all([
+    const [customers, vendors, orders, showEventsLink] = await Promise.all([
       getCustomers(),
       getVendors(),
       getOrdersWithRelations(),
+      shouldShowEventsInNav(),
     ]);
 
     return withAuthHeaders(
@@ -67,6 +75,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         user,
         userDetails,
         appConfig,
+        showEventsLink,
       }),
       headers
     );
@@ -83,6 +92,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         user,
         userDetails,
         appConfig,
+        showEventsLink: true,
       }),
       headers
     );
@@ -160,6 +170,7 @@ export default function EventsPage() {
     user,
     userDetails,
     appConfig,
+    showEventsLink,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const navigate = useNavigate();
@@ -291,8 +302,9 @@ export default function EventsPage() {
             .join("")
             .toUpperCase() || "U"
         }
-        version={appConfig?.appVersion}
-        isStaging={appConfig?.appEnv === "staging"}
+        version={appConfig?.version}
+        isStaging={appConfig?.isStaging}
+        showEventsLink={showEventsLink}
       />
 
       <div className="px-8 py-6">

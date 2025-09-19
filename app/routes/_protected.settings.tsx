@@ -7,25 +7,30 @@ import { createServerClient } from "~/lib/supabase";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
 import Navbar from "~/components/Navbar";
-import { getAllFeatureFlags, updateFeatureFlag, initializeFeatureFlags } from "~/lib/featureFlags";
+import { getAllFeatureFlags, updateFeatureFlag, initializeFeatureFlags, shouldShowEventsInNav } from "~/lib/featureFlags";
 import type { FeatureFlag } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
-  
+
   // Initialize feature flags if needed
   await initializeFeatureFlags();
-  
-  // Get feature flags for developer users
-  const featureFlags = userDetails.role === "Dev" ? await getAllFeatureFlags() : [];
-  
+
+  // Get feature flags for developer and admin users
+  const featureFlags = (userDetails.role === "Dev" || userDetails.role === "Admin")
+    ? await getAllFeatureFlags()
+    : [];
+
   // Check for success message in URL
   const url = new URL(request.url);
   const message = url.searchParams.get("message");
-  
+
+  // Get events nav visibility
+  const showEventsLink = await shouldShowEventsInNav();
+
   return withAuthHeaders(
-    json({ user, userDetails, message, appConfig, featureFlags }),
+    json({ user, userDetails, message, appConfig, featureFlags, showEventsLink }),
     headers
   );
 }
@@ -36,17 +41,17 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  if (intent === "saveFeatureFlags" && userDetails.role === "Dev") {
+  if (intent === "saveFeatureFlags" && (userDetails.role === "Dev" || userDetails.role === "Admin")) {
     const flagsJson = formData.get("flags") as string;
-    
+
     try {
       const flags = JSON.parse(flagsJson);
-      
+
       // Update all flags
       for (const flag of flags) {
         await updateFeatureFlag(flag.key, flag.enabled, user.id);
       }
-      
+
       return withAuthHeaders(
         json({ success: true }),
         headers
@@ -216,7 +221,7 @@ function FeatureFlagItem({ flag, onToggle, disabled }: { flag: FeatureFlag; onTo
 }
 
 export default function Settings() {
-  const { user, userDetails, message, appConfig, featureFlags: initialFeatureFlags } = useLoaderData<typeof loader>();
+  const { user, userDetails, message, appConfig, featureFlags: initialFeatureFlags, showEventsLink } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
   const passwordResetFetcher = useFetcher<typeof action>();
@@ -302,12 +307,13 @@ export default function Settings() {
 
   return (
     <div>
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={(userDetails?.name || user.email).charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="p-4 md:p-6 max-w-6xl mx-auto">
       <div className="mb-6">
@@ -498,7 +504,28 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
-                
+
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                  <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
+                    Access Control (RBAC)
+                  </h4>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    Control access to features for all users. Admin and Dev users always have access to Events.
+                  </p>
+                  <div className="space-y-2">
+                    {localFeatureFlags?.filter((flag: FeatureFlag) =>
+                      flag.key === "events_access_all" || flag.key === "events_nav_visible"
+                    ).map((flag: FeatureFlag) => (
+                      <FeatureFlagItem
+                        key={flag.id}
+                        flag={flag}
+                        onToggle={handleFeatureFlagToggle}
+                        disabled={isSaving}
+                      />
+                    ))}
+                  </div>
+                </div>
+
                 <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
                   <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
                     Admin Actions
@@ -539,10 +566,12 @@ export default function Settings() {
                     Feature Flags
                   </h4>
                   <div>
-                    {localFeatureFlags?.sort((a: FeatureFlag, b: FeatureFlag) => a.key.localeCompare(b.key)).map((flag: FeatureFlag) => (
-                      <FeatureFlagItem 
-                        key={flag.id} 
-                        flag={flag} 
+                    {localFeatureFlags?.filter((flag: FeatureFlag) =>
+                      flag.key !== "events_access_all" && flag.key !== "events_nav_visible"
+                    ).sort((a: FeatureFlag, b: FeatureFlag) => a.key.localeCompare(b.key)).map((flag: FeatureFlag) => (
+                      <FeatureFlagItem
+                        key={flag.id}
+                        flag={flag}
                         onToggle={handleFeatureFlagToggle}
                         disabled={isSaving}
                       />
@@ -554,7 +583,8 @@ export default function Settings() {
           )}
           
           {/* Save button and indicator - positioned absolute to parent container */}
-          {activeTab === "developer" && userDetails?.role === "Dev" && (
+          {((activeTab === "developer" && userDetails?.role === "Dev") ||
+            (activeTab === "admin" && (userDetails?.role === "Admin" || userDetails?.role === "Dev"))) && (
             <div className="absolute bottom-6 right-6 flex items-center gap-3">
               {featureFlagsFetcher.state === "submitting" && (
                 <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
