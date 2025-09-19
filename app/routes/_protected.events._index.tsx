@@ -3,7 +3,12 @@ import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
-import { getRecentEvents, getEventById, createEvent, type EventFilters } from "~/lib/events";
+import {
+  getRecentEvents,
+  getEventById,
+  createEvent,
+  type EventFilters,
+} from "~/lib/events";
 import type { EventLog } from "~/lib/db/schema";
 import { getCustomers } from "~/lib/customers";
 import { getVendors } from "~/lib/vendors";
@@ -61,7 +66,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         orders,
         user,
         userDetails,
-        appConfig
+        appConfig,
       }),
       headers
     );
@@ -101,10 +106,17 @@ export async function action({ request }: ActionFunctionArgs) {
           entityType: formData.get("entityType") as string,
           entityId: formData.get("entityId") as string,
           eventType: formData.get("eventType") as string,
-          eventCategory: formData.get("eventCategory") as "status" | "document" | "financial" | "communication" | "system" | "quality" | "manufacturing",
+          eventCategory: formData.get("eventCategory") as
+            | "status"
+            | "document"
+            | "financial"
+            | "communication"
+            | "system"
+            | "quality"
+            | "manufacturing",
           title: formData.get("title") as string,
-          description: formData.get("description") as string || undefined,
-          userEmail: formData.get("userEmail") as string || undefined,
+          description: (formData.get("description") as string) || undefined,
+          userEmail: (formData.get("userEmail") as string) || undefined,
         };
 
         const newEvent = await createEvent(eventData);
@@ -131,31 +143,50 @@ function formatTimeAgo(date: Date | string | null): string {
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
 
-  if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
-  if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-  if (minutes > 0) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-  return `${seconds} second${seconds !== 1 ? 's' : ''} ago`;
+  if (days > 0) return `${days} day${days > 1 ? "s" : ""} ago`;
+  if (hours > 0) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+  if (minutes > 0) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`;
+  return `${seconds} second${seconds !== 1 ? "s" : ""} ago`;
 }
 
-
-
 export default function EventsPage() {
-  const { events, totalCount, filters, customers, vendors, orders, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const {
+    events,
+    totalCount,
+    filters,
+    customers,
+    vendors,
+    orders,
+    user,
+    userDetails,
+    appConfig,
+  } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const navigate = useNavigate();
 
   const [searchTerm, setSearchTerm] = useState(filters.searchTerm || "");
-  const [selectedCategory, setSelectedCategory] = useState(filters.eventCategory || "");
-  const [selectedEntity, setSelectedEntity] = useState(filters.entityType || "");
-  const [startDate, setStartDate] = useState(filters.startDate ? new Date(filters.startDate).toISOString().split('T')[0] : "");
-  const [endDate, setEndDate] = useState(filters.endDate ? new Date(filters.endDate).toISOString().split('T')[0] : "");
+  const [selectedCategory, setSelectedCategory] = useState(
+    filters.eventCategory || ""
+  );
+  const [selectedEntity, setSelectedEntity] = useState(
+    filters.entityType || ""
+  );
+  const [startDate, setStartDate] = useState(
+    filters.startDate
+      ? new Date(filters.startDate).toISOString().split("T")[0]
+      : ""
+  );
+  const [endDate, setEndDate] = useState(
+    filters.endDate ? new Date(filters.endDate).toISOString().split("T")[0] : ""
+  );
   const [sortOrder, setSortOrder] = useState(filters.sortOrder || "desc");
   const [pageSize, setPageSize] = useState(filters.limit || 25);
-  const [currentPage, setCurrentPage] = useState(Math.floor((filters.offset || 0) / pageSize) + 1);
+  const [currentPage, setCurrentPage] = useState(
+    Math.floor((filters.offset || 0) / pageSize) + 1
+  );
 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
-  const [showManualEventModal, setShowManualEventModal] = useState(false);
 
   const totalPages = Math.ceil(totalCount / pageSize);
 
@@ -175,7 +206,7 @@ export default function EventsPage() {
 
   useEffect(() => {
     applyFilters();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize, sortOrder]);
 
   const handleViewDetails = async (event: EventLog) => {
@@ -189,7 +220,16 @@ export default function EventsPage() {
 
   const handleExport = () => {
     const csv = [
-      ["Time", "Entity Type", "Entity ID", "Event", "Description", "Severity", "Category", "User"],
+      [
+        "Time",
+        "Entity Type",
+        "Entity ID",
+        "Event",
+        "Description",
+        "Severity",
+        "Category",
+        "User",
+      ],
       ...events.map((event: EventLog) => [
         new Date(event.createdAt).toISOString(),
         event.entityType,
@@ -197,15 +237,17 @@ export default function EventsPage() {
         event.title,
         event.description || "",
         event.eventCategory,
-        event.userEmail || "System"
-      ])
-    ].map(row => row.map((cell: string | number) => `"${cell}"`).join(",")).join("\n");
+        event.userEmail || "System",
+      ]),
+    ]
+      .map((row) => row.map((cell: string | number) => `"${cell}"`).join(","))
+      .join("\n");
 
     const blob = new Blob([csv], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `events-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `events-${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -214,10 +256,14 @@ export default function EventsPage() {
     switch (event.entityType) {
       case "order": {
         const order = orders.find((o) => o.id.toString() === event.entityId);
-        return order ? `Order #${order.orderNumber}` : `Order #${event.entityId}`;
+        return order
+          ? `Order #${order.orderNumber}`
+          : `Order #${event.entityId}`;
       }
       case "customer": {
-        const customer = customers.find((c) => c.id.toString() === event.entityId);
+        const customer = customers.find(
+          (c) => c.id.toString() === event.entityId
+        );
         return customer ? customer.displayName : `Customer #${event.entityId}`;
       }
       case "vendor": {
@@ -238,24 +284,24 @@ export default function EventsPage() {
       <Navbar
         userName={userDetails?.name || user?.email}
         userEmail={user?.email}
-        userInitials={userDetails?.name?.split(' ').map((n: string) => n[0]).join('').toUpperCase() || 'U'}
+        userInitials={
+          userDetails?.name
+            ?.split(" ")
+            .map((n: string) => n[0])
+            .join("")
+            .toUpperCase() || "U"
+        }
         version={appConfig?.appVersion}
-        isStaging={appConfig?.appEnv === 'staging'}
+        isStaging={appConfig?.appEnv === "staging"}
       />
 
       <div className="px-8 py-6">
         {/* Header with Filters */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-          <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Event Log</h1>
-            <div className="flex gap-2">
-              <Button onClick={() => setShowManualEventModal(true)}>
-                Add Manual Event
-              </Button>
-              <Button onClick={handleExport} variant="secondary">
-                Export CSV
-              </Button>
-            </div>
+          <div className="mb-6">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+              Event Log
+            </h1>
           </div>
 
           {/* Filters */}
@@ -296,7 +342,6 @@ export default function EventsPage() {
               <option value="quote">Quotes</option>
             </select>
 
-
             <input
               type="date"
               value={startDate}
@@ -323,7 +368,9 @@ export default function EventsPage() {
 
           <div className="flex justify-between items-center mt-4">
             <div className="flex gap-2">
-              <Button onClick={applyFilters} size="sm">Apply Filters</Button>
+              <Button onClick={applyFilters} size="sm">
+                Apply Filters
+              </Button>
               <Button
                 onClick={() => {
                   setSearchTerm("");
@@ -342,18 +389,40 @@ export default function EventsPage() {
               </Button>
             </div>
 
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(parseInt(e.target.value));
-                setCurrentPage(1);
-              }}
-              className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="25">Show: 25 items</option>
-              <option value="50">Show: 50 items</option>
-              <option value="100">Show: 100 items</option>
-            </select>
+            <div className="flex gap-2 items-center">
+              <button
+                onClick={handleExport}
+                className="flex items-center gap-1 text-sm px-3 py-2 text-gray-600 hover:text-gray-800 border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                title="Export to CSV"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+                Download CSV
+              </button>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(parseInt(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="25">Show: 25 items</option>
+                <option value="50">Show: 50 items</option>
+                <option value="100">Show: 100 items</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -380,9 +449,7 @@ export default function EventsPage() {
                 events.map((event: EventLog) => (
                   <tr key={event.id} className={tableStyles.row}>
                     <td className={tableStyles.cell}>
-                      <div>
-                        {new Date(event.createdAt).toLocaleString()}
-                      </div>
+                      <div>{new Date(event.createdAt).toLocaleString()}</div>
                       <div className="text-xs text-gray-500">
                         {formatTimeAgo(event.createdAt)}
                       </div>
@@ -437,8 +504,11 @@ export default function EventsPage() {
                 const pageNum = i + 1;
                 if (totalPages > 10) {
                   // Show first, last, and pages around current
-                  if (pageNum === 1 || pageNum === totalPages ||
-                      (pageNum >= currentPage - 2 && pageNum <= currentPage + 2)) {
+                  if (
+                    pageNum === 1 ||
+                    pageNum === totalPages ||
+                    (pageNum >= currentPage - 2 && pageNum <= currentPage + 2)
+                  ) {
                     return (
                       <button
                         key={pageNum}
@@ -453,8 +523,13 @@ export default function EventsPage() {
                       </button>
                     );
                   }
-                  if (pageNum === 2 && currentPage > 4) return <span key={pageNum}>...</span>;
-                  if (pageNum === totalPages - 1 && currentPage < totalPages - 3) return <span key={pageNum}>...</span>;
+                  if (pageNum === 2 && currentPage > 4)
+                    return <span key={pageNum}>...</span>;
+                  if (
+                    pageNum === totalPages - 1 &&
+                    currentPage < totalPages - 3
+                  )
+                    return <span key={pageNum}>...</span>;
                   return null;
                 } else {
                   return (
@@ -491,15 +566,25 @@ export default function EventsPage() {
 
       {/* Event Details Modal */}
       {showDetailsModal && selectedEvent && (
-        <Modal title="Event Details" isOpen={showDetailsModal} onClose={() => setShowDetailsModal(false)}>
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Event Details</h3>
+        <Modal
+          title="Event Details"
+          isOpen={showDetailsModal}
+          onClose={() => setShowDetailsModal(false)}
+        >
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
+            Event Details
+          </h3>
           <div className="space-y-3">
             <div>
-              <span className="text-sm font-medium text-gray-500">Event ID:</span>
+              <span className="text-sm font-medium text-gray-500">
+                Event ID:
+              </span>
               <span className="text-sm ml-2">{selectedEvent.id}</span>
             </div>
             <div>
-              <span className="text-sm font-medium text-gray-500">Timestamp:</span>
+              <span className="text-sm font-medium text-gray-500">
+                Timestamp:
+              </span>
               <span className="text-sm ml-2">
                 {new Date(selectedEvent.createdAt).toLocaleString()}
               </span>
@@ -511,11 +596,17 @@ export default function EventsPage() {
               </span>
             </div>
             <div>
-              <span className="text-sm font-medium text-gray-500">Category:</span>
-              <span className="text-sm ml-2 capitalize">{selectedEvent.eventCategory}</span>
+              <span className="text-sm font-medium text-gray-500">
+                Category:
+              </span>
+              <span className="text-sm ml-2 capitalize">
+                {selectedEvent.eventCategory}
+              </span>
             </div>
             <div>
-              <span className="text-sm font-medium text-gray-500">Event Type:</span>
+              <span className="text-sm font-medium text-gray-500">
+                Event Type:
+              </span>
               <span className="text-sm ml-2">{selectedEvent.eventType}</span>
             </div>
             <div>
@@ -524,131 +615,48 @@ export default function EventsPage() {
             </div>
             {selectedEvent.description && (
               <div>
-                <span className="text-sm font-medium text-gray-500">Description:</span>
-                <span className="text-sm ml-2">{selectedEvent.description}</span>
+                <span className="text-sm font-medium text-gray-500">
+                  Description:
+                </span>
+                <span className="text-sm ml-2">
+                  {selectedEvent.description}
+                </span>
               </div>
             )}
             <div>
               <span className="text-sm font-medium text-gray-500">User:</span>
-              <span className="text-sm ml-2">{selectedEvent.userEmail || "System (Automated)"}</span>
+              <span className="text-sm ml-2">
+                {selectedEvent.userEmail || "System (Automated)"}
+              </span>
             </div>
             {selectedEvent.ipAddress && (
               <div>
-                <span className="text-sm font-medium text-gray-500">IP Address:</span>
+                <span className="text-sm font-medium text-gray-500">
+                  IP Address:
+                </span>
                 <span className="text-sm ml-2">{selectedEvent.ipAddress}</span>
               </div>
             )}
-            {selectedEvent.metadata !== null && selectedEvent.metadata !== undefined && (
-              <div>
-                <span className="text-sm font-medium text-gray-500">Metadata:</span>
-                <pre className="text-xs bg-gray-50 dark:bg-gray-700 p-2 mt-1 rounded overflow-auto">
-                  {JSON.stringify(selectedEvent.metadata, null, 2)}
-                </pre>
-              </div>
-            )}
+            {selectedEvent.metadata !== null &&
+              selectedEvent.metadata !== undefined && (
+                <div>
+                  <span className="text-sm font-medium text-gray-500">
+                    Metadata:
+                  </span>
+                  <pre className="text-xs bg-gray-50 dark:bg-gray-700 p-2 mt-1 rounded overflow-auto">
+                    {JSON.stringify(selectedEvent.metadata, null, 2)}
+                  </pre>
+                </div>
+              )}
           </div>
           <div className="mt-6 flex justify-end">
-            <Button onClick={() => setShowDetailsModal(false)} variant="secondary">
+            <Button
+              onClick={() => setShowDetailsModal(false)}
+              variant="secondary"
+            >
               Close
             </Button>
           </div>
-        </Modal>
-      )}
-
-      {/* Manual Event Modal */}
-      {showManualEventModal && (
-        <Modal title="Add Manual Event" isOpen={showManualEventModal} onClose={() => setShowManualEventModal(false)}>
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Add Manual Event</h3>
-          <fetcher.Form method="post">
-            <input type="hidden" name="intent" value="manualEvent" />
-            <div className="space-y-4">
-              <SelectField
-                label="Entity Type"
-                name="entityType"
-                required
-              >
-                <option value="">Select entity type</option>
-                <option value="order">Order</option>
-                <option value="customer">Customer</option>
-                <option value="vendor">Vendor</option>
-                <option value="part">Part</option>
-                <option value="quote">Quote</option>
-              </SelectField>
-
-              <InputField
-                label="Entity ID"
-                name="entityId"
-                type="text"
-                required
-                placeholder="Enter entity ID"
-              />
-
-              <InputField
-                label="Event Type"
-                name="eventType"
-                type="text"
-                required
-                placeholder="e.g., status_change, document_upload"
-              />
-
-              <SelectField
-                label="Category"
-                name="eventCategory"
-                required
-              >
-                <option value="">Select category</option>
-                <option value="status">Status</option>
-                <option value="financial">Financial</option>
-                <option value="document">Document</option>
-                <option value="communication">Communication</option>
-                <option value="system">System</option>
-                <option value="quality">Quality</option>
-                <option value="manufacturing">Manufacturing</option>
-              </SelectField>
-
-
-              <InputField
-                label="Title"
-                name="title"
-                type="text"
-                required
-                placeholder="Brief event title"
-              />
-
-              <div>
-                <label htmlFor="description" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Description
-                </label>
-                <textarea
-                  id="description"
-                  name="description"
-                  rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Optional event description"
-                />
-              </div>
-
-              <InputField
-                label="User Email (Optional)"
-                name="userEmail"
-                type="email"
-                placeholder="user@example.com"
-              />
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <Button
-                type="button"
-                onClick={() => setShowManualEventModal(false)}
-                variant="secondary"
-              >
-                Cancel
-              </Button>
-              <Button type="submit">
-                Create Event
-              </Button>
-            </div>
-          </fetcher.Form>
         </Modal>
       )}
     </div>
