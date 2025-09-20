@@ -16,9 +16,9 @@ export default function Button({
   const baseClasses = 'font-semibold rounded transition-all cursor-pointer'
   
   const variantClasses = {
-    primary: 'bg-gray-800 dark:bg-gray-700 text-white hover:opacity-80 border-0',
-    secondary: 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-800 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700',
-    danger: 'bg-red-600 dark:bg-red-700 text-white hover:opacity-80 border-0'
+    primary: 'bg-gray-800 dark:bg-transparent text-white dark:text-blue-400 hover:bg-gray-900 dark:hover:bg-blue-950/30 border border-transparent dark:border-blue-600',
+    secondary: 'bg-white dark:bg-transparent text-gray-800 dark:text-gray-200 border border-gray-800 dark:border-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/30',
+    danger: 'bg-red-600 dark:bg-transparent text-white dark:text-red-400 hover:bg-red-700 dark:hover:bg-red-950/30 border border-transparent dark:border-red-600'
   }
   
   const sizeClasses = {

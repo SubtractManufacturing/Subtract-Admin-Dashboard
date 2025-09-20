@@ -367,6 +367,7 @@ export default function OrderDetails() {
   const [lineItemModalOpen, setLineItemModalOpen] = useState(false);
   const [selectedLineItem, setSelectedLineItem] = useState<OrderLineItem | null>(null);
   const [lineItemMode, setLineItemMode] = useState<"create" | "edit">("create");
+  const [isAddingNote, setIsAddingNote] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>("");
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
@@ -836,14 +837,14 @@ export default function OrderDetails() {
                                   part.thumbnailUrl ? (
                                     <button
                                       onClick={() => handleView3DModel(part)}
-                                      className="h-10 w-10 p-0 border-0 bg-transparent cursor-pointer"
+                                      className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
                                       title="Click to view 3D model"
                                       type="button"
                                     >
                                       <img
                                         src={part.thumbnailUrl}
                                         alt={`${part.partName || lineItem.name} thumbnail`}
-                                        className="h-full w-full object-cover rounded-lg border border-gray-200 dark:border-gray-600 hover:opacity-80 transition-opacity"
+                                        className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                       />
                                     </button>
                                   ) : (
@@ -1009,20 +1010,40 @@ export default function OrderDetails() {
             </div>
           </div>
 
-          {/* Notes Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order Notes</h3>
+          {/* Notes and Event Log Section - Side by Side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Notes */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order Notes</h3>
+                {!isAddingNote && (
+                  <Button size="sm" onClick={() => setIsAddingNote(true)}>
+                    Add Note
+                  </Button>
+                )}
+              </div>
+              <div className="p-6">
+                <Notes
+                  entityType="order"
+                  entityId={order.id.toString()}
+                  initialNotes={notes}
+                  currentUserId={user.id || user.email}
+                  currentUserName={userDetails?.name || user.email}
+                  showHeader={false}
+                  onAddNoteClick={() => setIsAddingNote(false)}
+                  isAddingNote={isAddingNote}
+                  externalControl={true}
+                />
+              </div>
             </div>
-            <div className="p-6">
-              <Notes 
-                entityType="order" 
-                entityId={order.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
-            </div>
+
+            {/* Event Log */}
+            <EventTimeline
+              entityType="order"
+              entityId={order.id.toString()}
+              entityName={order.orderNumber}
+              initialEvents={events}
+            />
           </div>
 
           {/* Vendor Information */}
@@ -1171,13 +1192,6 @@ export default function OrderDetails() {
               )}
             </div>
           </div>
-
-          {/* Event Timeline - Full width at bottom */}
-          <EventTimeline
-            entityType="order"
-            entityId={order.id.toString()}
-            initialEvents={events}
-          />
         </div>
       </div>
 

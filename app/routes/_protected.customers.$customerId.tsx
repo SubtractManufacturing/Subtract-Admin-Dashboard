@@ -582,6 +582,7 @@ export default function CustomerDetails() {
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
+  const [isAddingNote, setIsAddingNote] = useState(false);
   const [partsModalOpen, setPartsModalOpen] = useState(false);
   const [selectedPart, setSelectedPart] = useState<Part | null>(null);
   const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
@@ -905,7 +906,7 @@ export default function CustomerDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Customer Information</h3>
                 {!isEditingInfo && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingInfo(true)}>
+                  <Button size="sm" onClick={() => setIsEditingInfo(true)}>
                     Edit
                   </Button>
                 )}
@@ -959,7 +960,7 @@ export default function CustomerDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Contact Information</h3>
                 {!isEditingContact && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingContact(true)}>
+                  <Button size="sm" onClick={() => setIsEditingContact(true)}>
                     Edit
                   </Button>
                 )}
@@ -1079,20 +1080,40 @@ export default function CustomerDetails() {
             </div>
           </div>
 
-          {/* Notes Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+          {/* Notes and Event Log Section - Side by Side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Notes */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+                {!isAddingNote && (
+                  <Button size="sm" onClick={() => setIsAddingNote(true)}>
+                    Add Note
+                  </Button>
+                )}
+              </div>
+              <div className="p-6">
+                <Notes
+                  entityType="customer"
+                  entityId={customer.id.toString()}
+                  initialNotes={notes}
+                  currentUserId={user.id || user.email}
+                  currentUserName={userDetails?.name || user.email}
+                  showHeader={false}
+                  onAddNoteClick={() => setIsAddingNote(false)}
+                  isAddingNote={isAddingNote}
+                  externalControl={true}
+                />
+              </div>
             </div>
-            <div className="p-6">
-              <Notes 
-                entityType="customer" 
-                entityId={customer.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
-            </div>
+
+            {/* Event Log */}
+            <EventTimeline
+              entityType="customer"
+              entityId={customer.id.toString()}
+              entityName={customer.displayName}
+              initialEvents={events}
+            />
           </div>
 
           {/* Attachments Card */}
@@ -1232,14 +1253,14 @@ export default function CustomerDetails() {
                               {part.thumbnailUrl ? (
                                 <button
                                   onClick={() => handleView3DPart(part)}
-                                  className="h-10 w-10 p-0 border-0 bg-transparent cursor-pointer"
+                                  className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
                                   title="View 3D model"
                                   type="button"
                                 >
                                   <img
                                     src={part.thumbnailUrl}
                                     alt={`${part.partName} thumbnail`}
-                                    className="h-full w-full object-cover rounded-lg border border-gray-200 dark:border-gray-600 hover:opacity-80 transition-opacity"
+                                    className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                   />
                                 </button>
                               ) : (
@@ -1327,13 +1348,6 @@ export default function CustomerDetails() {
               )}
             </div>
           </div>
-
-          {/* Event Timeline - Full width at bottom */}
-          <EventTimeline
-            entityType="customer"
-            entityId={customer.id.toString()}
-            initialEvents={events}
-          />
         </div>
       </div>
 

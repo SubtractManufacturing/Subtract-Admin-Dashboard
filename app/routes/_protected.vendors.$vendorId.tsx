@@ -305,6 +305,7 @@ export default function VendorDetails() {
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
+  const [isAddingNote, setIsAddingNote] = useState(false);
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -516,7 +517,7 @@ export default function VendorDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Vendor Information</h3>
                 {!isEditingInfo && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingInfo(true)}>
+                  <Button size="sm" onClick={() => setIsEditingInfo(true)}>
                     Edit
                   </Button>
                 )}
@@ -590,7 +591,7 @@ export default function VendorDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Contact Information</h3>
                 {!isEditingContact && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingContact(true)}>
+                  <Button size="sm" onClick={() => setIsEditingContact(true)}>
                     Edit
                   </Button>
                 )}
@@ -740,7 +741,7 @@ export default function VendorDetails() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Attachments</h3>
-              <Button onClick={handleFileUpload}>Upload File</Button>
+              <Button size="sm" onClick={handleFileUpload}>Upload File</Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -835,28 +836,41 @@ export default function VendorDetails() {
             </div>
           </div>
 
-          {/* Notes Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+          {/* Notes and Event Log Section - Side by Side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Notes */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+                {!isAddingNote && (
+                  <Button size="sm" onClick={() => setIsAddingNote(true)}>
+                    Add Note
+                  </Button>
+                )}
+              </div>
+              <div className="p-6">
+                <Notes
+                  entityType="vendor"
+                  entityId={vendor.id.toString()}
+                  initialNotes={notes}
+                  currentUserId={user.id || user.email}
+                  currentUserName={userDetails?.name || user.email}
+                  showHeader={false}
+                  onAddNoteClick={() => setIsAddingNote(false)}
+                  isAddingNote={isAddingNote}
+                  externalControl={true}
+                />
+              </div>
             </div>
-            <div className="p-6">
-              <Notes 
-                entityType="vendor" 
-                entityId={vendor.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
-            </div>
-          </div>
 
-          {/* Event Timeline - Full width at bottom */}
-          <EventTimeline
-            entityType="vendor"
-            entityId={vendor.id.toString()}
-            initialEvents={events}
-          />
+            {/* Event Log */}
+            <EventTimeline
+              entityType="vendor"
+              entityId={vendor.id.toString()}
+              entityName={vendor.displayName}
+              initialEvents={events}
+            />
+          </div>
         </div>
       </div>
 
