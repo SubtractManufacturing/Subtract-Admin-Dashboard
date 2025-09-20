@@ -72,7 +72,7 @@ export function Notes({
     );
 
     setNewNoteContent("");
-    setIsAddingNote(false);
+    setInternalIsAddingNote(false);
     
     setTimeout(() => {
       loadNotes();

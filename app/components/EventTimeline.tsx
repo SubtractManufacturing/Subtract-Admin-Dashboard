@@ -30,7 +30,12 @@ export function EventTimeline({
 
   useEffect(() => {
     if (fetcher.data?.events) {
-      setEvents(fetcher.data.events);
+      const mappedEvents = fetcher.data.events as Array<Omit<EventLog, 'createdAt'> & { createdAt: string }>;
+      setEvents(mappedEvents.map(event => ({
+        ...event,
+        createdAt: new Date(event.createdAt),
+        metadata: event.metadata || null
+      })));
     }
   }, [fetcher.data]);
 

@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
@@ -20,7 +20,6 @@ import { canUserAccessEvents, shouldShowEventsInNav } from "~/lib/featureFlags";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
-import { InputField, SelectField } from "~/components/shared/FormField";
 import { tableStyles } from "~/utils/tw-styles";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -172,7 +171,6 @@ export default function EventsPage() {
     appConfig,
     showEventsLink,
   } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher();
   const navigate = useNavigate();
 
   const [searchTerm, setSearchTerm] = useState(filters.searchTerm || "");
@@ -266,19 +264,19 @@ export default function EventsPage() {
   const getEntityDisplay = (event: EventLog) => {
     switch (event.entityType) {
       case "order": {
-        const order = orders.find((o) => o.id.toString() === event.entityId);
+        const order = orders.find((o: {id: number; orderNumber: string}) => o.id.toString() === event.entityId);
         return order
           ? `Order #${order.orderNumber}`
           : `Order #${event.entityId}`;
       }
       case "customer": {
         const customer = customers.find(
-          (c) => c.id.toString() === event.entityId
+          (c: {id: number; displayName: string}) => c.id.toString() === event.entityId
         );
         return customer ? customer.displayName : `Customer #${event.entityId}`;
       }
       case "vendor": {
-        const vendor = vendors.find((v) => v.id.toString() === event.entityId);
+        const vendor = vendors.find((v: {id: number; displayName: string}) => v.id.toString() === event.entityId);
         return vendor ? vendor.displayName : `Vendor #${event.entityId}`;
       }
       case "part":
