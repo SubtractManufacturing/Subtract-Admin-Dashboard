@@ -16,6 +16,8 @@ import { InputField as FormField } from "~/components/shared/FormField";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
+import { EventTimeline } from "~/components/EventTimeline";
+import { getEventsByEntity } from "~/lib/events";
 
 type VendorOrder = {
   id: number;
@@ -45,15 +47,16 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Vendor not found", { status: 404 });
   }
 
-  const [orders, stats, notes, showEventsLink] = await Promise.all([
+  const [orders, stats, notes, showEventsLink, events] = await Promise.all([
     getVendorOrders(vendor.id),
     getVendorStats(vendor.id),
     getNotes("vendor", vendor.id.toString()),
     shouldShowEventsInNav(),
+    getEventsByEntity("vendor", vendor.id.toString(), 10),
   ]);
 
   return withAuthHeaders(
-    json({ vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink }),
+    json({ vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, events }),
     headers
   );
 }
@@ -296,7 +299,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function VendorDetails() {
-  const { vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink } = useLoaderData<typeof loader>();
+  const { vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, events } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -847,9 +850,16 @@ export default function VendorDetails() {
               />
             </div>
           </div>
+
+          {/* Event Timeline - Full width at bottom */}
+          <EventTimeline
+            entityType="vendor"
+            entityId={vendor.id.toString()}
+            initialEvents={events}
+          />
         </div>
       </div>
-      
+
       {/* File Viewer Modal */}
       {selectedFile && (
         <FileViewerModal

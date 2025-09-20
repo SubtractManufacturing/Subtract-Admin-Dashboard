@@ -21,6 +21,8 @@ import ToggleSlider from "~/components/shared/ToggleSlider";
 import PartsModal from "~/components/PartsModal";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
+import { EventTimeline } from "~/components/EventTimeline";
+import { getEventsByEntity } from "~/lib/events";
 
 type CustomerOrder = {
   id: number;
@@ -50,17 +52,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, parts, canUploadMesh, showEventsLink] = await Promise.all([
+  const [orders, stats, notes, parts, canUploadMesh, showEventsLink, events] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
     getPartsByCustomerId(customer.id),
     canUserUploadMesh(userDetails.role),
     shouldShowEventsInNav(),
+    getEventsByEntity("customer", customer.id.toString(), 10),
   ]);
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink }),
+    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events }),
     headers
   );
 }
@@ -573,7 +576,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -1324,9 +1327,16 @@ export default function CustomerDetails() {
               )}
             </div>
           </div>
+
+          {/* Event Timeline - Full width at bottom */}
+          <EventTimeline
+            entityType="customer"
+            entityId={customer.id.toString()}
+            initialEvents={events}
+          />
         </div>
       </div>
-      
+
       {/* File Viewer Modal */}
       {selectedFile && (
         <FileViewerModal

@@ -21,6 +21,8 @@ import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
 import { useState, useRef, useCallback } from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import { EventTimeline } from "~/components/EventTimeline";
+import { getEventsByEntity } from "~/lib/events";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -49,11 +51,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch parts for the customer if available
   const parts = order.customerId ? await getPartsByCustomerId(order.customerId) : [];
 
-  // Get feature flags
-  const showEventsLink = await shouldShowEventsInNav();
+  // Get feature flags and events
+  const [showEventsLink, events] = await Promise.all([
+    shouldShowEventsInNav(),
+    getEventsByEntity("order", order.id.toString(), 10),
+  ]);
 
   return withAuthHeaders(
-    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink }),
+    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink, events }),
     headers
   );
 }
@@ -355,7 +360,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function OrderDetails() {
-  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink } = useLoaderData<typeof loader>();
+  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink, events } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
@@ -1166,9 +1171,16 @@ export default function OrderDetails() {
               )}
             </div>
           </div>
+
+          {/* Event Timeline - Full width at bottom */}
+          <EventTimeline
+            entityType="order"
+            entityId={order.id.toString()}
+            initialEvents={events}
+          />
         </div>
       </div>
-      
+
       {/* File Viewer Modal */}
       {selectedFile && (
         <FileViewerModal

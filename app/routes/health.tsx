@@ -7,7 +7,7 @@ export const loader: LoaderFunction = async () => {
       status: "healthy",
       timestamp: new Date().toISOString(),
       service: "subtract-frontend",
-      version: process.env.APP_VERSION || "1.0.0",
+      version: process.env.APP_VERSION || "Unable to load version",
     },
     {
       status: 200,
