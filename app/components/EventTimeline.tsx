@@ -193,9 +193,19 @@ export function EventTimeline({
                     {event.description}
                   </p>
                 )}
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                  {formatTimeAgo(event.createdAt)}
-                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-xs text-gray-400 dark:text-gray-500">
+                    {formatTimeAgo(event.createdAt)}
+                  </p>
+                  {event.userEmail && (
+                    <>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">•</span>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        {event.userEmail.split('@')[0]}
+                      </p>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           ))}
