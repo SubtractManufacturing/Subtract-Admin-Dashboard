@@ -39,6 +39,20 @@ export async function createEvent(eventData: EventLogInput): Promise<EventLog> {
   return event;
 }
 
+export async function dismissEvent(eventId: string, dismissedBy: string): Promise<EventLog | null> {
+  const result = await db
+    .update(eventLogs)
+    .set({
+      isDismissed: true,
+      dismissedAt: new Date(),
+      dismissedBy,
+    })
+    .where(eq(eventLogs.id, eventId))
+    .returning();
+
+  return result[0] || null;
+}
+
 export async function getEventsByEntity(
   entityType: string,
   entityId: string,
@@ -47,7 +61,11 @@ export async function getEventsByEntity(
   return await db
     .select()
     .from(eventLogs)
-    .where(and(eq(eventLogs.entityType, entityType), eq(eventLogs.entityId, entityId)))
+    .where(and(
+      eq(eventLogs.entityType, entityType),
+      eq(eventLogs.entityId, entityId),
+      eq(eventLogs.isDismissed, false)
+    ))
     .orderBy(desc(eventLogs.createdAt))
     .limit(limit);
 }

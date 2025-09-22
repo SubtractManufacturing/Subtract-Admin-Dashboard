@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useFetcher, Link } from "@remix-run/react";
 import type { EventLog } from "~/lib/events";
 import Button from "~/components/shared/Button";
@@ -18,10 +18,12 @@ export function EventTimeline({
   initialEvents = [],
   className = ""
 }: EventTimelineProps) {
-  const [events, setEvents] = useState<EventLog[]>(initialEvents);
+  const [events, setEvents] = useState<EventLog[]>(initialEvents.filter(e => !e.isDismissed));
   const [showAll, setShowAll] = useState(false);
-  const [dismissedEventIds, setDismissedEventIds] = useState<Set<string>>(new Set());
+  const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const fetcher = useFetcher<{ events: EventLog[] }>();
+  const dismissFetcher = useFetcher();
 
   useEffect(() => {
     if (!initialEvents || initialEvents.length === 0) {
@@ -32,23 +34,56 @@ export function EventTimeline({
   useEffect(() => {
     if (fetcher.data?.events) {
       const mappedEvents = fetcher.data.events as Array<Omit<EventLog, 'createdAt'> & { createdAt: string }>;
-      setEvents(mappedEvents.map(event => ({
-        ...event,
-        createdAt: new Date(event.createdAt),
-        metadata: event.metadata || null
-      })));
+      setEvents(mappedEvents
+        .filter(event => !event.isDismissed)
+        .map(event => ({
+          ...event,
+          createdAt: new Date(event.createdAt),
+          metadata: event.metadata || null
+        })));
     }
   }, [fetcher.data]);
 
-  const filteredEvents = events.filter(event => !dismissedEventIds.has(event.id));
-  const displayEvents = showAll ? filteredEvents : filteredEvents.slice(0, 5);
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedEvent) {
+        setSelectedEvent(null);
+      }
+    };
+
+    if (selectedEvent) {
+      document.addEventListener('keydown', handleEscape);
+      modalRef.current?.focus();
+
+      // Lock body scroll
+      document.body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      // Restore body scroll
+      document.body.style.overflow = '';
+    };
+  }, [selectedEvent]);
+
+  const displayEvents = showAll ? events : events.slice(0, 5);
 
   const handleDismissEvent = (eventId: string) => {
-    setDismissedEventIds(prev => new Set(prev).add(eventId));
+    // Optimistically update UI by removing the event
+    setEvents(prev => prev.filter(e => e.id !== eventId));
+
+    // Persist to database
+    const formData = new FormData();
+    formData.append('eventId', eventId);
+
+    dismissFetcher.submit(formData, {
+      method: 'post',
+      action: '/actions/events/dismiss'
+    });
   };
 
   const getEventIcon = (event: EventLog) => {
-    const baseClasses = "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center z-10";
+    const baseClasses = "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center z-10 cursor-pointer hover:scale-110 transition-transform";
 
     switch (event.eventCategory) {
       case "financial":
@@ -194,7 +229,13 @@ export function EventTimeline({
         <div className="space-y-4">
           {displayEvents.map((event) => (
             <div key={event.id} className="relative flex items-start group">
-              {getEventIcon(event)}
+              <button
+                onClick={() => setSelectedEvent(event)}
+                className="focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-full"
+                aria-label="View event details"
+              >
+                {getEventIcon(event)}
+              </button>
               <div className="ml-4 flex-1">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -236,16 +277,16 @@ export function EventTimeline({
         </div>
 
         {/* Show More Button */}
-        {filteredEvents.length > 5 && !showAll && (
+        {events.length > 5 && !showAll && (
           <button
             onClick={() => setShowAll(true)}
             className="w-full text-center text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 pt-4 transition-colors"
           >
-            View all {filteredEvents.length} events →
+            View all {events.length} events →
           </button>
         )}
 
-        {showAll && filteredEvents.length > 5 && (
+        {showAll && events.length > 5 && (
           <button
             onClick={() => setShowAll(false)}
             className="w-full text-center text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 pt-4 transition-colors"
@@ -255,6 +296,121 @@ export function EventTimeline({
         )}
       </div>
       </div>
+
+      {/* Event Details Modal */}
+      {selectedEvent && (
+        <>
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 z-50"
+            onClick={() => setSelectedEvent(null)}
+            aria-hidden="true"
+          />
+          <div
+            className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="event-details-title"
+          >
+            <div
+              ref={modalRef}
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-auto pointer-events-auto"
+              tabIndex={-1}
+            >
+            <div className="border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <h2 id="event-details-title" className="text-xl font-semibold text-gray-900 dark:text-gray-100">Event Details</h2>
+                <button
+                  onClick={() => setSelectedEvent(null)}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Title</h3>
+                <p className="mt-1 text-base text-gray-900 dark:text-gray-100">{selectedEvent.title}</p>
+              </div>
+
+              {selectedEvent.description && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Description</h3>
+                  <p className="mt-1 text-base text-gray-700 dark:text-gray-300">{selectedEvent.description}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Category</h3>
+                  <p className="mt-1 text-base text-gray-900 dark:text-gray-100 capitalize">{selectedEvent.eventCategory}</p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Type</h3>
+                  <p className="mt-1 text-base text-gray-900 dark:text-gray-100">{selectedEvent.eventType}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Date & Time</h3>
+                  <p className="mt-1 text-base text-gray-900 dark:text-gray-100">
+                    {new Date(selectedEvent.createdAt).toLocaleString('en-US', {
+                      dateStyle: 'medium',
+                      timeStyle: 'short'
+                    })}
+                  </p>
+                </div>
+
+                {selectedEvent.userEmail && (
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">User</h3>
+                    <p className="mt-1 text-base text-gray-900 dark:text-gray-100">{selectedEvent.userEmail}</p>
+                  </div>
+                )}
+              </div>
+
+              {(() => {
+                const metadata = selectedEvent.metadata as Record<string, unknown> | null;
+                if (!metadata || Object.keys(metadata).length === 0) return null;
+                return (
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Additional Details</h3>
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                      {Object.entries(metadata).map(([key, value]) => (
+                      <div key={key} className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-700 last:border-0">
+                        <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                          {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                        </span>
+                        <span className="text-sm text-gray-900 dark:text-gray-100">
+                          {value === null || value === undefined
+                            ? ''
+                            : typeof value === 'object'
+                              ? JSON.stringify(value, null, 2)
+                              : String(value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                );
+              })()}
+
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  <p>Event ID: {selectedEvent.id}</p>
+                  <p>Entity: {selectedEvent.entityType} ({selectedEvent.entityId})</p>
+                </div>
+              </div>
+            </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

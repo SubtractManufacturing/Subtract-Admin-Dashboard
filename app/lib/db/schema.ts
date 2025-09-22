@@ -272,6 +272,11 @@ export const eventLogs = pgTable("event_logs", {
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
 
+  // Dismissal tracking
+  isDismissed: boolean("is_dismissed").notNull().default(false),
+  dismissedAt: timestamp("dismissed_at"),
+  dismissedBy: text("dismissed_by"),
+
   // Timestamps
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
