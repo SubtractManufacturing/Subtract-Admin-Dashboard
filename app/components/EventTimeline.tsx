@@ -20,6 +20,7 @@ export function EventTimeline({
 }: EventTimelineProps) {
   const [events, setEvents] = useState<EventLog[]>(initialEvents);
   const [showAll, setShowAll] = useState(false);
+  const [dismissedEventIds, setDismissedEventIds] = useState<Set<string>>(new Set());
   const fetcher = useFetcher<{ events: EventLog[] }>();
 
   useEffect(() => {
@@ -39,7 +40,12 @@ export function EventTimeline({
     }
   }, [fetcher.data]);
 
-  const displayEvents = showAll ? events : events.slice(0, 5);
+  const filteredEvents = events.filter(event => !dismissedEventIds.has(event.id));
+  const displayEvents = showAll ? filteredEvents : filteredEvents.slice(0, 5);
+
+  const handleDismissEvent = (eventId: string) => {
+    setDismissedEventIds(prev => new Set(prev).add(eventId));
+  };
 
   const getEventIcon = (event: EventLog) => {
     const baseClasses = "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center z-10";
@@ -187,29 +193,42 @@ export function EventTimeline({
         {/* Timeline Events */}
         <div className="space-y-4">
           {displayEvents.map((event) => (
-            <div key={event.id} className="relative flex items-start">
+            <div key={event.id} className="relative flex items-start group">
               {getEventIcon(event)}
               <div className="ml-4 flex-1">
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  {event.title}
-                </p>
-                {event.description && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {event.description}
-                  </p>
-                )}
-                <div className="flex items-center gap-2 mt-1">
-                  <p className="text-xs text-gray-400 dark:text-gray-500">
-                    {formatTimeAgo(event.createdAt)}
-                  </p>
-                  {event.userEmail && (
-                    <>
-                      <span className="text-xs text-gray-400 dark:text-gray-500">•</span>
-                      <p className="text-xs text-gray-400 dark:text-gray-500">
-                        {event.userEmail.split('@')[0]}
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {event.title}
+                    </p>
+                    {event.description && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {event.description}
                       </p>
-                    </>
-                  )}
+                    )}
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        {formatTimeAgo(event.createdAt)}
+                      </p>
+                      {event.userEmail && (
+                        <>
+                          <span className="text-xs text-gray-400 dark:text-gray-500">•</span>
+                          <p className="text-xs text-gray-400 dark:text-gray-500">
+                            {event.userEmail.split('@')[0]}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDismissEvent(event.id)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity ml-2 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                    aria-label="Dismiss event"
+                  >
+                    <svg className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
                 </div>
               </div>
             </div>
@@ -217,16 +236,16 @@ export function EventTimeline({
         </div>
 
         {/* Show More Button */}
-        {events.length > 5 && !showAll && (
+        {filteredEvents.length > 5 && !showAll && (
           <button
             onClick={() => setShowAll(true)}
             className="w-full text-center text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 pt-4 transition-colors"
           >
-            View all {events.length} events →
+            View all {filteredEvents.length} events →
           </button>
         )}
 
-        {showAll && events.length > 5 && (
+        {showAll && filteredEvents.length > 5 && (
           <button
             onClick={() => setShowAll(false)}
             className="w-full text-center text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 pt-4 transition-colors"
