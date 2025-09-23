@@ -50,11 +50,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const startDate = searchParams.get("startDate");
   const endDate = searchParams.get("endDate");
   if (startDate) filters.startDate = new Date(startDate);
-  if (endDate) {
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-    filters.endDate = end;
-  }
+  if (endDate) filters.endDate = new Date(endDate);
 
   try {
     const { events, totalCount } = await getRecentEvents(filters);
@@ -184,11 +180,11 @@ export default function EventsPage() {
   );
   const [startDate, setStartDate] = useState(
     filters.startDate
-      ? new Date(filters.startDate).toISOString().split("T")[0]
+      ? new Date(filters.startDate).toISOString().slice(0, 16)
       : ""
   );
   const [endDate, setEndDate] = useState(
-    filters.endDate ? new Date(filters.endDate).toISOString().split("T")[0] : ""
+    filters.endDate ? new Date(filters.endDate).toISOString().slice(0, 16) : ""
   );
   const [sortOrder, setSortOrder] = useState(filters.sortOrder || "desc");
   const [pageSize, setPageSize] = useState(filters.limit || 25);
@@ -444,21 +440,30 @@ export default function EventsPage() {
           </div>
 
           {/* Filters */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-            <input
-              type="text"
-              placeholder="Search events..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+            <div className="flex flex-col">
+              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+                Search
+              </label>
+              <input
+                type="text"
+                placeholder="Search events..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              />
+            </div>
 
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-            >
-              <option value="">All Categories</option>
+            <div className="flex flex-col">
+              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+                Category
+              </label>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              >
+                <option value="">All Categories</option>
               <option value="status">Status Changes</option>
               <option value="financial">Financial</option>
               <option value="document">Documents</option>
@@ -466,60 +471,81 @@ export default function EventsPage() {
               <option value="system">System</option>
               <option value="quality">Quality</option>
               <option value="manufacturing">Manufacturing</option>
-              <option value="dismissed">Dismissed Events</option>
-            </select>
+                <option value="dismissed">Dismissed Events</option>
+              </select>
+            </div>
 
-            <select
-              value={selectedEntity}
-              onChange={(e) => setSelectedEntity(e.target.value)}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-            >
-              <option value="">All Entities</option>
+            <div className="flex flex-col">
+              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+                Entity Type
+              </label>
+              <select
+                value={selectedEntity}
+                onChange={(e) => setSelectedEntity(e.target.value)}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              >
+                <option value="">All Entities</option>
               <option value="order">Orders</option>
               <option value="customer">Customers</option>
               <option value="vendor">Vendors</option>
               <option value="part">Parts</option>
-              <option value="quote">Quotes</option>
-            </select>
+                <option value="quote">Quotes</option>
+              </select>
+            </div>
 
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-            />
+            <div className="flex flex-col">
+              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+                Start Date & Time
+              </label>
+              <input
+                type="datetime-local"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              />
+            </div>
 
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-            />
+            <div className="flex flex-col">
+              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+                End Date & Time
+              </label>
+              <input
+                type="datetime-local"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              />
+            </div>
 
-            <select
-              value={sortOrder}
-              onChange={(e) => {
-                const newSortOrder = e.target.value as "asc" | "desc";
-                setSortOrder(newSortOrder);
+            <div className="flex flex-col">
+              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+                Sort Order
+              </label>
+              <select
+                value={sortOrder}
+                onChange={(e) => {
+                  const newSortOrder = e.target.value as "asc" | "desc";
+                  setSortOrder(newSortOrder);
 
-                // Apply the new sort order immediately
-                const params = new URLSearchParams();
-                if (searchTerm) params.set("search", searchTerm);
-                if (selectedCategory) params.set("category", selectedCategory);
-                if (selectedEntity) params.set("entityType", selectedEntity);
-                if (startDate) params.set("startDate", startDate);
-                if (endDate) params.set("endDate", endDate);
-                params.set("sort", newSortOrder);
-                params.set("limit", pageSize.toString());
-                params.set("offset", "0");
+                  // Apply the new sort order immediately
+                  const params = new URLSearchParams();
+                  if (searchTerm) params.set("search", searchTerm);
+                  if (selectedCategory) params.set("category", selectedCategory);
+                  if (selectedEntity) params.set("entityType", selectedEntity);
+                  if (startDate) params.set("startDate", startDate);
+                  if (endDate) params.set("endDate", endDate);
+                  params.set("sort", newSortOrder);
+                  params.set("limit", pageSize.toString());
+                  params.set("offset", "0");
 
-                navigate(`/events?${params.toString()}`);
-              }}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-            >
-              <option value="desc">Newest First</option>
-              <option value="asc">Oldest First</option>
-            </select>
+                  navigate(`/events?${params.toString()}`);
+                }}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              >
+                <option value="desc">Newest First</option>
+                <option value="asc">Oldest First</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex justify-between items-center mt-4">
