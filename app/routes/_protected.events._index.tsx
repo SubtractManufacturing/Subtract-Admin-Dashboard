@@ -216,8 +216,12 @@ export default function EventsPage() {
       setDisplayedEvents(events);
       setHasMore(totalCount > events.length);
       setLoadedOffsets(new Set([0]));
+      // Update page size from filters to ensure it persists
+      if (filters.limit && filters.limit !== pageSize) {
+        setPageSize(filters.limit);
+      }
     }
-  }, [events, totalCount]);
+  }, [events, totalCount, filters.limit]);
 
   const applyFilters = () => {
     // Reset to first page when applying filters
@@ -446,13 +450,13 @@ export default function EventsPage() {
               placeholder="Search events..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
             />
 
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
             >
               <option value="">All Categories</option>
               <option value="status">Status Changes</option>
@@ -468,7 +472,7 @@ export default function EventsPage() {
             <select
               value={selectedEntity}
               onChange={(e) => setSelectedEntity(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
             >
               <option value="">All Entities</option>
               <option value="order">Orders</option>
@@ -482,20 +486,36 @@ export default function EventsPage() {
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
             />
 
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
             />
 
             <select
               value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
-              className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => {
+                const newSortOrder = e.target.value as "asc" | "desc";
+                setSortOrder(newSortOrder);
+
+                // Apply the new sort order immediately
+                const params = new URLSearchParams();
+                if (searchTerm) params.set("search", searchTerm);
+                if (selectedCategory) params.set("category", selectedCategory);
+                if (selectedEntity) params.set("entityType", selectedEntity);
+                if (startDate) params.set("startDate", startDate);
+                if (endDate) params.set("endDate", endDate);
+                params.set("sort", newSortOrder);
+                params.set("limit", pageSize.toString());
+                params.set("offset", "0");
+
+                navigate(`/events?${params.toString()}`);
+              }}
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
             >
               <option value="desc">Newest First</option>
               <option value="asc">Oldest First</option>
@@ -528,7 +548,7 @@ export default function EventsPage() {
             <div className="flex gap-2 items-center">
               <button
                 onClick={handleExport}
-                className="flex items-center gap-1 text-sm px-3 py-2 text-gray-600 hover:text-gray-800 border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                className="flex items-center gap-1 text-sm px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
                 title="Export to CSV"
               >
                 <svg
@@ -549,10 +569,24 @@ export default function EventsPage() {
               <select
                 value={pageSize}
                 onChange={(e) => {
-                  setPageSize(parseInt(e.target.value));
+                  const newPageSize = parseInt(e.target.value);
+                  setPageSize(newPageSize);
                   setCurrentPage(1);
+
+                  // Apply the new page size immediately
+                  const params = new URLSearchParams();
+                  if (searchTerm) params.set("search", searchTerm);
+                  if (selectedCategory) params.set("category", selectedCategory);
+                  if (selectedEntity) params.set("entityType", selectedEntity);
+                  if (startDate) params.set("startDate", startDate);
+                  if (endDate) params.set("endDate", endDate);
+                  params.set("sort", sortOrder);
+                  params.set("limit", newPageSize.toString());
+                  params.set("offset", "0");
+
+                  navigate(`/events?${params.toString()}`);
                 }}
-                className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               >
                 <option value="25">Show: 25 items</option>
                 <option value="50">Show: 50 items</option>
