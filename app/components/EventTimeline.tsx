@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useFetcher, Link } from "@remix-run/react";
 import type { EventLog } from "~/lib/events";
 import Button from "~/components/shared/Button";
+import { formatEventForTimeline } from "~/utils/eventFormatters";
 
 interface EventTimelineProps {
   entityType: string;
@@ -239,14 +240,21 @@ export function EventTimeline({
               <div className="ml-4 flex-1">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      {event.title}
-                    </p>
-                    {event.description && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        {event.description}
-                      </p>
-                    )}
+                    {(() => {
+                      const formatted = formatEventForTimeline(event);
+                      return (
+                        <>
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {formatted.title}
+                          </p>
+                          {formatted.description && (
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {formatted.description}
+                            </p>
+                          )}
+                        </>
+                      );
+                    })()}
                     <div className="flex items-center gap-2 mt-1">
                       <p className="text-xs text-gray-400 dark:text-gray-500">
                         {formatTimeAgo(event.createdAt)}
@@ -331,17 +339,24 @@ export function EventTimeline({
             </div>
 
             <div className="px-6 py-4 space-y-4">
-              <div>
-                <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Title</h3>
-                <p className="mt-1 text-base text-gray-900 dark:text-gray-100">{selectedEvent.title}</p>
-              </div>
+              {(() => {
+                const formatted = formatEventForTimeline(selectedEvent);
+                return (
+                  <>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Event</h3>
+                      <p className="mt-1 text-base text-gray-900 dark:text-gray-100">{formatted.title}</p>
+                    </div>
 
-              {selectedEvent.description && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Description</h3>
-                  <p className="mt-1 text-base text-gray-700 dark:text-gray-300">{selectedEvent.description}</p>
-                </div>
-              )}
+                    {formatted.description && (
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Details</h3>
+                        <p className="mt-1 text-base text-gray-700 dark:text-gray-300">{formatted.description}</p>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
