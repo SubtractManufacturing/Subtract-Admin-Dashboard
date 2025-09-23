@@ -4,6 +4,7 @@ import { eq, desc, ilike, or, and } from 'drizzle-orm'
 import type { Part } from "./db/schema.js"
 import { detectFileFormat, isConversionEnabled } from "./conversion-service.server.js"
 import { convertPartToMesh } from "./mesh-converter.server.js"
+import { createEvent } from "./events.js"
 
 export type { Part }
 
@@ -17,6 +18,11 @@ export type PartInput = {
   thumbnailUrl?: string | null
   partFileUrl?: string | null
   partMeshUrl?: string | null
+}
+
+export type PartEventContext = {
+  userId?: string
+  userEmail?: string
 }
 
 export type PartWithCounts = Part & {
@@ -77,7 +83,7 @@ export async function getPart(id: string): Promise<Part | null> {
   }
 }
 
-export async function createPart(partData: PartInput): Promise<Part> {
+export async function createPart(partData: PartInput, eventContext?: PartEventContext): Promise<Part> {
   try {
     const result = await db
       .insert(parts)
@@ -88,6 +94,25 @@ export async function createPart(partData: PartInput): Promise<Part> {
       .returning()
 
     const newPart = result[0]
+
+    // Log event
+    await createEvent({
+      entityType: "part",
+      entityId: newPart.id,
+      eventType: "part_created",
+      eventCategory: "system",
+      title: "Part Created",
+      description: `Created part: ${newPart.partName || "Unnamed"}`,
+      metadata: {
+        partName: newPart.partName,
+        customerId: newPart.customerId,
+        material: newPart.material,
+        tolerance: newPart.tolerance,
+        finishing: newPart.finishing
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
 
     // Trigger mesh conversion if applicable
     if (newPart.partFileUrl && !newPart.partMeshUrl) {
@@ -101,7 +126,7 @@ export async function createPart(partData: PartInput): Promise<Part> {
   }
 }
 
-export async function updatePart(id: string, partData: Partial<PartInput>): Promise<Part> {
+export async function updatePart(id: string, partData: Partial<PartInput>, eventContext?: PartEventContext): Promise<Part> {
   try {
     const result = await db
       .update(parts)
@@ -114,6 +139,22 @@ export async function updatePart(id: string, partData: Partial<PartInput>): Prom
 
     const updatedPart = result[0]
 
+    // Log event
+    await createEvent({
+      entityType: "part",
+      entityId: id,
+      eventType: "part_updated",
+      eventCategory: "system",
+      title: "Part Updated",
+      description: `Updated part: ${updatedPart.partName || "Unnamed"}`,
+      metadata: {
+        updatedFields: Object.keys(partData),
+        ...partData
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
+
     // Trigger mesh conversion if model file was updated and no mesh exists
     if (partData.partFileUrl && !updatedPart.partMeshUrl) {
       await triggerMeshConversion(updatedPart.id, partData.partFileUrl)
@@ -125,22 +166,64 @@ export async function updatePart(id: string, partData: Partial<PartInput>): Prom
   }
 }
 
-export async function deletePart(id: string): Promise<void> {
+export async function deletePart(id: string, eventContext?: PartEventContext): Promise<void> {
   try {
+    // Get part details before deletion
+    const part = await getPart(id)
+
     await db
       .delete(parts)
       .where(eq(parts.id, id))
+
+    // Log event if part existed
+    if (part) {
+      await createEvent({
+        entityType: "part",
+        entityId: id,
+        eventType: "part_deleted",
+        eventCategory: "system",
+        title: "Part Deleted",
+        description: `Deleted part: ${part.partName || "Unnamed"}`,
+        metadata: {
+          partName: part.partName,
+          customerId: part.customerId
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
+      })
+    }
   } catch (error) {
     throw new Error(`Failed to delete part: ${error}`)
   }
 }
 
-export async function archivePart(id: string): Promise<void> {
+export async function archivePart(id: string, eventContext?: PartEventContext): Promise<void> {
   try {
+    // Get part details before archiving
+    const part = await getPart(id)
+
     await db
       .update(parts)
       .set({ isArchived: true })
       .where(eq(parts.id, id))
+
+    // Log event if part existed
+    if (part) {
+      await createEvent({
+        entityType: "part",
+        entityId: id,
+        eventType: "part_archived",
+        eventCategory: "system",
+        title: "Part Archived",
+        description: `Archived part: ${part.partName || "Unnamed"}`,
+        metadata: {
+          partName: part.partName,
+          customerId: part.customerId
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
+      })
+    }
   } catch (error) {
     throw new Error(`Failed to archive part: ${error}`)
   }

@@ -1,14 +1,14 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
-import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments } from "~/lib/customers";
-import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment } from "~/lib/attachments";
+import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext } from "~/lib/customers";
+import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
-import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
-import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput } from "~/lib/parts";
+import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
+import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh } from "~/lib/featureFlags";
+import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -21,6 +21,8 @@ import ToggleSlider from "~/components/shared/ToggleSlider";
 import PartsModal from "~/components/PartsModal";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
+import { EventTimeline } from "~/components/EventTimeline";
+import { getEventsByEntity } from "~/lib/events";
 
 type CustomerOrder = {
   id: number;
@@ -50,16 +52,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, parts, canUploadMesh] = await Promise.all([
+  const [orders, stats, notes, parts, canUploadMesh, showEventsLink, events] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
     getPartsByCustomerId(customer.id),
-    canUserUploadMesh(userDetails.role)
+    canUserUploadMesh(userDetails.role),
+    shouldShowEventsInNav(),
+    getEventsByEntity("customer", customer.id.toString(), 10),
   ]);
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh }),
+    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events }),
     headers
   );
 }
@@ -70,7 +74,9 @@ async function handlePartsAction(
   formData: FormData,
   intent: string,
   customer: Customer,
-  customerId: string
+  customerId: string,
+  user: { id?: string; email?: string } | null,
+  userDetails: { name?: string | null } | null
 ) {
   try {
     if (intent === "createPart") {
@@ -113,6 +119,11 @@ async function handlePartsAction(
       }
 
       // Create the part with thumbnail URL
+      const eventContext: PartEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
       const part = await createPart({
         customerId: customer.id,
         partName,
@@ -121,7 +132,7 @@ async function handlePartsAction(
         finishing: finishing || null,
         notes: notes || null,
         thumbnailUrl,
-      });
+      }, eventContext);
 
       // Handle 3D model file upload if provided
       if (modelFile && modelFile.size > 0) {
@@ -139,20 +150,24 @@ async function handlePartsAction(
           });
 
           // Create attachment record
+          const attachmentEventContext: AttachmentEventContext = {
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          };
           const attachment = await createAttachment({
             s3Bucket: uploadResult.bucket,
             s3Key: uploadResult.key,
             fileName: uploadResult.fileName,
             contentType: uploadResult.contentType,
             fileSize: uploadResult.size,
-          });
+          }, attachmentEventContext);
 
           // Link to part as a 3D model
           await linkAttachmentToPart(part.id, attachment.id);
           
           // Store the file URL in partFileUrl (CAD files only)
           const fileUrl = `/attachments/s3/${uploadResult.key}`;
-          await updatePart(part.id.toString(), { partFileUrl: fileUrl });
+          await updatePart(part.id.toString(), { partFileUrl: fileUrl }, eventContext);
         } catch (error) {
           console.error('Failed to upload 3D model:', error);
         }
@@ -175,7 +190,7 @@ async function handlePartsAction(
 
           // Store the mesh URL in partMeshUrl
           const meshUrl = `/attachments/s3/${uploadResult.key}`;
-          await updatePart(part.id.toString(), { partMeshUrl: meshUrl });
+          await updatePart(part.id.toString(), { partMeshUrl: meshUrl }, eventContext);
         } catch (error) {
           console.error('Failed to upload mesh file:', error);
         }
@@ -214,7 +229,11 @@ async function handlePartsAction(
               // Delete from S3
               await deleteFile(s3Key);
               // Delete attachment record
-              await deleteAttachmentByS3Key(s3Key);
+              const attachmentEventContext: AttachmentEventContext = {
+                userId: user?.id,
+                userEmail: user?.email || userDetails?.name || undefined,
+              };
+              await deleteAttachmentByS3Key(s3Key, attachmentEventContext);
               console.log(`Deleted thumbnail from S3: ${s3Key}`);
             }
           } catch (error) {
@@ -261,7 +280,12 @@ async function handlePartsAction(
         updateData.thumbnailUrl = thumbnailUrl;
       }
 
-      await updatePart(partId, updateData);
+      const eventContext: PartEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
+      await updatePart(partId, updateData, eventContext);
 
       // TEMPORARY: Handle mesh file upload separately for updates
       if (meshFile && meshFile.size > 0) {
@@ -280,7 +304,7 @@ async function handlePartsAction(
 
           // Store the mesh URL in partMeshUrl
           const meshUrl = `/attachments/s3/${uploadResult.key}`;
-          await updatePart(partId, { partMeshUrl: meshUrl });
+          await updatePart(partId, { partMeshUrl: meshUrl }, eventContext);
         } catch (error) {
           console.error('Failed to upload mesh file:', error);
         }
@@ -296,7 +320,7 @@ async function handlePartsAction(
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { user, userDetails, headers } = await requireAuth(request);
   
   const customerId = params.customerId;
   if (!customerId) {
@@ -320,7 +344,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Check if this is a parts-related action
     if (intent === "createPart" || intent === "updatePart") {
       // Handle parts actions with multipart data
-      return handlePartsAction(formData, intent, customer, customerId);
+      return handlePartsAction(formData, intent, customer, customerId, user, userDetails);
     }
     
     // Otherwise, it's a regular file upload
@@ -350,6 +374,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: file.name,
       });
 
+      // Create event context for attachment operations
+      const eventContext: AttachmentEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
       // Create attachment record
       const attachment = await createAttachment({
         s3Bucket: uploadResult.bucket,
@@ -357,10 +387,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: uploadResult.fileName,
         contentType: uploadResult.contentType,
         fileSize: uploadResult.size,
-      });
+      }, eventContext);
 
       // Link to customer
-      await linkAttachmentToCustomer(customer.id, attachment.id);
+      await linkAttachmentToCustomer(customer.id, attachment.id, eventContext);
 
       // Return a redirect to refresh the page
       return redirect(`/customers/${customerId}`);
@@ -381,17 +411,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const email = formData.get("email") as string;
         const phone = formData.get("phone") as string;
 
+        const eventContext: CustomerEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const updated = await updateCustomer(customer.id, {
           displayName,
           email: email || null,
           phone: phone || null
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ customer: updated }), headers);
       }
 
       case "archiveCustomer": {
-        await archiveCustomer(customer.id);
+        const eventContext: CustomerEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await archiveCustomer(customer.id, eventContext);
         return redirect("/customers");
       }
 
@@ -408,12 +448,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const note = await createNote({
           entityType: "customer",
           entityId: customer.id.toString(),
           content,
           createdBy,
-        });
+        }, noteEventContext);
 
         return withAuthHeaders(json({ note }), headers);
       }
@@ -426,7 +471,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        const note = await updateNote(noteId, content);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await updateNote(noteId, content, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -437,7 +487,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing note ID" }, { status: 400 });
         }
 
-        const note = await archiveNote(noteId);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await archiveNote(noteId, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -454,14 +509,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Attachment not found" }, { status: 404 });
         }
 
+        const eventContext: AttachmentEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         // Unlink from customer first
-        await unlinkAttachmentFromCustomer(customer.id, attachmentId);
+        await unlinkAttachmentFromCustomer(customer.id, attachmentId, eventContext);
 
         // Delete from S3
         await deleteFile(attachment.s3Key);
 
         // Delete database record
-        await deleteAttachment(attachmentId);
+        await deleteAttachment(attachmentId, eventContext);
 
         // Return a redirect to refresh the page
         return redirect(`/customers/${customerId}`);
@@ -496,7 +556,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing part ID" }, { status: 400 });
         }
 
-        await archivePart(partId);
+        const eventContext: PartEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await archivePart(partId, eventContext);
         // Return a redirect to refresh the page
         return redirect(`/customers/${customerId}`);
       }
@@ -511,12 +576,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
+  const [isAddingNote, setIsAddingNote] = useState(false);
   const [partsModalOpen, setPartsModalOpen] = useState(false);
   const [selectedPart, setSelectedPart] = useState<Part | null>(null);
   const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
@@ -792,12 +858,13 @@ export default function CustomerDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         <div className="flex justify-between items-center px-10 py-2.5">
@@ -839,7 +906,7 @@ export default function CustomerDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Customer Information</h3>
                 {!isEditingInfo && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingInfo(true)}>
+                  <Button size="sm" onClick={() => setIsEditingInfo(true)}>
                     Edit
                   </Button>
                 )}
@@ -893,7 +960,7 @@ export default function CustomerDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Contact Information</h3>
                 {!isEditingContact && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingContact(true)}>
+                  <Button size="sm" onClick={() => setIsEditingContact(true)}>
                     Edit
                   </Button>
                 )}
@@ -1013,20 +1080,40 @@ export default function CustomerDetails() {
             </div>
           </div>
 
-          {/* Notes Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+          {/* Notes and Event Log Section - Side by Side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Notes */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+                {!isAddingNote && (
+                  <Button size="sm" onClick={() => setIsAddingNote(true)}>
+                    Add Note
+                  </Button>
+                )}
+              </div>
+              <div className="p-6">
+                <Notes
+                  entityType="customer"
+                  entityId={customer.id.toString()}
+                  initialNotes={notes}
+                  currentUserId={user.id || user.email}
+                  currentUserName={userDetails?.name || user.email}
+                  showHeader={false}
+                  onAddNoteClick={() => setIsAddingNote(false)}
+                  isAddingNote={isAddingNote}
+                  externalControl={true}
+                />
+              </div>
             </div>
-            <div className="p-6">
-              <Notes 
-                entityType="customer" 
-                entityId={customer.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
-            </div>
+
+            {/* Event Log */}
+            <EventTimeline
+              entityType="customer"
+              entityId={customer.id.toString()}
+              entityName={customer.displayName}
+              initialEvents={events}
+            />
           </div>
 
           {/* Attachments Card */}
@@ -1166,14 +1253,14 @@ export default function CustomerDetails() {
                               {part.thumbnailUrl ? (
                                 <button
                                   onClick={() => handleView3DPart(part)}
-                                  className="h-10 w-10 p-0 border-0 bg-transparent cursor-pointer"
+                                  className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
                                   title="View 3D model"
                                   type="button"
                                 >
                                   <img
                                     src={part.thumbnailUrl}
                                     alt={`${part.partName} thumbnail`}
-                                    className="h-full w-full object-cover rounded-lg border border-gray-200 dark:border-gray-600 hover:opacity-80 transition-opacity"
+                                    className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                   />
                                 </button>
                               ) : (
@@ -1263,7 +1350,7 @@ export default function CustomerDetails() {
           </div>
         </div>
       </div>
-      
+
       {/* File Viewer Modal */}
       {selectedFile && (
         <FileViewerModal

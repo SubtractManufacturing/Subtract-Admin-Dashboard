@@ -1,11 +1,12 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, useFetcher, Link } from "@remix-run/react";
 import { getVendor, updateVendor, archiveVendor, getVendorOrders, getVendorStats, getVendorWithAttachments } from "~/lib/vendors";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToVendor, unlinkAttachmentFromVendor, type Attachment } from "~/lib/attachments";
+import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToVendor, unlinkAttachmentFromVendor, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
 import type { Customer } from "~/lib/db/schema";
-import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
+import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { shouldShowEventsInNav } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
@@ -15,6 +16,8 @@ import { InputField as FormField } from "~/components/shared/FormField";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import ToggleSlider from "~/components/shared/ToggleSlider";
+import { EventTimeline } from "~/components/EventTimeline";
+import { getEventsByEntity } from "~/lib/events";
 
 type VendorOrder = {
   id: number;
@@ -44,14 +47,16 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Vendor not found", { status: 404 });
   }
 
-  const [orders, stats, notes] = await Promise.all([
+  const [orders, stats, notes, showEventsLink, events] = await Promise.all([
     getVendorOrders(vendor.id),
     getVendorStats(vendor.id),
-    getNotes("vendor", vendor.id.toString())
+    getNotes("vendor", vendor.id.toString()),
+    shouldShowEventsInNav(),
+    getEventsByEntity("vendor", vendor.id.toString(), 10),
   ]);
 
   return withAuthHeaders(
-    json({ vendor, orders, stats, notes, user, userDetails, appConfig }),
+    json({ vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, events }),
     headers
   );
 }
@@ -59,7 +64,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { user, userDetails, headers } = await requireAuth(request);
   
   const vendorId = params.vendorId;
   if (!vendorId) {
@@ -104,6 +109,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: file.name,
       });
 
+      // Create event context for attachment operations
+      const eventContext: AttachmentEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
       // Create attachment record
       const attachment = await createAttachment({
         s3Bucket: uploadResult.bucket,
@@ -111,10 +122,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: uploadResult.fileName,
         contentType: uploadResult.contentType,
         fileSize: uploadResult.size,
-      });
+      }, eventContext);
 
       // Link to vendor
-      await linkAttachmentToVendor(vendor.id, attachment.id);
+      await linkAttachmentToVendor(vendor.id, attachment.id, eventContext);
 
       // Return a redirect to refresh the page
       return redirect(`/vendors/${vendorId}`);
@@ -139,6 +150,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const address = formData.get("address") as string;
         const discordId = formData.get("discordId") as string;
 
+        const eventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const updated = await updateVendor(vendor.id, {
           displayName,
           companyName: companyName || null,
@@ -147,13 +163,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
           phone: phone || null,
           address: address || null,
           discordId: discordId || null
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ vendor: updated }), headers);
       }
 
       case "archiveVendor": {
-        await archiveVendor(vendor.id);
+        const eventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await archiveVendor(vendor.id, eventContext);
         return redirect("/vendors");
       }
 
@@ -170,12 +191,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const note = await createNote({
           entityType: "vendor",
           entityId: vendor.id.toString(),
           content,
           createdBy,
-        });
+        }, noteEventContext);
 
         return withAuthHeaders(json({ note }), headers);
       }
@@ -188,7 +214,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        const note = await updateNote(noteId, content);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await updateNote(noteId, content, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -199,7 +230,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing note ID" }, { status: 400 });
         }
 
-        const note = await archiveNote(noteId);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await archiveNote(noteId, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -216,14 +252,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Attachment not found" }, { status: 404 });
         }
 
+        const eventContext: AttachmentEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         // Unlink from vendor first
-        await unlinkAttachmentFromVendor(vendor.id, attachmentId);
+        await unlinkAttachmentFromVendor(vendor.id, attachmentId, eventContext);
 
         // Delete from S3
         await deleteFile(attachment.s3Key);
 
         // Delete database record
-        await deleteAttachment(attachmentId);
+        await deleteAttachment(attachmentId, eventContext);
 
         // Return a redirect to refresh the page
         return redirect(`/vendors/${vendorId}`);
@@ -258,12 +299,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function VendorDetails() {
-  const { vendor, orders, stats, notes, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, events } = useLoaderData<typeof loader>();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
+  const [isAddingNote, setIsAddingNote] = useState(false);
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -425,12 +467,13 @@ export default function VendorDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         <div className="flex justify-between items-center px-10 py-2.5">
@@ -474,7 +517,7 @@ export default function VendorDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Vendor Information</h3>
                 {!isEditingInfo && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingInfo(true)}>
+                  <Button size="sm" onClick={() => setIsEditingInfo(true)}>
                     Edit
                   </Button>
                 )}
@@ -548,7 +591,7 @@ export default function VendorDetails() {
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Contact Information</h3>
                 {!isEditingContact && (
-                  <Button variant="secondary" size="sm" onClick={() => setIsEditingContact(true)}>
+                  <Button size="sm" onClick={() => setIsEditingContact(true)}>
                     Edit
                   </Button>
                 )}
@@ -698,7 +741,7 @@ export default function VendorDetails() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Attachments</h3>
-              <Button onClick={handleFileUpload}>Upload File</Button>
+              <Button size="sm" onClick={handleFileUpload}>Upload File</Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -793,24 +836,44 @@ export default function VendorDetails() {
             </div>
           </div>
 
-          {/* Notes Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+          {/* Notes and Event Log Section - Side by Side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Notes */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Notes</h3>
+                {!isAddingNote && (
+                  <Button size="sm" onClick={() => setIsAddingNote(true)}>
+                    Add Note
+                  </Button>
+                )}
+              </div>
+              <div className="p-6">
+                <Notes
+                  entityType="vendor"
+                  entityId={vendor.id.toString()}
+                  initialNotes={notes}
+                  currentUserId={user.id || user.email}
+                  currentUserName={userDetails?.name || user.email}
+                  showHeader={false}
+                  onAddNoteClick={() => setIsAddingNote(false)}
+                  isAddingNote={isAddingNote}
+                  externalControl={true}
+                />
+              </div>
             </div>
-            <div className="p-6">
-              <Notes 
-                entityType="vendor" 
-                entityId={vendor.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
-            </div>
+
+            {/* Event Log */}
+            <EventTimeline
+              entityType="vendor"
+              entityId={vendor.id.toString()}
+              entityName={vendor.displayName}
+              initialEvents={events}
+            />
           </div>
         </div>
       </div>
-      
+
       {/* File Viewer Modal */}
       {selectedFile && (
         <FileViewerModal

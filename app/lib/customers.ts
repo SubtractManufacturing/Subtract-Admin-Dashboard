@@ -3,6 +3,7 @@ import { customers, orders, vendors } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
 import type { Customer } from "./db/schema.js"
 import { getCustomerAttachments } from "./attachments.js"
+import { createEvent } from "./events.js"
 
 export type { Customer }
 
@@ -10,6 +11,11 @@ export type CustomerInput = {
   displayName: string
   email?: string | null
   phone?: string | null
+}
+
+export type CustomerEventContext = {
+  userId?: string
+  userEmail?: string
 }
 
 export async function getCustomers(): Promise<Customer[]> {
@@ -41,20 +47,39 @@ export async function getCustomer(id: number): Promise<Customer | null> {
   }
 }
 
-export async function createCustomer(customerData: CustomerInput): Promise<Customer> {
+export async function createCustomer(customerData: CustomerInput, eventContext?: CustomerEventContext): Promise<Customer> {
   try {
     const result = await db
       .insert(customers)
       .values(customerData)
       .returning()
 
-    return result[0]
+    const customer = result[0]
+
+    // Log event for customer creation
+    await createEvent({
+      entityType: "customer",
+      entityId: customer.id.toString(),
+      eventType: "customer_created",
+      eventCategory: "system",
+      title: `Customer "${customer.displayName}" created`,
+      description: `New customer added to the system`,
+      metadata: {
+        displayName: customer.displayName,
+        email: customer.email,
+        phone: customer.phone
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
+
+    return customer
   } catch (error) {
     throw new Error(`Failed to create customer: ${error}`)
   }
 }
 
-export async function updateCustomer(id: number, customerData: Partial<CustomerInput>): Promise<Customer> {
+export async function updateCustomer(id: number, customerData: Partial<CustomerInput>, eventContext?: CustomerEventContext): Promise<Customer> {
   try {
     const result = await db
       .update(customers)
@@ -62,7 +87,22 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
       .where(eq(customers.id, id))
       .returning()
 
-    return result[0]
+    const customer = result[0]
+
+    // Log event for customer update
+    await createEvent({
+      entityType: "customer",
+      entityId: id.toString(),
+      eventType: "customer_updated",
+      eventCategory: "system",
+      title: `Customer information updated`,
+      description: `Customer "${customer.displayName}" details were updated`,
+      metadata: customerData,
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
+
+    return customer
   } catch (error) {
     throw new Error(`Failed to update customer: ${error}`)
   }
@@ -78,12 +118,28 @@ export async function deleteCustomer(id: number): Promise<void> {
   }
 }
 
-export async function archiveCustomer(id: number): Promise<void> {
+export async function archiveCustomer(id: number, eventContext?: CustomerEventContext): Promise<void> {
   try {
-    await db
+    const [customer] = await db
       .update(customers)
       .set({ isArchived: true })
       .where(eq(customers.id, id))
+      .returning()
+
+    // Log event for customer archival
+    await createEvent({
+      entityType: "customer",
+      entityId: id.toString(),
+      eventType: "customer_archived",
+      eventCategory: "system",
+      title: `Customer archived`,
+      description: `Customer "${customer.displayName}" has been archived`,
+      metadata: {
+        displayName: customer.displayName
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
   } catch (error) {
     throw new Error(`Failed to archive customer: ${error}`)
   }

@@ -10,11 +10,27 @@ interface NotesProps {
   initialNotes?: Note[];
   currentUserId: string;
   currentUserName: string;
+  showHeader?: boolean;
+  onAddNoteClick?: () => void;
+  isAddingNote?: boolean;
+  externalControl?: boolean;
 }
 
-export function Notes({ entityType, entityId, initialNotes = [], currentUserId, currentUserName }: NotesProps) {
+export function Notes({
+  entityType,
+  entityId,
+  initialNotes = [],
+  currentUserId,
+  currentUserName,
+  showHeader = true,
+  onAddNoteClick,
+  isAddingNote: externalIsAddingNote,
+  externalControl = false
+}: NotesProps) {
   const [notes, setNotes] = useState<Note[]>(initialNotes);
-  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [internalIsAddingNote, setInternalIsAddingNote] = useState(false);
+
+  const isAddingNote = externalControl ? externalIsAddingNote || false : internalIsAddingNote;
   const [newNoteContent, setNewNoteContent] = useState("");
   const fetcher = useFetcher<{ notes?: Note[] }>();
 
@@ -56,7 +72,7 @@ export function Notes({ entityType, entityId, initialNotes = [], currentUserId, 
     );
 
     setNewNoteContent("");
-    setIsAddingNote(false);
+    setInternalIsAddingNote(false);
     
     setTimeout(() => {
       loadNotes();
@@ -64,20 +80,35 @@ export function Notes({ entityType, entityId, initialNotes = [], currentUserId, 
   };
 
   const handleCancel = () => {
-    setIsAddingNote(false);
+    if (externalControl && onAddNoteClick) {
+      onAddNoteClick();
+    } else {
+      setInternalIsAddingNote(false);
+    }
     setNewNoteContent("");
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Notes</h3>
-        {!isAddingNote && (
-          <Button size="sm" onClick={() => setIsAddingNote(true)}>
-            Add Note
-          </Button>
-        )}
-      </div>
+      {showHeader && (
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Notes</h3>
+          {!isAddingNote && (
+            <Button
+              size="sm"
+              onClick={() => {
+                if (externalControl && onAddNoteClick) {
+                  onAddNoteClick();
+                } else {
+                  setInternalIsAddingNote(true);
+                }
+              }}
+            >
+              Add Note
+            </Button>
+          )}
+        </div>
+      )}
 
       {isAddingNote && (
         <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 space-y-2">

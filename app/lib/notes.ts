@@ -1,6 +1,12 @@
 import { eq, and, desc } from "drizzle-orm";
 import { db } from "./db";
 import { notes, type Note, type NewNote } from "./db/schema";
+import { createEvent } from "./events";
+
+export type NoteEventContext = {
+  userId?: string;
+  userEmail?: string;
+};
 
 export async function getNotes(entityType: string, entityId: string): Promise<Note[]> {
   const result = await db
@@ -18,7 +24,7 @@ export async function getNotes(entityType: string, entityId: string): Promise<No
   return result;
 }
 
-export async function createNote(data: Omit<NewNote, "id" | "createdAt" | "updatedAt">): Promise<Note> {
+export async function createNote(data: Omit<NewNote, "id" | "createdAt" | "updatedAt">, eventContext?: NoteEventContext): Promise<Note> {
   const [newNote] = await db
     .insert(notes)
     .values({
@@ -26,11 +32,28 @@ export async function createNote(data: Omit<NewNote, "id" | "createdAt" | "updat
       updatedAt: new Date(),
     })
     .returning();
-  
+
+  // Log event
+  await createEvent({
+    entityType: data.entityType,
+    entityId: data.entityId,
+    eventType: "note_added",
+    eventCategory: "communication",
+    title: "Note Added",
+    description: `Added note to ${data.entityType}`,
+    metadata: {
+      noteId: newNote.id,
+      content: data.content.substring(0, 100), // First 100 chars
+      createdBy: data.createdBy
+    },
+    userId: eventContext?.userId,
+    userEmail: eventContext?.userEmail
+  });
+
   return newNote;
 }
 
-export async function updateNote(id: string, content: string): Promise<Note> {
+export async function updateNote(id: string, content: string, eventContext?: NoteEventContext): Promise<Note> {
   const [updatedNote] = await db
     .update(notes)
     .set({
@@ -39,11 +62,27 @@ export async function updateNote(id: string, content: string): Promise<Note> {
     })
     .where(eq(notes.id, id))
     .returning();
-  
+
+  // Log event
+  await createEvent({
+    entityType: updatedNote.entityType,
+    entityId: updatedNote.entityId,
+    eventType: "note_updated",
+    eventCategory: "communication",
+    title: "Note Updated",
+    description: `Updated note`,
+    metadata: {
+      noteId: id,
+      content: content.substring(0, 100) // First 100 chars
+    },
+    userId: eventContext?.userId,
+    userEmail: eventContext?.userEmail
+  });
+
   return updatedNote;
 }
 
-export async function archiveNote(id: string): Promise<Note> {
+export async function archiveNote(id: string, eventContext?: NoteEventContext): Promise<Note> {
   const [archivedNote] = await db
     .update(notes)
     .set({
@@ -52,7 +91,23 @@ export async function archiveNote(id: string): Promise<Note> {
     })
     .where(eq(notes.id, id))
     .returning();
-  
+
+  // Log event
+  await createEvent({
+    entityType: archivedNote.entityType,
+    entityId: archivedNote.entityId,
+    eventType: "note_archived",
+    eventCategory: "communication",
+    title: "Note Archived",
+    description: `Archived note`,
+    metadata: {
+      noteId: id,
+      createdBy: archivedNote.createdBy
+    },
+    userId: eventContext?.userId,
+    userEmail: eventContext?.userEmail
+  });
+
   return archivedNote;
 }
 

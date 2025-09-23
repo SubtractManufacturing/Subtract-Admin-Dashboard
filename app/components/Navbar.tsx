@@ -8,9 +8,10 @@ interface NavbarProps {
   userInitials?: string;
   version?: string;
   isStaging?: boolean;
+  showEventsLink?: boolean;
 }
 
-export default function Navbar({ userName, userEmail, userInitials, version, isStaging }: NavbarProps) {
+export default function Navbar({ userName, userEmail, userInitials, version, isStaging, showEventsLink = true }: NavbarProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -51,6 +52,14 @@ export default function Navbar({ userName, userEmail, userInitials, version, isS
         >
           Vendors
         </Link>
+        {showEventsLink && (
+          <Link
+            to="/events"
+            className="text-white no-underline font-semibold transition-opacity hover:opacity-80"
+          >
+            Events
+          </Link>
+        )}
         <div className="relative">
           <button
             ref={buttonRef}

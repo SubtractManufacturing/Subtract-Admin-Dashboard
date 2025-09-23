@@ -42,7 +42,7 @@ async function fetchWithTimeout(
   url: string,
   options: RequestInit & { timeout?: number } = {}
 ): Promise<Response> {
-  const { timeout = 5000, ...fetchOptions } = options;
+  const { ...fetchOptions } = options;
 
   // For now, just use regular fetch without timeout
   // The timeout was causing issues with the polyfill

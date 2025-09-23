@@ -4,9 +4,10 @@ import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
 import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
-import type { Customer, CustomerInput } from "~/lib/customers"
+import type { Customer, CustomerInput, CustomerEventContext } from "~/lib/customers"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 import { getAppConfig } from "~/lib/config.server"
+import { shouldShowEventsInNav } from "~/lib/featureFlags"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
@@ -20,23 +21,32 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const appConfig = getAppConfig()
   
   try {
-    const customers = await getCustomers()
+    const [customers, showEventsLink] = await Promise.all([
+      getCustomers(),
+      shouldShowEventsInNav(),
+    ])
     return withAuthHeaders(
-      json({ customers, user, userDetails, appConfig }),
+      json({ customers, user, userDetails, appConfig, showEventsLink }),
       headers
     )
   } catch (error) {
     console.error("Customers loader error:", error)
     return withAuthHeaders(
-      json({ customers: [], user, userDetails, appConfig }),
+      json({ customers: [], user, userDetails, appConfig, showEventsLink: true }),
       headers
     )
   }
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const { user, userDetails } = await requireAuth(request)
   const formData = await request.formData()
   const intent = formData.get("intent")
+
+  const eventContext: CustomerEventContext = {
+    userId: user?.id,
+    userEmail: user?.email || userDetails?.name || undefined,
+  }
 
   try {
     switch (intent) {
@@ -46,7 +56,7 @@ export async function action({ request }: ActionFunctionArgs) {
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
         }
-        await createCustomer(customerData)
+        await createCustomer(customerData, eventContext)
         break
       }
       case "update": {
@@ -56,12 +66,12 @@ export async function action({ request }: ActionFunctionArgs) {
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
         }
-        await updateCustomer(id, customerData)
+        await updateCustomer(id, customerData, eventContext)
         break
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
-        await archiveCustomer(id)
+        await archiveCustomer(id, eventContext)
         break
       }
     }
@@ -72,7 +82,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers, user, userDetails, appConfig } = useLoaderData<typeof loader>()
+  const { customers, user, userDetails, appConfig, showEventsLink } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
@@ -119,12 +129,13 @@ export default function Customers() {
 
   return (
     <div>
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader 

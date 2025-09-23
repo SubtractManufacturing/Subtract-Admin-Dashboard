@@ -3,9 +3,10 @@ import { useLoaderData, useFetcher } from "@remix-run/react";
 import { getOrderByNumberWithAttachments } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
 import { getVendor } from "~/lib/vendors";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToOrder, unlinkAttachmentFromOrder, type Attachment } from "~/lib/attachments";
+import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToOrder, unlinkAttachmentFromOrder, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
+import { shouldShowEventsInNav } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
@@ -13,13 +14,15 @@ import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
-import { getNotes, createNote, updateNote, archiveNote } from "~/lib/notes";
-import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart } from "~/lib/lineItems";
+import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
+import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart, type LineItemEventContext } from "~/lib/lineItems";
 import { getPartsByCustomerId } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
 import { useState, useRef, useCallback } from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import { EventTimeline } from "~/components/EventTimeline";
+import { getEventsByEntity } from "~/lib/events";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -48,8 +51,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch parts for the customer if available
   const parts = order.customerId ? await getPartsByCustomerId(order.customerId) : [];
 
+  // Get feature flags and events
+  const [showEventsLink, events] = await Promise.all([
+    shouldShowEventsInNav(),
+    getEventsByEntity("order", order.id.toString(), 10),
+  ]);
+
   return withAuthHeaders(
-    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig }),
+    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink, events }),
     headers
   );
 }
@@ -57,7 +66,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { user, userDetails, headers } = await requireAuth(request);
   
   const orderNumber = params.orderId;
   if (!orderNumber) {
@@ -102,6 +111,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: file.name,
       });
 
+      // Create event context for attachment operations
+      const eventContext: AttachmentEventContext = {
+        userId: user?.id,
+        userEmail: user?.email || userDetails?.name || undefined,
+      };
+
       // Create attachment record
       const attachment = await createAttachment({
         s3Bucket: uploadResult.bucket,
@@ -109,10 +124,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: uploadResult.fileName,
         contentType: uploadResult.contentType,
         fileSize: uploadResult.size,
-      });
+      }, eventContext);
 
       // Link to order
-      await linkAttachmentToOrder(order.id, attachment.id);
+      await linkAttachmentToOrder(order.id, attachment.id, eventContext);
 
       // Return a redirect to refresh the page
       return redirect(`/orders/${orderNumber}`);
@@ -141,12 +156,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const note = await createNote({
           entityType: "order",
           entityId: order.id.toString(),
           content,
           createdBy,
-        });
+        }, noteEventContext);
 
         return withAuthHeaders(json({ note }), headers);
       }
@@ -159,7 +179,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        const note = await updateNote(noteId, content);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await updateNote(noteId, content, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -170,7 +195,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing note ID" }, { status: 400 });
         }
 
-        const note = await archiveNote(noteId);
+        const noteEventContext: NoteEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const note = await archiveNote(noteId, noteEventContext);
         return withAuthHeaders(json({ note }), headers);
       }
 
@@ -187,14 +217,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Attachment not found" }, { status: 404 });
         }
 
+        const eventContext: AttachmentEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         // Unlink from order first
-        await unlinkAttachmentFromOrder(order.id, attachmentId);
+        await unlinkAttachmentFromOrder(order.id, attachmentId, eventContext);
 
         // Delete from S3
         await deleteFile(attachment.s3Key);
 
         // Delete database record
-        await deleteAttachment(attachmentId);
+        await deleteAttachment(attachmentId, eventContext);
 
         // Return a redirect to refresh the page
         return redirect(`/orders/${orderNumber}`);
@@ -231,6 +266,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const lineItem = await createLineItem({
           orderId: order.id,
           name,
@@ -239,7 +279,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           unitPrice,
           partId: partId || null,
           notes: notes || null,
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
@@ -257,6 +297,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing required fields" }, { status: 400 });
         }
 
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const lineItem = await updateLineItem(lineItemId, {
           name,
           description,
@@ -264,7 +309,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           unitPrice,
           partId: partId || null,
           notes: notes || null,
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
@@ -276,7 +321,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
-        await deleteLineItem(lineItemId);
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await deleteLineItem(lineItemId, eventContext);
         return withAuthHeaders(json({ success: true }), headers);
       }
 
@@ -288,9 +338,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
         const lineItem = await updateLineItem(lineItemId, {
           notes: notes || null,
-        });
+        }, eventContext);
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
@@ -305,13 +360,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function OrderDetails() {
-  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig } = useLoaderData<typeof loader>();
+  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink, events } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [lineItemModalOpen, setLineItemModalOpen] = useState(false);
   const [selectedLineItem, setSelectedLineItem] = useState<OrderLineItem | null>(null);
   const [lineItemMode, setLineItemMode] = useState<"create" | "edit">("create");
+  const [isAddingNote, setIsAddingNote] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>("");
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
@@ -557,12 +613,13 @@ export default function OrderDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar 
-        userName={userDetails?.name || user.email} 
+      <Navbar
+        userName={userDetails?.name || user.email}
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
         isStaging={appConfig.isStaging}
+        showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">
         {/* Custom breadcrumb bar with buttons */}
@@ -780,14 +837,14 @@ export default function OrderDetails() {
                                   part.thumbnailUrl ? (
                                     <button
                                       onClick={() => handleView3DModel(part)}
-                                      className="h-10 w-10 p-0 border-0 bg-transparent cursor-pointer"
+                                      className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
                                       title="Click to view 3D model"
                                       type="button"
                                     >
                                       <img
                                         src={part.thumbnailUrl}
                                         alt={`${part.partName || lineItem.name} thumbnail`}
-                                        className="h-full w-full object-cover rounded-lg border border-gray-200 dark:border-gray-600 hover:opacity-80 transition-opacity"
+                                        className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                       />
                                     </button>
                                   ) : (
@@ -953,20 +1010,40 @@ export default function OrderDetails() {
             </div>
           </div>
 
-          {/* Notes Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order Notes</h3>
+          {/* Notes and Event Log Section - Side by Side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Notes */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order Notes</h3>
+                {!isAddingNote && (
+                  <Button size="sm" onClick={() => setIsAddingNote(true)}>
+                    Add Note
+                  </Button>
+                )}
+              </div>
+              <div className="p-6">
+                <Notes
+                  entityType="order"
+                  entityId={order.id.toString()}
+                  initialNotes={notes}
+                  currentUserId={user.id || user.email}
+                  currentUserName={userDetails?.name || user.email}
+                  showHeader={false}
+                  onAddNoteClick={() => setIsAddingNote(false)}
+                  isAddingNote={isAddingNote}
+                  externalControl={true}
+                />
+              </div>
             </div>
-            <div className="p-6">
-              <Notes 
-                entityType="order" 
-                entityId={order.id.toString()} 
-                initialNotes={notes}
-                currentUserId={user.id || user.email}
-                currentUserName={userDetails?.name || user.email}
-              />
-            </div>
+
+            {/* Event Log */}
+            <EventTimeline
+              entityType="order"
+              entityId={order.id.toString()}
+              entityName={order.orderNumber}
+              initialEvents={events}
+            />
           </div>
 
           {/* Vendor Information */}
@@ -1117,7 +1194,7 @@ export default function OrderDetails() {
           </div>
         </div>
       </div>
-      
+
       {/* File Viewer Modal */}
       {selectedFile && (
         <FileViewerModal

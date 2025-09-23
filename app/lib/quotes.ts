@@ -3,6 +3,7 @@ import { quotes, customers, vendors } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
 import type { Customer, Vendor } from "./db/schema.js"
 import { getNextQuoteNumber } from "./number-generator.js"
+import { createEvent } from "./events.js"
 
 export type QuoteWithRelations = {
   id: number
@@ -28,6 +29,11 @@ export type QuoteInput = {
   currency?: 'USD' | 'EUR' | 'GBP' | 'CNY'
   totalPrice?: string | null
   validUntil?: Date | null
+}
+
+export type QuoteEventContext = {
+  userId?: string
+  userEmail?: string
 }
 
 export async function getQuotesWithRelations(): Promise<QuoteWithRelations[]> {
@@ -91,7 +97,7 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
   }
 }
 
-export async function createQuote(quoteData: QuoteInput): Promise<QuoteWithRelations> {
+export async function createQuote(quoteData: QuoteInput, eventContext?: QuoteEventContext): Promise<QuoteWithRelations> {
   try {
     const quoteNumber = await getNextQuoteNumber()
     
@@ -104,6 +110,25 @@ export async function createQuote(quoteData: QuoteInput): Promise<QuoteWithRelat
       .returning()
 
     const newQuote = insertResult[0]
+
+    // Log event
+    await createEvent({
+      entityType: "quote",
+      entityId: newQuote.id.toString(),
+      eventType: "quote_created",
+      eventCategory: "system",
+      title: "Quote Created",
+      description: `Created quote ${quoteNumber}`,
+      metadata: {
+        quoteNumber,
+        customerId: quoteData.customerId,
+        vendorId: quoteData.vendorId,
+        status: quoteData.status,
+        totalPrice: quoteData.totalPrice
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
 
     const result = await db
       .select({
@@ -133,12 +158,28 @@ export async function createQuote(quoteData: QuoteInput): Promise<QuoteWithRelat
   }
 }
 
-export async function updateQuote(id: number, quoteData: Partial<QuoteInput>): Promise<QuoteWithRelations> {
+export async function updateQuote(id: number, quoteData: Partial<QuoteInput>, eventContext?: QuoteEventContext): Promise<QuoteWithRelations> {
   try {
     await db
       .update(quotes)
       .set(quoteData)
       .where(eq(quotes.id, id))
+
+    // Log event
+    await createEvent({
+      entityType: "quote",
+      entityId: id.toString(),
+      eventType: "quote_updated",
+      eventCategory: "system",
+      title: "Quote Updated",
+      description: `Updated quote`,
+      metadata: {
+        updatedFields: Object.keys(quoteData),
+        ...quoteData
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail
+    })
 
     const result = await db
       .select({
@@ -168,22 +209,66 @@ export async function updateQuote(id: number, quoteData: Partial<QuoteInput>): P
   }
 }
 
-export async function deleteQuote(id: number): Promise<void> {
+export async function deleteQuote(id: number, eventContext?: QuoteEventContext): Promise<void> {
   try {
+    // Get quote details before deletion
+    const quote = await getQuote(id)
+
     await db
       .delete(quotes)
       .where(eq(quotes.id, id))
+
+    // Log event if quote existed
+    if (quote) {
+      await createEvent({
+        entityType: "quote",
+        entityId: id.toString(),
+        eventType: "quote_deleted",
+        eventCategory: "system",
+        title: "Quote Deleted",
+        description: `Deleted quote ${quote.quoteNumber}`,
+        metadata: {
+          quoteNumber: quote.quoteNumber,
+          customerId: quote.customerId,
+          vendorId: quote.vendorId
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
+      })
+    }
   } catch (error) {
     throw new Error(`Failed to delete quote: ${error}`)
   }
 }
 
-export async function archiveQuote(id: number): Promise<void> {
+export async function archiveQuote(id: number, eventContext?: QuoteEventContext): Promise<void> {
   try {
+    // Get quote details before archiving
+    const quote = await getQuote(id)
+
     await db
       .update(quotes)
       .set({ isArchived: true })
       .where(eq(quotes.id, id))
+
+    // Log event if quote existed
+    if (quote) {
+      await createEvent({
+        entityType: "quote",
+        entityId: id.toString(),
+        eventType: "quote_archived",
+        eventCategory: "system",
+        title: "Quote Archived",
+        description: `Archived quote ${quote.quoteNumber}`,
+        metadata: {
+          quoteNumber: quote.quoteNumber,
+          customerId: quote.customerId,
+          vendorId: quote.vendorId
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
+      })
+    }
   } catch (error) {
     throw new Error(`Failed to archive quote: ${error}`)
   }
