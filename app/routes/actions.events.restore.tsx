@@ -1,10 +1,9 @@
 import { type ActionFunction } from "@remix-run/node";
-import { dismissEvent } from "~/lib/events";
+import { restoreEvent } from "~/lib/events";
 import { requireAuth } from "~/lib/auth.server";
 
 export const action: ActionFunction = async ({ request }) => {
-  const session = await requireAuth(request);
-  const userEmail = session.userDetails.email;
+  await requireAuth(request);
 
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -18,7 +17,7 @@ export const action: ActionFunction = async ({ request }) => {
   }
 
   try {
-    const result = await dismissEvent(eventId, userEmail);
+    const result = await restoreEvent(eventId);
 
     if (!result) {
       return Response.json({ error: "Event not found" }, { status: 404 });
@@ -26,7 +25,7 @@ export const action: ActionFunction = async ({ request }) => {
 
     return Response.json({ success: true });
   } catch (error) {
-    console.error("Error dismissing event:", error);
-    return Response.json({ error: "Failed to dismiss event" }, { status: 500 });
+    console.error("Error restoring event:", error);
+    return Response.json({ error: "Failed to restore event" }, { status: 500 });
   }
 };

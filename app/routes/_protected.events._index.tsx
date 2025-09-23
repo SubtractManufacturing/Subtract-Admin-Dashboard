@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
@@ -35,13 +35,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const searchParams = url.searchParams;
 
+  const categoryParam = searchParams.get("category");
   const filters: EventFilters = {
     entityType: searchParams.get("entityType") || undefined,
-    eventCategory: searchParams.get("category") || undefined,
+    eventCategory: categoryParam === "dismissed" ? undefined : categoryParam || undefined,
     searchTerm: searchParams.get("search") || undefined,
     limit: parseInt(searchParams.get("limit") || "25"),
     offset: parseInt(searchParams.get("offset") || "0"),
     sortOrder: (searchParams.get("sort") || "desc") as "asc" | "desc",
+    dismissedOnly: categoryParam === "dismissed",
   };
 
   // Parse date filters
@@ -196,6 +198,7 @@ export default function EventsPage() {
 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
+  const restoreFetcher = useFetcher();
 
   const totalPages = Math.ceil(totalCount / pageSize);
 
@@ -221,6 +224,19 @@ export default function EventsPage() {
   const handleViewDetails = async (event: EventLog) => {
     setSelectedEvent(event);
     setShowDetailsModal(true);
+  };
+
+  const handleRestoreEvent = (eventId: string) => {
+    const formData = new FormData();
+    formData.append('eventId', eventId);
+
+    restoreFetcher.submit(formData, {
+      method: 'post',
+      action: '/actions/events/restore'
+    });
+
+    // Close modal after restore
+    setShowDetailsModal(false);
   };
 
   const handlePageChange = (page: number) => {
@@ -337,6 +353,7 @@ export default function EventsPage() {
               <option value="system">System</option>
               <option value="quality">Quality</option>
               <option value="manufacturing">Manufacturing</option>
+              <option value="dismissed">Dismissed Events</option>
             </select>
 
             <select
@@ -457,12 +474,17 @@ export default function EventsPage() {
                 </tr>
               ) : (
                 events.map((event: EventLog) => (
-                  <tr key={event.id} className={tableStyles.row}>
+                  <tr key={event.id} className={`${tableStyles.row} ${event.isDismissed ? 'opacity-60' : ''}`}>
                     <td className={tableStyles.cell}>
                       <div>{new Date(event.createdAt).toLocaleString()}</div>
                       <div className="text-xs text-gray-500">
                         {formatTimeAgo(event.createdAt)}
                       </div>
+                      {event.isDismissed && (
+                        <div className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
+                          Dismissed
+                        </div>
+                      )}
                     </td>
                     <td className={tableStyles.cell}>
                       <div className="font-medium">
@@ -647,6 +669,21 @@ export default function EventsPage() {
                 <span className="text-sm ml-2">{selectedEvent.ipAddress}</span>
               </div>
             )}
+            {selectedEvent.isDismissed && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-3 my-3">
+                <h4 className="text-sm font-medium text-yellow-800 dark:text-yellow-300 mb-1">
+                  Event Dismissed
+                </h4>
+                <div className="space-y-1 text-sm text-yellow-700 dark:text-yellow-400">
+                  {selectedEvent.dismissedBy && (
+                    <p>By: {selectedEvent.dismissedBy}</p>
+                  )}
+                  {selectedEvent.dismissedAt && (
+                    <p>At: {new Date(selectedEvent.dismissedAt).toLocaleString()}</p>
+                  )}
+                </div>
+              </div>
+            )}
             {selectedEvent.metadata !== null &&
               selectedEvent.metadata !== undefined && (
                 <div>
@@ -659,7 +696,18 @@ export default function EventsPage() {
                 </div>
               )}
           </div>
-          <div className="mt-6 flex justify-end">
+          <div className="mt-6 flex justify-between">
+            <div>
+              {selectedEvent.isDismissed && (
+                <Button
+                  onClick={() => handleRestoreEvent(selectedEvent.id)}
+                  variant="primary"
+                  size="sm"
+                >
+                  Restore Event
+                </Button>
+              )}
+            </div>
             <Button
               onClick={() => setShowDetailsModal(false)}
               variant="secondary"

@@ -28,6 +28,7 @@ export interface EventFilters {
   limit?: number;
   offset?: number;
   sortOrder?: "asc" | "desc";
+  dismissedOnly?: boolean;
 }
 
 export async function createEvent(eventData: EventLogInput): Promise<EventLog> {
@@ -46,6 +47,20 @@ export async function dismissEvent(eventId: string, dismissedBy: string): Promis
       isDismissed: true,
       dismissedAt: new Date(),
       dismissedBy,
+    })
+    .where(eq(eventLogs.id, eventId))
+    .returning();
+
+  return result[0] || null;
+}
+
+export async function restoreEvent(eventId: string): Promise<EventLog | null> {
+  const result = await db
+    .update(eventLogs)
+    .set({
+      isDismissed: false,
+      dismissedAt: null,
+      dismissedBy: null,
     })
     .where(eq(eventLogs.id, eventId))
     .returning();
@@ -75,6 +90,11 @@ export async function getRecentEvents(filters: EventFilters = {}): Promise<{
   totalCount: number;
 }> {
   const conditions = [];
+
+  // Filter for dismissed events if requested
+  if (filters.dismissedOnly) {
+    conditions.push(eq(eventLogs.isDismissed, true));
+  }
 
   if (filters.entityType) {
     conditions.push(eq(eventLogs.entityType, filters.entityType));
