@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
 import {
@@ -198,11 +198,31 @@ export default function EventsPage() {
 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
+  const [displayedEvents, setDisplayedEvents] = useState<EventLog[]>(events);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(totalCount > events.length);
+  const [loadedOffsets, setLoadedOffsets] = useState<Set<number>>(new Set([0]));
+  const loadMoreFetcher = useFetcher<typeof loader>();
   const restoreFetcher = useFetcher();
+  const observerTarget = useRef<HTMLDivElement>(null);
 
   const totalPages = Math.ceil(totalCount / pageSize);
 
+  // Update displayed events only when filters change (not when loading more)
+  useEffect(() => {
+    // Reset when we get new initial events (from filters/navigation)
+    // but not when we're loading more
+    if (!isLoadingMore) {
+      setDisplayedEvents(events);
+      setHasMore(totalCount > events.length);
+      setLoadedOffsets(new Set([0]));
+    }
+  }, [events, totalCount]);
+
   const applyFilters = () => {
+    // Reset to first page when applying filters
+    setCurrentPage(1);
+
     const params = new URLSearchParams();
     if (searchTerm) params.set("search", searchTerm);
     if (selectedCategory) params.set("category", selectedCategory);
@@ -211,15 +231,107 @@ export default function EventsPage() {
     if (endDate) params.set("endDate", endDate);
     params.set("sort", sortOrder);
     params.set("limit", pageSize.toString());
-    params.set("offset", ((currentPage - 1) * pageSize).toString());
+    params.set("offset", "0");
 
     navigate(`/events?${params.toString()}`);
   };
 
+  // Load more events when fetcher returns data
   useEffect(() => {
-    applyFilters();
+    if (loadMoreFetcher.data?.events && isLoadingMore) {
+      const newEvents = loadMoreFetcher.data.events;
+
+      // Filter out any duplicates based on event ID
+      const existingIds = new Set(displayedEvents.map(e => e.id));
+      const uniqueNewEvents = newEvents.filter((e: EventLog) => !existingIds.has(e.id));
+
+      if (uniqueNewEvents.length > 0) {
+        setDisplayedEvents(prev => [...prev, ...uniqueNewEvents]);
+      }
+
+      setIsLoadingMore(false);
+
+      // Check if there are more events to load
+      const currentTotal = displayedEvents.length + uniqueNewEvents.length;
+      setHasMore(currentTotal < loadMoreFetcher.data.totalCount);
+    }
+  }, [loadMoreFetcher.data, displayedEvents, isLoadingMore]);
+
+  // Set up intersection observer for infinite scroll
+  useEffect(() => {
+    const loadMore = () => {
+      if (hasMore && !isLoadingMore && loadMoreFetcher.state === 'idle') {
+        loadMoreEvents();
+      }
+    };
+
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' }
+    );
+
+    const currentTarget = observerTarget.current;
+    if (currentTarget) {
+      observer.observe(currentTarget);
+    }
+
+    return () => {
+      if (currentTarget) {
+        observer.unobserve(currentTarget);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, sortOrder]);
+  }, [hasMore, isLoadingMore, loadMoreFetcher.state, displayedEvents.length]);
+
+  const loadMoreEvents = useCallback(() => {
+    if (isLoadingMore || !hasMore || loadMoreFetcher.state !== 'idle') return;
+
+    const nextOffset = displayedEvents.length;
+
+    // Don't load if we've already loaded this offset
+    if (loadedOffsets.has(nextOffset)) {
+      return;
+    }
+
+    // Don't load if we already have all the events
+    if (nextOffset >= totalCount) {
+      setHasMore(false);
+      return;
+    }
+
+    setIsLoadingMore(true);
+    setLoadedOffsets(prev => new Set([...prev, nextOffset]));
+
+    const params = new URLSearchParams();
+    if (searchTerm) params.set("search", searchTerm);
+    if (selectedCategory) params.set("category", selectedCategory);
+    if (selectedEntity) params.set("entityType", selectedEntity);
+    if (startDate) params.set("startDate", startDate);
+    if (endDate) params.set("endDate", endDate);
+    params.set("sort", sortOrder);
+    params.set("limit", pageSize.toString());
+    params.set("offset", nextOffset.toString());
+
+    loadMoreFetcher.load(`/events?${params.toString()}`);
+  }, [
+    isLoadingMore,
+    hasMore,
+    displayedEvents.length,
+    totalCount,
+    loadedOffsets,
+    searchTerm,
+    selectedCategory,
+    selectedEntity,
+    startDate,
+    endDate,
+    sortOrder,
+    pageSize,
+    loadMoreFetcher
+  ]);
 
   const handleViewDetails = async (event: EventLog) => {
     setSelectedEvent(event);
@@ -239,9 +351,6 @@ export default function EventsPage() {
     setShowDetailsModal(false);
   };
 
-  const handlePageChange = (page: number) => {
-    setCurrentPage(page);
-  };
 
   const handleExport = () => {
     const csv = [
@@ -473,7 +582,7 @@ export default function EventsPage() {
                   </td>
                 </tr>
               ) : (
-                events.map((event: EventLog) => (
+                displayedEvents.map((event: EventLog) => (
                   <tr key={event.id} className={`${tableStyles.row} ${event.isDismissed ? 'opacity-60' : ''}`}>
                     <td className={tableStyles.cell}>
                       <div>{new Date(event.createdAt).toLocaleString()}</div>
@@ -521,78 +630,20 @@ export default function EventsPage() {
             </tbody>
           </table>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex justify-center items-center py-4 gap-2 bg-gray-50 dark:bg-gray-700">
-              <button
-                onClick={() => handlePageChange(currentPage - 1)}
-                disabled={currentPage === 1}
-                className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
-              >
-                Previous
-              </button>
-
-              {Array.from({ length: Math.min(10, totalPages) }, (_, i) => {
-                const pageNum = i + 1;
-                if (totalPages > 10) {
-                  // Show first, last, and pages around current
-                  if (
-                    pageNum === 1 ||
-                    pageNum === totalPages ||
-                    (pageNum >= currentPage - 2 && pageNum <= currentPage + 2)
-                  ) {
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => handlePageChange(pageNum)}
-                        className={`px-3 py-1 border rounded ${
-                          currentPage === pageNum
-                            ? "bg-blue-600 text-white"
-                            : "hover:bg-gray-100"
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  }
-                  if (pageNum === 2 && currentPage > 4)
-                    return <span key={pageNum}>...</span>;
-                  if (
-                    pageNum === totalPages - 1 &&
-                    currentPage < totalPages - 3
-                  )
-                    return <span key={pageNum}>...</span>;
-                  return null;
-                } else {
-                  return (
-                    <button
-                      key={pageNum}
-                      onClick={() => handlePageChange(pageNum)}
-                      className={`px-3 py-1 border rounded ${
-                        currentPage === pageNum
-                          ? "bg-blue-600 text-white"
-                          : "hover:bg-gray-100"
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
-                  );
-                }
-              })}
-
-              <button
-                onClick={() => handlePageChange(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
-              >
-                Next
-              </button>
-
-              <span className="ml-4 text-sm text-gray-600">
-                Page {currentPage} of {totalPages} ({totalCount} total events)
-              </span>
-            </div>
-          )}
+          {/* Loading indicator and scroll target */}
+          <div ref={observerTarget} className="py-8 bg-gray-50 dark:bg-gray-700">
+            {isLoadingMore && (
+              <div className="flex justify-center items-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <span className="ml-3 text-gray-600 dark:text-gray-400">Loading more events...</span>
+              </div>
+            )}
+            {!hasMore && displayedEvents.length > 0 && (
+              <div className="text-center text-sm text-gray-500 dark:text-gray-400">
+                No more events to load • Showing {displayedEvents.length} of {totalCount} total events
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
