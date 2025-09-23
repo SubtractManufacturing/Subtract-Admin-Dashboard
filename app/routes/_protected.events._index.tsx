@@ -188,9 +188,6 @@ export default function EventsPage() {
   );
   const [sortOrder, setSortOrder] = useState(filters.sortOrder || "desc");
   const [pageSize, setPageSize] = useState(filters.limit || 25);
-  const [currentPage, setCurrentPage] = useState(
-    Math.floor((filters.offset || 0) / pageSize) + 1
-  );
 
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
@@ -201,8 +198,6 @@ export default function EventsPage() {
   const loadMoreFetcher = useFetcher<typeof loader>();
   const restoreFetcher = useFetcher();
   const observerTarget = useRef<HTMLDivElement>(null);
-
-  const totalPages = Math.ceil(totalCount / pageSize);
 
   // Update displayed events only when filters change (not when loading more)
   useEffect(() => {
@@ -220,8 +215,6 @@ export default function EventsPage() {
   }, [events, totalCount, filters.limit]);
 
   const applyFilters = () => {
-    // Reset to first page when applying filters
-    setCurrentPage(1);
 
     const params = new URLSearchParams();
     if (searchTerm) params.set("search", searchTerm);
@@ -442,10 +435,11 @@ export default function EventsPage() {
           {/* Filters */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
             <div className="flex flex-col">
-              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+              <label htmlFor="search-input" className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
                 Search
               </label>
               <input
+                id="search-input"
                 type="text"
                 placeholder="Search events..."
                 value={searchTerm}
@@ -455,10 +449,11 @@ export default function EventsPage() {
             </div>
 
             <div className="flex flex-col">
-              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+              <label htmlFor="category-select" className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
                 Category
               </label>
               <select
+                id="category-select"
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
                 className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
@@ -476,10 +471,11 @@ export default function EventsPage() {
             </div>
 
             <div className="flex flex-col">
-              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+              <label htmlFor="entity-select" className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
                 Entity Type
               </label>
               <select
+                id="entity-select"
                 value={selectedEntity}
                 onChange={(e) => setSelectedEntity(e.target.value)}
                 className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
@@ -494,10 +490,11 @@ export default function EventsPage() {
             </div>
 
             <div className="flex flex-col">
-              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+              <label htmlFor="start-date-input" className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
                 Start Date & Time
               </label>
               <input
+                id="start-date-input"
                 type="datetime-local"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
@@ -506,10 +503,11 @@ export default function EventsPage() {
             </div>
 
             <div className="flex flex-col">
-              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+              <label htmlFor="end-date-input" className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
                 End Date & Time
               </label>
               <input
+                id="end-date-input"
                 type="datetime-local"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
@@ -518,10 +516,11 @@ export default function EventsPage() {
             </div>
 
             <div className="flex flex-col">
-              <label className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
+              <label htmlFor="sort-select" className="text-xs text-gray-600 dark:text-gray-400 mb-1 px-1">
                 Sort Order
               </label>
               <select
+                id="sort-select"
                 value={sortOrder}
                 onChange={(e) => {
                   const newSortOrder = e.target.value as "asc" | "desc";
@@ -561,7 +560,6 @@ export default function EventsPage() {
                   setStartDate("");
                   setEndDate("");
                   setSortOrder("desc");
-                  setCurrentPage(1);
                   navigate("/events");
                 }}
                 variant="secondary"
@@ -597,7 +595,6 @@ export default function EventsPage() {
                 onChange={(e) => {
                   const newPageSize = parseInt(e.target.value);
                   setPageSize(newPageSize);
-                  setCurrentPage(1);
 
                   // Apply the new page size immediately
                   const params = new URLSearchParams();
