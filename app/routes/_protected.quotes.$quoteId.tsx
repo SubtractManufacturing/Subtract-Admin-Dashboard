@@ -23,6 +23,7 @@ import FileViewerModal from "~/components/shared/FileViewerModal";
 import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
 import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
+import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
@@ -181,6 +182,83 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
 
     const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+    const intent = formData.get("intent");
+
+    // Handle add line item with file upload
+    if (intent === "addLineItem") {
+      const name = formData.get("name") as string;
+      const quantity = formData.get("quantity") as string;
+      const unitPrice = formData.get("unitPrice") as string;
+      const file = formData.get("file") as File | null;
+
+      if (!name || !quantity || !unitPrice) {
+        return json({ error: "Missing required fields" }, { status: 400 });
+      }
+
+      try {
+        let quotePartId: string | null = null;
+
+        // If a file was uploaded, create a quote part
+        if (file && file.size > 0) {
+          const { quoteParts } = await import("~/lib/db/schema");
+          const { triggerQuotePartMeshConversion } = await import("~/lib/quote-part-mesh-converter.server");
+          const crypto = await import("crypto");
+
+          // Convert File to Buffer
+          const arrayBuffer = await file.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+
+          // Generate unique part number
+          const partNumber = `QP-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+          // Generate S3 key for the uploaded file
+          const fileKey = `quote-parts/${crypto.randomUUID()}/source/${file.name}`;
+
+          // Upload to S3
+          const uploadResult = await uploadFile({
+            key: fileKey,
+            buffer,
+            contentType: file.type || 'application/octet-stream',
+            fileName: file.name,
+          });
+
+          // Create quote part record
+          const [newQuotePart] = await db.insert(quoteParts).values({
+            quoteId: quote.id,
+            partNumber,
+            partName: name,
+            partFileUrl: uploadResult.key,
+            conversionStatus: 'pending',
+          }).returning();
+
+          quotePartId = newQuotePart.id;
+
+          // Trigger mesh conversion asynchronously
+          triggerQuotePartMeshConversion(newQuotePart.id, uploadResult.key).catch((error) => {
+            console.error(`Failed to trigger mesh conversion for quote part ${newQuotePart.id}:`, error);
+          });
+        }
+
+        // Create quote line item
+        const { createQuoteLineItem } = await import("~/lib/line-items");
+        await createQuoteLineItem(quote.id, {
+          partId: quotePartId,
+          quantity: parseInt(quantity),
+          unitPrice,
+        });
+
+        // Recalculate totals
+        const { calculateQuoteTotals } = await import("~/lib/quotes");
+        await calculateQuoteTotals(quote.id);
+
+        return redirect(`/quotes/${quoteId}`);
+      } catch (error) {
+        console.error("Error adding line item:", error);
+        return json({ error: "Failed to add line item" }, { status: 500 });
+      }
+    }
+
+    // Handle regular file attachment upload
     const file = formData.get("file") as File;
 
     if (!file) {
@@ -444,6 +522,7 @@ export default function QuoteDetail() {
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
+  const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
   // Define the line item type
   type LineItem = {
     id: number;
@@ -562,9 +641,15 @@ export default function QuoteDetail() {
   };
 
   const handleAddLineItem = () => {
-    // This would need to be implemented with quote-specific line item management
-    // For now, this is a placeholder that shows the intent
-    alert("Add line item functionality coming soon. You can manage line items through the quote edit form.");
+    setIsAddLineItemModalOpen(true);
+  };
+
+  const handleAddLineItemSubmit = (formData: FormData) => {
+    formData.append("intent", "addLineItem");
+    fetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
   };
 
   const startEditingLineItem = (itemId: number, field: 'quantity' | 'unitPrice' | 'totalPrice', currentValue: string | number) => {
@@ -1321,6 +1406,13 @@ export default function QuoteDetail() {
         }
         return null;
       })}
+
+      {/* Add Line Item Modal */}
+      <AddQuoteLineItemModal
+        isOpen={isAddLineItemModalOpen}
+        onClose={() => setIsAddLineItemModalOpen(false)}
+        onSubmit={handleAddLineItemSubmit}
+      />
     </div>
   );
 }

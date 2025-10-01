@@ -156,8 +156,11 @@ export async function convertQuotePartToMesh(
       };
     }
 
-    // Upload to S3
-    const meshKey = `quote-parts/${quotePartId}/mesh/${result.filename}`;
+    // Upload to S3 - sanitize filename to remove spaces and special characters
+    const sanitizedFilename = result.filename
+      .replace(/\s+/g, '-')  // Replace spaces with hyphens
+      .replace(/[^a-zA-Z0-9._-]/g, '');  // Remove any other special characters
+    const meshKey = `quote-parts/${quotePartId}/mesh/${sanitizedFilename}`;
     console.log(`Uploading mesh to S3: ${meshKey}`);
 
     const meshUrl = await uploadToS3(
