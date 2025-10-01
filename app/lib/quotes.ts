@@ -355,6 +355,7 @@ export async function convertQuoteToOrder(
               material: quotePart.material || null,
               tolerance: quotePart.tolerance || null,
               finishing: quotePart.finish || null,
+              thumbnailUrl: quotePart.thumbnailUrl || null,
               partFileUrl: quotePart.partFileUrl || null,
               partMeshUrl: quotePart.partMeshUrl || null,
               meshConversionStatus: quotePart.conversionStatus || 'pending',

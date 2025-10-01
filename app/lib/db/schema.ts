@@ -191,6 +191,7 @@ export const quoteParts = pgTable("quote_parts", {
   material: text("material"),
   finish: text("finish"),
   tolerance: text("tolerance"),
+  thumbnailUrl: text("thumbnail_url"),
   partFileUrl: text("part_file_url"),
   partMeshUrl: text("part_mesh_url"),
   conversionStatus: meshConversionStatusEnum("conversion_status").default("pending"),

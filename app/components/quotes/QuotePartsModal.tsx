@@ -7,6 +7,7 @@ interface QuotePart {
   partName: string;
   partMeshUrl: string | null;
   signedMeshUrl?: string;
+  signedThumbnailUrl?: string;
   conversionStatus: string | null;
   material: string | null;
   finish: string | null;

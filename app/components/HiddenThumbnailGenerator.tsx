@@ -18,6 +18,7 @@ interface HiddenThumbnailGeneratorProps {
   partId: string;
   onComplete?: () => void;
   onError?: (error: string) => void;
+  entityType?: "part" | "quote-part";
 }
 
 function Model3D({
@@ -35,7 +36,14 @@ function Model3D({
   useEffect(() => {
     const loadModel = async () => {
       try {
-        const extension = url.split(".").pop()?.toLowerCase();
+        // Extract the actual file extension, ignoring query parameters
+        let extension = url.split("?")[0].split(".").pop()?.toLowerCase();
+
+        // If no extension found, try to extract from the path before query params
+        if (!extension) {
+          const pathMatch = url.match(/\.([a-z0-9]+)(?:\?|$)/i);
+          extension = pathMatch ? pathMatch[1].toLowerCase() : undefined;
+        }
 
         let loader;
         switch (extension) {
@@ -50,7 +58,7 @@ function Model3D({
             loader = new GLTFLoader();
             break;
           default:
-            throw new Error(`Unsupported file format: ${extension}`);
+            throw new Error(`Unsupported file format: ${extension || 'unknown'}`);
         }
 
         loader.load(
@@ -64,9 +72,16 @@ function Model3D({
                 setGeometry(mesh.geometry);
               }
             } else if (extension === "gltf" || extension === "glb") {
-              const mesh = result.scene.children[0];
-              if (mesh && mesh.geometry) {
-                setGeometry(mesh.geometry);
+              // For GLTF/GLB, find the first mesh in the scene hierarchy
+              let foundGeometry: THREE.BufferGeometry | null = null;
+              result.scene.traverse((child: any) => {
+                if (!foundGeometry && child.isMesh && child.geometry) {
+                  foundGeometry = child.geometry;
+                }
+              });
+
+              if (foundGeometry) {
+                setGeometry(foundGeometry);
               }
             }
 
@@ -99,7 +114,11 @@ function Model3D({
 
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color="#6b7280" metalness={0.1} roughness={0.7} />
+      <meshStandardMaterial
+        color="#6b7280"
+        metalness={0.1}
+        roughness={0.7}
+      />
     </mesh>
   );
 }
@@ -109,6 +128,7 @@ export function HiddenThumbnailGenerator({
   partId,
   onComplete,
   onError,
+  entityType = "part",
 }: HiddenThumbnailGeneratorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
@@ -121,7 +141,7 @@ export function HiddenThumbnailGenerator({
 
     try {
       const canvas = canvasRef.current;
-      
+
       canvas.toBlob(async (blob) => {
         if (!blob) {
           console.error("Failed to capture thumbnail");
@@ -133,7 +153,11 @@ export function HiddenThumbnailGenerator({
         const filename = `thumbnail-${partId}-auto-${Date.now()}.png`;
         formData.append('file', blob, filename);
 
-        const response = await fetch(`/parts/${partId}/thumbnail`, {
+        const endpoint = entityType === "quote-part"
+          ? `/quote-parts/${partId}/thumbnail`
+          : `/parts/${partId}/thumbnail`;
+
+        const response = await fetch(endpoint, {
           method: 'POST',
           body: formData,
         });
@@ -150,7 +174,7 @@ export function HiddenThumbnailGenerator({
       console.error('Error capturing thumbnail:', error);
       onError?.(error instanceof Error ? error.message : "Error capturing thumbnail");
     }
-  }, [hasCaptured, partId, onComplete, onError]);
+  }, [hasCaptured, partId, onComplete, onError, entityType]);
 
   useEffect(() => {
     if (isModelLoaded && !hasCaptured) {
@@ -178,7 +202,7 @@ export function HiddenThumbnailGenerator({
     >
       <Canvas
         ref={canvasRef}
-        camera={{ position: [10, 10, 10], fov: 35 }}
+        camera={{ position: [10, 10, 10], fov: 50 }}
         gl={{
           alpha: false,
           antialias: true,
@@ -193,13 +217,13 @@ export function HiddenThumbnailGenerator({
         }}
       >
         <color attach="background" args={['#f3f4f6']} />
-        
-        <ambientLight intensity={0.9} />
-        <directionalLight position={[10, 10, 5]} intensity={0.5} />
-        <directionalLight position={[-10, -10, -5]} intensity={0.3} />
-        <pointLight position={[0, 10, 0]} intensity={0.2} />
 
-        <Bounds fit clip observe margin={1.2}>
+        {/* Lighting matching Part3DViewer light mode */}
+        <ambientLight intensity={0.8} />
+        <directionalLight position={[10, 10, 5]} intensity={0.6} />
+        <directionalLight position={[-10, -10, -5]} intensity={0.5} />
+
+        <Bounds fit clip observe margin={1.5}>
           <Center>
             <Model3D
               url={modelUrl}
@@ -214,7 +238,7 @@ export function HiddenThumbnailGenerator({
           </Center>
         </Bounds>
 
-        <Environment preset="studio" background={false} />
+        <Environment preset="city" background={false} />
       </Canvas>
     </div>
   );

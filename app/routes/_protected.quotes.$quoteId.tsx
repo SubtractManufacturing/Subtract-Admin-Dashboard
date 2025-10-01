@@ -23,6 +23,7 @@ import FileViewerModal from "~/components/shared/FileViewerModal";
 import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
 import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
+import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 
@@ -49,17 +50,33 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const customer = quote.customerId ? await getCustomer(quote.customerId) : null;
   const vendor = quote.vendorId ? await getVendor(quote.vendorId) : null;
 
-  // Generate signed URLs for quote parts with meshes
+  // Generate signed URLs for quote parts with meshes and thumbnails
   const partsWithSignedUrls = await Promise.all(
     (quote.parts || []).map(async (part) => {
+      let signedMeshUrl = undefined;
+      let signedThumbnailUrl = undefined;
+
+      // Get signed mesh URL
       if (part.partMeshUrl && part.conversionStatus === 'completed') {
         const { getQuotePartMeshUrl } = await import("~/lib/quote-part-mesh-converter.server");
         const result = await getQuotePartMeshUrl(part.id);
         if ('url' in result) {
-          return { ...part, signedMeshUrl: result.url };
+          signedMeshUrl = result.url;
         }
       }
-      return part;
+
+      // Get signed thumbnail URL
+      // thumbnailUrl is stored as just the S3 key (e.g., "quote-parts/abc-123/thumbnails/...")
+      if (part.thumbnailUrl) {
+        const { getDownloadUrl } = await import("~/lib/s3.server");
+        try {
+          signedThumbnailUrl = await getDownloadUrl(part.thumbnailUrl, 3600);
+        } catch (error) {
+          console.error("Error getting signed thumbnail URL for part", part.id, ":", error);
+        }
+      }
+
+      return { ...part, signedMeshUrl, signedThumbnailUrl };
     })
   );
 
@@ -996,6 +1013,7 @@ export default function QuoteDetail() {
             <table className={tableStyles.container}>
               <thead className={tableStyles.header}>
                 <tr>
+                  <th className={tableStyles.headerCell}>Preview</th>
                   <th className={tableStyles.headerCell}>Part</th>
                   <th className={tableStyles.headerCell}>Notes</th>
                   <th className={tableStyles.headerCell}>Quantity</th>
@@ -1004,10 +1022,32 @@ export default function QuoteDetail() {
                 </tr>
               </thead>
               <tbody>
-                {optimisticLineItems.map((item) => (
+                {optimisticLineItems.map((item) => {
+                  const part = quote.parts?.find((p: { id: string; partName: string; signedThumbnailUrl?: string; thumbnailUrl?: string | null }) => p.id === item.quotePartId);
+
+                  return (
                   <tr key={item.id} className={tableStyles.row}>
                     <td className={tableStyles.cell}>
-                      {quote.parts?.find((p: { id: string; partName: string }) => p.id === item.quotePartId)?.partName || "N/A"}
+                      {part?.signedThumbnailUrl ? (
+                        <img
+                          src={part.signedThumbnailUrl}
+                          alt={part.partName}
+                          className="w-16 h-16 object-cover rounded bg-gray-100 dark:bg-gray-800"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center">
+                          {part?.thumbnailUrl ? (
+                            <span className="text-xs text-gray-500">Loading...</span>
+                          ) : (
+                            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                            </svg>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className={tableStyles.cell}>
+                      {part?.partName || "N/A"}
                     </td>
                     <td className={tableStyles.cell}>{item.notes || "—"}</td>
                     <td
@@ -1075,11 +1115,12 @@ export default function QuoteDetail() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={5} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
+                  <td colSpan={6} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
                     Total: ${optimisticTotal}
                   </td>
                 </tr>
@@ -1241,6 +1282,24 @@ export default function QuoteDetail() {
           parts={quote.parts}
         />
       )}
+
+      {/* Hidden Thumbnail Generators for parts without thumbnails */}
+      {quote.parts?.map((part: { id: string; signedMeshUrl?: string; thumbnailUrl?: string | null; conversionStatus: string | null }) => {
+        if (part.signedMeshUrl && part.conversionStatus === 'completed' && !part.thumbnailUrl) {
+          return (
+            <HiddenThumbnailGenerator
+              key={part.id}
+              modelUrl={part.signedMeshUrl}
+              partId={part.id}
+              entityType="quote-part"
+              onComplete={() => {
+                revalidator.revalidate();
+              }}
+            />
+          );
+        }
+        return null;
+      })}
     </div>
   );
 }
