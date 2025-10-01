@@ -22,7 +22,7 @@ import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
-import { Part3DViewer } from "~/components/shared/Part3DViewer";
+import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 
@@ -249,8 +249,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
       case "convertToOrder": {
         const result = await convertQuoteToOrder(quote.id, eventContext);
-        if (result.success && result.orderId) {
-          return redirect(`/orders/${result.orderId}`);
+        if (result.success && result.orderNumber) {
+          return redirect(`/orders/${result.orderNumber}`);
         }
         return json({ error: result.error || "Failed to convert quote" }, { status: 400 });
       }
@@ -404,6 +404,7 @@ export default function QuoteDetail() {
   const [isFileViewerOpen, setIsFileViewerOpen] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   // Define the line item type
   type LineItem = {
     id: number;
@@ -980,7 +981,14 @@ export default function QuoteDetail() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
               <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Line Items</h3>
-              <Button size="sm" onClick={handleAddLineItem}>Add Line Item</Button>
+              <div className="flex gap-2">
+                {quote.parts && quote.parts.length > 0 && (
+                  <Button size="sm" variant="secondary" onClick={() => setIsPartsModalOpen(true)}>
+                    View Parts ({quote.parts.length})
+                  </Button>
+                )}
+                <Button size="sm" onClick={handleAddLineItem}>Add Line Item</Button>
+              </div>
             </div>
             <div className="p-6">
 
@@ -1082,63 +1090,6 @@ export default function QuoteDetail() {
           )}
             </div>
           </div>
-
-          {/* Quote Parts 3D Viewer Section */}
-          {quote.parts && quote.parts.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Parts</h3>
-              </div>
-              <div className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {quote.parts.map((part: { id: string; partName: string; partMeshUrl: string | null; signedMeshUrl?: string; conversionStatus: string | null; material: string | null; finish: string | null; tolerance: string | null }) => (
-                    <div key={part.id} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                      <div className="aspect-square bg-gray-100 dark:bg-gray-800 relative">
-                        {part.signedMeshUrl && part.conversionStatus === 'completed' ? (
-                          <Part3DViewer
-                            modelUrl={part.signedMeshUrl}
-                            partName={part.partName}
-                            partId={part.id}
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            {part.conversionStatus === 'in_progress' || part.conversionStatus === 'queued' || part.conversionStatus === 'pending' ? (
-                              <div className="text-center">
-                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                                <p className="text-sm text-gray-600 dark:text-gray-400">Parts loading...</p>
-                              </div>
-                            ) : part.conversionStatus === 'failed' ? (
-                              <div className="text-center px-4">
-                                <svg className="w-12 h-12 text-red-500 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                <p className="text-sm text-red-600 dark:text-red-400">Conversion failed</p>
-                              </div>
-                            ) : (
-                              <div className="text-center">
-                                <svg className="w-12 h-12 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                                </svg>
-                                <p className="text-sm text-gray-600 dark:text-gray-400">No 3D model</p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="p-4">
-                        <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">{part.partName}</h4>
-                        <div className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
-                          {part.material && <p><span className="font-medium">Material:</span> {part.material}</p>}
-                          {part.tolerance && <p><span className="font-medium">Tolerance:</span> {part.tolerance}</p>}
-                          {part.finish && <p><span className="font-medium">Finish:</span> {part.finish}</p>}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Attachments Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
@@ -1279,6 +1230,15 @@ export default function QuoteDetail() {
           fileName={selectedFile.fileName}
           contentType={selectedFile.contentType}
           fileSize={selectedFile.fileSize}
+        />
+      )}
+
+      {/* Quote Parts Modal */}
+      {quote.parts && quote.parts.length > 0 && (
+        <QuotePartsModal
+          isOpen={isPartsModalOpen}
+          onClose={() => setIsPartsModalOpen(false)}
+          parts={quote.parts}
         />
       )}
     </div>

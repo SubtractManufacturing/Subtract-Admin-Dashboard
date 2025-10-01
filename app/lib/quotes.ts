@@ -302,7 +302,7 @@ export async function archiveQuote(
 export async function convertQuoteToOrder(
   quoteId: number,
   context?: QuoteEventContext
-): Promise<{ success: boolean; orderId?: number; error?: string }> {
+): Promise<{ success: boolean; orderId?: number; orderNumber?: string; error?: string }> {
   try {
     const quote = await getQuote(quoteId)
     if (!quote) {
@@ -401,7 +401,7 @@ export async function convertQuoteToOrder(
           )
       }
 
-      return order.id
+      return { orderId: order.id, orderNumber: order.orderNumber }
     })
 
     // Log conversion event
@@ -414,13 +414,14 @@ export async function convertQuoteToOrder(
       description: `Quote ${quote.quoteNumber} was converted to an order`,
       metadata: {
         quoteNumber: quote.quoteNumber,
-        orderId: result,
+        orderId: result.orderId,
+        orderNumber: result.orderNumber,
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
     })
 
-    return { success: true, orderId: result }
+    return { success: true, orderId: result.orderId, orderNumber: result.orderNumber }
   } catch (error) {
     console.error('Error converting quote to order:', error)
     return { success: false, error: 'Failed to convert quote to order' }
