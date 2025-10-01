@@ -214,9 +214,16 @@ export function formatEventForTimeline(event: EventLog): {
 
   // Handle creation events - remove redundant entity references
   if (event.eventType === "order_created") {
+    // Check if order was created from a quote
+    if (metadata?.quoteNumber) {
+      return {
+        title: "Order Created",
+        description: `Quote ${metadata.quoteNumber} accepted`
+      };
+    }
     return {
       title: "Order Created",
-      description: `Initial status: ${metadata?.status || "Pending"}`
+      description: `Initial status: ${metadata?.initialStatus || metadata?.status || "Pending"}`
     };
   }
 
