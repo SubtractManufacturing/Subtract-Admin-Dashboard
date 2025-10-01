@@ -789,6 +789,20 @@ export async function createQuoteLineItem(
     // Recalculate quote totals
     await calculateQuoteTotals(quoteId)
 
+    // Get part name if applicable
+    let partName = 'Unknown Part'
+    if (itemData.quotePartId) {
+      const [quotePart] = await db
+        .select()
+        .from(quoteParts)
+        .where(eq(quoteParts.id, itemData.quotePartId))
+        .limit(1)
+
+      if (quotePart) {
+        partName = quotePart.partName
+      }
+    }
+
     // Log event
     await createEvent({
       entityType: 'quote',
@@ -796,9 +810,10 @@ export async function createQuoteLineItem(
       eventType: 'quote_line_item_added',
       eventCategory: 'financial',
       title: 'Line Item Added',
-      description: `Line item added with quantity ${itemData.quantity}`,
+      description: `Added ${partName}`,
       metadata: {
         lineItemId: newItem.id,
+        partName,
         quantity: itemData.quantity,
         unitPrice: itemData.unitPrice,
         totalPrice,
@@ -855,6 +870,20 @@ export async function updateQuoteLineItem(
     // Recalculate quote totals
     await calculateQuoteTotals(currentItem.quoteId)
 
+    // Get part name if applicable
+    let partName = 'Unknown Part'
+    if (currentItem.quotePartId) {
+      const [quotePart] = await db
+        .select()
+        .from(quoteParts)
+        .where(eq(quoteParts.id, currentItem.quotePartId))
+        .limit(1)
+
+      if (quotePart) {
+        partName = quotePart.partName
+      }
+    }
+
     // Log event
     await createEvent({
       entityType: 'quote',
@@ -862,9 +891,10 @@ export async function updateQuoteLineItem(
       eventType: 'quote_line_item_updated',
       eventCategory: 'financial',
       title: 'Line Item Updated',
-      description: `Line item updated`,
+      description: `Updated ${partName}`,
       metadata: {
         lineItemId: itemId,
+        partName,
         updates,
         newTotalPrice: totalPrice,
       },
@@ -902,6 +932,20 @@ export async function deleteQuoteLineItem(
     // Recalculate quote totals
     await calculateQuoteTotals(item.quoteId)
 
+    // Get part name if applicable
+    let partName = 'Unknown Part'
+    if (item.quotePartId) {
+      const [quotePart] = await db
+        .select()
+        .from(quoteParts)
+        .where(eq(quoteParts.id, item.quotePartId))
+        .limit(1)
+
+      if (quotePart) {
+        partName = quotePart.partName
+      }
+    }
+
     // Log event
     await createEvent({
       entityType: 'quote',
@@ -909,9 +953,10 @@ export async function deleteQuoteLineItem(
       eventType: 'quote_line_item_deleted',
       eventCategory: 'financial',
       title: 'Line Item Deleted',
-      description: `Line item deleted`,
+      description: `Deleted ${partName}`,
       metadata: {
         lineItemId: itemId,
+        partName,
         quantity: item.quantity,
         totalPrice: item.totalPrice,
       },

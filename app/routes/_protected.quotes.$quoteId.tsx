@@ -175,6 +175,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Quote not found" }, { status: 404 });
   }
 
+  // Create event context for all operations
+  const eventContext: QuoteEventContext = {
+    userId: user?.id,
+    userEmail: user?.email || userDetails?.name || undefined,
+  };
+
   // Handle file uploads separately
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
     const uploadHandler = unstable_createMemoryUploadHandler({
@@ -244,13 +250,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
           });
         }
 
-        // Create quote line item
-        const { createQuoteLineItem } = await import("~/lib/line-items");
+        // Create quote line item with event context
+        const { createQuoteLineItem } = await import("~/lib/quotes");
         await createQuoteLineItem(quote.id, {
-          partId: quotePartId,
+          quotePartId: quotePartId || undefined,
           quantity: parseInt(quantity),
-          unitPrice,
-        });
+          unitPrice: parseFloat(unitPrice),
+        }, eventContext);
 
         // Recalculate totals
         const { calculateQuoteTotals } = await import("~/lib/quotes");
@@ -290,12 +296,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: file.name,
       });
 
-      // Create event context for attachment operations
-      const eventContext: AttachmentEventContext = {
-        userId: user?.id,
-        userEmail: user?.email || userDetails?.name || undefined,
-      };
-
       // Create attachment record
       const attachment = await createAttachment({
         s3Bucket: uploadResult.bucket,
@@ -322,11 +322,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
   // Handle other form submissions
   const formData = await request.formData();
   const intent = formData.get("intent");
-
-  const eventContext: QuoteEventContext = {
-    userId: user?.id,
-    userEmail: user?.email || userDetails?.name || undefined,
-  };
 
   try {
     switch (intent) {
@@ -384,29 +379,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
-        const { updateQuoteLineItem } = await import("~/lib/line-items");
+        const { updateQuoteLineItem } = await import("~/lib/quotes");
 
-        const updateData: { quantity?: number; unitPrice?: string; totalPrice?: string } = {};
+        const updateData: { quantity?: number; unitPrice?: number } = {};
 
         // Get all possible updated fields
         const quantity = formData.get("quantity") as string | null;
         const unitPrice = formData.get("unitPrice") as string | null;
-        const totalPrice = formData.get("totalPrice") as string | null;
 
-        // Only add fields that were provided
+        // Only add fields that were provided (totalPrice is calculated automatically)
         if (quantity !== null) {
           updateData.quantity = parseInt(quantity);
         }
         if (unitPrice !== null) {
-          updateData.unitPrice = unitPrice;
-        }
-        if (totalPrice !== null) {
-          updateData.totalPrice = totalPrice;
+          updateData.unitPrice = parseFloat(unitPrice);
         }
 
-        await updateQuoteLineItem(parseInt(lineItemId), updateData);
+        await updateQuoteLineItem(parseInt(lineItemId), updateData, eventContext);
 
-        // Recalculate totals after updating line item
+        // Totals are already recalculated by updateQuoteLineItem
         const { calculateQuoteTotals } = await import("~/lib/quotes");
         const updatedTotals = await calculateQuoteTotals(quote.id);
 
@@ -542,8 +533,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
           }
 
           // Delete the line item FIRST (to avoid foreign key constraint)
-          const { deleteQuoteLineItem } = await import("~/lib/line-items");
-          await deleteQuoteLineItem(parseInt(lineItemId));
+          const { deleteQuoteLineItem } = await import("~/lib/quotes");
+          await deleteQuoteLineItem(parseInt(lineItemId), eventContext);
 
           // Now delete the quote part and its S3 files
           if (quotePart) {
@@ -1235,7 +1226,6 @@ export default function QuoteDetail() {
                   <th className={tableStyles.headerCell}>Quantity</th>
                   <th className={tableStyles.headerCell}>Unit Price</th>
                   <th className={tableStyles.headerCell}>Total Price</th>
-                  {!isQuoteLocked && <th className={tableStyles.headerCell}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1256,7 +1246,7 @@ export default function QuoteDetail() {
                   );
 
                   return (
-                  <tr key={item.id} className={tableStyles.row}>
+                  <tr key={item.id} className={`${tableStyles.row} group`}>
                     <td className={tableStyles.cell}>
                       <div className="flex items-center gap-3">
                         {part?.signedThumbnailUrl ? (
@@ -1326,44 +1316,49 @@ export default function QuoteDetail() {
                       className={`${tableStyles.cell} ${!isQuoteLocked ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors' : ''}`}
                       onClick={() => !isQuoteLocked && startEditingLineItem(item.id, 'totalPrice', item.totalPrice)}
                     >
-                      {editingLineItem?.id === item.id && editingLineItem?.field === 'totalPrice' ? (
+                      <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center">
-                          <span className="mr-1">$</span>
-                          <input
-                            ref={editInputRef}
-                            type="text"
-                            className="w-24 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
-                            value={editingLineItem.value}
-                            onChange={(e) => setEditingLineItem({ ...editingLineItem, value: e.target.value })}
-                            onKeyDown={handleLineItemKeyDown}
-                            onBlur={cancelEditingLineItem}
-                            onClick={(e) => e.stopPropagation()}
-                          />
+                          {editingLineItem?.id === item.id && editingLineItem?.field === 'totalPrice' ? (
+                            <>
+                              <span className="mr-1">$</span>
+                              <input
+                                ref={editInputRef}
+                                type="text"
+                                className="w-24 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
+                                value={editingLineItem.value}
+                                onChange={(e) => setEditingLineItem({ ...editingLineItem, value: e.target.value })}
+                                onKeyDown={handleLineItemKeyDown}
+                                onBlur={cancelEditingLineItem}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </>
+                          ) : (
+                            `$${item.totalPrice}`
+                          )}
                         </div>
-                      ) : (
-                        `$${item.totalPrice}`
-                      )}
+                        {!isQuoteLocked && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteLineItem(item.id, part?.id);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
+                            title="Delete line item"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     </td>
-                    {!isQuoteLocked && (
-                      <td className={tableStyles.cell}>
-                        <button
-                          onClick={() => handleDeleteLineItem(item.id, part?.id)}
-                          className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                          title="Delete line item"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </td>
-                    )}
                   </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={isQuoteLocked ? 5 : 6} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
+                  <td colSpan={5} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
                     Total: ${optimisticTotal}
                   </td>
                 </tr>
