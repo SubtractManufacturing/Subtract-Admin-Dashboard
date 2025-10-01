@@ -11,40 +11,51 @@ interface Part3DViewerModalProps {
   onThumbnailUpdate?: (thumbnailUrl: string) => void;
   autoGenerateThumbnail?: boolean;
   existingThumbnailUrl?: string;
+  isQuotePart?: boolean;
 }
 
-export function Part3DViewerModal({ 
-  isOpen, 
-  onClose, 
+export function Part3DViewerModal({
+  isOpen,
+  onClose,
   partName,
   modelUrl,
   solidModelUrl,
   partId,
   onThumbnailUpdate,
   autoGenerateThumbnail,
-  existingThumbnailUrl
+  existingThumbnailUrl,
+  isQuotePart = false
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
     if (!isOpen) return;
-    
-    // Prevent body scroll when modal is open
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    
+
+    // Only manage body scroll if this is not a nested modal (i.e., no other modals are open)
+    // Check if body is already set to hidden (indicating a parent modal)
+    const isNestedModal = document.body.style.overflow === 'hidden';
+    const originalOverflow = !isNestedModal ? document.body.style.overflow : null;
+
+    if (!isNestedModal) {
+      document.body.style.overflow = 'hidden';
+    }
+
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.stopPropagation(); // Prevent event from bubbling to parent modal
         onClose();
       }
     };
-    
+
     document.addEventListener('keydown', handleEscape);
-    
+
     // Cleanup function
     return () => {
       document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = originalOverflow;
+      // Only restore overflow if we were the one who set it
+      if (!isNestedModal && originalOverflow !== null) {
+        document.body.style.overflow = originalOverflow;
+      }
     };
   }, [isOpen, onClose]);
   
@@ -82,14 +93,15 @@ export function Part3DViewerModal({
           </svg>
         </button>
         
-        <Part3DViewer 
-          partName={partName} 
-          modelUrl={modelUrl} 
+        <Part3DViewer
+          partName={partName}
+          modelUrl={modelUrl}
           solidModelUrl={solidModelUrl}
           partId={partId}
           onThumbnailUpdate={onThumbnailUpdate}
           autoGenerateThumbnail={autoGenerateThumbnail}
           existingThumbnailUrl={existingThumbnailUrl}
+          isQuotePart={isQuotePart}
         />
       </div>
     </div>

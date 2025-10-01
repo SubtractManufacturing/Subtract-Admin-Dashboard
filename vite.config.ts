@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [
     remix({
       ignoredRouteFiles: ["**/*.css"],
+      future: {
+        v3_relativeSplatPath: true,
+      },
     }),
   ],
   resolve: {

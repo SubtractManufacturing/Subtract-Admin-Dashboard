@@ -6,7 +6,9 @@ interface QuotePart {
   id: string;
   partName: string;
   partMeshUrl: string | null;
+  partFileUrl: string | null;
   signedMeshUrl?: string;
+  signedFileUrl?: string;
   signedThumbnailUrl?: string;
   conversionStatus: string | null;
   material: string | null;
@@ -25,9 +27,15 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
   const modalRef = useRef<HTMLDivElement>(null);
   const [selectedPart, setSelectedPart] = useState<QuotePart | null>(null);
   const [isPart3DModalOpen, setIsPart3DModalOpen] = useState(false);
+  const dragStartPos = useRef<{ x: number; y: number } | null>(null);
+  const hasDragged = useRef(false);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Ensure body scroll is restored when modal is closed
+      document.body.style.overflow = '';
+      return;
+    }
 
     // Prevent body scroll when modal is open
     const originalOverflow = document.body.style.overflow;
@@ -112,10 +120,25 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
                           ? 'cursor-pointer hover:opacity-90 transition-opacity'
                           : ''
                       }`}
-                      onClick={() => {
-                        if (part.signedMeshUrl && part.conversionStatus === 'completed') {
+                      onMouseDown={(e) => {
+                        dragStartPos.current = { x: e.clientX, y: e.clientY };
+                        hasDragged.current = false;
+                      }}
+                      onMouseMove={(e) => {
+                        if (dragStartPos.current && !hasDragged.current) {
+                          const dx = Math.abs(e.clientX - dragStartPos.current.x);
+                          const dy = Math.abs(e.clientY - dragStartPos.current.y);
+                          if (dx > 5 || dy > 5) {
+                            hasDragged.current = true;
+                          }
+                        }
+                      }}
+                      onMouseUp={() => {
+                        if (!hasDragged.current && part.signedMeshUrl && part.conversionStatus === 'completed') {
                           handleView3D(part);
                         }
+                        dragStartPos.current = null;
+                        hasDragged.current = false;
                       }}
                       role={part.signedMeshUrl && part.conversionStatus === 'completed' ? 'button' : undefined}
                       tabIndex={part.signedMeshUrl && part.conversionStatus === 'completed' ? 0 : undefined}
@@ -127,11 +150,14 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
                       }}
                     >
                       {part.signedMeshUrl && part.conversionStatus === 'completed' ? (
-                        <div className="pointer-events-none w-full h-full">
+                        <div className="w-full h-full">
                           <Part3DViewer
                             modelUrl={part.signedMeshUrl}
+                            solidModelUrl={part.signedFileUrl}
                             partName={part.partName}
                             partId={part.id}
+                            hideControls={true}
+                            isQuotePart={true}
                           />
                         </div>
                       ) : (
@@ -235,7 +261,9 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
           }}
           partName={selectedPart.partName}
           modelUrl={selectedPart.signedMeshUrl}
+          solidModelUrl={selectedPart.signedFileUrl}
           partId={selectedPart.id}
+          isQuotePart={true}
         />
       )}
     </>

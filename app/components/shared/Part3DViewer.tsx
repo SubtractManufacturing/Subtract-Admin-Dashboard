@@ -23,6 +23,9 @@ interface Part3DViewerProps {
   onThumbnailUpdate?: (thumbnailUrl: string) => void;
   autoGenerateThumbnail?: boolean;
   existingThumbnailUrl?: string;
+  disableInteraction?: boolean; // Disable orbit controls for thumbnail previews
+  hideControls?: boolean; // Hide grid toggle and thumbnail capture buttons
+  isQuotePart?: boolean; // Is this a quote part (disables manual thumbnail capture)
 }
 
 function Model3D({
@@ -125,7 +128,7 @@ function Model3D({
 
   // Auto-frame the camera when geometry is loaded
   useEffect(() => {
-    if (!geometry || !meshRef.current || !controls) return;
+    if (!geometry || !meshRef.current) return;
 
     // Compute bounding box
     const box = new Box3().setFromObject(meshRef.current);
@@ -148,7 +151,7 @@ function Model3D({
     camera.position.copy(direction.multiplyScalar(cameraZ).add(center));
     camera.lookAt(center);
 
-    // Update controls target to center of model
+    // Update controls target to center of model (if controls exist)
     if (controls && 'target' in controls && 'update' in controls) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (controls as any).target.copy(center);
@@ -183,29 +186,33 @@ function Scene({
   onError,
   showGrid,
   isLightMode,
+  disableInteraction,
 }: {
   modelUrl?: string;
   onLoad?: () => void;
   onError?: (error: string) => void;
   showGrid: boolean;
   isLightMode: boolean;
+  disableInteraction?: boolean;
 }) {
   return (
     <>
       <PerspectiveCamera makeDefault position={[10, 10, 10]} fov={50} />
-      <OrbitControls
-        enablePan={true}
-        enableZoom={true}
-        enableRotate={true}
-        minDistance={1}
-        maxDistance={500}
-        target={[0, 0, 0]}
-        makeDefault
-        dampingFactor={0.05}
-        enableDamping={true}
-        rotateSpeed={0.5}
-        panSpeed={0.5}
-      />
+      {!disableInteraction && (
+        <OrbitControls
+          enablePan={true}
+          enableZoom={true}
+          enableRotate={true}
+          minDistance={1}
+          maxDistance={500}
+          target={[0, 0, 0]}
+          makeDefault
+          dampingFactor={0.05}
+          enableDamping={true}
+          rotateSpeed={0.5}
+          panSpeed={0.5}
+        />
+      )}
 
       <ambientLight intensity={isLightMode ? 0.8 : 0.5} />
       <directionalLight position={[10, 10, 5]} intensity={isLightMode ? 0.6 : 1} castShadow />
@@ -238,14 +245,17 @@ function Scene({
   );
 }
 
-export function Part3DViewer({ 
-  partName, 
-  modelUrl, 
-  solidModelUrl, 
-  partId, 
+export function Part3DViewer({
+  partName,
+  modelUrl,
+  solidModelUrl,
+  partId,
   onThumbnailUpdate,
   autoGenerateThumbnail = false,
-  existingThumbnailUrl
+  existingThumbnailUrl,
+  disableInteraction = false,
+  hideControls = false,
+  isQuotePart = false
 }: Part3DViewerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -261,13 +271,19 @@ export function Part3DViewer({
   // Fetch signed URL for mesh model if needed
   useEffect(() => {
     const fetchSignedUrl = async () => {
-      if (!modelUrl || !partId) {
+      if (!modelUrl) {
+        setSignedModelUrl(modelUrl);
+        return;
+      }
+
+      // If URL already has AWS signature parameters, it's already signed - use it directly
+      if (modelUrl.includes('X-Amz-Algorithm') || modelUrl.includes('X-Amz-Signature')) {
         setSignedModelUrl(modelUrl);
         return;
       }
 
       // Check if this is a mesh URL that needs signing
-      if (modelUrl.includes('partMeshUrl') || modelUrl.includes('/mesh/') || modelUrl.includes('supabase')) {
+      if (partId && (modelUrl.includes('partMeshUrl') || modelUrl.includes('/mesh/') || modelUrl.includes('supabase'))) {
         try {
           const response = await fetch(`/parts/${partId}/mesh`);
           if (response.ok) {
@@ -426,54 +442,65 @@ export function Part3DViewer({
   const handleDownload = () => {
     // Prefer solid model for download, fall back to mesh if not available
     const downloadUrl = solidModelUrl || signedModelUrl || modelUrl;
-    
+
     if (downloadUrl) {
-      // Extract just the original filename from the URL
-      const urlParts = downloadUrl.split('/');
-      const fullFilename = urlParts[urlParts.length - 1];
-      
+      // Extract just the original filename from the URL, removing query parameters
+      const urlWithoutQuery = downloadUrl.split('?')[0];
+      const urlParts = urlWithoutQuery.split('/');
+      const fullFilename = decodeURIComponent(urlParts[urlParts.length - 1]);
+
       let originalFilename = fullFilename;
-      
-      // Pattern: timestamp-part-uuid-originalname.ext
-      // Example: 1755410533104-part-8afdac98-47f4-48fa-a091-6980b17553e7-ThinkNas.step
-      // Use regex to match: digits-part-uuid pattern and extract everything after
-      // Allow for case-insensitive UUID matching
+
+      // Pattern for quote-parts: timestamp-quote-part-uuid-originalname.ext
+      // Pattern for parts: timestamp-part-uuid-originalname.ext
+      const quotePartFileRegex = /^\d+-quote-part-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
       const partFileRegex = /^\d+-part-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
       const partMeshRegex = /^\d+-part-mesh-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
-      
-      let match = fullFilename.match(partFileRegex);
-      
+
+      let match = fullFilename.match(quotePartFileRegex);
       if (match) {
         originalFilename = match[1];
       } else {
-        match = fullFilename.match(partMeshRegex);
+        match = fullFilename.match(partFileRegex);
         if (match) {
           originalFilename = match[1];
+        } else {
+          match = fullFilename.match(partMeshRegex);
+          if (match) {
+            originalFilename = match[1];
+          }
         }
       }
-      
+
       // If regex didn't match, try simpler approach - look for last occurrence of UUID pattern
       if (originalFilename === fullFilename) {
-        // UUID pattern: 8-4-4-4-12 hex characters (case-insensitive)
         const uuidIndex = fullFilename.search(/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}/i);
         if (uuidIndex > 0) {
-          // Find the end of UUID (36 chars) and skip the dash after it
           const afterUuid = uuidIndex + 36 + 1;
           if (afterUuid < fullFilename.length) {
             originalFilename = fullFilename.substring(afterUuid);
           }
         }
       }
-      
-      // Final fallback
+
+      // Final fallback - use part name with extension
       if (!originalFilename || originalFilename === fullFilename) {
-        const extension = downloadUrl.split(".").pop();
-        originalFilename = `${partName || "part"}.${extension}`;
+        const urlWithoutParams = downloadUrl.split('?')[0];
+        const extension = urlWithoutParams.split(".").pop()?.split('/').pop();
+        originalFilename = `${partName || "part"}.${extension || "step"}`;
       }
-      
+
       // Fetch the file and create a blob URL to ensure the download attribute works
-      fetch(downloadUrl)
-        .then(response => response.blob())
+      fetch(downloadUrl, {
+        method: 'GET',
+        mode: 'cors',
+      })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          return response.blob();
+        })
         .then(blob => {
           const blobUrl = URL.createObjectURL(blob);
           const link = document.createElement("a");
@@ -482,19 +509,12 @@ export function Part3DViewer({
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
-          // Clean up the blob URL
           setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
         })
         .catch(error => {
-          console.error("Download failed:", error);
-          // Fallback to direct download
-          const link = document.createElement("a");
-          link.href = downloadUrl;
-          link.download = originalFilename;
-          link.target = "_blank";
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+          console.error("Fetch download failed, trying direct download:", error);
+          // Fallback to direct download using the signed URL
+          window.open(downloadUrl, '_blank');
         });
     }
   };
@@ -505,42 +525,55 @@ export function Part3DViewer({
         <div className={`${isLightMode ? 'bg-white/70' : 'bg-gray-800/70'} backdrop-blur-sm px-2 py-1 rounded text-xs ${isLightMode ? 'text-gray-700' : 'text-gray-300'}`}>
           {partName || "Part"}
         </div>
-        <button
-          onClick={() => setShowGrid(!showGrid)}
-          className={`p-1.5 ${isLightMode ? 'bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900' : 'bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white'} backdrop-blur-sm rounded transition-colors`}
-          title={showGrid ? "Hide grid" : "Show grid"}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            fill="currentColor"
-            viewBox="0 0 16 16"
-          >
-            <path d="M0 0h5v5H0V0zm6 0h5v5H6V0zm6 0h4v5h-4V0zM0 6h5v5H0V6zm6 0h5v5H6V6zm6 0h4v5h-4V6zM0 12h5v4H0v-4zm6 0h5v4H6v-4zm6 0h4v4h-4v-4z"/>
-          </svg>
-        </button>
-        {partId && (
-          <button
-            onClick={() => setIsCameraMode(!isCameraMode)}
-            disabled={isCapturing}
-            className={`p-1.5 ${isCameraMode ? 'bg-red-600 text-white' : isLightMode ? 'bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900' : 'bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white'} backdrop-blur-sm rounded transition-colors ${isCapturing ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title={isCameraMode ? "Exit camera mode" : "Capture thumbnail"}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              fill="currentColor"
-              viewBox="0 0 16 16"
+        {!hideControls && (
+          <>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowGrid(!showGrid);
+              }}
+              className={`p-1.5 ${isLightMode ? 'bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900' : 'bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white'} backdrop-blur-sm rounded transition-colors`}
+              title={showGrid ? "Hide grid" : "Show grid"}
             >
-              <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
-              <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/>
-            </svg>
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                fill="currentColor"
+                viewBox="0 0 16 16"
+              >
+                <path d="M0 0h5v5H0V0zm6 0h5v5H6V0zm6 0h4v5h-4V0zM0 6h5v5H0V6zm6 0h5v5H6V6zm6 0h4v5h-4V6zM0 12h5v4H0v-4zm6 0h5v4H6v-4zm6 0h4v4h-4v-4z"/>
+              </svg>
+            </button>
+            {partId && !isQuotePart && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsCameraMode(!isCameraMode);
+                }}
+                disabled={isCapturing}
+                className={`p-1.5 ${isCameraMode ? 'bg-red-600 text-white' : isLightMode ? 'bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900' : 'bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white'} backdrop-blur-sm rounded transition-colors ${isCapturing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title={isCameraMode ? "Exit camera mode" : "Capture thumbnail"}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  fill="currentColor"
+                  viewBox="0 0 16 16"
+                >
+                  <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
+                  <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/>
+                </svg>
+              </button>
+            )}
+          </>
         )}
         <button
-          onClick={handleDownload}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDownload();
+          }}
           className={`p-1.5 ${isLightMode ? 'text-blue-600 hover:bg-blue-50' : 'text-blue-400 hover:bg-blue-900/50'} rounded transition-colors`}
           title="Download 3D model"
         >
@@ -641,6 +674,7 @@ export function Part3DViewer({
             onError={setLoadError}
             showGrid={showGrid}
             isLightMode={isLightMode}
+            disableInteraction={disableInteraction}
           />
         </Suspense>
       </Canvas>

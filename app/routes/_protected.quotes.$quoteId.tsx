@@ -50,10 +50,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const customer = quote.customerId ? await getCustomer(quote.customerId) : null;
   const vendor = quote.vendorId ? await getVendor(quote.vendorId) : null;
 
-  // Generate signed URLs for quote parts with meshes and thumbnails
+  // Generate signed URLs for quote parts with meshes, solid files, and thumbnails
   const partsWithSignedUrls = await Promise.all(
     (quote.parts || []).map(async (part) => {
       let signedMeshUrl = undefined;
+      let signedFileUrl = undefined;
       let signedThumbnailUrl = undefined;
 
       // Get signed mesh URL
@@ -65,10 +66,31 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         }
       }
 
+      // Get signed solid file URL (STEP, BREP, SLDPRT, etc.)
+      if (part.partFileUrl) {
+        try {
+          // Extract S3 key from the URL
+          let key: string;
+          if (part.partFileUrl.includes('quote-parts/')) {
+            const urlParts = part.partFileUrl.split('/');
+            const quotePartsIndex = urlParts.findIndex(p => p === 'quote-parts');
+            if (quotePartsIndex >= 0) {
+              key = urlParts.slice(quotePartsIndex).join('/');
+            } else {
+              key = part.partFileUrl;
+            }
+          } else {
+            key = part.partFileUrl;
+          }
+          signedFileUrl = await getDownloadUrl(key, 3600);
+        } catch (error) {
+          console.error("Error getting signed file URL for part", part.id, ":", error);
+        }
+      }
+
       // Get signed thumbnail URL
       // thumbnailUrl is stored as just the S3 key (e.g., "quote-parts/abc-123/thumbnails/...")
       if (part.thumbnailUrl) {
-        const { getDownloadUrl } = await import("~/lib/s3.server");
         try {
           signedThumbnailUrl = await getDownloadUrl(part.thumbnailUrl, 3600);
         } catch (error) {
@@ -76,7 +98,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         }
       }
 
-      return { ...part, signedMeshUrl, signedThumbnailUrl };
+      return { ...part, signedMeshUrl, signedFileUrl, signedThumbnailUrl };
     })
   );
 
@@ -1013,7 +1035,6 @@ export default function QuoteDetail() {
             <table className={tableStyles.container}>
               <thead className={tableStyles.header}>
                 <tr>
-                  <th className={tableStyles.headerCell}>Preview</th>
                   <th className={tableStyles.headerCell}>Part</th>
                   <th className={tableStyles.headerCell}>Notes</th>
                   <th className={tableStyles.headerCell}>Quantity</th>
@@ -1028,26 +1049,26 @@ export default function QuoteDetail() {
                   return (
                   <tr key={item.id} className={tableStyles.row}>
                     <td className={tableStyles.cell}>
-                      {part?.signedThumbnailUrl ? (
-                        <img
-                          src={part.signedThumbnailUrl}
-                          alt={part.partName}
-                          className="w-16 h-16 object-cover rounded bg-gray-100 dark:bg-gray-800"
-                        />
-                      ) : (
-                        <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center">
-                          {part?.thumbnailUrl ? (
-                            <span className="text-xs text-gray-500">Loading...</span>
-                          ) : (
-                            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                            </svg>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td className={tableStyles.cell}>
-                      {part?.partName || "N/A"}
+                      <div className="flex items-center gap-3">
+                        {part?.signedThumbnailUrl ? (
+                          <img
+                            src={part.signedThumbnailUrl}
+                            alt={part.partName}
+                            className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0">
+                            {part?.thumbnailUrl ? (
+                              <span className="text-xs text-gray-500">Loading...</span>
+                            ) : (
+                              <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                              </svg>
+                            )}
+                          </div>
+                        )}
+                        <span>{part?.partName || "N/A"}</span>
+                      </div>
                     </td>
                     <td className={tableStyles.cell}>{item.notes || "—"}</td>
                     <td
@@ -1120,7 +1141,7 @@ export default function QuoteDetail() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={6} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
+                  <td colSpan={5} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
                     Total: ${optimisticTotal}
                   </td>
                 </tr>
