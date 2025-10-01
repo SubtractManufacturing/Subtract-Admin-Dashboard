@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useFetcher } from '@remix-run/react';
 import { Part3DViewer } from '~/components/shared/Part3DViewer';
 import { Part3DViewerModal } from '~/components/shared/Part3DViewerModal';
 
@@ -21,9 +22,11 @@ interface QuotePartsModalProps {
   isOpen: boolean;
   onClose: () => void;
   parts: QuotePart[];
+  quoteId?: number;
 }
 
-export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps) {
+export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsModalProps) {
+  const meshFetcher = useFetcher();
   const modalRef = useRef<HTMLDivElement>(null);
   const [selectedPart, setSelectedPart] = useState<QuotePart | null>(null);
   const [isPart3DModalOpen, setIsPart3DModalOpen] = useState(false);
@@ -62,6 +65,19 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
   const handleView3D = (part: QuotePart) => {
     setSelectedPart(part);
     setIsPart3DModalOpen(true);
+  };
+
+  const handleRegenerateMesh = (partId: string) => {
+    if (!quoteId) return;
+
+    const formData = new FormData();
+    formData.append('intent', 'regenerateMesh');
+    formData.append('partId', partId);
+
+    meshFetcher.submit(formData, {
+      method: 'post',
+      action: `/quotes/${quoteId}`,
+    });
   };
 
   if (!isOpen) return null;
@@ -186,9 +202,18 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
                                   d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                                 />
                               </svg>
-                              <p className="text-sm text-red-600 dark:text-red-400">
+                              <p className="text-sm text-red-600 dark:text-red-400 mb-2">
                                 Conversion failed
                               </p>
+                              {part.partFileUrl && (
+                                <button
+                                  onClick={() => handleRegenerateMesh(part.id)}
+                                  disabled={meshFetcher.state === 'submitting'}
+                                  className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 rounded transition-colors"
+                                >
+                                  {meshFetcher.state === 'submitting' ? 'Retrying...' : 'Retry Conversion'}
+                                </button>
+                              )}
                             </div>
                           ) : (
                             <div className="text-center">

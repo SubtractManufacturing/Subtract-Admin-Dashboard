@@ -734,6 +734,59 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
 
+      case "regenerateMesh": {
+        const partId = formData.get("partId") as string;
+        if (!partId) {
+          return json({ error: "Part ID is required" }, { status: 400 });
+        }
+
+        // Get the quote part
+        const { quoteParts } = await import("~/lib/db/schema");
+        const [quotePart] = await db
+          .select()
+          .from(quoteParts)
+          .where(eq(quoteParts.id, partId))
+          .limit(1);
+
+        if (!quotePart) {
+          return json({ error: "Quote part not found" }, { status: 404 });
+        }
+
+        if (!quotePart.partFileUrl) {
+          return json(
+            { error: "No source file available for conversion" },
+            { status: 400 }
+          );
+        }
+
+        // Trigger mesh conversion
+        const { triggerQuotePartMeshConversion } = await import(
+          "~/lib/quote-part-mesh-converter.server"
+        );
+
+        // Reset conversion status to pending
+        await db
+          .update(quoteParts)
+          .set({
+            conversionStatus: "pending",
+            meshConversionError: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(quoteParts.id, partId));
+
+        // Trigger conversion asynchronously
+        triggerQuotePartMeshConversion(quotePart.id, quotePart.partFileUrl).catch(
+          (error) => {
+            console.error(
+              `Failed to regenerate mesh for quote part ${quotePart.id}:`,
+              error
+            );
+          }
+        );
+
+        return json({ success: true });
+      }
+
       default:
         return json({ error: "Invalid action" }, { status: 400 });
     }
@@ -2119,6 +2172,7 @@ export default function QuoteDetail() {
           isOpen={isPartsModalOpen}
           onClose={() => setIsPartsModalOpen(false)}
           parts={quote.parts}
+          quoteId={quote.id}
         />
       )}
 

@@ -415,6 +415,7 @@ export async function convertQuoteToOrder(
       if (quote.parts && quote.parts.length > 0) {
         for (const quotePart of quote.parts) {
           // Create a customer part from the quote part
+          // Copy the S3 key directly - loaders will generate signed URLs on-demand
           const [customerPart] = await tx
             .insert(parts)
             .values({
@@ -473,18 +474,37 @@ export async function convertQuoteToOrder(
       return { orderId: order.id, orderNumber: order.orderNumber }
     })
 
-    // Log conversion event
+    // Log conversion event on quote
     await createEvent({
       entityType: 'quote',
       entityId: quoteId.toString(),
       eventType: 'quote_converted',
       eventCategory: 'system',
       title: 'Quote Converted to Order',
-      description: `Quote ${quote.quoteNumber} was converted to an order`,
+      description: `Quote ${quote.quoteNumber} was converted to order ${result.orderNumber}`,
       metadata: {
         quoteNumber: quote.quoteNumber,
         orderId: result.orderId,
         orderNumber: result.orderNumber,
+      },
+      userId: context?.userId,
+      userEmail: context?.userEmail,
+    })
+
+    // Log creation event on order
+    await createEvent({
+      entityType: 'order',
+      entityId: result.orderId.toString(),
+      eventType: 'order_created',
+      eventCategory: 'system',
+      title: 'Order Created from Quote',
+      description: `Order ${result.orderNumber} was created from quote ${quote.quoteNumber}`,
+      metadata: {
+        orderNumber: result.orderNumber,
+        sourceQuoteId: quoteId,
+        quoteNumber: quote.quoteNumber,
+        customerId: quote.customerId,
+        vendorId: quote.vendorId,
       },
       userId: context?.userId,
       userEmail: context?.userEmail,

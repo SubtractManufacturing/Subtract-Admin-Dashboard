@@ -16,7 +16,7 @@ import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart, type LineItemEventContext } from "~/lib/lineItems";
-import { getPartsByCustomerId } from "~/lib/parts";
+import { getPartsByCustomerId, hydratePartThumbnails } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem } from "~/lib/db/schema";
 import { useState, useRef, useCallback } from "react";
@@ -44,12 +44,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   
   // Fetch notes for this order
   const notes = await getNotes("order", order.id.toString());
-  
+
   // Fetch line items for this order
   const lineItems = await getLineItemsByOrderId(order.id);
-  
+
+  // Hydrate thumbnails for line item parts (convert S3 keys to signed URLs)
+  for (const item of lineItems) {
+    if (item.part && item.part.thumbnailUrl) {
+      const [hydratedPart] = await hydratePartThumbnails([item.part]);
+      item.part = hydratedPart;
+    }
+  }
+
   // Fetch parts for the customer if available
-  const parts = order.customerId ? await getPartsByCustomerId(order.customerId) : [];
+  let parts = order.customerId ? await getPartsByCustomerId(order.customerId) : [];
+
+  // Hydrate thumbnails for customer parts (convert S3 keys to signed URLs)
+  parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
   const [showEventsLink, events] = await Promise.all([

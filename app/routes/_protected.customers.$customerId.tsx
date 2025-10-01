@@ -5,7 +5,7 @@ import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCus
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
-import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
+import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, hydratePartThumbnails, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";
@@ -52,7 +52,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, parts, canUploadMesh, showEventsLink, events] = await Promise.all([
+  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, events] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
@@ -61,6 +61,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     shouldShowEventsInNav(),
     getEventsByEntity("customer", customer.id.toString(), 10),
   ]);
+
+  // Hydrate thumbnails for customer parts (convert S3 keys to signed URLs)
+  const parts = await hydratePartThumbnails(rawParts);
 
   return withAuthHeaders(
     json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events }),
@@ -110,8 +113,9 @@ async function handlePartsAction(
             fileName: thumbnailFile.name,
           });
 
-          // Create public URL for the thumbnail
-          thumbnailUrl = `/attachments/s3/${uploadResult.key}`;
+          // Store just the S3 key (not a URL)
+          // Loaders will generate signed URLs on-demand
+          thumbnailUrl = uploadResult.key;
         } catch (error) {
           console.error('Thumbnail upload error:', error);
           // Continue without thumbnail on error

@@ -287,6 +287,42 @@ export async function getPartWithAttachments(partId: string) {
 }
 
 /**
+ * Convert S3 keys to signed URLs for parts array
+ * This ensures thumbnails don't expire
+ */
+export async function hydratePartThumbnails(parts: Part[]): Promise<Part[]> {
+  return Promise.all(
+    parts.map(async (part) => {
+      if (part.thumbnailUrl && !part.thumbnailUrl.startsWith('http')) {
+        // It's an S3 key, generate signed URL
+        try {
+          part.thumbnailUrl = await getDownloadUrl(part.thumbnailUrl, 3600);
+        } catch (error) {
+          console.error(`Failed to generate thumbnail URL for part ${part.id}:`, error);
+          part.thumbnailUrl = null;
+        }
+      }
+      return part;
+    })
+  );
+}
+
+/**
+ * Convert S3 key to signed URL for a single part
+ */
+export async function hydratePartThumbnail(part: Part): Promise<Part> {
+  if (part.thumbnailUrl && !part.thumbnailUrl.startsWith('http')) {
+    try {
+      part.thumbnailUrl = await getDownloadUrl(part.thumbnailUrl, 3600);
+    } catch (error) {
+      console.error(`Failed to generate thumbnail URL for part ${part.id}:`, error);
+      part.thumbnailUrl = null;
+    }
+  }
+  return part;
+}
+
+/**
  * Get signed URL for part mesh file
  */
 export async function getPartMeshUrl(partId: string): Promise<{ url: string } | { error: string }> {
