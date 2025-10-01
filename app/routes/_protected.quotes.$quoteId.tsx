@@ -502,11 +502,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const { updateQuoteLineItem } = await import("~/lib/quotes");
 
-        const updateData: { quantity?: number; unitPrice?: number } = {};
+        const updateData: { quantity?: number; unitPrice?: number; notes?: string } = {};
 
         // Get all possible updated fields
         const quantity = formData.get("quantity") as string | null;
         const unitPrice = formData.get("unitPrice") as string | null;
+        const notes = formData.get("notes") as string | null;
 
         // Only add fields that were provided (totalPrice is calculated automatically)
         if (quantity !== null) {
@@ -514,6 +515,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
         if (unitPrice !== null) {
           updateData.unitPrice = parseFloat(unitPrice);
+        }
+        if (notes !== null) {
+          updateData.notes = notes || "";
         }
 
         await updateQuoteLineItem(
@@ -784,7 +788,7 @@ export default function QuoteDetail() {
 
   const [editingLineItem, setEditingLineItem] = useState<{
     id: number;
-    field: "quantity" | "unitPrice" | "totalPrice";
+    field: "quantity" | "unitPrice" | "totalPrice" | "notes";
     value: string;
   } | null>(null);
   const [optimisticLineItems, setOptimisticLineItems] = useState<
@@ -946,18 +950,22 @@ export default function QuoteDetail() {
 
   const startEditingLineItem = (
     itemId: number,
-    field: "quantity" | "unitPrice" | "totalPrice",
-    currentValue: string | number
+    field: "quantity" | "unitPrice" | "totalPrice" | "notes",
+    currentValue: string | number | null
   ) => {
     const value =
-      field === "quantity"
-        ? currentValue.toString()
-        : currentValue.toString().replace(/[^0-9.]/g, "");
+      field === "notes"
+        ? (currentValue || "").toString()
+        : field === "quantity"
+        ? currentValue?.toString() || ""
+        : currentValue?.toString().replace(/[^0-9.]/g, "") || "";
     setEditingLineItem({ id: itemId, field, value });
     setTimeout(() => {
       if (editInputRef.current) {
         editInputRef.current.focus();
-        editInputRef.current.select();
+        if (field !== "notes") {
+          editInputRef.current.select();
+        }
       }
     }, 0);
   };
@@ -978,7 +986,10 @@ export default function QuoteDetail() {
     // Validate and calculate related values
     const updatedItem: Partial<LineItem> = {};
 
-    if (editingLineItem.field === "quantity") {
+    if (editingLineItem.field === "notes") {
+      // Update notes (no validation needed)
+      updatedItem.notes = editingLineItem.value || null;
+    } else if (editingLineItem.field === "quantity") {
       const qty = parseInt(editingLineItem.value);
       if (isNaN(qty) || qty <= 0) {
         alert("Please enter a valid quantity");
@@ -1028,6 +1039,9 @@ export default function QuoteDetail() {
     formData.append("lineItemId", editingLineItem.id.toString());
 
     // Send all updated fields to the backend
+    if (updatedItem.notes !== undefined) {
+      formData.append("notes", updatedItem.notes || "");
+    }
     if (updatedItem.quantity !== undefined) {
       formData.append("quantity", updatedItem.quantity.toString());
     }
@@ -1681,8 +1695,52 @@ export default function QuoteDetail() {
                               <span>{part?.partName || "N/A"}</span>
                             </div>
                           </td>
-                          <td className={tableStyles.cell}>
-                            {item.notes || "—"}
+                          <td
+                            className={`${tableStyles.cell} ${
+                              !isQuoteLocked
+                                ? "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                : ""
+                            }`}
+                            onClick={() =>
+                              !isQuoteLocked &&
+                              startEditingLineItem(
+                                item.id,
+                                "notes",
+                                item.notes
+                              )
+                            }
+                          >
+                            {editingLineItem?.id === item.id &&
+                            editingLineItem?.field === "notes" ? (
+                              <textarea
+                                autoFocus
+                                className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white resize-none"
+                                value={editingLineItem.value}
+                                onChange={(e) =>
+                                  setEditingLineItem({
+                                    ...editingLineItem,
+                                    value: e.target.value,
+                                  })
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && e.ctrlKey) {
+                                    e.preventDefault();
+                                    saveLineItemEdit();
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    cancelEditingLineItem();
+                                  }
+                                }}
+                                onBlur={saveLineItemEdit}
+                                onClick={(e) => e.stopPropagation()}
+                                rows={2}
+                                placeholder="Add notes... (Ctrl+Enter to save, Esc to cancel)"
+                              />
+                            ) : (
+                              <span className="block truncate max-w-xs" title={item.notes || ""}>
+                                {item.notes || "—"}
+                              </span>
+                            )}
                           </td>
                           <td
                             className={`${tableStyles.cell} ${
