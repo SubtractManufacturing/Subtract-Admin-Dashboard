@@ -1366,13 +1366,25 @@ export default function QuoteDetail() {
                       <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
                         {customer?.displayName || "N/A"}
                       </p>
+                      {customer?.email && (
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                          {customer.email}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
               ) : (
-                <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                  {customer?.displayName || "N/A"}
-                </p>
+                <div>
+                  <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                    {customer?.displayName || "N/A"}
+                  </p>
+                  {customer?.email && (
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                      {customer.email}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>

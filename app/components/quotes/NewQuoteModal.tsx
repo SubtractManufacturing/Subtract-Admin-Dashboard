@@ -307,9 +307,9 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                 onClick={() => togglePartExpanded(index)}
                 type="button"
               >
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 min-w-0 flex-1">
                   <svg
-                    className={`w-5 h-5 text-gray-500 transform transition-transform ${
+                    className={`w-5 h-5 text-gray-500 transform transition-transform flex-shrink-0 ${
                       config.isExpanded ? 'rotate-90' : ''
                     }`}
                     fill="currentColor"
@@ -321,15 +321,15 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                       clipRule="evenodd"
                     />
                   </svg>
-                  <div>
-                    <div className="font-medium">{config.partName || partFiles[index].name}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium truncate">{config.partName || partFiles[index].name}</div>
                     <div className="text-sm text-gray-500">
                       {config.material && `Material: ${config.material} | `}
                       {config.quantity && `Qty: ${config.quantity}`}
                     </div>
                   </div>
                 </div>
-                <span className="text-xs text-gray-400">{partFiles[index].name}</span>
+                <span className="text-xs text-gray-400 ml-2 truncate max-w-xs flex-shrink-0" title={partFiles[index].name}>{partFiles[index].name}</span>
               </button>
 
               {/* Part Details - Collapsible */}
@@ -666,7 +666,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   // Determine modal size based on current step
-  const modalSize = currentStep === 'upload' ? 'lg' : 'full';
+  const modalSize = currentStep === 'upload' ? 'xl' : 'full';
 
   return (
     <Modal
