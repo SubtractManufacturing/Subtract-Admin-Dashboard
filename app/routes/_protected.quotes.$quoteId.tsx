@@ -1129,7 +1129,12 @@ export default function QuoteDetail() {
               </thead>
               <tbody>
                 {optimisticLineItems.map((item) => {
-                  const part = quote.parts?.find((p: { id: string; partName: string; signedThumbnailUrl?: string; thumbnailUrl?: string | null }) => p.id === item.quotePartId);
+                  const part = quote.parts?.find((p: { id: string; partName: string; signedThumbnailUrl?: string; thumbnailUrl?: string | null; conversionStatus?: string | null }) => p.id === item.quotePartId);
+                  const isConverting = part && (
+                    part.conversionStatus === 'in_progress' ||
+                    part.conversionStatus === 'queued' ||
+                    part.conversionStatus === 'pending'
+                  );
 
                   return (
                   <tr key={item.id} className={tableStyles.row}>
@@ -1142,14 +1147,14 @@ export default function QuoteDetail() {
                             className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0"
                           />
                         ) : (
-                          <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0">
-                            {part?.thumbnailUrl ? (
-                              <span className="text-xs text-gray-500">Loading...</span>
-                            ) : (
+                          <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
+                            {isConverting || part?.thumbnailUrl ? (
+                              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                            ) : part ? (
                               <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                               </svg>
-                            )}
+                            ) : null}
                           </div>
                         )}
                         <span>{part?.partName || "N/A"}</span>
