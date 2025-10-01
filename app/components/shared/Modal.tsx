@@ -8,7 +8,7 @@ interface ModalProps {
   title: string
   children: ReactNode
   zIndex?: number
-  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full'
 }
 
 export default function Modal({ isOpen, onClose, title, children, zIndex = 50, size = 'md' }: ModalProps) {
@@ -66,6 +66,7 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50, s
     md: 'max-w-lg',
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
+    '2xl': 'max-w-6xl',
     full: 'max-w-[90vw]'
   }
 
@@ -74,6 +75,7 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50, s
     md: 'max-h-[80vh]',
     lg: 'max-h-[80vh]',
     xl: 'max-h-[80vh]',
+    '2xl': 'max-h-[85vh]',
     full: 'max-h-[90vh] h-[90vh]'
   }
 

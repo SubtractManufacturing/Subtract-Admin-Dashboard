@@ -665,8 +665,8 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     );
   };
 
-  // Determine modal size based on current step
-  const modalSize = currentStep === 'upload' ? 'xl' : 'full';
+  // Use 2xl size for wider modal with flexible height
+  const modalSize = '2xl';
 
   return (
     <Modal
