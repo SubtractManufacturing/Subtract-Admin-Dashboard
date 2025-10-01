@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Part3DViewer } from '~/components/shared/Part3DViewer';
 import { Part3DViewerModal } from '~/components/shared/Part3DViewerModal';
-import Button from '~/components/shared/Button';
 
 interface QuotePart {
   id: string;
@@ -35,7 +34,10 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        // Only close if the 3D modal is not open
+        if (!isPart3DModalOpen) {
+          onClose();
+        }
       }
     };
 
@@ -46,7 +48,7 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
       document.removeEventListener('keydown', handleEscape);
       document.body.style.overflow = originalOverflow;
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, isPart3DModalOpen, onClose]);
 
   const handleView3D = (part: QuotePart) => {
     setSelectedPart(part);
@@ -103,13 +105,34 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
                     key={part.id}
                     className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
                   >
-                    <div className="aspect-square bg-gray-100 dark:bg-gray-800 relative">
+                    <div
+                      className={`aspect-square bg-gray-100 dark:bg-gray-800 relative ${
+                        part.signedMeshUrl && part.conversionStatus === 'completed'
+                          ? 'cursor-pointer hover:opacity-90 transition-opacity'
+                          : ''
+                      }`}
+                      onClick={() => {
+                        if (part.signedMeshUrl && part.conversionStatus === 'completed') {
+                          handleView3D(part);
+                        }
+                      }}
+                      role={part.signedMeshUrl && part.conversionStatus === 'completed' ? 'button' : undefined}
+                      tabIndex={part.signedMeshUrl && part.conversionStatus === 'completed' ? 0 : undefined}
+                      onKeyDown={(e) => {
+                        if ((e.key === 'Enter' || e.key === ' ') && part.signedMeshUrl && part.conversionStatus === 'completed') {
+                          e.preventDefault();
+                          handleView3D(part);
+                        }
+                      }}
+                    >
                       {part.signedMeshUrl && part.conversionStatus === 'completed' ? (
-                        <Part3DViewer
-                          modelUrl={part.signedMeshUrl}
-                          partName={part.partName}
-                          partId={part.id}
-                        />
+                        <div className="pointer-events-none w-full h-full">
+                          <Part3DViewer
+                            modelUrl={part.signedMeshUrl}
+                            partName={part.partName}
+                            partId={part.id}
+                          />
+                        </div>
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
                           {part.conversionStatus === 'in_progress' ||
@@ -163,43 +186,32 @@ export function QuotePartsModal({ isOpen, onClose, parts }: QuotePartsModalProps
                         </div>
                       )}
                     </div>
-                    <div className="p-4">
-                      <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                        {part.partName}
-                      </h4>
-                      <div className="space-y-1 text-sm text-gray-600 dark:text-gray-400 mb-3">
-                        {part.material && (
-                          <p>
-                            <span className="font-medium">Material:</span> {part.material}
-                          </p>
-                        )}
-                        {part.tolerance && (
-                          <p>
-                            <span className="font-medium">Tolerance:</span> {part.tolerance}
-                          </p>
-                        )}
-                        {part.finish && (
-                          <p>
-                            <span className="font-medium">Finish:</span> {part.finish}
-                          </p>
-                        )}
-                        {part.description && (
-                          <p>
-                            <span className="font-medium">Description:</span> {part.description}
-                          </p>
-                        )}
+                    {(part.material || part.tolerance || part.finish || part.description) && (
+                      <div className="p-4">
+                        <div className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
+                          {part.material && (
+                            <p>
+                              <span className="font-medium">Material:</span> {part.material}
+                            </p>
+                          )}
+                          {part.tolerance && (
+                            <p>
+                              <span className="font-medium">Tolerance:</span> {part.tolerance}
+                            </p>
+                          )}
+                          {part.finish && (
+                            <p>
+                              <span className="font-medium">Finish:</span> {part.finish}
+                            </p>
+                          )}
+                          {part.description && (
+                            <p>
+                              <span className="font-medium">Description:</span> {part.description}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      {part.signedMeshUrl && part.conversionStatus === 'completed' && (
-                        <Button
-                          onClick={() => handleView3D(part)}
-                          variant="secondary"
-                          size="sm"
-                          className="w-full"
-                        >
-                          View in Full Screen
-                        </Button>
-                      )}
-                    </div>
+                    )}
                   </div>
                 ))}
               </div>
