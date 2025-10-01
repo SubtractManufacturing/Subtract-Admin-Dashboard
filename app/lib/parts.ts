@@ -5,6 +5,7 @@ import type { Part } from "./db/schema.js"
 import { detectFileFormat, isConversionEnabled } from "./conversion-service.server.js"
 import { convertPartToMesh } from "./mesh-converter.server.js"
 import { createEvent } from "./events.js"
+import { getDownloadUrl } from "./s3.server.js"
 
 export type { Part }
 
@@ -286,6 +287,67 @@ export async function getPartWithAttachments(partId: string) {
 }
 
 /**
+ * Get signed URL for part mesh file
+ */
+export async function getPartMeshUrl(partId: string): Promise<{ url: string } | { error: string }> {
+  try {
+    // Get the part from database
+    const part = await getPart(partId)
+
+    if (!part) {
+      return { error: "Part not found" }
+    }
+
+    if (!part.partMeshUrl) {
+      return { error: "Part has no mesh file" }
+    }
+
+    // Extract the S3 key from the mesh URL
+    let key: string
+    const meshUrl = part.partMeshUrl
+
+    // Handle different URL formats
+    if (meshUrl.includes("/storage/v1/")) {
+      // Supabase storage URL format
+      const urlParts = meshUrl.split("/storage/v1/s3/")
+      if (urlParts[1]) {
+        const bucketAndKey = urlParts[1]
+        // Remove bucket name (testing-bucket/) to get the key
+        key = bucketAndKey.replace(/^[^/]+\//, "")
+      } else {
+        return { error: "Invalid mesh URL format" }
+      }
+    } else if (meshUrl.includes("parts/") && meshUrl.includes("/mesh/")) {
+      // Direct S3 key format
+      const urlParts = meshUrl.split("/")
+      const partsIndex = urlParts.indexOf("parts")
+      if (partsIndex >= 0) {
+        key = urlParts.slice(partsIndex).join("/")
+      } else {
+        key = meshUrl
+      }
+    } else {
+      // Try to extract key from full URL
+      const urlParts = meshUrl.split("/")
+      const partsIndex = urlParts.findIndex(p => p === "parts")
+      if (partsIndex >= 0) {
+        key = urlParts.slice(partsIndex).join("/")
+      } else {
+        return { error: "Cannot extract key from mesh URL" }
+      }
+    }
+
+    // Generate a signed URL for the mesh file
+    const signedUrl = await getDownloadUrl(key, 3600) // 1 hour expiry
+
+    return { url: signedUrl }
+  } catch (error) {
+    console.error("Error getting mesh URL:", error)
+    return { error: "Failed to generate mesh URL" }
+  }
+}
+
+/**
  * Trigger mesh conversion for a part (non-blocking)
  */
 async function triggerMeshConversion(partId: string, fileUrl: string) {
@@ -298,7 +360,7 @@ async function triggerMeshConversion(partId: string, fileUrl: string) {
   // Check if file is a BREP format
   const filename = fileUrl.split('/').pop() || ''
   const format = detectFileFormat(filename)
-  
+
   if (format !== "brep") {
     console.log(`File ${filename} is not a BREP format - skipping conversion`)
     return

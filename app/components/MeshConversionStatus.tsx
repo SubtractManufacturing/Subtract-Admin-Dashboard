@@ -83,7 +83,7 @@ export function MeshConversionStatus({
     if (status.status === "in_progress" || status.status === "queued") {
       // Poll every 2 seconds
       const interval = setInterval(() => {
-        fetcher.load(`/api/mesh-conversion/${partId}`);
+        fetcher.load(`/mesh-conversion/${partId}`);
       }, 2000);
 
       setPollingInterval(interval);
@@ -108,7 +108,7 @@ export function MeshConversionStatus({
     formData.append("action", "convert");
     fetcher.submit(formData, {
       method: "post",
-      action: `/api/mesh-conversion/${partId}`,
+      action: `/mesh-conversion/${partId}`,
     });
   };
 
@@ -117,7 +117,7 @@ export function MeshConversionStatus({
     formData.append("action", "retry");
     fetcher.submit(formData, {
       method: "post",
-      action: `/api/mesh-conversion/${partId}`,
+      action: `/mesh-conversion/${partId}`,
     });
   };
 

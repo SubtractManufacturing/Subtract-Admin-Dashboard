@@ -232,7 +232,7 @@ export function Part3DViewer({
       // Check if this is a mesh URL that needs signing
       if (modelUrl.includes('partMeshUrl') || modelUrl.includes('/mesh/') || modelUrl.includes('supabase')) {
         try {
-          const response = await fetch(`/api/parts/${partId}/mesh`);
+          const response = await fetch(`/parts/${partId}/mesh`);
           if (response.ok) {
             const data = await response.json();
             setSignedModelUrl(data.url);

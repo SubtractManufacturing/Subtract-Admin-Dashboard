@@ -31,7 +31,7 @@ export const cardStyles = {
 }
 
 export const modalStyles = {
-  overlay: "fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 transition-colors duration-150",
+  overlay: "fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 transition-colors duration-150",
   content: "bg-white dark:bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 transition-colors duration-150",
   header: "flex justify-between items-center mb-4",
   title: "text-xl font-semibold dark:text-white transition-colors duration-150",

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useFetcher, Link } from "@remix-run/react";
+import { useFetcher, Link, useRevalidator } from "@remix-run/react";
 import type { EventLog } from "~/lib/events";
 import Button from "~/components/shared/Button";
 import { formatEventForTimeline } from "~/utils/eventFormatters";
@@ -23,27 +23,14 @@ export function EventTimeline({
   const [showAll, setShowAll] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  const fetcher = useFetcher<{ events: EventLog[] }>();
+  const revalidator = useRevalidator();
   const dismissFetcher = useFetcher();
 
   useEffect(() => {
-    if (!initialEvents || initialEvents.length === 0) {
-      fetcher.load(`/api/events?entityType=${entityType}&entityId=${entityId}&limit=5`);
+    if (initialEvents && initialEvents.length > 0) {
+      setEvents(initialEvents.filter(e => !e.isDismissed));
     }
-  }, [entityType, entityId]);
-
-  useEffect(() => {
-    if (fetcher.data?.events) {
-      const mappedEvents = fetcher.data.events as Array<Omit<EventLog, 'createdAt'> & { createdAt: string }>;
-      setEvents(mappedEvents
-        .filter(event => !event.isDismissed)
-        .map(event => ({
-          ...event,
-          createdAt: new Date(event.createdAt),
-          metadata: event.metadata || null
-        })));
-    }
-  }, [fetcher.data]);
+  }, [initialEvents]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -75,12 +62,16 @@ export function EventTimeline({
 
     // Persist to database
     const formData = new FormData();
+    formData.append('intent', 'dismiss');
     formData.append('eventId', eventId);
 
     dismissFetcher.submit(formData, {
       method: 'post',
-      action: '/actions/events/dismiss'
+      action: '/events'
     });
+
+    // Revalidate to get fresh data
+    setTimeout(() => revalidator.revalidate(), 100);
   };
 
   const getEventIcon = (event: EventLog) => {
@@ -187,7 +178,7 @@ export function EventTimeline({
     });
   };
 
-  if (events.length === 0 && !fetcher.state) {
+  if (events.length === 0) {
     return (
       <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 ${className}`}>
         <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">

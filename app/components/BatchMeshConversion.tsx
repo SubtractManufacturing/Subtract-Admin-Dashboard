@@ -53,7 +53,7 @@ export function BatchMeshConversion({
 
     fetcher.submit(formData, {
       method: "post",
-      action: "/api/mesh-conversion/batch",
+      action: "/mesh-conversion/batch",
     });
   };
 
@@ -64,7 +64,7 @@ export function BatchMeshConversion({
 
     fetcher.submit(formData, {
       method: "post",
-      action: "/api/mesh-conversion/batch",
+      action: "/mesh-conversion/batch",
     });
   };
 
@@ -74,7 +74,7 @@ export function BatchMeshConversion({
 
     fetcher.submit(formData, {
       method: "post",
-      action: "/api/mesh-conversion/batch",
+      action: "/mesh-conversion/batch",
     });
   };
 

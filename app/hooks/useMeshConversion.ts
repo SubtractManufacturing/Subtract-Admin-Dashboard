@@ -77,7 +77,7 @@ export function useMeshConversion({
       setState(prev => ({ ...prev, isPolling: true }));
       
       pollingIntervalRef.current = setInterval(() => {
-        fetcher.load(`/api/mesh-conversion/${partId}`);
+        fetcher.load(`/mesh-conversion/${partId}`);
       }, pollingInterval);
     }
   }, [partId, pollingInterval, fetcher]);
@@ -96,7 +96,7 @@ export function useMeshConversion({
     
     fetcher.submit(formData, {
       method: "post",
-      action: `/api/mesh-conversion/${partId}`,
+      action: `/mesh-conversion/${partId}`,
     });
 
     setState(prev => ({ ...prev, status: "queued" }));
@@ -105,7 +105,7 @@ export function useMeshConversion({
   // Load initial status
   useEffect(() => {
     if (partId) {
-      fetcher.load(`/api/mesh-conversion/${partId}`);
+      fetcher.load(`/mesh-conversion/${partId}`);
     }
   }, [partId, fetcher]);
 
@@ -161,7 +161,7 @@ export function useMeshConversion({
     
     fetcher.submit(formData, {
       method: "post",
-      action: `/api/mesh-conversion/${partId}`,
+      action: `/mesh-conversion/${partId}`,
     });
 
     setState(prev => ({ 
@@ -172,7 +172,7 @@ export function useMeshConversion({
   }, [partId, fetcher]);
 
   const checkStatus = useCallback(() => {
-    fetcher.load(`/api/mesh-conversion/${partId}`);
+    fetcher.load(`/mesh-conversion/${partId}`);
   }, [partId, fetcher]);
 
   // Cleanup on unmount
@@ -250,7 +250,7 @@ export function useBatchMeshConversion() {
 
     fetcher.submit(formData, {
       method: "post",
-      action: "/api/mesh-conversion/batch",
+      action: "/mesh-conversion/batch",
     });
   }, [fetcher]);
 
@@ -263,7 +263,7 @@ export function useBatchMeshConversion() {
 
     fetcher.submit(formData, {
       method: "post",
-      action: "/api/mesh-conversion/batch",
+      action: "/mesh-conversion/batch",
     });
   }, [fetcher]);
 
@@ -273,7 +273,7 @@ export function useBatchMeshConversion() {
 
     fetcher.submit(formData, {
       method: "post",
-      action: "/api/mesh-conversion/batch",
+      action: "/mesh-conversion/batch",
     });
   }, [fetcher]);
 

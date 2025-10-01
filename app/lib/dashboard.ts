@@ -30,7 +30,7 @@ export type Quote = {
   customer_name: string
   vendor_id: number | null
   vendor_name: string
-  status: 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired'
+  status: 'RFQ' | 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Dropped' | 'Expired'
   quantity: number
   total_price: string | null
   valid_until: Date | string | null
@@ -133,7 +133,7 @@ export async function getQuotes(): Promise<Quote[]> {
         customer_id: quotes.customerId,
         vendor_id: quotes.vendorId,
         status: quotes.status,
-        total_price: quotes.totalPrice,
+        total_price: quotes.total,
         valid_until: quotes.validUntil,
         created_at: quotes.createdAt,
         customer_name: customers.displayName,
