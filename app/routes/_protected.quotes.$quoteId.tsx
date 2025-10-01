@@ -211,15 +211,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
           // Generate unique part number
           const partNumber = `QP-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
+          // Sanitize filename for S3 (replace spaces and special chars)
+          const sanitizedFileName = file.name
+            .replace(/\s+/g, '-')  // Replace spaces with hyphens
+            .replace(/[^a-zA-Z0-9._-]/g, '');  // Remove any other special characters
+
           // Generate S3 key for the uploaded file
-          const fileKey = `quote-parts/${crypto.randomUUID()}/source/${file.name}`;
+          const fileKey = `quote-parts/${crypto.randomUUID()}/source/${sanitizedFileName}`;
 
           // Upload to S3
           const uploadResult = await uploadFile({
             key: fileKey,
             buffer,
             contentType: file.type || 'application/octet-stream',
-            fileName: file.name,
+            fileName: sanitizedFileName,
           });
 
           // Create quote part record
@@ -504,6 +509,102 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/quotes/${quoteId}`);
       }
 
+      case "deleteLineItem": {
+        const lineItemId = formData.get("lineItemId") as string;
+        const quotePartId = formData.get("quotePartId") as string;
+
+        if (!lineItemId) {
+          return json({ error: "Missing line item ID" }, { status: 400 });
+        }
+
+        try {
+          // Helper function to sanitize S3 keys (same as upload logic)
+          const sanitizeS3Key = (key: string): string => {
+            return key
+              .replace(/\s+/g, '-')  // Replace spaces with hyphens
+              .replace(/[^a-zA-Z0-9._\/-]/g, '');  // Remove any other special characters except slashes
+          };
+
+          let quotePart = null;
+
+          // If there's an associated quote part, get its details first
+          if (quotePartId) {
+            const { quoteParts } = await import("~/lib/db/schema");
+
+            // Get the quote part details to find S3 files
+            const [part] = await db
+              .select()
+              .from(quoteParts)
+              .where(eq(quoteParts.id, quotePartId))
+              .limit(1);
+
+            quotePart = part;
+          }
+
+          // Delete the line item FIRST (to avoid foreign key constraint)
+          const { deleteQuoteLineItem } = await import("~/lib/line-items");
+          await deleteQuoteLineItem(parseInt(lineItemId));
+
+          // Now delete the quote part and its S3 files
+          if (quotePart) {
+            const { quoteParts } = await import("~/lib/db/schema");
+            const filesToDelete = [];
+
+            // Add source file (sanitize the key)
+            if (quotePart.partFileUrl) {
+              filesToDelete.push(sanitizeS3Key(quotePart.partFileUrl));
+            }
+
+            // Add mesh file
+            if (quotePart.partMeshUrl) {
+              // Extract key from mesh URL
+              const meshUrl = quotePart.partMeshUrl;
+              if (meshUrl.includes("quote-parts/")) {
+                const urlParts = meshUrl.split("/");
+                const quotePartsIndex = urlParts.findIndex(p => p === "quote-parts");
+                if (quotePartsIndex >= 0) {
+                  const meshKey = urlParts.slice(quotePartsIndex).join("/");
+                  // Mesh files are already sanitized during conversion
+                  filesToDelete.push(meshKey);
+                }
+              }
+            }
+
+            // Add thumbnail file
+            if (quotePart.thumbnailUrl) {
+              filesToDelete.push(quotePart.thumbnailUrl);
+            }
+
+            // Delete all files from S3
+            for (const fileKey of filesToDelete) {
+              try {
+                await deleteFile(fileKey);
+                console.log(`Deleted S3 file: ${fileKey}`);
+              } catch (error: any) {
+                // Log but don't fail if file doesn't exist
+                if (error?.Code === 'NoSuchKey' || error?.name === 'NoSuchKey') {
+                  console.log(`S3 file not found (already deleted?): ${fileKey}`);
+                } else {
+                  console.error(`Error deleting S3 file ${fileKey}:`, error);
+                }
+              }
+            }
+
+            // Delete quote part from database
+            await db.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
+          }
+
+          // Recalculate quote totals
+          const { calculateQuoteTotals } = await import("~/lib/quotes");
+          await calculateQuoteTotals(quote.id);
+
+          return redirect(`/quotes/${quoteId}`);
+        } catch (error) {
+          console.error("Error deleting line item:", error);
+          return json({ error: "Failed to delete line item" }, { status: 500 });
+        }
+      }
+
       default:
         return json({ error: "Invalid action" }, { status: 400 });
     }
@@ -650,6 +751,15 @@ export default function QuoteDetail() {
       method: "post",
       encType: "multipart/form-data",
     });
+  };
+
+  const handleDeleteLineItem = (lineItemId: number, quotePartId?: string) => {
+    if (confirm("Are you sure you want to delete this line item? This will also delete any associated files and cannot be undone.")) {
+      fetcher.submit(
+        { intent: "deleteLineItem", lineItemId: lineItemId.toString(), quotePartId: quotePartId || "" },
+        { method: "post" }
+      );
+    }
   };
 
   const startEditingLineItem = (itemId: number, field: 'quantity' | 'unitPrice' | 'totalPrice', currentValue: string | number) => {
@@ -1125,15 +1235,24 @@ export default function QuoteDetail() {
                   <th className={tableStyles.headerCell}>Quantity</th>
                   <th className={tableStyles.headerCell}>Unit Price</th>
                   <th className={tableStyles.headerCell}>Total Price</th>
+                  {!isQuoteLocked && <th className={tableStyles.headerCell}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {optimisticLineItems.map((item) => {
-                  const part = quote.parts?.find((p: { id: string; partName: string; signedThumbnailUrl?: string; thumbnailUrl?: string | null; conversionStatus?: string | null }) => p.id === item.quotePartId);
-                  const isConverting = part && (
+                  const part = quote.parts?.find((p: { id: string; partName: string; signedThumbnailUrl?: string; thumbnailUrl?: string | null; conversionStatus?: string | null; partFileUrl?: string | null }) => p.id === item.quotePartId);
+
+                  // Show spinner if:
+                  // 1. Conversion is in progress
+                  // 2. Conversion completed but thumbnail not generated yet
+                  // 3. Thumbnail exists but signed URL not loaded yet
+                  const isProcessing = part && (
                     part.conversionStatus === 'in_progress' ||
                     part.conversionStatus === 'queued' ||
-                    part.conversionStatus === 'pending'
+                    part.conversionStatus === 'pending' ||
+                    (part.conversionStatus === 'completed' && !part.thumbnailUrl) ||
+                    (part.thumbnailUrl && !part.signedThumbnailUrl) ||
+                    (part.partFileUrl && !part.conversionStatus)
                   );
 
                   return (
@@ -1148,7 +1267,7 @@ export default function QuoteDetail() {
                           />
                         ) : (
                           <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
-                            {isConverting || part?.thumbnailUrl ? (
+                            {isProcessing ? (
                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
                             ) : part ? (
                               <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1225,13 +1344,26 @@ export default function QuoteDetail() {
                         `$${item.totalPrice}`
                       )}
                     </td>
+                    {!isQuoteLocked && (
+                      <td className={tableStyles.cell}>
+                        <button
+                          onClick={() => handleDeleteLineItem(item.id, part?.id)}
+                          className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+                          title="Delete line item"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </td>
+                    )}
                   </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={5} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
+                  <td colSpan={isQuoteLocked ? 5 : 6} className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300">
                     Total: ${optimisticTotal}
                   </td>
                 </tr>
