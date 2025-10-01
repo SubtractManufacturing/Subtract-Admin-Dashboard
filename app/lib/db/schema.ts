@@ -27,7 +27,6 @@ export const leadTimeEnum = pgEnum("lead_time", [
   "Expedited",
   "Custom",
 ]);
-export const currencyEnum = pgEnum("currency", ["USD", "EUR", "GBP", "CNY"]);
 export const orderStatusEnum = pgEnum("order_status", [
   "Pending",
   "In_Production",
@@ -85,12 +84,9 @@ export const quotes = pgTable("quotes", {
   subtotal: numeric("subtotal", { precision: 10, scale: 2 }),
   tax: numeric("tax", { precision: 10, scale: 2 }).default("0"),
   total: numeric("total", { precision: 10, scale: 2 }),
-  notes: text("notes"),
-  termsAndConditions: text("terms_and_conditions"),
   createdById: text("created_by_id").references(() => users.id),
   convertedToOrderId: integer("converted_to_order_id"),
   rejectionReason: text("rejection_reason"),
-  currency: currencyEnum("currency").default("USD").notNull(),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

@@ -22,12 +22,9 @@ export type QuoteWithRelations = {
   subtotal: string | null
   tax: string | null
   total: string | null
-  notes: string | null
-  termsAndConditions: string | null
   createdById: string | null
   convertedToOrderId: number | null
   rejectionReason: string | null
-  currency: 'USD' | 'EUR' | 'GBP' | 'CNY'
   isArchived: boolean
   createdAt: Date
   updatedAt: Date
@@ -44,9 +41,6 @@ export type QuoteInput = {
   status?: 'RFQ' | 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Dropped' | 'Expired'
   validUntil?: Date | null
   expirationDays?: number | null
-  notes?: string | null
-  termsAndConditions?: string | null
-  currency?: 'USD' | 'EUR' | 'GBP' | 'CNY'
   rejectionReason?: string | null
   createdById?: string | null
 }
@@ -160,9 +154,6 @@ export async function createQuote(
         status: input.status || 'RFQ',
         validUntil: input.validUntil,
         expirationDays: input.expirationDays,
-        notes: input.notes,
-        termsAndConditions: input.termsAndConditions,
-        currency: input.currency || 'USD',
         createdById: input.createdById || context?.userId,
         rejectionReason: input.rejectionReason,
       })
@@ -250,6 +241,84 @@ export async function updateQuote(
       })
     }
 
+    // Log vendor change events
+    if (updates.vendorId !== undefined && updates.vendorId !== oldQuote.vendorId) {
+      // Fetch vendor names for the event
+      let oldVendorName = 'None'
+      let newVendorName = 'None'
+
+      if (oldQuote.vendorId) {
+        const oldVendor = await db.select().from(vendors).where(eq(vendors.id, oldQuote.vendorId)).limit(1)
+        if (oldVendor[0]) {
+          oldVendorName = oldVendor[0].displayName
+        }
+      }
+
+      if (updates.vendorId) {
+        const newVendor = await db.select().from(vendors).where(eq(vendors.id, updates.vendorId)).limit(1)
+        if (newVendor[0]) {
+          newVendorName = newVendor[0].displayName
+        }
+      }
+
+      await createEvent({
+        entityType: 'quote',
+        entityId: id.toString(),
+        eventType: 'quote_vendor_changed',
+        eventCategory: 'system',
+        title: 'Quote Vendor Updated',
+        description: `Quote vendor changed from ${oldVendorName} to ${newVendorName}`,
+        metadata: {
+          oldVendorId: oldQuote.vendorId,
+          newVendorId: updates.vendorId,
+          oldVendorName,
+          newVendorName,
+          quoteNumber: oldQuote.quoteNumber,
+        },
+        userId: context?.userId,
+        userEmail: context?.userEmail,
+      })
+    }
+
+    // Log customer change events
+    if (updates.customerId !== undefined && updates.customerId !== oldQuote.customerId) {
+      // Fetch customer names for the event
+      let oldCustomerName = 'Unknown'
+      let newCustomerName = 'Unknown'
+
+      if (oldQuote.customerId) {
+        const oldCustomer = await db.select().from(customers).where(eq(customers.id, oldQuote.customerId)).limit(1)
+        if (oldCustomer[0]) {
+          oldCustomerName = oldCustomer[0].displayName
+        }
+      }
+
+      if (updates.customerId) {
+        const newCustomer = await db.select().from(customers).where(eq(customers.id, updates.customerId)).limit(1)
+        if (newCustomer[0]) {
+          newCustomerName = newCustomer[0].displayName
+        }
+      }
+
+      await createEvent({
+        entityType: 'quote',
+        entityId: id.toString(),
+        eventType: 'quote_customer_changed',
+        eventCategory: 'system',
+        title: 'Quote Customer Updated',
+        description: `Quote customer changed from ${oldCustomerName} to ${newCustomerName}`,
+        metadata: {
+          oldCustomerId: oldQuote.customerId,
+          newCustomerId: updates.customerId,
+          oldCustomerName,
+          newCustomerName,
+          quoteNumber: oldQuote.quoteNumber,
+        },
+        userId: context?.userId,
+        userEmail: context?.userEmail,
+      })
+    }
+
     return updatedQuote
   } catch (error) {
     console.error('Error updating quote:', error)
@@ -329,7 +398,6 @@ export async function convertQuoteToOrder(
           sourceQuoteId: quoteId,
           status: 'Pending',
           totalPrice: quote.total,
-          notes: quote.notes,
         })
         .returning()
 

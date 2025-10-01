@@ -3,8 +3,8 @@ import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { getQuote, updateQuote, archiveQuote, convertQuoteToOrder } from "~/lib/quotes";
 import type { QuoteEventContext } from "~/lib/quotes";
-import { getCustomer } from "~/lib/customers";
-import { getVendor } from "~/lib/vendors";
+import { getCustomer, getCustomers } from "~/lib/customers";
+import { getVendor, getVendors } from "~/lib/vendors";
 import { getAttachment, createAttachment, deleteAttachment, type AttachmentEventContext } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
@@ -47,9 +47,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Quote not found", { status: 404 });
   }
 
-  // Fetch customer and vendor details
-  const customer = quote.customerId ? await getCustomer(quote.customerId) : null;
-  const vendor = quote.vendorId ? await getVendor(quote.vendorId) : null;
+  // Fetch customer and vendor details, plus all customers and vendors for editing
+  const [customer, vendor, customers, vendors] = await Promise.all([
+    quote.customerId ? getCustomer(quote.customerId) : null,
+    quote.vendorId ? getVendor(quote.vendorId) : null,
+    getCustomers(),
+    getVendors(),
+  ]);
 
   // Generate signed URLs for quote parts with meshes, solid files, and thumbnails
   const partsWithSignedUrls = await Promise.all(
@@ -142,6 +146,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       quote: quoteWithSignedUrls,
       customer,
       vendor,
+      customers,
+      vendors,
       notes,
       attachments: attachmentsWithUrls,
       user,
@@ -339,17 +345,31 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
       case "updateQuote": {
         const expirationDays = formData.get("expirationDays");
-        const notes = formData.get("notes");
 
-        const updates: { expirationDays?: number; notes?: string | null } = {};
+        const updates: { expirationDays?: number } = {};
         if (expirationDays !== null) {
           updates.expirationDays = parseInt(expirationDays as string);
         }
-        if (notes !== null) {
-          updates.notes = notes as string || null;
-        }
 
         await updateQuote(quote.id, updates, eventContext);
+        return json({ success: true });
+      }
+
+      case "updateCustomer": {
+        const customerId = formData.get("customerId") as string;
+        if (!customerId) {
+          return json({ error: "Customer ID is required" }, { status: 400 });
+        }
+
+        await updateQuote(quote.id, { customerId: parseInt(customerId) }, eventContext);
+        return json({ success: true });
+      }
+
+      case "updateVendor": {
+        const vendorId = formData.get("vendorId") as string;
+        await updateQuote(quote.id, {
+          vendorId: vendorId ? parseInt(vendorId) : null
+        }, eventContext);
         return json({ success: true });
       }
 
@@ -606,7 +626,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function QuoteDetail() {
-  const { quote, customer, vendor, notes, attachments, user, userDetails, appConfig, showEventsLink, showQuotesLink, events } = useLoaderData<typeof loader>();
+  const { quote, customer, vendor, customers, vendors, notes, attachments, user, userDetails, appConfig, showEventsLink, showQuotesLink, events } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
   const [selectedFile, setSelectedFile] = useState<{ url: string; type: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
@@ -615,6 +635,8 @@ export default function QuoteDetail() {
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState(false);
+  const [editingVendor, setEditingVendor] = useState(false);
   // Define the line item type
   type LineItem = {
     id: number;
@@ -1055,12 +1077,53 @@ export default function QuoteDetail() {
             {/* Customer Card */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 p-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Customer</h3>
-              <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                {customer?.displayName || "N/A"}
-              </p>
-              {vendor && (
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  Vendor: {vendor.displayName}
+              {!isQuoteLocked ? (
+                <div>
+                  {editingCustomer ? (
+                    <select
+                      value={quote.customerId?.toString() || ""}
+                      onChange={(e) => {
+                        const customerId = e.target.value;
+                        if (customerId) {
+                          fetcher.submit(
+                            { intent: "updateCustomer", customerId },
+                            { method: "post" }
+                          );
+                          setEditingCustomer(false);
+                        }
+                      }}
+                      onBlur={() => setEditingCustomer(false)}
+                      autoFocus
+                      className="w-full px-3 py-2 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
+                    >
+                      {customers.map((c: { id: number; displayName: string }) => (
+                        <option key={c.id} value={c.id}>
+                          {c.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div
+                      onClick={() => setEditingCustomer(true)}
+                      className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1 -mx-2 transition-colors"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setEditingCustomer(true);
+                        }
+                      }}
+                    >
+                      <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                        {customer?.displayName || "N/A"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                  {customer?.displayName || "N/A"}
                 </p>
               )}
             </div>
@@ -1166,6 +1229,55 @@ export default function QuoteDetail() {
                   </p>
                 )}
               </div>
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Vendor</p>
+                {!isQuoteLocked ? (
+                  editingVendor ? (
+                    <select
+                      value={quote.vendorId?.toString() || ""}
+                      onChange={(e) => {
+                        const vendorId = e.target.value;
+                        fetcher.submit(
+                          { intent: "updateVendor", vendorId },
+                          { method: "post" }
+                        );
+                        setEditingVendor(false);
+                      }}
+                      onBlur={() => setEditingVendor(false)}
+                      autoFocus
+                      className="w-full px-3 py-2 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
+                    >
+                      <option value="">No Vendor</option>
+                      {vendors.map((v: { id: number; displayName: string }) => (
+                        <option key={v.id} value={v.id}>
+                          {v.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div
+                      onClick={() => setEditingVendor(true)}
+                      className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1 -mx-2 transition-colors"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setEditingVendor(true);
+                        }
+                      }}
+                    >
+                      <p className="text-base font-medium text-gray-900 dark:text-gray-100">
+                        {vendor?.displayName || "None"}
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <p className="text-base font-medium text-gray-900 dark:text-gray-100">
+                    {vendor?.displayName || "None"}
+                  </p>
+                )}
+              </div>
               {quote.sentAt && (
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">Sent Date</p>
@@ -1185,20 +1297,6 @@ export default function QuoteDetail() {
                 </div>
               )}
               </div>
-
-              {quote.notes && (
-              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Notes</p>
-                <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{quote.notes}</p>
-              </div>
-            )}
-
-            {quote.termsAndConditions && (
-              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Terms and Conditions</p>
-                <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{quote.termsAndConditions}</p>
-              </div>
-            )}
             </div>
           </div>
 

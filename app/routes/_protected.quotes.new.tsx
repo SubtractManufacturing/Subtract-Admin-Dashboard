@@ -114,8 +114,6 @@ export async function action({ request }: ActionFunctionArgs) {
       vendorId: null,
       status: "RFQ",
       expirationDays: 14,
-      notes: formData.get("notes") as string || undefined,
-      currency: "USD",
       createdById: user?.id,
     };
 

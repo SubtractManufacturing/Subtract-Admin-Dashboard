@@ -42,7 +42,6 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     phone: "",
     zipCode: ""
   });
-  const [notes, setNotes] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [hasHandledSuccess, setHasHandledSuccess] = useState(false);
   const [isContentTransitioning, setIsContentTransitioning] = useState(false);
@@ -70,7 +69,6 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       phone: "",
       zipCode: ""
     });
-    setNotes("");
     onClose();
   };
 
@@ -211,9 +209,6 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       alert("Please select or create a customer");
       return;
     }
-
-    // Add quote notes
-    formData.append("notes", notes);
 
     // Add parts data
     partConfigs.forEach((config, index) => {
@@ -522,14 +517,6 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         </div>
       )}
 
-      <TextareaField
-        label="Quote Notes"
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        rows={3}
-        placeholder="Any additional notes for this quote"
-      />
-
       </div>
     </div>
   );
@@ -574,13 +561,6 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
           </div>
         ))}
       </div>
-
-      {notes && (
-        <div className="border rounded-lg p-4">
-          <h4 className="font-semibold mb-2">Notes</h4>
-          <p className="text-sm">{notes}</p>
-        </div>
-      )}
 
       </div>
     </div>
