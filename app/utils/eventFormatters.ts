@@ -221,9 +221,10 @@ export function formatEventForTimeline(event: EventLog): {
         description: `Quote ${metadata.quoteNumber} accepted`
       };
     }
+    // Order was created manually
     return {
       title: "Order Created",
-      description: `Initial status: ${metadata?.initialStatus || metadata?.status || "Pending"}`
+      description: "Order created manually"
     };
   }
 
