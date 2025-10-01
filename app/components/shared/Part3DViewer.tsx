@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unknown-property */
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import {
   OrbitControls,
   Grid,
@@ -13,6 +13,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type * as THREE from "three";
+import { Box3, Vector3 } from "three";
 
 interface Part3DViewerProps {
   partName?: string;
@@ -37,6 +38,8 @@ function Model3D({
 }) {
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { camera, controls } = useThree();
+  const meshRef = useRef<THREE.Mesh>(null);
 
   useEffect(() => {
     const loadModel = async () => {
@@ -120,6 +123,40 @@ function Model3D({
     loadModel();
   }, [url, onLoad, onError]);
 
+  // Auto-frame the camera when geometry is loaded
+  useEffect(() => {
+    if (!geometry || !meshRef.current || !controls) return;
+
+    // Compute bounding box
+    const box = new Box3().setFromObject(meshRef.current);
+    const size = box.getSize(new Vector3());
+    const center = box.getCenter(new Vector3());
+
+    // Calculate the max dimension
+    const maxDim = Math.max(size.x, size.y, size.z);
+
+    // Check if camera is perspective camera
+    const fov = 'fov' in camera ? (camera as THREE.PerspectiveCamera).fov : 50;
+    const fovRadians = fov * (Math.PI / 180);
+    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fovRadians / 2));
+
+    // Add some padding (multiply by 1.5 for better framing)
+    cameraZ *= 1.5;
+
+    // Position camera to look at the model
+    const direction = new Vector3(1, 1, 1).normalize();
+    camera.position.copy(direction.multiplyScalar(cameraZ).add(center));
+    camera.lookAt(center);
+
+    // Update controls target to center of model
+    if (controls && 'target' in controls && 'update' in controls) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (controls as any).target.copy(center);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (controls as any).update();
+    }
+  }, [geometry, camera, controls]);
+
   if (error) {
     // Display error as HTML text in Three.js scene
     return null;
@@ -130,11 +167,11 @@ function Model3D({
   }
 
   return (
-    <mesh geometry={geometry}>
-      <meshStandardMaterial 
-        color={isLightMode ? "#6b7280" : "#8b5cf6"} 
-        metalness={isLightMode ? 0.1 : 0.3} 
-        roughness={isLightMode ? 0.7 : 0.4} 
+    <mesh ref={meshRef} geometry={geometry}>
+      <meshStandardMaterial
+        color={isLightMode ? "#6b7280" : "#8b5cf6"}
+        metalness={isLightMode ? 0.1 : 0.3}
+        roughness={isLightMode ? 0.7 : 0.4}
       />
     </mesh>
   );
