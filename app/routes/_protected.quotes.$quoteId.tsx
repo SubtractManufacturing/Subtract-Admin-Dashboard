@@ -499,13 +499,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "reviseQuote": {
-        // Check if quote can be revised
+        // Check if quote can be revised (Accepted quotes cannot be revised)
         const revisableStatuses = ["Sent", "Dropped", "Rejected", "Expired"];
         if (!revisableStatuses.includes(quote.status)) {
           return json(
             {
               error:
-                "Only sent, dropped, rejected, or expired quotes can be revised",
+                "Only sent, dropped, rejected, or expired quotes can be revised. Accepted quotes are immutable.",
             },
             { status: 400 }
           );
@@ -1298,7 +1298,62 @@ export default function QuoteDetail() {
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
-          {/* Notice Bar */}
+          {/* Locked Quote Banner */}
+          {(quote.status === "Sent" || quote.status === "Accepted") && (
+            <div
+              className={`relative border-2 rounded-lg p-4 ${
+                quote.status === "Accepted"
+                  ? "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700"
+                  : "bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <svg
+                  className={`w-6 h-6 flex-shrink-0 ${
+                    quote.status === "Accepted"
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-blue-600 dark:text-blue-400"
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+                <div className="flex-1">
+                  <p
+                    className={`font-semibold ${
+                      quote.status === "Accepted"
+                        ? "text-green-800 dark:text-green-200"
+                        : "text-blue-800 dark:text-blue-200"
+                    }`}
+                  >
+                    {quote.status === "Accepted"
+                      ? "Quote Accepted"
+                      : "Quote Sent"}
+                  </p>
+                  <p
+                    className={`text-sm mt-1 ${
+                      quote.status === "Accepted"
+                        ? "text-green-700 dark:text-green-300"
+                        : "text-blue-700 dark:text-blue-300"
+                    }`}
+                  >
+                    {quote.status === "Accepted"
+                      ? "Accepted quotes are immutable."
+                      : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Expiry Notice Bar */}
           {daysUntilExpiry &&
             daysUntilExpiry > 0 &&
             daysUntilExpiry <= 7 &&
