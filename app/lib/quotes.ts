@@ -52,6 +52,9 @@ export type QuoteEventContext = {
 
 export async function getQuotes(includeArchived = false): Promise<QuoteWithRelations[]> {
   try {
+    // Check and update expired quotes before fetching
+    await checkAndUpdateExpiredQuotes()
+
     const quotesResult = await db
       .select()
       .from(quotes)
@@ -99,6 +102,9 @@ export async function getQuotes(includeArchived = false): Promise<QuoteWithRelat
 
 export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
   try {
+    // Check and update expired quotes before fetching
+    await checkAndUpdateExpiredQuotes()
+
     const [quote] = await db
       .select()
       .from(quotes)

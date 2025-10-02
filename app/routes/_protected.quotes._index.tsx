@@ -1,5 +1,10 @@
 import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate, useRevalidator } from "@remix-run/react";
+import {
+  useLoaderData,
+  useFetcher,
+  useNavigate,
+  useRevalidator,
+} from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
@@ -13,11 +18,19 @@ import { getCustomers } from "~/lib/customers";
 import type { Customer } from "~/lib/customers";
 import { getVendors } from "~/lib/vendors";
 import type { Vendor } from "~/lib/vendors";
-import type { QuoteWithRelations, QuoteInput, QuoteEventContext } from "~/lib/quotes";
+import type {
+  QuoteWithRelations,
+  QuoteInput,
+  QuoteEventContext,
+} from "~/lib/quotes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { getNextQuoteNumber } from "~/lib/number-generator";
-import { shouldShowEventsInNav, shouldShowQuotesInNav, canUserManageQuotes } from "~/lib/featureFlags";
+import {
+  shouldShowEventsInNav,
+  shouldShowQuotesInNav,
+  canUserManageQuotes,
+} from "~/lib/featureFlags";
 
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
@@ -67,7 +80,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   return withAuthHeaders(
-    json({ quotes, customers, vendors, user, userDetails, appConfig, showEventsLink, showQuotesLink }),
+    json({
+      quotes,
+      customers,
+      vendors,
+      user,
+      userDetails,
+      appConfig,
+      showEventsLink,
+      showQuotesLink,
+    }),
     headers
   );
 }
@@ -136,16 +158,30 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function QuotesIndex() {
-  const { quotes, customers, vendors, user, userDetails, appConfig, showEventsLink, showQuotesLink } = useLoaderData<typeof loader>();
+  const {
+    quotes,
+    customers,
+    vendors,
+    user,
+    userDetails,
+    appConfig,
+    showEventsLink,
+    showQuotesLink,
+  } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const archiveFetcher = useFetcher(); // Dedicated fetcher for archive actions
   const revalidator = useRevalidator();
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [showAllQuotes, setShowAllQuotes] = useState(false);
 
   // Handle archive success
   useEffect(() => {
-    if (archiveFetcher.state === "idle" && (archiveFetcher.data as { success?: boolean })?.success) {
+    if (
+      archiveFetcher.state === "idle" &&
+      (archiveFetcher.data as { success?: boolean })?.success
+    ) {
       revalidator.revalidate();
     }
   }, [archiveFetcher.data, archiveFetcher.state, revalidator]);
@@ -159,26 +195,51 @@ export default function QuotesIndex() {
     }
   };
 
-
   const filteredQuotes = quotes.filter((quote: QuoteWithRelations) => {
-    const matchesSearch = searchQuery === "" ||
+    const matchesSearch =
+      searchQuery === "" ||
       quote.quoteNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      quote.customer?.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      quote.vendor?.displayName?.toLowerCase().includes(searchQuery.toLowerCase());
+      quote.customer?.displayName
+        ?.toLowerCase()
+        .includes(searchQuery.toLowerCase()) ||
+      quote.vendor?.displayName
+        ?.toLowerCase()
+        .includes(searchQuery.toLowerCase());
 
-    return matchesSearch;
+    // Filter by status
+    const matchesStatus =
+      selectedStatus === "all" || quote.status === selectedStatus;
+
+    // Exclude certain statuses unless "show all quotes" is checked OR that status is specifically selected
+    const hiddenStatuses = ["Dropped", "Expired", "Accepted", "Rejected"];
+    const isStatusSpecificallySelected =
+      selectedStatus !== "all" && hiddenStatuses.includes(selectedStatus);
+    const shouldShow =
+      showAllQuotes ||
+      isStatusSpecificallySelected ||
+      !hiddenStatuses.includes(quote.status);
+
+    return matchesSearch && matchesStatus && shouldShow;
   });
 
   const getStatusStyle = (status: string) => {
     switch (status.toLowerCase()) {
-      case "rfq": return statusStyles.pending;
-      case "draft": return statusStyles.pending;
-      case "sent": return statusStyles.inProduction;
-      case "accepted": return statusStyles.completed;
-      case "rejected": return statusStyles.cancelled;
-      case "dropped": return statusStyles.cancelled;
-      case "expired": return statusStyles.archived;
-      default: return "";
+      case "rfq":
+        return statusStyles.pending;
+      case "draft":
+        return statusStyles.pending;
+      case "sent":
+        return statusStyles.inProduction;
+      case "accepted":
+        return statusStyles.completed;
+      case "rejected":
+        return statusStyles.cancelled;
+      case "dropped":
+        return statusStyles.cancelled;
+      case "expired":
+        return statusStyles.archived;
+      default:
+        return "";
     }
   };
 
@@ -205,7 +266,10 @@ export default function QuotesIndex() {
       <Navbar
         userName={userDetails?.name || user.email}
         userEmail={user.email}
-        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        userInitials={
+          userDetails?.name?.charAt(0).toUpperCase() ||
+          user.email.charAt(0).toUpperCase()
+        }
         version={appConfig.version}
         isStaging={appConfig.isStaging}
         showEventsLink={showEventsLink}
@@ -213,19 +277,54 @@ export default function QuotesIndex() {
       />
       <div className="max-w-[1920px] mx-auto">
         <SearchHeader
-          breadcrumbs={[
-            { label: "Dashboard", href: "/" },
-            { label: "Quotes" }
-          ]}
+          breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Quotes" }]}
           onSearch={setSearchQuery}
         />
 
         <div className="px-10 py-8">
-          <div className="flex justify-between items-center mb-5">
+          <div className="flex justify-between items-end mb-5">
             <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
               Quotes ({filteredQuotes.length})
             </h2>
-            <Button onClick={() => setShowNewQuoteModal(true)}>New Quote</Button>
+
+            <div className="flex gap-3 items-center">
+              {/* Filters */}
+              <select
+                id="status-filter"
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              >
+                <option value="all">-Status-</option>
+                <option value="RFQ">RFQ</option>
+                <option value="Draft">Draft</option>
+                <option value="Sent">Sent</option>
+                <option value="Accepted">Accepted</option>
+                <option value="Rejected">Rejected</option>
+                <option value="Dropped">Dropped</option>
+                <option value="Expired">Expired</option>
+              </select>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="show-all-quotes"
+                  checked={showAllQuotes}
+                  onChange={(e) => setShowAllQuotes(e.target.checked)}
+                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:bg-gray-700"
+                />
+                <label
+                  htmlFor="show-all-quotes"
+                  className="text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap"
+                >
+                  Show all
+                </label>
+              </div>
+
+              <Button onClick={() => setShowNewQuoteModal(true)}>
+                New Quote
+              </Button>
+            </div>
           </div>
 
           <table className={tableStyles.container}>

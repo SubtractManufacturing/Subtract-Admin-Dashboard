@@ -17,6 +17,7 @@ import {
 import type { QuoteEventContext } from "~/lib/quotes";
 import { getCustomer, getCustomers } from "~/lib/customers";
 import { getVendor, getVendors } from "~/lib/vendors";
+import { getOrder } from "~/lib/orders";
 import {
   getAttachment,
   createAttachment,
@@ -191,6 +192,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     getEventsByEntity("quote", quote.id.toString(), 10),
   ]);
 
+  // Fetch converted order if exists
+  const convertedOrder = quote.convertedToOrderId
+    ? await getOrder(quote.convertedToOrderId)
+    : null;
+
   return withAuthHeaders(
     json({
       quote: quoteWithSignedUrls,
@@ -206,6 +212,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       showEventsLink,
       showQuotesLink,
       events,
+      convertedOrder,
     }),
     headers
   );
@@ -915,6 +922,7 @@ export default function QuoteDetail() {
     showEventsLink,
     showQuotesLink,
     events,
+    convertedOrder,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -1290,6 +1298,20 @@ export default function QuoteDetail() {
       year: "numeric",
       month: "numeric",
       day: "numeric",
+    });
+  };
+
+  // Format date and time in local timezone
+  const formatDateTime = (date: Date | string | null) => {
+    if (!date) return "--";
+    const dateObj = typeof date === "string" ? new Date(date) : date;
+    return dateObj.toLocaleString("en-US", {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
     });
   };
 
@@ -1831,7 +1853,7 @@ export default function QuoteDetail() {
                     Created Date
                   </p>
                   <p className="text-base font-medium text-gray-900 dark:text-gray-100">
-                    {formatDate(quote.createdAt)}
+                    {formatDateTime(quote.createdAt)}
                   </p>
                 </div>
                 <div>
@@ -2002,18 +2024,34 @@ export default function QuoteDetail() {
                       Sent Date
                     </p>
                     <p className="text-base font-medium text-gray-900 dark:text-gray-100">
-                      {formatDate(quote.sentAt)}
+                      {formatDateTime(quote.sentAt)}
                     </p>
                   </div>
                 )}
-                {quote.convertedToOrderId && (
+                {quote.acceptedAt && (
+                  <div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Accepted Date
+                    </p>
+                    <p className="text-base font-medium text-gray-900 dark:text-gray-100">
+                      {formatDateTime(quote.acceptedAt)}
+                    </p>
+                  </div>
+                )}
+                {quote.convertedToOrderId && convertedOrder && (
                   <div>
                     <p className="text-sm text-gray-500 dark:text-gray-400">
                       Converted to Order
                     </p>
-                    <p className="text-base font-medium text-gray-900 dark:text-gray-100">
-                      Order #{quote.convertedToOrderId}
-                    </p>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.location.href = `/orders/${quote.convertedToOrderId}`;
+                      }}
+                      className="text-base font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                    >
+                      {convertedOrder.orderNumber}
+                    </button>
                   </div>
                 )}
                 {quote.rejectionReason && (
