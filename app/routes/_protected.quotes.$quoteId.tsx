@@ -56,6 +56,7 @@ import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
 import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
 import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
+import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
@@ -251,6 +252,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Handle add line item with file upload
     if (intent === "addLineItem") {
       const name = formData.get("name") as string;
+      const description = formData.get("description") as string;
+      const notes = formData.get("notes") as string;
       const quantity = formData.get("quantity") as string;
       const unitPrice = formData.get("unitPrice") as string;
       const file = formData.get("file") as File | null;
@@ -329,6 +332,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
             quotePartId: quotePartId || undefined,
             quantity: parseInt(quantity),
             unitPrice: parseFloat(unitPrice),
+            description: description || undefined,
+            notes: notes || undefined,
           },
           eventContext
         );
@@ -502,11 +507,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const { updateQuoteLineItem } = await import("~/lib/quotes");
 
-        const updateData: { quantity?: number; unitPrice?: number; notes?: string } = {};
+        const updateData: { quantity?: number; unitPrice?: number; description?: string; notes?: string } = {};
 
         // Get all possible updated fields
         const quantity = formData.get("quantity") as string | null;
         const unitPrice = formData.get("unitPrice") as string | null;
+        const description = formData.get("description") as string | null;
         const notes = formData.get("notes") as string | null;
 
         // Only add fields that were provided (totalPrice is calculated automatically)
@@ -515,6 +521,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
         if (unitPrice !== null) {
           updateData.unitPrice = parseFloat(unitPrice);
+        }
+        if (description !== null) {
+          updateData.description = description || "";
         }
         if (notes !== null) {
           updateData.notes = notes || "";
@@ -836,12 +845,13 @@ export default function QuoteDetail() {
     unitPrice: string;
     totalPrice: string;
     leadTimeDays: number | null;
+    description: string | null;
     notes: string | null;
   };
 
   const [editingLineItem, setEditingLineItem] = useState<{
     id: number;
-    field: "quantity" | "unitPrice" | "totalPrice" | "notes";
+    field: "quantity" | "unitPrice" | "totalPrice" | "description" | "notes";
     value: string;
   } | null>(null);
   const [optimisticLineItems, setOptimisticLineItems] = useState<
@@ -861,6 +871,8 @@ export default function QuoteDetail() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const lineItemFetcher = useFetcher();
+  const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
+  const actionsButtonRef = useRef<HTMLButtonElement>(null);
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1003,11 +1015,11 @@ export default function QuoteDetail() {
 
   const startEditingLineItem = (
     itemId: number,
-    field: "quantity" | "unitPrice" | "totalPrice" | "notes",
+    field: "quantity" | "unitPrice" | "totalPrice" | "description" | "notes",
     currentValue: string | number | null
   ) => {
     const value =
-      field === "notes"
+      field === "notes" || field === "description"
         ? (currentValue || "").toString()
         : field === "quantity"
         ? currentValue?.toString() || ""
@@ -1016,7 +1028,7 @@ export default function QuoteDetail() {
     setTimeout(() => {
       if (editInputRef.current) {
         editInputRef.current.focus();
-        if (field !== "notes") {
+        if (field !== "notes" && field !== "description") {
           editInputRef.current.select();
         }
       }
@@ -1039,7 +1051,10 @@ export default function QuoteDetail() {
     // Validate and calculate related values
     const updatedItem: Partial<LineItem> = {};
 
-    if (editingLineItem.field === "notes") {
+    if (editingLineItem.field === "description") {
+      // Update description (no validation needed)
+      updatedItem.description = editingLineItem.value || null;
+    } else if (editingLineItem.field === "notes") {
       // Update notes (no validation needed)
       updatedItem.notes = editingLineItem.value || null;
     } else if (editingLineItem.field === "quantity") {
@@ -1092,6 +1107,9 @@ export default function QuoteDetail() {
     formData.append("lineItemId", editingLineItem.id.toString());
 
     // Send all updated fields to the backend
+    if (updatedItem.description !== undefined) {
+      formData.append("description", updatedItem.description || "");
+    }
     if (updatedItem.notes !== undefined) {
       formData.append("notes", updatedItem.notes || "");
     }
@@ -1193,9 +1211,20 @@ export default function QuoteDetail() {
             ]}
           />
           <div className="flex flex-wrap gap-3">
-            <Button onClick={() => {}} variant="secondary">
-              Actions
-            </Button>
+            <div className="relative">
+              <Button
+                ref={actionsButtonRef}
+                onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
+                variant="secondary"
+              >
+                Actions
+              </Button>
+              <QuoteActionsDropdown
+                isOpen={isActionsDropdownOpen}
+                onClose={() => setIsActionsDropdownOpen(false)}
+                excludeRef={actionsButtonRef}
+              />
+            </div>
             {(quote.status === "Sent" || quote.status === "Accepted") &&
               !quote.convertedToOrderId && (
                 <Button onClick={handleConvertToOrder} variant="primary">
@@ -1679,9 +1708,11 @@ export default function QuoteDetail() {
                     View Parts ({quote.parts.length})
                   </Button>
                 )}
-                <Button size="sm" onClick={handleAddLineItem}>
-                  Add Line Item
-                </Button>
+                {!isQuoteLocked && (
+                  <Button size="sm" onClick={handleAddLineItem}>
+                    Add Line Item
+                  </Button>
+                )}
               </div>
             </div>
             <div className="p-6">
@@ -1690,6 +1721,7 @@ export default function QuoteDetail() {
                   <thead className={tableStyles.header}>
                     <tr>
                       <th className={tableStyles.headerCell}>Part</th>
+                      <th className={tableStyles.headerCell}>Description</th>
                       <th className={tableStyles.headerCell}>Notes</th>
                       <th className={tableStyles.headerCell}>Quantity</th>
                       <th className={tableStyles.headerCell}>Unit Price</th>
@@ -1759,6 +1791,53 @@ export default function QuoteDetail() {
                               )}
                               <span>{part?.partName || "N/A"}</span>
                             </div>
+                          </td>
+                          <td
+                            className={`${tableStyles.cell} ${
+                              !isQuoteLocked
+                                ? "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                : ""
+                            }`}
+                            onClick={() =>
+                              !isQuoteLocked &&
+                              startEditingLineItem(
+                                item.id,
+                                "description",
+                                item.description
+                              )
+                            }
+                          >
+                            {editingLineItem?.id === item.id &&
+                            editingLineItem?.field === "description" ? (
+                              <textarea
+                                autoFocus
+                                className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white resize-none"
+                                value={editingLineItem.value}
+                                onChange={(e) =>
+                                  setEditingLineItem({
+                                    ...editingLineItem,
+                                    value: e.target.value,
+                                  })
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && e.ctrlKey) {
+                                    e.preventDefault();
+                                    saveLineItemEdit();
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    cancelEditingLineItem();
+                                  }
+                                }}
+                                onBlur={saveLineItemEdit}
+                                onClick={(e) => e.stopPropagation()}
+                                rows={2}
+                                placeholder="Add description... (Ctrl+Enter to save, Esc to cancel)"
+                              />
+                            ) : (
+                              <span className="block truncate max-w-xs" title={item.description || ""}>
+                                {item.description || "—"}
+                              </span>
+                            )}
                           </td>
                           <td
                             className={`${tableStyles.cell} ${
@@ -1957,7 +2036,7 @@ export default function QuoteDetail() {
                   <tfoot>
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={6}
                         className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300"
                       >
                         Total: ${optimisticTotal}
@@ -1986,9 +2065,11 @@ export default function QuoteDetail() {
                   onChange={handleFileUpload}
                   className="hidden"
                 />
-                <Button onClick={() => fileInputRef.current?.click()} size="sm">
-                  Upload File
-                </Button>
+                {!isQuoteLocked && (
+                  <Button onClick={() => fileInputRef.current?.click()} size="sm">
+                    Upload File
+                  </Button>
+                )}
               </div>
             </div>
             <div className="p-6">
@@ -2089,15 +2170,17 @@ export default function QuoteDetail() {
                               Download
                             </Button>
                           )}
-                          <Button
-                            onClick={() =>
-                              handleDeleteAttachment(attachment.id)
-                            }
-                            variant="danger"
-                            size="sm"
-                          >
-                            Delete
-                          </Button>
+                          {!isQuoteLocked && (
+                            <Button
+                              onClick={() =>
+                                handleDeleteAttachment(attachment.id)
+                              }
+                              variant="danger"
+                              size="sm"
+                            >
+                              Delete
+                            </Button>
+                          )}
                         </div>
                       </div>
                     )
@@ -2119,7 +2202,7 @@ export default function QuoteDetail() {
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
                   Quote Notes
                 </h3>
-                {!isAddingNote && (
+                {!isAddingNote && !isQuoteLocked && (
                   <Button size="sm" onClick={() => setIsAddingNote(true)}>
                     Add Note
                   </Button>
@@ -2136,6 +2219,7 @@ export default function QuoteDetail() {
                   onAddNoteClick={() => setIsAddingNote(false)}
                   isAddingNote={isAddingNote}
                   externalControl={true}
+                  readOnly={isQuoteLocked}
                 />
               </div>
             </div>

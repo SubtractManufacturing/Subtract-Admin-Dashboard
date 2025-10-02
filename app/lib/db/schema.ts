@@ -208,6 +208,7 @@ export const quoteLineItems = pgTable("quote_line_items", {
   unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
   totalPrice: numeric("total_price", { precision: 10, scale: 2 }).notNull(),
   leadTimeDays: integer("lead_time_days"),
+  description: text("description"),
   notes: text("notes"),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),

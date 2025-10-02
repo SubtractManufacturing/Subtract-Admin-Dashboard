@@ -447,10 +447,10 @@ export async function convertQuoteToOrder(
                 orderId: order.id,
                 partId: customerPart.id,
                 name: quotePart.partName,
-                description: quotePart.description || lineItem.notes || '',
+                description: lineItem.description || quotePart.description || '',
                 quantity: lineItem.quantity,
                 unitPrice: lineItem.unitPrice,
-                notes: lineItem.notes,
+                notes: lineItem.notes || null,
               })
           }
         }
@@ -463,10 +463,10 @@ export async function convertQuoteToOrder(
               orderId: order.id,
               partId: null,
               name: `Part from quote ${quote.quoteNumber}`,
-              description: item.notes || '',
+              description: item.description || '',
               quantity: item.quantity,
               unitPrice: item.unitPrice,
-              notes: item.notes,
+              notes: item.notes || null,
             }))
           )
       }
@@ -853,6 +853,7 @@ export async function createQuoteLineItem(
     quantity: number
     unitPrice: number
     leadTimeDays?: number
+    description?: string
     notes?: string
     sortOrder?: number
   },
@@ -870,6 +871,7 @@ export async function createQuoteLineItem(
         unitPrice: itemData.unitPrice.toFixed(2),
         totalPrice,
         leadTimeDays: itemData.leadTimeDays || null,
+        description: itemData.description || null,
         notes: itemData.notes || null,
         sortOrder: itemData.sortOrder || 0,
       })
@@ -924,6 +926,7 @@ export async function updateQuoteLineItem(
     quantity: number
     unitPrice: number
     leadTimeDays: number
+    description: string
     notes: string
     sortOrder: number
   }>,

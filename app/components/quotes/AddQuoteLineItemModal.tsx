@@ -16,6 +16,8 @@ export default function AddQuoteLineItemModal({
 }: AddQuoteLineItemModalProps) {
   const [formData, setFormData] = useState({
     name: "",
+    description: "",
+    notes: "",
     quantity: "1",
     unitPrice: "",
     totalPrice: "",
@@ -33,6 +35,8 @@ export default function AddQuoteLineItemModal({
       // Reset form when modal opens
       setFormData({
         name: "",
+        description: "",
+        notes: "",
         quantity: "1",
         unitPrice: "",
         totalPrice: "",
@@ -58,6 +62,8 @@ export default function AddQuoteLineItemModal({
   const handleClose = () => {
     setFormData({
       name: "",
+      description: "",
+      notes: "",
       quantity: "1",
       unitPrice: "",
       totalPrice: "",
@@ -129,6 +135,8 @@ export default function AddQuoteLineItemModal({
     // Create FormData to send to the server
     const submitData = new FormData();
     submitData.append("name", formData.name);
+    submitData.append("description", formData.description);
+    submitData.append("notes", formData.notes);
     submitData.append("quantity", quantity);
     submitData.append("unitPrice", unitPrice);
     submitData.append("totalPrice", totalPrice);
@@ -276,6 +284,36 @@ export default function AddQuoteLineItemModal({
           placeholder="Enter part name"
           error={errors.name}
         />
+
+        {/* Description Field */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Description
+          </label>
+          <textarea
+            name="description"
+            value={formData.description}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleChange("description", e.target.value)}
+            placeholder="Enter part description"
+            rows={3}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          />
+        </div>
+
+        {/* Notes Field */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Notes
+          </label>
+          <textarea
+            name="notes"
+            value={formData.notes}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleChange("notes", e.target.value)}
+            placeholder="Enter internal notes"
+            rows={2}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          />
+        </div>
 
         {/* Quantity and Prices Grid */}
         <div className="grid grid-cols-3 gap-4">

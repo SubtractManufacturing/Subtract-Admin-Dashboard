@@ -187,6 +187,24 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     });
   };
 
+  const removePart = (index: number) => {
+    setPartFiles(prev => {
+      const updated = [...prev];
+      updated.splice(index, 1);
+      return updated;
+    });
+    setPartConfigs(prev => {
+      const updated = [...prev];
+      updated.splice(index, 1);
+      return updated;
+    });
+
+    // If no parts left, go back to upload step
+    if (partFiles.length === 1) {
+      setCurrentStep('upload');
+    }
+  };
+
 
   const handleSubmit = async () => {
     const formData = new FormData();
@@ -302,12 +320,12 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
               className="border border-gray-200 dark:border-gray-700 rounded-lg"
             >
               {/* Part Header - Always Visible */}
-              <button
-                className="w-full flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-left"
-                onClick={() => togglePartExpanded(index)}
-                type="button"
-              >
-                <div className="flex items-center space-x-3 min-w-0 flex-1">
+              <div className="w-full flex items-center justify-between p-4">
+                <button
+                  className="flex items-center space-x-3 min-w-0 flex-1 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 text-left -m-4 p-4 rounded-l-lg"
+                  onClick={() => togglePartExpanded(index)}
+                  type="button"
+                >
                   <svg
                     className={`w-5 h-5 text-gray-500 transform transition-transform flex-shrink-0 ${
                       config.isExpanded ? 'rotate-90' : ''
@@ -328,9 +346,24 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                       {config.quantity && `Qty: ${config.quantity}`}
                     </div>
                   </div>
-                </div>
-                <span className="text-xs text-gray-400 ml-2 truncate max-w-xs flex-shrink-0" title={partFiles[index].name}>{partFiles[index].name}</span>
-              </button>
+                  <span className="text-xs text-gray-400 ml-2 truncate max-w-xs flex-shrink-0" title={partFiles[index].name}>{partFiles[index].name}</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
+                      removePart(index);
+                    }
+                  }}
+                  type="button"
+                  className="ml-3 p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                  title="Remove part"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
 
               {/* Part Details - Collapsible */}
               {config.isExpanded && (
@@ -544,20 +577,38 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       <div className="border rounded-lg p-4 space-y-3">
         <h4 className="font-semibold">Parts ({partConfigs.length})</h4>
         {partConfigs.map((config, index) => (
-          <div key={index} className="text-sm border-t pt-2">
-            <p><strong>{config.partName || partFiles[index].name}</strong></p>
-            <div className="grid grid-cols-2 gap-2 mt-1">
-              <p>Material: {config.material || "Not specified"}</p>
-              <p>Quantity: {config.quantity || 1}</p>
-              <p>Tolerances: {config.tolerances || "Not specified"}</p>
-              <p>Finish: {config.surfaceFinish || "Not specified"}</p>
+          <div key={index} className="text-sm border-t pt-2 relative">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <p><strong>{config.partName || partFiles[index].name}</strong></p>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <p>Material: {config.material || "Not specified"}</p>
+                  <p>Quantity: {config.quantity || 1}</p>
+                  <p>Tolerances: {config.tolerances || "Not specified"}</p>
+                  <p>Finish: {config.surfaceFinish || "Not specified"}</p>
+                </div>
+                {config.drawings && config.drawings.length > 0 && (
+                  <p className="mt-1">Drawings: {config.drawings.length} file(s)</p>
+                )}
+                {config.notes && (
+                  <p className="mt-1 text-gray-600">Notes: {config.notes}</p>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
+                    removePart(index);
+                  }
+                }}
+                type="button"
+                className="ml-3 p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                title="Remove part"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            {config.drawings && config.drawings.length > 0 && (
-              <p className="mt-1">Drawings: {config.drawings.length} file(s)</p>
-            )}
-            {config.notes && (
-              <p className="mt-1 text-gray-600">Notes: {config.notes}</p>
-            )}
           </div>
         ))}
       </div>

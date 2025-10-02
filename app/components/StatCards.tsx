@@ -37,7 +37,6 @@ export default function StatCards({ stats }: StatCardsProps) {
         <h1 className={cardStyles.title}>
           {formatCurrency(stats.openPoRevenue)}
         </h1>
-        <p className={cardStyles.content}>+81% month over month</p>
       </div>
       <Link
         to="/orders"
@@ -46,7 +45,6 @@ export default function StatCards({ stats }: StatCardsProps) {
         <div className={`${cardStyles.container} cursor-pointer h-full flex flex-col`}>
           <h4 className={cardStyles.subtitle}>Open PO&apos;s</h4>
           <h1 className={cardStyles.title}>{stats.openPOs}</h1>
-          <p className={cardStyles.content}>+33% month over month</p>
         </div>
       </Link>
       <div

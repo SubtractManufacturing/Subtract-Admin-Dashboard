@@ -151,7 +151,7 @@ export default function QuotesIndex() {
   }, [archiveFetcher.data, archiveFetcher.state, revalidator]);
 
   const handleArchiveQuote = (quoteId: number) => {
-    if (confirm("Are you sure you want to archive this quote?")) {
+    if (confirm("Are you sure you want to delete this quote?")) {
       const formData = new FormData();
       formData.append("intent", "archive");
       formData.append("quoteId", quoteId.toString());
@@ -238,7 +238,7 @@ export default function QuotesIndex() {
                 <th className={tableStyles.headerCell}>Total</th>
                 <th className={tableStyles.headerCell}>Valid Until</th>
                 <th className={tableStyles.headerCell}>Created</th>
-                <th className={tableStyles.headerCell}>Actions</th>
+                <th className={tableStyles.headerCell}></th>
               </tr>
             </thead>
             <tbody>
@@ -295,27 +295,29 @@ export default function QuotesIndex() {
                   <td className={tableStyles.cell}>
                     {formatDate(quote.createdAt)}
                   </td>
-                  <td className={tableStyles.cell}>
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleArchiveQuote(quote.id);
-                        }}
-                        className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
-                        title="Archive"
+                  <td className={`${tableStyles.cell} text-right`}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleArchiveQuote(quote.id);
+                      }}
+                      className="p-1.5 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors duration-150"
+                      title="Delete"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
                       >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="16"
-                          height="16"
-                          fill="currentColor"
-                          viewBox="0 0 16 16"
-                        >
-                          <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z" />
-                        </svg>
-                      </button>
-                    </div>
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
                   </td>
                 </tr>
               ))}
