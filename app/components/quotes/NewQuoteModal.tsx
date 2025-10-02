@@ -199,8 +199,9 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       return updated;
     });
 
-    // If no parts left, go back to upload step
-    if (partFiles.length === 1) {
+    // If no parts left and we're in configure step, go back to upload step
+    // If we're in review/customer step, stay there (allow empty quote)
+    if (partFiles.length === 1 && currentStep === 'configure') {
       setCurrentStep('upload');
     }
   };
@@ -294,12 +295,29 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
           onChange={handleFileSelect}
           className="hidden"
         />
-        <Button
-          onClick={() => fileInputRef.current?.click()}
-          variant="primary"
-        >
-          Select Files
-        </Button>
+        <div className="flex flex-col gap-3 items-center">
+          <Button
+            onClick={() => fileInputRef.current?.click()}
+            variant="primary"
+          >
+            Select Files
+          </Button>
+          <div className="text-sm text-gray-500 dark:text-gray-400">or</div>
+          <Button
+            onClick={() => {
+              setIsContentTransitioning(true);
+              setTimeout(() => {
+                setCurrentStep('customer');
+                setTimeout(() => {
+                  setIsContentTransitioning(false);
+                }, 300);
+              }, 150);
+            }}
+            variant="secondary"
+          >
+            Skip - Create Empty Quote
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -576,41 +594,47 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
 
       <div className="border rounded-lg p-4 space-y-3">
         <h4 className="font-semibold">Parts ({partConfigs.length})</h4>
-        {partConfigs.map((config, index) => (
-          <div key={index} className="text-sm border-t pt-2 relative">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <p><strong>{config.partName || partFiles[index].name}</strong></p>
-                <div className="grid grid-cols-2 gap-2 mt-1">
-                  <p>Material: {config.material || "Not specified"}</p>
-                  <p>Quantity: {config.quantity || 1}</p>
-                  <p>Tolerances: {config.tolerances || "Not specified"}</p>
-                  <p>Finish: {config.surfaceFinish || "Not specified"}</p>
+        {partConfigs.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No parts added. This will create an empty quote that you can add line items to later.
+          </p>
+        ) : (
+          partConfigs.map((config, index) => (
+            <div key={index} className="text-sm border-t pt-2 relative">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <p><strong>{config.partName || partFiles[index].name}</strong></p>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <p>Material: {config.material || "Not specified"}</p>
+                    <p>Quantity: {config.quantity || 1}</p>
+                    <p>Tolerances: {config.tolerances || "Not specified"}</p>
+                    <p>Finish: {config.surfaceFinish || "Not specified"}</p>
+                  </div>
+                  {config.drawings && config.drawings.length > 0 && (
+                    <p className="mt-1">Drawings: {config.drawings.length} file(s)</p>
+                  )}
+                  {config.notes && (
+                    <p className="mt-1 text-gray-600">Notes: {config.notes}</p>
+                  )}
                 </div>
-                {config.drawings && config.drawings.length > 0 && (
-                  <p className="mt-1">Drawings: {config.drawings.length} file(s)</p>
-                )}
-                {config.notes && (
-                  <p className="mt-1 text-gray-600">Notes: {config.notes}</p>
-                )}
+                <button
+                  onClick={() => {
+                    if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
+                      removePart(index);
+                    }
+                  }}
+                  type="button"
+                  className="ml-3 p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                  title="Remove part"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-              <button
-                onClick={() => {
-                  if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
-                    removePart(index);
-                  }
-                }}
-                type="button"
-                className="ml-3 p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                title="Remove part"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       </div>
@@ -657,7 +681,10 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
             setIsContentTransitioning(true);
             setTimeout(() => {
               if (currentStep === 'configure') setCurrentStep('upload');
-              else if (currentStep === 'customer') setCurrentStep('configure');
+              else if (currentStep === 'customer') {
+                // If no parts, go back to upload; otherwise go to configure
+                setCurrentStep(partConfigs.length === 0 ? 'upload' : 'configure');
+              }
               else if (currentStep === 'review') setCurrentStep('customer');
               setTimeout(() => {
                 setIsContentTransitioning(false);

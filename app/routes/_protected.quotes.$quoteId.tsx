@@ -237,6 +237,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
     userEmail: user?.email || userDetails?.name || undefined,
   };
 
+  // Helper function to auto-convert RFQ to Draft when editing starts
+  const autoConvertRFQToDraft = async () => {
+    if (quote.status === "RFQ") {
+      await updateQuote(
+        quote.id,
+        { status: "Draft" },
+        eventContext
+      );
+    }
+  };
+
   // Handle file uploads separately
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
     const uploadHandler = unstable_createMemoryUploadHandler({
@@ -251,6 +262,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
     // Handle add line item with file upload
     if (intent === "addLineItem") {
+      // Auto-convert RFQ to Draft when editing starts
+      await autoConvertRFQToDraft();
+
       const name = formData.get("name") as string;
       const description = formData.get("description") as string;
       const notes = formData.get("notes") as string;
@@ -428,10 +442,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
           eventContext
         );
 
+        // If status is Accepted, automatically convert to order
+        if (status === "Accepted") {
+          const result = await convertQuoteToOrder(quote.id, eventContext);
+          if (result.success && result.orderNumber) {
+            return redirect(`/orders/${result.orderNumber}`);
+          }
+          return json(
+            { error: result.error || "Failed to convert quote to order" },
+            { status: 400 }
+          );
+        }
+
         return redirect(`/quotes/${quoteId}`);
       }
 
       case "updateQuote": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
         const expirationDays = formData.get("expirationDays");
 
         const updates: { expirationDays?: number } = {};
@@ -444,6 +473,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "updateCustomer": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
         const customerId = formData.get("customerId") as string;
         if (!customerId) {
           return json({ error: "Customer ID is required" }, { status: 400 });
@@ -458,6 +490,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "updateVendor": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
         const vendorId = formData.get("vendorId") as string;
         await updateQuote(
           quote.id,
@@ -470,6 +505,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "updateValidUntil": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
         const validUntil = formData.get("validUntil") as string;
 
         if (!validUntil) {
@@ -544,6 +582,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "updateLineItem": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
         const lineItemId = formData.get("lineItemId") as string;
 
         if (!lineItemId) {
@@ -691,6 +732,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "deleteLineItem": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
         const lineItemId = formData.get("lineItemId") as string;
         const quotePartId = formData.get("quotePartId") as string;
 
@@ -1045,6 +1089,40 @@ export default function QuoteDetail() {
     }
   };
 
+  const handleSendQuote = () => {
+    if (
+      confirm(
+        "Are you sure you want to send this quote? Once sent, the quote will be locked and line items cannot be modified."
+      )
+    ) {
+      fetcher.submit(
+        {
+          intent: "updateStatus",
+          status: "Sent",
+          rejectionReason: "",
+        },
+        { method: "post" }
+      );
+    }
+  };
+
+  const handleMarkAsAccepted = () => {
+    if (
+      confirm(
+        "Are you sure you want to mark this quote as accepted? This will automatically convert the quote to an order and the quote will become permanently immutable."
+      )
+    ) {
+      fetcher.submit(
+        {
+          intent: "updateStatus",
+          status: "Accepted",
+          rejectionReason: "",
+        },
+        { method: "post" }
+      );
+    }
+  };
+
   const handleAddLineItem = () => {
     setIsAddLineItemModalOpen(true);
   };
@@ -1288,12 +1366,16 @@ export default function QuoteDetail() {
                 onReviseQuote={handleReviseQuote}
               />
             </div>
-            {(quote.status === "Sent" || quote.status === "Accepted") &&
-              !quote.convertedToOrderId && (
-                <Button onClick={handleConvertToOrder} variant="primary">
-                  Convert to Order
-                </Button>
-              )}
+            {(quote.status === "RFQ" || quote.status === "Draft") && (
+              <Button onClick={handleSendQuote} variant="primary">
+                Send Quote
+              </Button>
+            )}
+            {quote.status === "Sent" && !quote.convertedToOrderId && (
+              <Button onClick={handleMarkAsAccepted} variant="primary">
+                Mark as Accepted
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1372,48 +1454,13 @@ export default function QuoteDetail() {
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
                 Quote Status
               </h3>
-              {isQuoteLocked ? (
-                <div
-                  className={`px-4 py-3 rounded-full text-center font-semibold ${getStatusClasses(
-                    quote.status
-                  )}`}
-                >
-                  {quote.status.charAt(0).toUpperCase() + quote.status.slice(1)}
-                </div>
-              ) : (
-                <select
-                  value={quote.status}
-                  onChange={(e) => {
-                    const newStatus = e.target.value as
-                      | "RFQ"
-                      | "Draft"
-                      | "Sent"
-                      | "Accepted"
-                      | "Rejected"
-                      | "Dropped"
-                      | "Expired";
-                    fetcher.submit(
-                      {
-                        intent: "updateStatus",
-                        status: newStatus,
-                        rejectionReason: "",
-                      },
-                      { method: "post" }
-                    );
-                  }}
-                  className={`w-full px-4 py-3 rounded-full text-center font-semibold cursor-pointer border-none outline-none focus:ring-2 focus:ring-blue-500 ${getStatusClasses(
-                    quote.status
-                  )}`}
-                >
-                  <option value="RFQ">RFQ</option>
-                  <option value="Draft">Draft</option>
-                  <option value="Sent">Sent</option>
-                  <option value="Accepted">Accepted</option>
-                  <option value="Rejected">Rejected</option>
-                  <option value="Dropped">Dropped</option>
-                  <option value="Expired">Expired</option>
-                </select>
-              )}
+              <div
+                className={`px-4 py-3 rounded-full text-center font-semibold ${getStatusClasses(
+                  quote.status
+                )}`}
+              >
+                {quote.status.charAt(0).toUpperCase() + quote.status.slice(1)}
+              </div>
             </div>
 
             {/* Valid Until / Expiration Days / Accepted Date Card */}
