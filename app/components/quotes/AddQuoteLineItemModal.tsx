@@ -53,9 +53,9 @@ export default function AddQuoteLineItemModal({
 
     if (!isNaN(qty) && qty > 0 && !isNaN(unitPrice) && unitPrice >= 0) {
       const total = (qty * unitPrice).toFixed(2);
-      setFormData(prev => ({ ...prev, totalPrice: total }));
+      setFormData((prev) => ({ ...prev, totalPrice: total }));
     } else {
-      setFormData(prev => ({ ...prev, totalPrice: "" }));
+      setFormData((prev) => ({ ...prev, totalPrice: "" }));
     }
   }, [formData.quantity, formData.unitPrice]);
 
@@ -77,12 +77,23 @@ export default function AddQuoteLineItemModal({
     const file = event.target.files?.[0];
     if (file) {
       // Validate file type (3D model formats)
-      const validExtensions = ['.step', '.stp', '.brep', '.sldprt', '.stl', '.obj', '.gltf', '.glb'];
+      const validExtensions = [
+        ".step",
+        ".stp",
+        ".brep",
+        ".sldprt",
+        ".stl",
+        ".obj",
+        ".gltf",
+        ".glb",
+      ];
       const fileName = file.name.toLowerCase();
-      const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+      const isValid = validExtensions.some((ext) => fileName.endsWith(ext));
 
       if (!isValid) {
-        alert('Please select a valid 3D model file (.step, .stp, .brep, .sldprt, .stl, .obj, .gltf, .glb)');
+        alert(
+          "Please select a valid 3D model file (.step, .stp, .brep, .sldprt, .stl, .obj, .gltf, .glb)"
+        );
         return;
       }
 
@@ -91,7 +102,7 @@ export default function AddQuoteLineItemModal({
       // Auto-populate name field with filename (without extension) if name is empty
       if (!formData.name) {
         const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-        setFormData(prev => ({ ...prev, name: nameWithoutExt }));
+        setFormData((prev) => ({ ...prev, name: nameWithoutExt }));
       }
     }
   };
@@ -128,9 +139,16 @@ export default function AddQuoteLineItemModal({
     }
 
     // Default values if not provided
-    const quantity = formData.quantity && formData.quantity !== "" ? formData.quantity : "1";
-    const unitPrice = formData.unitPrice && formData.unitPrice !== "" ? formData.unitPrice : "0";
-    const totalPrice = formData.totalPrice && formData.totalPrice !== "" ? formData.totalPrice : "0";
+    const quantity =
+      formData.quantity && formData.quantity !== "" ? formData.quantity : "1";
+    const unitPrice =
+      formData.unitPrice && formData.unitPrice !== ""
+        ? formData.unitPrice
+        : "0";
+    const totalPrice =
+      formData.totalPrice && formData.totalPrice !== ""
+        ? formData.totalPrice
+        : "0";
 
     // Create FormData to send to the server
     const submitData = new FormData();
@@ -171,31 +189,27 @@ export default function AddQuoteLineItemModal({
 
   // Calculate unit price when total price changes
   const handleTotalPriceChange = (value: string) => {
-    setFormData(prev => ({ ...prev, totalPrice: value }));
+    setFormData((prev) => ({ ...prev, totalPrice: value }));
 
     const qty = parseInt(formData.quantity);
     const total = parseFloat(value);
 
     if (!isNaN(qty) && qty > 0 && !isNaN(total) && total >= 0) {
       const unitPrice = (total / qty).toFixed(2);
-      setFormData(prev => ({ ...prev, unitPrice }));
+      setFormData((prev) => ({ ...prev, unitPrice }));
     }
   };
 
   const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 Bytes';
+    if (bytes === 0) return "0 Bytes";
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
   };
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={handleClose}
-      title="Add Line Item"
-    >
+    <Modal isOpen={isOpen} onClose={handleClose} title="Add Line Item">
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 3D Model Upload */}
         <div>
@@ -221,7 +235,8 @@ export default function AddQuoteLineItemModal({
                     />
                   </svg>
                   <p className="mb-2 text-sm text-gray-500 dark:text-gray-400">
-                    <span className="font-semibold">Click to upload</span> or drag and drop
+                    <span className="font-semibold">Click to upload</span> or
+                    drag and drop
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
                     STEP, BREP, SLDPRT, STL, OBJ, GLTF, GLB
@@ -266,8 +281,18 @@ export default function AddQuoteLineItemModal({
                 onClick={handleRemoveFile}
                 className="ml-3 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 flex-shrink-0"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>
@@ -279,22 +304,33 @@ export default function AddQuoteLineItemModal({
           label="Name"
           name="name"
           value={formData.name}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange("name", e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            handleChange("name", e.target.value)
+          }
           required
-          placeholder="Enter part name"
+          placeholder="Enter item or part name"
           error={errors.name}
         />
 
         {/* Description Field */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Description
+            Description{" "}
+            {!selectedFile && (
+              <span className="text-xs text-gray-500">(Optional)</span>
+            )}
           </label>
           <textarea
             name="description"
             value={formData.description}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleChange("description", e.target.value)}
-            placeholder="Enter part description"
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+              handleChange("description", e.target.value)
+            }
+            placeholder={
+              selectedFile
+                ? "Enter additional details about this part model"
+                : "Enter additional details about this part"
+            }
             rows={3}
             className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
           />
@@ -308,7 +344,9 @@ export default function AddQuoteLineItemModal({
           <textarea
             name="notes"
             value={formData.notes}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleChange("notes", e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+              handleChange("notes", e.target.value)
+            }
             placeholder="Enter internal notes"
             rows={2}
             className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
@@ -322,7 +360,9 @@ export default function AddQuoteLineItemModal({
             name="quantity"
             type="number"
             value={formData.quantity}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange("quantity", e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              handleChange("quantity", e.target.value)
+            }
             min={1}
             placeholder="1"
             error={errors.quantity}
@@ -333,7 +373,9 @@ export default function AddQuoteLineItemModal({
             name="unitPrice"
             type="number"
             value={formData.unitPrice}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleUnitPriceChange(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              handleUnitPriceChange(e.target.value)
+            }
             min={0}
             step="0.01"
             placeholder="0.00"
@@ -345,7 +387,9 @@ export default function AddQuoteLineItemModal({
             name="totalPrice"
             type="number"
             value={formData.totalPrice}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleTotalPriceChange(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              handleTotalPriceChange(e.target.value)
+            }
             min={0}
             step="0.01"
             placeholder="0.00"

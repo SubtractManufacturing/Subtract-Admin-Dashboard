@@ -353,7 +353,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
             quotePartId: quotePartId || undefined,
             quantity: parseInt(quantity),
             unitPrice: parseFloat(unitPrice),
-            description: description || undefined,
+            // If there's a file/part, use description field; if no file, use name as description
+            description: quotePartId ? (description || undefined) : (name || undefined),
             notes: notes || undefined,
           },
           eventContext
@@ -2096,7 +2097,7 @@ export default function QuoteDetail() {
                 <table className={tableStyles.container}>
                   <thead className={tableStyles.header}>
                     <tr>
-                      <th className={tableStyles.headerCell}>Part</th>
+                      <th className={tableStyles.headerCell}>Name</th>
                       <th className={tableStyles.headerCell}>Description</th>
                       <th className={tableStyles.headerCell}>Notes</th>
                       <th className={tableStyles.headerCell}>Quantity</th>
@@ -2138,34 +2139,38 @@ export default function QuoteDetail() {
                         >
                           <td className={tableStyles.cell}>
                             <div className="flex items-center gap-3">
-                              {part?.signedThumbnailUrl ? (
-                                <img
-                                  src={part.signedThumbnailUrl}
-                                  alt={part.partName}
-                                  className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0"
-                                />
-                              ) : (
-                                <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
-                                  {isProcessing ? (
-                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-                                  ) : part ? (
-                                    <svg
-                                      className="w-6 h-6 text-gray-400"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      viewBox="0 0 24 24"
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                                      />
-                                    </svg>
-                                  ) : null}
-                                </div>
+                              {part && (
+                                <>
+                                  {part.signedThumbnailUrl ? (
+                                    <img
+                                      src={part.signedThumbnailUrl}
+                                      alt={part.partName}
+                                      className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0"
+                                    />
+                                  ) : (
+                                    <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
+                                      {isProcessing ? (
+                                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                                      ) : (
+                                        <svg
+                                          className="w-6 h-6 text-gray-400"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          viewBox="0 0 24 24"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
+                                          />
+                                        </svg>
+                                      )}
+                                    </div>
+                                  )}
+                                </>
                               )}
-                              <span>{part?.partName || "N/A"}</span>
+                              <span>{part?.partName || item.description || "Line Item"}</span>
                             </div>
                           </td>
                           <td
