@@ -99,6 +99,7 @@ export async function getQuoteLineItems(quoteId: number): Promise<QuoteLineItemW
         unitPrice: quoteLineItems.unitPrice,
         totalPrice: quoteLineItems.totalPrice,
         leadTimeDays: quoteLineItems.leadTimeDays,
+        description: quoteLineItems.description,
         notes: quoteLineItems.notes,
         sortOrder: quoteLineItems.sortOrder,
         createdAt: quoteLineItems.createdAt,

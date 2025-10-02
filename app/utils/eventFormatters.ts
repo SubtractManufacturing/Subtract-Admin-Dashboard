@@ -185,6 +185,35 @@ export function formatEventForTimeline(event: EventLog): {
     };
   }
 
+  if (event.eventType === "quote_revised") {
+    const oldStatus = metadata?.oldStatus || "Unknown";
+    return {
+      title: "Quote Revised",
+      description: `Reverted from ${oldStatus} to Draft for editing`
+    };
+  }
+
+  if (event.eventType === "quote_status_changed") {
+    const newStatus = metadata?.newStatus || metadata?.status;
+    const oldStatus = metadata?.oldStatus;
+
+    // Special case for quote being sent
+    if (newStatus === "Sent") {
+      return {
+        title: "Quote Sent",
+        description: oldStatus ? `Status changed from ${oldStatus}` : null
+      };
+    }
+
+    // Handle other status changes
+    if (oldStatus && newStatus) {
+      return {
+        title: "Quote Status Updated",
+        description: `${oldStatus} → ${newStatus}`
+      };
+    }
+  }
+
   if (event.eventType === "quote_converted") {
     return {
       title: "Quote Converted to Order",

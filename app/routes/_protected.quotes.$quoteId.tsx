@@ -43,9 +43,9 @@ import {
   archiveNote,
   type NoteEventContext,
 } from "~/lib/notes";
-import { getEventsByEntity } from "~/lib/events";
+import { getEventsByEntity, createEvent } from "~/lib/events";
 import { db } from "~/lib/db";
-import { quoteAttachments, attachments } from "~/lib/db/schema";
+import { quoteAttachments, attachments, quotes } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 import Navbar from "~/components/Navbar";
@@ -496,6 +496,48 @@ export async function action({ request, params }: ActionFunctionArgs) {
           { error: result.error || "Failed to convert quote" },
           { status: 400 }
         );
+      }
+
+      case "reviseQuote": {
+        // Check if quote can be revised
+        const revisableStatuses = ["Sent", "Dropped", "Rejected", "Expired"];
+        if (!revisableStatuses.includes(quote.status)) {
+          return json(
+            { error: "Only sent, dropped, rejected, or expired quotes can be revised" },
+            { status: 400 }
+          );
+        }
+
+        // Store old status before updating
+        const oldStatus = quote.status;
+
+        // Manually update quote status to Draft without triggering automatic status change event
+        await db
+          .update(quotes)
+          .set({
+            status: "Draft",
+            updatedAt: new Date()
+          })
+          .where(eq(quotes.id, quote.id));
+
+        // Create custom revision event
+        await createEvent({
+          entityType: 'quote',
+          entityId: quote.id.toString(),
+          eventType: 'quote_revised',
+          eventCategory: 'status',
+          title: 'Quote Revised',
+          description: `Quote was revised and reverted to Draft status from ${oldStatus}`,
+          metadata: {
+            oldStatus,
+            newStatus: 'Draft',
+            quoteNumber: quote.quoteNumber,
+          },
+          userId: eventContext.userId,
+          userEmail: eventContext.userEmail,
+        });
+
+        return redirect(`/quotes/${quoteId}`);
       }
 
       case "updateLineItem": {
@@ -984,6 +1026,16 @@ export default function QuoteDetail() {
     }
   };
 
+  const handleReviseQuote = () => {
+    if (
+      confirm(
+        "Are you sure you want to revise this quote? This will revert the quote to Draft status and allow editing again."
+      )
+    ) {
+      fetcher.submit({ intent: "reviseQuote" }, { method: "post" });
+    }
+  };
+
   const handleAddLineItem = () => {
     setIsAddLineItemModalOpen(true);
   };
@@ -1223,6 +1275,8 @@ export default function QuoteDetail() {
                 isOpen={isActionsDropdownOpen}
                 onClose={() => setIsActionsDropdownOpen(false)}
                 excludeRef={actionsButtonRef}
+                quoteStatus={quote.status}
+                onReviseQuote={handleReviseQuote}
               />
             </div>
             {(quote.status === "Sent" || quote.status === "Accepted") &&
