@@ -79,6 +79,7 @@ export const quotes = pgTable("quotes", {
   validUntil: timestamp("valid_until"),
   expirationDays: integer("expiration_days"),
   sentAt: timestamp("sent_at"),
+  acceptedAt: timestamp("accepted_at"),
   expiredAt: timestamp("expired_at"),
   archivedAt: timestamp("archived_at"),
   subtotal: numeric("subtotal", { precision: 10, scale: 2 }),

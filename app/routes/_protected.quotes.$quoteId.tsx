@@ -503,7 +503,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const revisableStatuses = ["Sent", "Dropped", "Rejected", "Expired"];
         if (!revisableStatuses.includes(quote.status)) {
           return json(
-            { error: "Only sent, dropped, rejected, or expired quotes can be revised" },
+            {
+              error:
+                "Only sent, dropped, rejected, or expired quotes can be revised",
+            },
             { status: 400 }
           );
         }
@@ -516,21 +519,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
           .update(quotes)
           .set({
             status: "Draft",
-            updatedAt: new Date()
+            updatedAt: new Date(),
           })
           .where(eq(quotes.id, quote.id));
 
         // Create custom revision event
         await createEvent({
-          entityType: 'quote',
+          entityType: "quote",
           entityId: quote.id.toString(),
-          eventType: 'quote_revised',
-          eventCategory: 'status',
-          title: 'Quote Revised',
+          eventType: "quote_revised",
+          eventCategory: "status",
+          title: "Quote Revised",
           description: `Quote was revised and reverted to Draft status from ${oldStatus}`,
           metadata: {
             oldStatus,
-            newStatus: 'Draft',
+            newStatus: "Draft",
             quoteNumber: quote.quoteNumber,
           },
           userId: eventContext.userId,
@@ -549,7 +552,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const { updateQuoteLineItem } = await import("~/lib/quotes");
 
-        const updateData: { quantity?: number; unitPrice?: number; description?: string; notes?: string } = {};
+        const updateData: {
+          quantity?: number;
+          unitPrice?: number;
+          description?: string;
+          notes?: string;
+        } = {};
 
         // Get all possible updated fields
         const quantity = formData.get("quantity") as string | null;
@@ -826,14 +834,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
           .where(eq(quoteParts.id, partId));
 
         // Trigger conversion asynchronously
-        triggerQuotePartMeshConversion(quotePart.id, quotePart.partFileUrl).catch(
-          (error) => {
-            console.error(
-              `Failed to regenerate mesh for quote part ${quotePart.id}:`,
-              error
-            );
-          }
-        );
+        triggerQuotePartMeshConversion(
+          quotePart.id,
+          quotePart.partFileUrl
+        ).catch((error) => {
+          console.error(
+            `Failed to regenerate mesh for quote part ${quotePart.id}:`,
+            error
+          );
+        });
 
         return json({ success: true });
       }
@@ -1352,96 +1361,269 @@ export default function QuoteDetail() {
               )}
             </div>
 
-            {/* Valid Until Card */}
+            {/* Valid Until / Expiration Days / Accepted Date Card */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-                Valid Until
-              </h3>
-              <div className="relative">
-                {editingValidUntil && isQuoteLocked ? (
-                  <input
-                    ref={(input) => {
-                      if (input && editingValidUntil) {
-                        input.focus();
-                      }
-                    }}
-                    type="date"
-                    className="w-full px-3 py-2 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
-                    value={validUntilValue}
-                    onChange={(e) => setValidUntilValue(e.target.value)}
-                    onBlur={() => {
-                      if (validUntilValue) {
-                        fetcher.submit(
-                          {
-                            intent: "updateValidUntil",
-                            validUntil: validUntilValue,
-                          },
-                          { method: "post" }
-                        );
-                      }
-                      setEditingValidUntil(false);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        if (validUntilValue) {
-                          fetcher.submit(
-                            {
-                              intent: "updateValidUntil",
-                              validUntil: validUntilValue,
-                            },
-                            { method: "post" }
-                          );
-                        }
-                        setEditingValidUntil(false);
-                      } else if (e.key === "Escape") {
-                        e.preventDefault();
-                        setValidUntilValue(
-                          quote.validUntil
-                            ? new Date(quote.validUntil)
-                                .toISOString()
-                                .split("T")[0]
-                            : ""
-                        );
-                        setEditingValidUntil(false);
-                      }
-                    }}
-                  />
-                ) : (
-                  <>
+              {quote.status === "Accepted" ? (
+                <>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                    Accepted
+                  </h3>
+                  <div className="relative">
                     <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                      {formatDate(quote.validUntil)}
+                      {quote.acceptedAt
+                        ? new Date(quote.acceptedAt).toLocaleString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                            hour12: true,
+                          })
+                        : "--"}
                     </p>
-                    {daysUntilExpiry !== null && (
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        {daysUntilExpiry > 0
-                          ? `${daysUntilExpiry} days remaining`
-                          : "Expired"}
-                      </p>
-                    )}
-                    {isQuoteLocked && (
-                      <button
-                        onClick={() => setEditingValidUntil(true)}
-                        className="absolute -top-2 -right-2 p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-                        aria-label="Edit expiration date"
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-5 w-5"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
+                    {quote.acceptedAt &&
+                      (() => {
+                        const acceptedDate = new Date(quote.acceptedAt);
+                        const now = new Date();
+                        const diffMs = now.getTime() - acceptedDate.getTime();
+                        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+                        const diffDays = Math.floor(diffHours / 24);
+                        const remainingHours = diffHours % 24;
+
+                        let timeElapsed = "";
+                        if (diffDays > 0) {
+                          timeElapsed = `${diffDays} day${
+                            diffDays > 1 ? "s" : ""
+                          }${
+                            remainingHours > 0
+                              ? `, ${remainingHours} hour${
+                                  remainingHours > 1 ? "s" : ""
+                                }`
+                              : ""
+                          } ago`;
+                        } else if (diffHours > 0) {
+                          timeElapsed = `${diffHours} hour${
+                            diffHours > 1 ? "s" : ""
+                          } ago`;
+                        } else {
+                          const diffMins = Math.floor(diffMs / (1000 * 60));
+                          timeElapsed =
+                            diffMins > 0
+                              ? `${diffMins} minute${
+                                  diffMins > 1 ? "s" : ""
+                                } ago`
+                              : "Just now";
+                        }
+
+                        return (
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                            {timeElapsed}
+                          </p>
+                        );
+                      })()}
+                  </div>
+                </>
+              ) : quote.status === "Sent" ||
+                quote.status === "Rejected" ||
+                quote.status === "Dropped" ||
+                quote.status === "Expired" ? (
+                <>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                    Valid Until
+                  </h3>
+                  <div className="relative">
+                    {editingValidUntil ? (
+                      <input
+                        ref={(input) => {
+                          if (input && editingValidUntil) {
+                            input.focus();
+                          }
+                        }}
+                        type="date"
+                        className="w-full px-3 py-2 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
+                        value={validUntilValue}
+                        onChange={(e) => setValidUntilValue(e.target.value)}
+                        onBlur={() => {
+                          if (validUntilValue) {
+                            fetcher.submit(
+                              {
+                                intent: "updateValidUntil",
+                                validUntil: validUntilValue,
+                              },
+                              { method: "post" }
+                            );
+                          }
+                          setEditingValidUntil(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            if (validUntilValue) {
+                              fetcher.submit(
+                                {
+                                  intent: "updateValidUntil",
+                                  validUntil: validUntilValue,
+                                },
+                                { method: "post" }
+                              );
+                            }
+                            setEditingValidUntil(false);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setValidUntilValue(
+                              quote.validUntil
+                                ? new Date(quote.validUntil)
+                                    .toISOString()
+                                    .split("T")[0]
+                                : ""
+                            );
+                            setEditingValidUntil(false);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                          {formatDate(quote.validUntil)}
+                        </p>
+                        {daysUntilExpiry !== null && (
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                            {daysUntilExpiry > 0
+                              ? `${daysUntilExpiry} days remaining`
+                              : "Expired"}
+                          </p>
+                        )}
+                        <button
+                          onClick={() => setEditingValidUntil(true)}
+                          className="absolute -top-2 -right-2 p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+                          aria-label="Edit expiration date"
                         >
-                          <path
-                            fillRule="evenodd"
-                            d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zM4 8h12v8H4V8z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      </button>
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="h-5 w-5"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                          >
+                            <path
+                              fillRule="evenodd"
+                              d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zM4 8h12v8H4V8z"
+                              clipRule="evenodd"
+                            />
+                          </svg>
+                        </button>
+                      </>
                     )}
-                  </>
-                )}
-              </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                    Expiration Days
+                  </h3>
+                  <div className="relative">
+                    <div
+                      className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1 -mx-2 transition-colors"
+                      onClick={() => {
+                        setEditingExpirationDays(true);
+                        setTimeout(() => {
+                          const input = document.getElementById(
+                            "expiration-days-input-chip"
+                          );
+                          if (input) {
+                            (input as HTMLInputElement).focus();
+                            (input as HTMLInputElement).select();
+                          }
+                        }, 0);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setEditingExpirationDays(true);
+                          setTimeout(() => {
+                            const input = document.getElementById(
+                              "expiration-days-input-chip"
+                            );
+                            if (input) {
+                              (input as HTMLInputElement).focus();
+                              (input as HTMLInputElement).select();
+                            }
+                          }, 0);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      {editingExpirationDays ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            id="expiration-days-input-chip"
+                            type="number"
+                            className="w-20 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
+                            value={expirationDaysValue}
+                            onChange={(e) =>
+                              setExpirationDaysValue(e.target.value)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                const days = parseInt(expirationDaysValue);
+                                if (!isNaN(days) && days > 0) {
+                                  fetcher.submit(
+                                    {
+                                      intent: "updateQuote",
+                                      expirationDays: expirationDaysValue,
+                                    },
+                                    { method: "post" }
+                                  );
+                                  setEditingExpirationDays(false);
+                                }
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                setExpirationDaysValue(
+                                  (quote.expirationDays || 14).toString()
+                                );
+                                setEditingExpirationDays(false);
+                              }
+                            }}
+                            onBlur={() => {
+                              const days = parseInt(expirationDaysValue);
+                              if (
+                                !isNaN(days) &&
+                                days > 0 &&
+                                days !== (quote.expirationDays || 14)
+                              ) {
+                                fetcher.submit(
+                                  {
+                                    intent: "updateQuote",
+                                    expirationDays: expirationDaysValue,
+                                  },
+                                  { method: "post" }
+                                );
+                              } else {
+                                setExpirationDaysValue(
+                                  (quote.expirationDays || 14).toString()
+                                );
+                              }
+                              setEditingExpirationDays(false);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            min="1"
+                          />
+                          <span className="text-base font-medium text-gray-900 dark:text-gray-100">
+                            days
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                            {quote.expirationDays || 14} days
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Quote Value Card */}
@@ -1888,7 +2070,10 @@ export default function QuoteDetail() {
                                 placeholder="Add description... (Ctrl+Enter to save, Esc to cancel)"
                               />
                             ) : (
-                              <span className="block truncate max-w-xs" title={item.description || ""}>
+                              <span
+                                className="block truncate max-w-xs"
+                                title={item.description || ""}
+                              >
                                 {item.description || "—"}
                               </span>
                             )}
@@ -1901,11 +2086,7 @@ export default function QuoteDetail() {
                             }`}
                             onClick={() =>
                               !isQuoteLocked &&
-                              startEditingLineItem(
-                                item.id,
-                                "notes",
-                                item.notes
-                              )
+                              startEditingLineItem(item.id, "notes", item.notes)
                             }
                           >
                             {editingLineItem?.id === item.id &&
@@ -1935,7 +2116,10 @@ export default function QuoteDetail() {
                                 placeholder="Add notes... (Ctrl+Enter to save, Esc to cancel)"
                               />
                             ) : (
-                              <span className="block truncate max-w-xs" title={item.notes || ""}>
+                              <span
+                                className="block truncate max-w-xs"
+                                title={item.notes || ""}
+                              >
                                 {item.notes || "—"}
                               </span>
                             )}
@@ -2120,7 +2304,10 @@ export default function QuoteDetail() {
                   className="hidden"
                 />
                 {!isQuoteLocked && (
-                  <Button onClick={() => fileInputRef.current?.click()} size="sm">
+                  <Button
+                    onClick={() => fileInputRef.current?.click()}
+                    size="sm"
+                  >
                     Upload File
                   </Button>
                 )}

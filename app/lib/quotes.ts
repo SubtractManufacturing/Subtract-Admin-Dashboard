@@ -212,6 +212,10 @@ export async function updateQuote(
       }
     }
 
+    if (updates.status === 'Accepted' && oldQuote.status !== 'Accepted') {
+      updateData.acceptedAt = new Date()
+    }
+
     if (updates.status === 'Expired' && oldQuote.status !== 'Expired') {
       updateData.expiredAt = new Date()
     }
