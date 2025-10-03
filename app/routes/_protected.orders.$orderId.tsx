@@ -56,7 +56,7 @@ import {
 import { getPartsByCustomerId, hydratePartThumbnails } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem, Vendor } from "~/lib/db/schema";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { EventTimeline } from "~/components/EventTimeline";
 import { getEventsByEntity } from "~/lib/events";
@@ -484,6 +484,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/orders/${orderNumber}`);
       }
 
+      case "updateOrderInfo": {
+        const shipDate = formData.get("shipDate") as string | null;
+        const leadTime = formData.get("leadTime") as string | null;
+        const vendorPay = formData.get("vendorPay") as string | null;
+
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const updates: any = {};
+        if (shipDate) updates.shipDate = new Date(shipDate);
+        if (leadTime) updates.leadTime = parseInt(leadTime);
+        if (vendorPay) updates.vendorPay = vendorPay;
+
+        await updateOrder(order.id, updates, orderEventContext);
+
+        return redirect(`/orders/${orderNumber}`);
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -533,10 +553,17 @@ export default function OrderDetails() {
   } | null>(null);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
+  const [editOrderModalOpen, setEditOrderModalOpen] = useState(false);
+  const [editOrderForm, setEditOrderForm] = useState({
+    shipDate: "",
+    leadTime: "",
+    vendorPay: "",
+  });
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const lineItemFetcher = useFetcher();
   const notesFetcher = useFetcher();
+  const orderEditFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = () => {
@@ -778,6 +805,50 @@ export default function OrderDetails() {
       lineItemFetcher.submit(formData, { method: "post" });
     }
   };
+
+  const handleEditOrder = () => {
+    setEditOrderForm({
+      shipDate: order.shipDate
+        ? new Date(order.shipDate).toISOString().split("T")[0]
+        : "",
+      leadTime: order.leadTime?.toString() || "",
+      vendorPay: order.vendorPay || "70",
+    });
+    setEditOrderModalOpen(true);
+  };
+
+  const handleEditOrderSubmit = () => {
+    const formData = new FormData();
+    formData.append("intent", "updateOrderInfo");
+    if (editOrderForm.shipDate) {
+      formData.append("shipDate", editOrderForm.shipDate);
+    }
+    if (editOrderForm.leadTime) {
+      formData.append("leadTime", editOrderForm.leadTime);
+    }
+    if (editOrderForm.vendorPay) {
+      formData.append("vendorPay", editOrderForm.vendorPay);
+    }
+    orderEditFetcher.submit(formData, { method: "post" });
+    setEditOrderModalOpen(false);
+  };
+
+  // Handle keyboard shortcuts for edit order modal
+  useEffect(() => {
+    if (!editOrderModalOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setEditOrderModalOpen(false);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        handleEditOrderSubmit();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [editOrderModalOpen, editOrderForm]);
 
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
@@ -1059,10 +1130,28 @@ export default function OrderDetails() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Order Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
                   Order Information
                 </h3>
+                <button
+                  onClick={handleEditOrder}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 rounded-md transition-colors"
+                >
+                  Edit
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    fill="currentColor"
+                    viewBox="0 0 16 16"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"
+                    />
+                  </svg>
+                </button>
               </div>
               <div className="p-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -1819,6 +1908,100 @@ export default function OrderDetails() {
                   className="bg-blue-600 hover:bg-blue-700"
                 >
                   Assign Shop
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Order Modal */}
+      {editOrderModalOpen && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Edit Order Information
+              </h2>
+              <button
+                onClick={() => setEditOrderModalOpen(false)}
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Ship Date
+                </label>
+                <input
+                  type="date"
+                  value={editOrderForm.shipDate}
+                  onChange={(e) =>
+                    setEditOrderForm({
+                      ...editOrderForm,
+                      shipDate: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Lead Time (Business Days)
+                </label>
+                <input
+                  type="number"
+                  value={editOrderForm.leadTime}
+                  onChange={(e) =>
+                    setEditOrderForm({
+                      ...editOrderForm,
+                      leadTime: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  placeholder="e.g., 10"
+                  min="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Vendor Pay (%)
+                </label>
+                <input
+                  type="number"
+                  value={editOrderForm.vendorPay}
+                  onChange={(e) =>
+                    setEditOrderForm({
+                      ...editOrderForm,
+                      vendorPay: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  placeholder="e.g., 70"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                />
+              </div>
+
+              <div className="flex gap-3 justify-end mt-6">
+                <Button
+                  variant="secondary"
+                  onClick={() => setEditOrderModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={handleEditOrderSubmit}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Save Changes
                 </Button>
               </div>
             </div>
