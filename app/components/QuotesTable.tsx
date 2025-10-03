@@ -61,12 +61,12 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
         </thead>
         <tbody>
           {quotes.map((quote) => (
-            <tr 
-              key={quote.id} 
+            <tr
+              key={quote.id}
               className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
-              onClick={() => navigate(`/quotes/${quote.quote_number || quote.id}`)}
+              onClick={() => navigate(`/quotes/${quote.id}`)}
             >
-              <td className={tableStyles.cell}>Q-{quote.id}</td>
+              <td className={tableStyles.cell}>{quote.quote_number}</td>
               <td className={tableStyles.cell}>
                 {quote.customer_id ? (
                   <button

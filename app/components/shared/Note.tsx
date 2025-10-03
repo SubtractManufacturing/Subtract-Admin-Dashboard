@@ -8,14 +8,15 @@ interface NoteProps {
   currentUserId: string;
   currentUserName: string;
   onUpdate?: () => void;
+  readOnly?: boolean;
 }
 
-export function NoteComponent({ note, currentUserId, currentUserName, onUpdate }: NoteProps) {
+export function NoteComponent({ note, currentUserId, currentUserName, onUpdate, readOnly = false }: NoteProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(note.content);
   const fetcher = useFetcher();
   // Check ownership by ID only
-  const isOwner = note.createdBy === currentUserId;
+  const isOwner = note.createdBy === currentUserId && !readOnly;
   // For display: if createdBy is a UUID, show the current user's name, otherwise show what's stored
   const displayName = note.createdBy === currentUserId ? currentUserName : note.createdBy;
 

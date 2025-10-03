@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { users, type NewUser } from "./db/schema";
+import { users } from "./db/schema";
 import { eq } from "drizzle-orm";
 
 export async function getUserRole(userId: string) {
@@ -23,32 +23,31 @@ export async function getUserById(userId: string) {
 }
 
 export async function ensureUserExists(userId: string, email: string, name?: string | null) {
-  // Check if user already exists in public.users
-  const existingUser = await getUserById(userId);
-  
-  if (existingUser) {
-    // Update user info if it changed
-    if (existingUser.email !== email || existingUser.name !== name) {
-      await db
-        .update(users)
-        .set({
+  try {
+    // Use upsert to avoid race conditions
+    const result = await db
+      .insert(users)
+      .values({
+        id: userId,
+        email,
+        name,
+        role: "User", // Default role for new users
+      })
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
           email,
           name,
           updatedAt: new Date(),
-        })
-        .where(eq(users.id, userId));
-    }
-    return existingUser.role;
+        },
+      })
+      .returning();
+
+    return result[0].role;
+  } catch (error) {
+    // If insert still fails, fallback to reading existing user
+    console.error('Error in ensureUserExists, falling back to read:', error);
+    const existingUser = await getUserById(userId);
+    return existingUser?.role || "User";
   }
-  
-  // Create new user record
-  const newUser: NewUser = {
-    id: userId,
-    email,
-    name,
-    role: "User", // Default role for new users
-  };
-  
-  await db.insert(users).values(newUser);
-  return "User";
 }

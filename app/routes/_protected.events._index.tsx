@@ -7,6 +7,8 @@ import {
   getRecentEvents,
   getEventById,
   createEvent,
+  dismissEvent,
+  restoreEvent,
   type EventFilters,
 } from "~/lib/events";
 import type { EventLog } from "~/lib/db/schema";
@@ -97,6 +99,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const { userDetails } = await requireAuth(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -128,6 +131,34 @@ export async function action({ request }: ActionFunctionArgs) {
 
         const newEvent = await createEvent(eventData);
         return json({ success: true, event: newEvent });
+      }
+
+      case "dismiss": {
+        const eventId = formData.get("eventId") as string;
+        if (!eventId) {
+          return json({ error: "Missing event ID" }, { status: 400 });
+        }
+
+        const result = await dismissEvent(eventId, userDetails?.email);
+        if (!result) {
+          return json({ error: "Event not found" }, { status: 404 });
+        }
+
+        return json({ success: true });
+      }
+
+      case "restore": {
+        const eventId = formData.get("eventId") as string;
+        if (!eventId) {
+          return json({ error: "Missing event ID" }, { status: 400 });
+        }
+
+        const result = await restoreEvent(eventId);
+        if (!result) {
+          return json({ error: "Event not found" }, { status: 404 });
+        }
+
+        return json({ success: true });
       }
 
       default:
@@ -212,7 +243,7 @@ export default function EventsPage() {
         setPageSize(filters.limit);
       }
     }
-  }, [events, totalCount, filters.limit]);
+  }, [events, totalCount, filters.limit, isLoadingMore, pageSize]);
 
   const applyFilters = () => {
 
@@ -333,11 +364,12 @@ export default function EventsPage() {
 
   const handleRestoreEvent = (eventId: string) => {
     const formData = new FormData();
+    formData.append('intent', 'restore');
     formData.append('eventId', eventId);
 
     restoreFetcher.submit(formData, {
       method: 'post',
-      action: '/actions/events/restore'
+      action: '/events'
     });
 
     // Close modal after restore

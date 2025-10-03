@@ -16,7 +16,7 @@ export type Order = {
   customer_name: string
   vendor_id: number | null
   vendor_name: string
-  status: 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived'
+  status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   quantity: number
   po_amount: string | null
   ship_date: Date | string | null
@@ -30,7 +30,7 @@ export type Quote = {
   customer_name: string
   vendor_id: number | null
   vendor_name: string
-  status: 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired'
+  status: 'RFQ' | 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Dropped' | 'Expired'
   quantity: number
   total_price: string | null
   valid_until: Date | string | null
@@ -52,7 +52,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
         totalRevenue: sum(orders.totalPrice)
       })
       .from(orders)
-      .where(inArray(orders.status, ['Pending', 'In_Production']))
+      .where(inArray(orders.status, ['Pending', 'Waiting_For_Shop_Selection', 'In_Production', 'In_Inspection', 'Shipped']))
 
     // Get RFQs (quotes sent in last 30 days)
     const thirtyDaysAgo = new Date()
@@ -111,7 +111,7 @@ export async function getOrders(): Promise<Order[]> {
       customer_id: order.customer_id,
       customer_name: order.customer_name || 'Unknown',
       vendor_id: order.vendor_id,
-      vendor_name: order.vendor_name || 'Unknown',
+      vendor_name: order.vendor_name || 'Unassigned',
       status: order.status,
       quantity: 0, // This would need to be calculated from order_line_items
       po_amount: order.total_price,
@@ -133,7 +133,7 @@ export async function getQuotes(): Promise<Quote[]> {
         customer_id: quotes.customerId,
         vendor_id: quotes.vendorId,
         status: quotes.status,
-        total_price: quotes.totalPrice,
+        total_price: quotes.total,
         valid_until: quotes.validUntil,
         created_at: quotes.createdAt,
         customer_name: customers.displayName,
@@ -151,7 +151,7 @@ export async function getQuotes(): Promise<Quote[]> {
       customer_id: quote.customer_id,
       customer_name: quote.customer_name || 'Unknown',
       vendor_id: quote.vendor_id,
-      vendor_name: quote.vendor_name || 'Unknown',
+      vendor_name: quote.vendor_name || 'Unassigned',
       status: quote.status,
       quantity: 0, // This would need to be calculated from quote_line_items
       total_price: quote.total_price,

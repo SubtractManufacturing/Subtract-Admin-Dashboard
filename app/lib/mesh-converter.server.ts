@@ -14,6 +14,7 @@ import {
   getRecommendedOutputFormat,
   validateFileSize,
   isConversionEnabled,
+  checkConversionStatus,
   type ConversionOptions,
 } from "./conversion-service.server";
 import { uploadToS3, downloadFromS3 } from "./s3.server";
@@ -344,4 +345,181 @@ export async function findPartsNeedingConversion() {
     .from(parts)
     .where(eq(parts.meshConversionStatus, "pending"))
     .limit(10); // Process in batches
+}
+
+/**
+ * Get conversion status for a part
+ */
+export async function getPartConversionStatus(partId: string) {
+  const [part] = await db.select({
+    id: parts.id,
+    partName: parts.partName,
+    partFileUrl: parts.partFileUrl,
+    partMeshUrl: parts.partMeshUrl,
+    meshConversionStatus: parts.meshConversionStatus,
+    meshConversionError: parts.meshConversionError,
+    meshConversionJobId: parts.meshConversionJobId,
+    meshConversionStartedAt: parts.meshConversionStartedAt,
+    meshConversionCompletedAt: parts.meshConversionCompletedAt,
+  })
+  .from(parts)
+  .where(eq(parts.id, partId));
+
+  if (!part) {
+    return null;
+  }
+
+  return {
+    part: {
+      id: part.id,
+      name: part.partName,
+      hasModelFile: !!part.partFileUrl,
+      hasMeshFile: !!part.partMeshUrl,
+      meshUrl: part.partMeshUrl,
+    },
+    conversion: {
+      status: part.meshConversionStatus,
+      error: part.meshConversionError,
+      jobId: part.meshConversionJobId,
+      startedAt: part.meshConversionStartedAt,
+      completedAt: part.meshConversionCompletedAt,
+    },
+  };
+}
+
+/**
+ * Get conversion status with live updates for a part
+ */
+export async function getPartConversionStatusWithLive(partId: string) {
+  const conversionData = await getPartConversionStatus(partId);
+
+  if (!conversionData) {
+    return null;
+  }
+
+  // If there's an active job, check its current status
+  let liveStatus = null;
+  if (conversionData.conversion.jobId && conversionData.conversion.status === "in_progress") {
+    liveStatus = await checkConversionStatus(conversionData.conversion.jobId);
+  }
+
+  return {
+    ...conversionData,
+    conversion: {
+      ...conversionData.conversion,
+      liveStatus: liveStatus,
+    },
+  };
+}
+
+/**
+ * Trigger conversion for a part
+ */
+export async function triggerPartConversion(partId: string, action: "convert" | "retry") {
+  if (action === "retry") {
+    return retryPartConversion(partId);
+  }
+
+  // Get part details
+  const [part] = await db.select()
+    .from(parts)
+    .where(eq(parts.id, partId));
+
+  if (!part) {
+    return {
+      success: false,
+      error: "Part not found"
+    };
+  }
+
+  if (!part.partFileUrl) {
+    return {
+      success: false,
+      error: "Part has no model file to convert"
+    };
+  }
+
+  // Check if already converted
+  if (part.partMeshUrl && part.meshConversionStatus === "completed") {
+    return {
+      success: true,
+      message: "Part already has a mesh file",
+      meshUrl: part.partMeshUrl,
+    };
+  }
+
+  // Start conversion
+  return convertPartToMesh(partId, part.partFileUrl);
+}
+
+/**
+ * Handle batch conversion actions
+ */
+export async function handleBatchConversion(action: string, partIds?: string[]) {
+  switch (action) {
+    case "convert-selected": {
+      if (!partIds || partIds.length === 0) {
+        return {
+          success: false,
+          error: "Part IDs are required for selected conversion"
+        };
+      }
+
+      const results = await batchConvertParts(partIds);
+
+      // Convert Map to object for JSON serialization
+      const resultsObj: Record<string, MeshConversionResult> = {};
+      for (const [partId, result] of results) {
+        resultsObj[partId] = result;
+      }
+
+      return {
+        success: true,
+        message: `Started conversion for ${partIds.length} parts`,
+        results: resultsObj,
+        stats: await getConversionStats(),
+      };
+    }
+
+    case "convert-pending": {
+      const pendingParts = await findPartsNeedingConversion();
+
+      if (pendingParts.length === 0) {
+        return {
+          success: true,
+          message: "No parts pending conversion",
+          stats: await getConversionStats(),
+        };
+      }
+
+      const pendingPartIds = pendingParts.map(p => p.id);
+      const results = await batchConvertParts(pendingPartIds);
+
+      // Convert Map to object for JSON serialization
+      const resultsObj: Record<string, MeshConversionResult> = {};
+      for (const [partId, result] of results) {
+        resultsObj[partId] = result;
+      }
+
+      return {
+        success: true,
+        message: `Started conversion for ${pendingPartIds.length} pending parts`,
+        results: resultsObj,
+        stats: await getConversionStats(),
+      };
+    }
+
+    case "get-stats": {
+      return {
+        success: true,
+        stats: await getConversionStats(),
+      };
+    }
+
+    default:
+      return {
+        success: false,
+        error: "Invalid action. Use 'convert-selected', 'convert-pending', or 'get-stats'"
+      };
+  }
 }

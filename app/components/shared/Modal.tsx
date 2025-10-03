@@ -8,20 +8,18 @@ interface ModalProps {
   title: string
   children: ReactNode
   zIndex?: number
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full'
 }
 
-export default function Modal({ isOpen, onClose, title, children, zIndex = 50 }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, zIndex = 50, size = 'md' }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   
-  // Focus modal only when it first opens
   useEffect(() => {
     if (isOpen && modalRef.current) {
       modalRef.current.focus()
     }
   }, [isOpen])
-  
-  // Handle events separately to avoid re-running on onClose changes
   useEffect(() => {
     if (!isOpen) return
     
@@ -63,17 +61,35 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50 }:
   
   if (!isOpen) return null
 
+  const sizeClasses = {
+    sm: 'max-w-md',
+    md: 'max-w-lg',
+    lg: 'max-w-2xl',
+    xl: 'max-w-4xl',
+    '2xl': 'max-w-6xl',
+    full: 'max-w-[90vw]'
+  }
+
+  const heightClasses = {
+    sm: 'max-h-[80vh]',
+    md: 'max-h-[80vh]',
+    lg: 'max-h-[80vh]',
+    xl: 'max-h-[80vh]',
+    '2xl': 'max-h-[85vh]',
+    full: 'max-h-[90vh] h-[90vh]'
+  }
+
   return (
     <div ref={overlayRef} className={`${modalStyles.overlay} modal-overlay`} style={{ zIndex }}>
-      <div 
+      <div
         ref={modalRef}
-        className={`${modalStyles.content} max-h-[80vh] overflow-auto shadow-lg`}
+        className={`${modalStyles.content} ${sizeClasses[size]} ${heightClasses[size]} w-full ${size === 'full' ? 'flex flex-col' : 'overflow-auto'} shadow-lg transition-all duration-300`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
         tabIndex={-1}
       >
-        <div className={modalStyles.header}>
+        <div className={`${modalStyles.header} ${size === 'full' ? 'flex-shrink-0' : ''}`}>
           <h2 id="modal-title" className={modalStyles.title}>{title}</h2>
           <button
             className={modalStyles.closeButton}
@@ -83,7 +99,9 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50 }:
             ×
           </button>
         </div>
-        {children}
+        <div className={size === 'full' ? 'flex-1 overflow-auto' : ''}>
+          {children}
+        </div>
       </div>
     </div>
   )

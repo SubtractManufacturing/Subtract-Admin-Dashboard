@@ -1,7 +1,7 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { updatePart, getPart } from "~/lib/parts";
-import { uploadFile, getDownloadUrl, deleteFile } from "~/lib/s3.server";
+import { uploadFile, deleteFile } from "~/lib/s3.server";
 import { createAttachment, deleteAttachmentByS3Key } from "~/lib/attachments";
 import { requireAuth } from "~/lib/auth.server";
 
@@ -64,9 +64,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
       fileName: `${partId}-thumbnail.png`
     });
 
-    // Get the download URL
-    const thumbnailUrl = await getDownloadUrl(uploadResult.key);
-
     // Create attachment record
     await createAttachment({
       fileName: uploadResult.fileName,
@@ -76,8 +73,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       s3Bucket: uploadResult.bucket,
     });
 
-    // Update the part with the new thumbnail URL
-    await updatePart(partId, { thumbnailUrl });
+    // Store just the S3 key (not a signed URL that expires)
+    // Loaders will generate signed URLs on-demand
+    await updatePart(partId, { thumbnailUrl: uploadResult.key });
 
     // After successful upload and update, delete the old thumbnail if it exists
     if (oldS3Key) {
@@ -95,7 +93,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
     }
 
-    return json({ thumbnailUrl, success: true }, { headers });
+    return json({ thumbnailUrl: uploadResult.key, success: true }, { headers });
   } catch (error) {
     console.error("Error uploading thumbnail:", error);
     return json({ error: "Failed to upload thumbnail" }, { status: 500 });

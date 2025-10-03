@@ -9,9 +9,10 @@ interface NavbarProps {
   version?: string;
   isStaging?: boolean;
   showEventsLink?: boolean;
+  showQuotesLink?: boolean;
 }
 
-export default function Navbar({ userName, userEmail, userInitials, version, isStaging, showEventsLink = true }: NavbarProps) {
+export default function Navbar({ userName, userEmail, userInitials, version, isStaging, showEventsLink = true, showQuotesLink = true }: NavbarProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -34,6 +35,14 @@ export default function Navbar({ userName, userEmail, userInitials, version, isS
         >
           Action Items
         </Link>
+        {showQuotesLink && (
+          <Link
+            to="/quotes"
+            className="text-white no-underline font-semibold transition-opacity hover:opacity-80"
+          >
+            Quotes
+          </Link>
+        )}
         <Link
           to="/orders"
           className="text-white no-underline font-semibold transition-opacity hover:opacity-80"

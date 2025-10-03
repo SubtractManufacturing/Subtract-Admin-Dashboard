@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useFetcher, Link } from "@remix-run/react";
+import { useFetcher, Link, useRevalidator } from "@remix-run/react";
 import type { EventLog } from "~/lib/events";
 import Button from "~/components/shared/Button";
 import { formatEventForTimeline } from "~/utils/eventFormatters";
@@ -23,27 +23,14 @@ export function EventTimeline({
   const [showAll, setShowAll] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  const fetcher = useFetcher<{ events: EventLog[] }>();
+  const revalidator = useRevalidator();
   const dismissFetcher = useFetcher();
 
   useEffect(() => {
-    if (!initialEvents || initialEvents.length === 0) {
-      fetcher.load(`/api/events?entityType=${entityType}&entityId=${entityId}&limit=5`);
+    if (initialEvents && initialEvents.length > 0) {
+      setEvents(initialEvents.filter(e => !e.isDismissed));
     }
-  }, [entityType, entityId]);
-
-  useEffect(() => {
-    if (fetcher.data?.events) {
-      const mappedEvents = fetcher.data.events as Array<Omit<EventLog, 'createdAt'> & { createdAt: string }>;
-      setEvents(mappedEvents
-        .filter(event => !event.isDismissed)
-        .map(event => ({
-          ...event,
-          createdAt: new Date(event.createdAt),
-          metadata: event.metadata || null
-        })));
-    }
-  }, [fetcher.data]);
+  }, [initialEvents]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -75,16 +62,49 @@ export function EventTimeline({
 
     // Persist to database
     const formData = new FormData();
+    formData.append('intent', 'dismiss');
     formData.append('eventId', eventId);
 
     dismissFetcher.submit(formData, {
       method: 'post',
-      action: '/actions/events/dismiss'
+      action: '/events'
     });
+
+    // Revalidate to get fresh data
+    setTimeout(() => revalidator.revalidate(), 100);
   };
 
   const getEventIcon = (event: EventLog) => {
     const baseClasses = "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center z-10 cursor-pointer hover:scale-110 transition-transform";
+
+    // Special case for quote revision
+    if (event.eventType === 'quote_revised') {
+      return (
+        <div className={`${baseClasses} bg-yellow-500`}>
+          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+      );
+    }
+
+    // Special case for quote sent
+    if (event.eventType === 'quote_status_changed') {
+      const metadata = event.metadata as Record<string, unknown> | null;
+      const newStatus = metadata?.newStatus || metadata?.status;
+
+      if (newStatus === 'Sent') {
+        return (
+          <div className={`${baseClasses} bg-green-500`}>
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </div>
+        );
+      }
+    }
 
     switch (event.eventCategory) {
       case "financial":
@@ -187,7 +207,7 @@ export function EventTimeline({
     });
   };
 
-  if (events.length === 0 && !fetcher.state) {
+  if (events.length === 0) {
     return (
       <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 ${className}`}>
         <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">

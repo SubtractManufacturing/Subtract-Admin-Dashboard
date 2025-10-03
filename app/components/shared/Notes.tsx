@@ -14,6 +14,7 @@ interface NotesProps {
   onAddNoteClick?: () => void;
   isAddingNote?: boolean;
   externalControl?: boolean;
+  readOnly?: boolean;
 }
 
 export function Notes({
@@ -25,7 +26,8 @@ export function Notes({
   showHeader = true,
   onAddNoteClick,
   isAddingNote: externalIsAddingNote,
-  externalControl = false
+  externalControl = false,
+  readOnly = false
 }: NotesProps) {
   const [notes, setNotes] = useState<Note[]>(initialNotes);
   const [internalIsAddingNote, setInternalIsAddingNote] = useState(false);
@@ -152,6 +154,7 @@ export function Notes({
               currentUserId={currentUserId}
               currentUserName={currentUserName}
               onUpdate={loadNotes}
+              readOnly={readOnly}
             />
           ))
         ) : (

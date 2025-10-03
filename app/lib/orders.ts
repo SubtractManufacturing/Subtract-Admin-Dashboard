@@ -12,7 +12,7 @@ export type OrderWithRelations = {
   customerId: number | null
   vendorId: number | null
   quoteId: number | null
-  status: 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived'
+  status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   totalPrice: string | null
   vendorPay: string | null
   shipDate: Date | null
@@ -30,7 +30,7 @@ export type OrderInput = {
   customerId?: number | null
   vendorId?: number | null
   quoteId?: number | null
-  status?: 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived'
+  status?: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   vendorPay?: string | null
   vendorPayPercentage?: number
   shipDate?: Date | null

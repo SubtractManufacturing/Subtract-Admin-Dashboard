@@ -8,6 +8,8 @@ export const FEATURE_FLAGS = {
   MESH_UPLOADS_ALL: "mesh_uploads_all",
   EVENTS_ACCESS_ALL: "events_access_all",
   EVENTS_NAV_VISIBLE: "events_nav_visible",
+  QUOTES_MANAGEMENT: "quotes_management",
+  QUOTES_NAV_VISIBLE: "quotes_nav_visible",
 } as const;
 
 // Default feature flags with their metadata
@@ -34,6 +36,18 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     key: FEATURE_FLAGS.EVENTS_NAV_VISIBLE,
     name: "Show Events in Navigation",
     description: "Display the Events link in the navigation bar for all users",
+    enabled: true,
+  },
+  {
+    key: FEATURE_FLAGS.QUOTES_MANAGEMENT,
+    name: "Enable Quotes Management",
+    description: "Enable the quotes management system for creating, editing, and converting quotes to orders",
+    enabled: true,
+  },
+  {
+    key: FEATURE_FLAGS.QUOTES_NAV_VISIBLE,
+    name: "Show Quotes in Navigation",
+    description: "Display the Quotes link in the navigation bar",
     enabled: true,
   },
 ];
@@ -78,7 +92,22 @@ export async function initializeFeatureFlags() {
 }
 
 export async function isFeatureEnabled(key: string) {
-  const flag = await getFeatureFlag(key);
+  let flag = await getFeatureFlag(key);
+
+  // If flag doesn't exist, create it with default value
+  if (!flag) {
+    const defaultFlag = DEFAULT_FLAGS.find(f => f.key === key);
+    if (defaultFlag) {
+      try {
+        await db.insert(featureFlags).values(defaultFlag);
+        flag = await getFeatureFlag(key);
+      } catch (error) {
+        // If insert fails (e.g., race condition), try to fetch again
+        flag = await getFeatureFlag(key);
+      }
+    }
+  }
+
   return flag?.enabled || false;
 }
 
@@ -110,5 +139,20 @@ export async function canUserAccessEvents(userRole?: string | null) {
 export async function shouldShowEventsInNav() {
   // Check if events should be shown in navigation
   const navVisible = await isFeatureEnabled(FEATURE_FLAGS.EVENTS_NAV_VISIBLE);
+  return navVisible;
+}
+
+export async function canUserManageQuotes() {
+  // Check if quotes management is enabled
+  const quotesEnabled = await isFeatureEnabled(FEATURE_FLAGS.QUOTES_MANAGEMENT);
+  if (!quotesEnabled) return false;
+
+  // All authenticated users can manage quotes when enabled
+  return true;
+}
+
+export async function shouldShowQuotesInNav() {
+  // Check if quotes should be shown in navigation
+  const navVisible = await isFeatureEnabled(FEATURE_FLAGS.QUOTES_NAV_VISIBLE);
   return navVisible;
 }

@@ -1,14 +1,14 @@
 import { db } from "./db/index.js"
-import { orderLineItems, quoteLineItems, parts } from "./db/schema.js"
+import { orderLineItems, quoteLineItems, parts, quoteParts } from "./db/schema.js"
 import { eq } from 'drizzle-orm'
-import type { OrderLineItem, QuoteLineItem, Part } from "./db/schema.js"
+import type { OrderLineItem, QuoteLineItem, Part, QuotePart } from "./db/schema.js"
 
 export type OrderLineItemWithPart = OrderLineItem & {
   part?: Part | null
 }
 
 export type QuoteLineItemWithPart = QuoteLineItem & {
-  part?: Part | null
+  quotePart?: QuotePart | null
 }
 
 export type LineItemInput = {
@@ -94,18 +94,22 @@ export async function getQuoteLineItems(quoteId: number): Promise<QuoteLineItemW
       .select({
         id: quoteLineItems.id,
         quoteId: quoteLineItems.quoteId,
-        partId: quoteLineItems.partId,
-        name: quoteLineItems.name,
-        description: quoteLineItems.description,
+        quotePartId: quoteLineItems.quotePartId,
         quantity: quoteLineItems.quantity,
         unitPrice: quoteLineItems.unitPrice,
+        totalPrice: quoteLineItems.totalPrice,
+        leadTimeDays: quoteLineItems.leadTimeDays,
+        description: quoteLineItems.description,
         notes: quoteLineItems.notes,
-        part: parts
+        sortOrder: quoteLineItems.sortOrder,
+        createdAt: quoteLineItems.createdAt,
+        updatedAt: quoteLineItems.updatedAt,
+        quotePart: quoteParts
       })
       .from(quoteLineItems)
-      .leftJoin(parts, eq(quoteLineItems.partId, parts.id))
+      .leftJoin(quoteParts, eq(quoteLineItems.quotePartId, quoteParts.id))
       .where(eq(quoteLineItems.quoteId, quoteId))
-      .orderBy(quoteLineItems.id)
+      .orderBy(quoteLineItems.sortOrder, quoteLineItems.id)
 
     return result
   } catch (error) {
@@ -116,11 +120,16 @@ export async function getQuoteLineItems(quoteId: number): Promise<QuoteLineItemW
 
 export async function createQuoteLineItem(quoteId: number, lineItemData: LineItemInput): Promise<QuoteLineItem> {
   try {
+    const totalPrice = (parseFloat(lineItemData.unitPrice) * lineItemData.quantity).toFixed(2)
     const result = await db
       .insert(quoteLineItems)
       .values({
         quoteId,
-        ...lineItemData
+        quotePartId: lineItemData.partId,
+        quantity: lineItemData.quantity,
+        unitPrice: lineItemData.unitPrice,
+        totalPrice: totalPrice,
+        notes: lineItemData.notes
       })
       .returning()
 

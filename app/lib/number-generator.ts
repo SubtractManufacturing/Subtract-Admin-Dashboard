@@ -77,6 +77,45 @@ export async function getNextOrderNumber(year?: number): Promise<string> {
   return generateHumanReadableNumber({ type: 'order', year })
 }
 
-export async function getNextQuoteNumber(year?: number): Promise<string> {
-  return generateHumanReadableNumber({ type: 'quote', year })
+export async function getNextQuoteNumber(): Promise<string> {
+  const now = new Date()
+  const year = now.getFullYear().toString().slice(-2)
+  const month = (now.getMonth() + 1).toString()
+
+  try {
+    const latestQuotes = await db
+      .select()
+      .from(quotes)
+      .where(like(quotes.quoteNumber, `Q${year}${month}-%`))
+      .orderBy(desc(quotes.createdAt))
+      .limit(1)
+
+    if (latestQuotes.length > 0) {
+      const latestNumber = latestQuotes[0].quoteNumber
+      const match = latestNumber.match(/^Q(\d{2})(\d{1,2})-([A-Z])(\d+)$/)
+
+      if (match) {
+        const [, numberYear, numberMonth, letter, sequence] = match
+
+        if (numberYear === year && numberMonth === month) {
+          const currentSequence = parseInt(sequence, 10)
+
+          if (currentSequence >= 999) {
+            const nextLetter = String.fromCharCode(letter.charCodeAt(0) + 1)
+            if (nextLetter > 'Z') {
+              throw new Error(`Maximum number reached for month ${year}/${month}`)
+            }
+            return `Q${year}${month}-${nextLetter}100`
+          }
+
+          return `Q${year}${month}-${letter}${(currentSequence + 1).toString().padStart(3, '0')}`
+        }
+      }
+    }
+
+    return `Q${year}${month}-A100`
+  } catch (error) {
+    console.error('Error generating quote number:', error)
+    return `Q${year}${month}-A100`
+  }
 }
