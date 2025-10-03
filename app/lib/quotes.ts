@@ -1,3 +1,16 @@
+/**
+ * Quotes Management Module
+ *
+ * Error Handling Convention:
+ * - Query functions (getQuote, getQuotes): Return null on error, log to console
+ * - Creation functions (createQuote, createQuotePart): Return null on error, log to console
+ * - Update functions (updateQuote, updateQuotePart): Return null on error, log to console
+ * - Delete/Archive functions: Return boolean (false on error)
+ * - Validation functions: Throw Error with descriptive message
+ * - Conversion functions: Return {success: boolean, error?: string} object
+ *
+ * All errors are logged to console. Critical errors are also logged as events for tracking.
+ */
 import { db } from "./db/index.js"
 import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings } from "./db/schema.js"
 import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
@@ -20,7 +33,6 @@ export type QuoteWithRelations = {
   expiredAt: Date | null
   archivedAt: Date | null
   subtotal: string | null
-  tax: string | null
   total: string | null
   createdById: string | null
   convertedToOrderId: number | null
@@ -55,45 +67,59 @@ export async function getQuotes(includeArchived = false): Promise<QuoteWithRelat
     // Check and update expired quotes before fetching
     await checkAndUpdateExpiredQuotes()
 
-    const quotesResult = await db
-      .select()
+    // Fetch all quotes with customers and vendors using joins
+    const quotesWithBasicRelations = await db
+      .select({
+        quote: quotes,
+        customer: customers,
+        vendor: vendors,
+      })
       .from(quotes)
+      .leftJoin(customers, eq(quotes.customerId, customers.id))
+      .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
       .where(includeArchived ? sql`1=1` : eq(quotes.isArchived, false))
       .orderBy(desc(quotes.createdAt))
 
-    if (!quotesResult.length) return []
+    if (!quotesWithBasicRelations.length) return []
 
-    const quotesWithRelations = await Promise.all(
-      quotesResult.map(async quote => {
-        const [customer, vendor, lineItems, parts] = await Promise.all([
-          quote.customerId
-            ? db.select().from(customers).where(eq(customers.id, quote.customerId)).limit(1)
-            : [null],
-          quote.vendorId
-            ? db.select().from(vendors).where(eq(vendors.id, quote.vendorId)).limit(1)
-            : [null],
-          db
-            .select()
-            .from(quoteLineItems)
-            .where(eq(quoteLineItems.quoteId, quote.id))
-            .orderBy(quoteLineItems.sortOrder),
-          db
-            .select()
-            .from(quoteParts)
-            .where(eq(quoteParts.quoteId, quote.id))
-        ])
+    // Fetch all line items for these quotes in bulk
+    const quoteIds = quotesWithBasicRelations.map(q => q.quote.id)
+    const allLineItems = await db
+      .select()
+      .from(quoteLineItems)
+      .where(sql`${quoteLineItems.quoteId} IN ${sql.raw(`(${quoteIds.join(',')})`)}`)
+      .orderBy(quoteLineItems.sortOrder)
 
-        return {
-          ...quote,
-          customer: customer[0],
-          vendor: vendor[0],
-          lineItems,
-          parts
-        }
-      })
-    )
+    // Fetch all parts for these quotes in bulk
+    const allParts = await db
+      .select()
+      .from(quoteParts)
+      .where(sql`${quoteParts.quoteId} IN ${sql.raw(`(${quoteIds.join(',')})`)}`);
 
-    return quotesWithRelations
+    // Group line items and parts by quote ID
+    const lineItemsByQuote = new Map<number, typeof allLineItems>()
+    const partsByQuote = new Map<number, typeof allParts>()
+
+    allLineItems.forEach(item => {
+      const items = lineItemsByQuote.get(item.quoteId) || []
+      items.push(item)
+      lineItemsByQuote.set(item.quoteId, items)
+    })
+
+    allParts.forEach(part => {
+      const parts = partsByQuote.get(part.quoteId) || []
+      parts.push(part)
+      partsByQuote.set(part.quoteId, parts)
+    })
+
+    // Assemble final results
+    return quotesWithBasicRelations.map(({ quote, customer, vendor }) => ({
+      ...quote,
+      customer,
+      vendor,
+      lineItems: lineItemsByQuote.get(quote.id) || [],
+      parts: partsByQuote.get(quote.id) || []
+    }))
   } catch (error) {
     console.error('Error fetching quotes:', error)
     return []
@@ -396,6 +422,28 @@ export async function convertQuoteToOrder(
       return { success: false, error: 'Quote has already been converted to an order' }
     }
 
+    // Validation: Ensure quote has line items
+    if (!quote.lineItems || quote.lineItems.length === 0) {
+      return { success: false, error: 'Cannot convert quote with no line items' }
+    }
+
+    // Validation: Ensure all line items have valid quantities and prices
+    for (const item of quote.lineItems) {
+      if (item.quantity <= 0) {
+        return { success: false, error: `Line item has invalid quantity: ${item.quantity}` }
+      }
+      const unitPrice = parseFloat(item.unitPrice || '0')
+      if (unitPrice < 0) {
+        return { success: false, error: `Line item has invalid price: ${unitPrice}` }
+      }
+    }
+
+    // Validation: Ensure quote total is greater than 0
+    const total = parseFloat(quote.total || '0')
+    if (total <= 0) {
+      return { success: false, error: 'Cannot convert quote with $0 total' }
+    }
+
     // Start a transaction
     const result = await db.transaction(async (tx) => {
       // Create the order
@@ -540,7 +588,6 @@ export async function convertQuoteToOrder(
 
 export async function calculateQuoteTotals(quoteId: number): Promise<{
   subtotal: number
-  tax: number
   total: number
 } | null> {
   try {
@@ -554,23 +601,20 @@ export async function calculateQuoteTotals(quoteId: number): Promise<{
       return sum + totalPrice
     }, 0)
 
-    // Simple tax calculation (you may want to make this configurable)
-    const taxRate = 0.08 // 8% tax
-    const tax = subtotal * taxRate
-    const total = subtotal + tax
+    // Total is same as subtotal - tax handled by financial platform
+    const total = subtotal
 
     // Update the quote with calculated totals
     await db
       .update(quotes)
       .set({
         subtotal: subtotal.toFixed(2),
-        tax: tax.toFixed(2),
         total: total.toFixed(2),
         updatedAt: new Date()
       })
       .where(eq(quotes.id, quoteId))
 
-    return { subtotal, tax, total }
+    return { subtotal, total }
   } catch (error) {
     console.error('Error calculating quote totals:', error)
     return null
@@ -702,8 +746,12 @@ export async function createQuoteWithParts(
           })
 
           // Create attachment record
+          if (!process.env.S3_BUCKET) {
+            throw new Error('S3_BUCKET environment variable is not configured')
+          }
+
           const [attachment] = await db.insert(attachments).values({
-            s3Bucket: process.env.S3_BUCKET || 'default-bucket',
+            s3Bucket: process.env.S3_BUCKET,
             s3Key: uploadResult.key,
             fileName: drawing.fileName,
             contentType: drawing.fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png',

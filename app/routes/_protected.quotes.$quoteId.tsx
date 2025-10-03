@@ -260,7 +260,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -379,11 +379,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
           triggerQuotePartMeshConversion(
             newQuotePart.id,
             uploadResult.key
-          ).catch((error) => {
+          ).catch(async (error) => {
             console.error(
               `Failed to trigger mesh conversion for quote part ${newQuotePart.id}:`,
               error
             );
+            // Log error event for tracking
+            const { createEvent } = await import("~/lib/events");
+            await createEvent({
+              entityType: "quote",
+              entityId: quoteId,
+              eventType: "mesh_conversion_failed",
+              eventCategory: "system",
+              title: "Mesh Conversion Failed",
+              description: `Failed to trigger mesh conversion for part ${newQuotePart.partName}`,
+              metadata: {
+                quotePartId: newQuotePart.id,
+                error: error instanceof Error ? error.message : String(error),
+              },
+              userId: eventContext?.userId,
+              userEmail: eventContext?.userEmail,
+            }).catch((err) => console.error("Failed to log event:", err));
           });
 
           // Handle technical drawings if provided
@@ -531,7 +547,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
     if (file.size > MAX_FILE_SIZE) {
-      return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
+      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
     }
 
     try {
@@ -629,7 +645,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const updates: { expirationDays?: number } = {};
         if (expirationDays !== null) {
-          updates.expirationDays = parseInt(expirationDays as string);
+          const days = parseInt(expirationDays as string);
+
+          // Validate expiration days: must be between 1 and 365 days
+          if (isNaN(days) || days < 1 || days > 365) {
+            return json(
+              { error: "Expiration days must be between 1 and 365" },
+              { status: 400 }
+            );
+          }
+
+          updates.expirationDays = days;
         }
 
         await updateQuote(quote.id, updates, eventContext);
@@ -944,6 +970,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           };
 
           let quotePart = null;
+          const filesToDelete: string[] = [];
 
           // If there's an associated quote part, get its details first
           if (quotePartId) {
@@ -957,67 +984,69 @@ export async function action({ request, params }: ActionFunctionArgs) {
               .limit(1);
 
             quotePart = part;
+
+            // Collect all S3 file keys to delete
+            if (quotePart) {
+              // Add source file (sanitize the key)
+              if (quotePart.partFileUrl) {
+                filesToDelete.push(sanitizeS3Key(quotePart.partFileUrl));
+              }
+
+              // Add mesh file
+              if (quotePart.partMeshUrl) {
+                const meshUrl = quotePart.partMeshUrl;
+                if (meshUrl.includes("quote-parts/")) {
+                  const urlParts = meshUrl.split("/");
+                  const quotePartsIndex = urlParts.findIndex(
+                    (p) => p === "quote-parts"
+                  );
+                  if (quotePartsIndex >= 0) {
+                    const meshKey = urlParts.slice(quotePartsIndex).join("/");
+                    filesToDelete.push(meshKey);
+                  }
+                }
+              }
+
+              // Add thumbnail file
+              if (quotePart.thumbnailUrl) {
+                filesToDelete.push(quotePart.thumbnailUrl);
+              }
+            }
           }
 
-          // Delete the line item FIRST (to avoid foreign key constraint)
-          const { deleteQuoteLineItem } = await import("~/lib/quotes");
-          await deleteQuoteLineItem(parseInt(lineItemId), eventContext);
+          // Step 1: Delete database records in transaction (atomic operation)
+          await db.transaction(async (tx) => {
+            const { deleteQuoteLineItem } = await import("~/lib/quotes");
+            await deleteQuoteLineItem(parseInt(lineItemId), eventContext);
 
-          // Now delete the quote part and its S3 files
-          if (quotePart) {
-            const { quoteParts } = await import("~/lib/db/schema");
-            const filesToDelete = [];
-
-            // Add source file (sanitize the key)
-            if (quotePart.partFileUrl) {
-              filesToDelete.push(sanitizeS3Key(quotePart.partFileUrl));
+            // Delete quote part from database if it exists
+            if (quotePart && quotePartId) {
+              const { quoteParts } = await import("~/lib/db/schema");
+              await tx.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
             }
+          });
 
-            // Add mesh file
-            if (quotePart.partMeshUrl) {
-              // Extract key from mesh URL
-              const meshUrl = quotePart.partMeshUrl;
-              if (meshUrl.includes("quote-parts/")) {
-                const urlParts = meshUrl.split("/");
-                const quotePartsIndex = urlParts.findIndex(
-                  (p) => p === "quote-parts"
+          // Step 2: Delete S3 files AFTER successful database operations
+          // If this fails, files become orphaned but database is consistent
+          for (const fileKey of filesToDelete) {
+            try {
+              await deleteFile(fileKey);
+              console.log(`Deleted S3 file: ${fileKey}`);
+            } catch (error: unknown) {
+              // Log but don't fail - database is already consistent
+              const err = error as { Code?: string; name?: string };
+              if (
+                err?.Code === "NoSuchKey" ||
+                err?.name === "NoSuchKey"
+              ) {
+                console.log(
+                  `S3 file not found (already deleted?): ${fileKey}`
                 );
-                if (quotePartsIndex >= 0) {
-                  const meshKey = urlParts.slice(quotePartsIndex).join("/");
-                  // Mesh files are already sanitized during conversion
-                  filesToDelete.push(meshKey);
-                }
+              } else {
+                console.error(`Error deleting S3 file ${fileKey}:`, error);
+                // TODO: Add to cleanup queue for retry
               }
             }
-
-            // Add thumbnail file
-            if (quotePart.thumbnailUrl) {
-              filesToDelete.push(quotePart.thumbnailUrl);
-            }
-
-            // Delete all files from S3
-            for (const fileKey of filesToDelete) {
-              try {
-                await deleteFile(fileKey);
-                console.log(`Deleted S3 file: ${fileKey}`);
-              } catch (error: unknown) {
-                // Log but don't fail if file doesn't exist
-                const err = error as { Code?: string; name?: string };
-                if (
-                  err?.Code === "NoSuchKey" ||
-                  err?.name === "NoSuchKey"
-                ) {
-                  console.log(
-                    `S3 file not found (already deleted?): ${fileKey}`
-                  );
-                } else {
-                  console.error(`Error deleting S3 file ${fileKey}:`, error);
-                }
-              }
-            }
-
-            // Delete quote part from database
-            await db.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
           }
 
           // Recalculate quote totals
@@ -1075,11 +1104,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
         triggerQuotePartMeshConversion(
           quotePart.id,
           quotePart.partFileUrl
-        ).catch((error) => {
+        ).catch(async (error) => {
           console.error(
             `Failed to regenerate mesh for quote part ${quotePart.id}:`,
             error
           );
+          // Log error event for tracking
+          const { createEvent } = await import("~/lib/events");
+          await createEvent({
+            entityType: "quote",
+            entityId: quoteId,
+            eventType: "mesh_conversion_failed",
+            eventCategory: "system",
+            title: "Mesh Regeneration Failed",
+            description: `Failed to regenerate mesh for part ${quotePart.partName}`,
+            metadata: {
+              quotePartId: quotePart.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            userId: eventContext?.userId,
+            userEmail: eventContext?.userEmail,
+          }).catch((err) => console.error("Failed to log event:", err));
         });
 
         return json({ success: true });
@@ -1123,6 +1168,7 @@ export default function QuoteDetail() {
   const [isFileViewerOpen, setIsFileViewerOpen] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const [pollCount, setPollCount] = useState(0);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(false);
@@ -1179,15 +1225,26 @@ export default function QuoteDetail() {
 
   // Set up polling for parts conversion status
   useEffect(() => {
-    if (hasConvertingParts && !pollInterval) {
+    const MAX_POLL_COUNT = 120; // Max 10 minutes (120 * 5 seconds)
+
+    if (hasConvertingParts && !pollInterval && pollCount < MAX_POLL_COUNT) {
       const interval = setInterval(() => {
+        setPollCount((prev) => prev + 1);
         // Revalidate the page data to get updated conversion status
         revalidator.revalidate();
       }, 5000); // Poll every 5 seconds
       setPollInterval(interval);
     } else if (!hasConvertingParts && pollInterval) {
+      // Conversion completed - clear interval and reset count
       clearInterval(pollInterval);
       setPollInterval(null);
+      setPollCount(0);
+    } else if (pollCount >= MAX_POLL_COUNT && pollInterval) {
+      // Timeout reached - stop polling
+      console.warn("Mesh conversion polling timeout reached (10 minutes)");
+      clearInterval(pollInterval);
+      setPollInterval(null);
+      setPollCount(0);
     }
 
     return () => {
@@ -1195,7 +1252,7 @@ export default function QuoteDetail() {
         clearInterval(pollInterval);
       }
     };
-  }, [hasConvertingParts, pollInterval, revalidator]);
+  }, [hasConvertingParts, pollInterval, pollCount, revalidator]);
 
   // Update optimistic line items when the actual data changes
   useEffect(() => {
