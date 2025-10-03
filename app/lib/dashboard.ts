@@ -16,7 +16,7 @@ export type Order = {
   customer_name: string
   vendor_id: number | null
   vendor_name: string
-  status: 'Pending' | 'In_Production' | 'Completed' | 'Cancelled' | 'Archived'
+  status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   quantity: number
   po_amount: string | null
   ship_date: Date | string | null
@@ -52,7 +52,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
         totalRevenue: sum(orders.totalPrice)
       })
       .from(orders)
-      .where(inArray(orders.status, ['Pending', 'In_Production']))
+      .where(inArray(orders.status, ['Pending', 'Waiting_For_Shop_Selection', 'In_Production', 'In_Inspection', 'Shipped']))
 
     // Get RFQs (quotes sent in last 30 days)
     const thirtyDaysAgo = new Date()

@@ -1,24 +1,61 @@
-import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
+import {
+  json,
+  LoaderFunctionArgs,
+  ActionFunctionArgs,
+  redirect,
+  unstable_parseMultipartFormData,
+  unstable_createMemoryUploadHandler,
+} from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { getOrderByNumberWithAttachments } from "~/lib/orders";
+import {
+  getOrderByNumberWithAttachments,
+  updateOrder,
+  type OrderEventContext,
+} from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
-import { getVendor } from "~/lib/vendors";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToOrder, unlinkAttachmentFromOrder, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
+import { getVendor, getVendors } from "~/lib/vendors";
+import {
+  getAttachment,
+  createAttachment,
+  deleteAttachment,
+  linkAttachmentToOrder,
+  unlinkAttachmentFromOrder,
+  type Attachment,
+  type AttachmentEventContext,
+} from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { shouldShowEventsInNav } from "~/lib/featureFlags";
-import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
+import {
+  uploadFile,
+  generateFileKey,
+  deleteFile,
+  getDownloadUrl,
+} from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
-import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
-import { getLineItemsByOrderId, createLineItem, updateLineItem, deleteLineItem, type LineItemWithPart, type LineItemEventContext } from "~/lib/lineItems";
+import {
+  getNotes,
+  createNote,
+  updateNote,
+  archiveNote,
+  type NoteEventContext,
+} from "~/lib/notes";
+import {
+  getLineItemsByOrderId,
+  createLineItem,
+  updateLineItem,
+  deleteLineItem,
+  type LineItemWithPart,
+  type LineItemEventContext,
+} from "~/lib/lineItems";
 import { getPartsByCustomerId, hydratePartThumbnails } from "~/lib/parts";
 import LineItemModal from "~/components/LineItemModal";
-import type { OrderLineItem } from "~/lib/db/schema";
+import type { OrderLineItem, Vendor } from "~/lib/db/schema";
 import { useState, useRef, useCallback } from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { EventTimeline } from "~/components/EventTimeline";
@@ -27,7 +64,7 @@ import { getEventsByEntity } from "~/lib/events";
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
-  
+
   const orderNumber = params.orderId; // Note: param name stays the same but now represents orderNumber
   if (!orderNumber) {
     throw new Response("Order number is required", { status: 400 });
@@ -39,9 +76,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Fetch customer and vendor details
-  const customer = order.customerId ? await getCustomer(order.customerId) : null;
+  const customer = order.customerId
+    ? await getCustomer(order.customerId)
+    : null;
   const vendor = order.vendorId ? await getVendor(order.vendorId) : null;
-  
+
+  // Fetch all vendors for shop assignment
+  const vendors = await getVendors();
+
   // Fetch notes for this order
   const notes = await getNotes("order", order.id.toString());
 
@@ -57,7 +99,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Fetch parts for the customer if available
-  let parts = order.customerId ? await getPartsByCustomerId(order.customerId) : [];
+  let parts = order.customerId
+    ? await getPartsByCustomerId(order.customerId)
+    : [];
 
   // Hydrate thumbnails for customer parts (convert S3 keys to signed URLs)
   parts = await hydratePartThumbnails(parts);
@@ -69,7 +113,20 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   ]);
 
   return withAuthHeaders(
-    json({ order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink, events }),
+    json({
+      order,
+      customer,
+      vendor,
+      vendors,
+      notes,
+      lineItems,
+      parts,
+      user,
+      userDetails,
+      appConfig,
+      showEventsLink,
+      events,
+    }),
     headers
   );
 }
@@ -78,7 +135,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  
+
   const orderNumber = params.orderId;
   if (!orderNumber) {
     return json({ error: "Order number is required" }, { status: 400 });
@@ -95,7 +152,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       maxPartSize: MAX_FILE_SIZE,
     });
 
-    const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+    const formData = await unstable_parseMultipartFormData(
+      request,
+      uploadHandler
+    );
     const file = formData.get("file") as File;
 
     if (!file) {
@@ -118,7 +178,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const uploadResult = await uploadFile({
         key,
         buffer,
-        contentType: file.type || 'application/octet-stream',
+        contentType: file.type || "application/octet-stream",
         fileName: file.name,
       });
 
@@ -129,13 +189,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
       };
 
       // Create attachment record
-      const attachment = await createAttachment({
-        s3Bucket: uploadResult.bucket,
-        s3Key: uploadResult.key,
-        fileName: uploadResult.fileName,
-        contentType: uploadResult.contentType,
-        fileSize: uploadResult.size,
-      }, eventContext);
+      const attachment = await createAttachment(
+        {
+          s3Bucket: uploadResult.bucket,
+          s3Key: uploadResult.key,
+          fileName: uploadResult.fileName,
+          contentType: uploadResult.contentType,
+          fileSize: uploadResult.size,
+        },
+        eventContext
+      );
 
       // Link to order
       await linkAttachmentToOrder(order.id, attachment.id, eventContext);
@@ -143,7 +206,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       // Return a redirect to refresh the page
       return redirect(`/orders/${orderNumber}`);
     } catch (error) {
-      console.error('Upload error:', error);
+      console.error("Upload error:", error);
       return json({ error: "Failed to upload file" }, { status: 500 });
     }
   }
@@ -172,12 +235,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const note = await createNote({
-          entityType: "order",
-          entityId: order.id.toString(),
-          content,
-          createdBy,
-        }, noteEventContext);
+        const note = await createNote(
+          {
+            entityType: "order",
+            entityId: order.id.toString(),
+            content,
+            createdBy,
+          },
+          noteEventContext
+        );
 
         return withAuthHeaders(json({ note }), headers);
       }
@@ -260,7 +326,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Generate a presigned URL for download
         const downloadUrl = await getDownloadUrl(attachment.s3Key);
-        
+
         // Return the URL for client-side redirect
         return json({ downloadUrl });
       }
@@ -282,15 +348,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const lineItem = await createLineItem({
-          orderId: order.id,
-          name,
-          description,
-          quantity,
-          unitPrice,
-          partId: partId || null,
-          notes: notes || null,
-        }, eventContext);
+        const lineItem = await createLineItem(
+          {
+            orderId: order.id,
+            name,
+            description,
+            quantity,
+            unitPrice,
+            partId: partId || null,
+            notes: notes || null,
+          },
+          eventContext
+        );
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
@@ -313,14 +382,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const lineItem = await updateLineItem(lineItemId, {
-          name,
-          description,
-          quantity,
-          unitPrice,
-          partId: partId || null,
-          notes: notes || null,
-        }, eventContext);
+        const lineItem = await updateLineItem(
+          lineItemId,
+          {
+            name,
+            description,
+            quantity,
+            unitPrice,
+            partId: partId || null,
+            notes: notes || null,
+          },
+          eventContext
+        );
 
         return withAuthHeaders(json({ lineItem }), headers);
       }
@@ -354,11 +427,61 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const lineItem = await updateLineItem(lineItemId, {
-          notes: notes || null,
-        }, eventContext);
+        const lineItem = await updateLineItem(
+          lineItemId,
+          {
+            notes: notes || null,
+          },
+          eventContext
+        );
 
         return withAuthHeaders(json({ lineItem }), headers);
+      }
+
+      case "updateStatus": {
+        const status = formData.get("status") as string;
+
+        if (!status) {
+          return json({ error: "Missing status" }, { status: 400 });
+        }
+
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await updateOrder(
+          order.id,
+          { status: status as any },
+          orderEventContext
+        );
+
+        return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "assignShop": {
+        const vendorId = formData.get("vendorId");
+
+        if (!vendorId) {
+          return json({ error: "Please select a vendor" }, { status: 400 });
+        }
+
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        // Update both vendor and status
+        await updateOrder(
+          order.id,
+          {
+            vendorId: parseInt(vendorId as string),
+            status: "In_Production",
+          },
+          orderEventContext
+        );
+
+        return redirect(`/orders/${orderNumber}`);
       }
 
       default:
@@ -371,18 +494,45 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function OrderDetails() {
-  const { order, customer, vendor, notes, lineItems, parts, user, userDetails, appConfig, showEventsLink, events } = useLoaderData<typeof loader>();
+  const {
+    order,
+    customer,
+    vendor,
+    vendors,
+    notes,
+    lineItems,
+    parts,
+    user,
+    userDetails,
+    appConfig,
+    showEventsLink,
+    events,
+  } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
+  const [selectedFile, setSelectedFile] = useState<{
+    url: string;
+    fileName: string;
+    contentType?: string;
+    fileSize?: number;
+  } | null>(null);
   const [lineItemModalOpen, setLineItemModalOpen] = useState(false);
-  const [selectedLineItem, setSelectedLineItem] = useState<OrderLineItem | null>(null);
+  const [selectedLineItem, setSelectedLineItem] =
+    useState<OrderLineItem | null>(null);
   const [lineItemMode, setLineItemMode] = useState<"create" | "edit">("create");
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editingNoteValue, setEditingNoteValue] = useState<string>("");
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
-  const [selectedPart3D, setSelectedPart3D] = useState<{ partId?: string; partName?: string; modelUrl?: string; solidModelUrl?: string; thumbnailUrl?: string } | null>(null);
+  const [selectedPart3D, setSelectedPart3D] = useState<{
+    partId?: string;
+    partName?: string;
+    modelUrl?: string;
+    solidModelUrl?: string;
+    thumbnailUrl?: string;
+  } | null>(null);
+  const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
+  const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const lineItemFetcher = useFetcher();
@@ -400,12 +550,12 @@ export default function OrderDetails() {
     if (file) {
       const formData = new FormData();
       formData.append("file", file);
-      
+
       uploadFetcher.submit(formData, {
         method: "post",
         encType: "multipart/form-data",
       });
-      
+
       // Reset the file input
       event.target.value = "";
     }
@@ -416,22 +566,25 @@ export default function OrderDetails() {
       const formData = new FormData();
       formData.append("intent", "deleteAttachment");
       formData.append("attachmentId", attachmentId);
-      
+
       deleteFetcher.submit(formData, {
         method: "post",
       });
     }
   };
 
-
-
-  const handleViewFile = (attachment: { id: string; fileName: string; contentType: string; fileSize: number | null }) => {
+  const handleViewFile = (attachment: {
+    id: string;
+    fileName: string;
+    contentType: string;
+    fileSize: number | null;
+  }) => {
     const fileUrl = `/attachments/${attachment.id}/download`;
-    setSelectedFile({ 
-      url: fileUrl, 
+    setSelectedFile({
+      url: fileUrl,
       fileName: attachment.fileName,
       contentType: attachment.contentType,
-      fileSize: attachment.fileSize || undefined
+      fileSize: attachment.fileSize || undefined,
     });
     setFileModalOpen(true);
   };
@@ -454,7 +607,7 @@ export default function OrderDetails() {
       const formData = new FormData();
       formData.append("intent", "deleteLineItem");
       formData.append("lineItemId", lineItemId.toString());
-      
+
       lineItemFetcher.submit(formData, {
         method: "post",
       });
@@ -465,40 +618,49 @@ export default function OrderDetails() {
     setLineItemModalOpen(false);
   }, []);
 
-  const handleLineItemSubmit = useCallback((data: {
-    name: string;
-    description: string;
-    quantity: number;
-    unitPrice: string;
-    partId?: string | null;
-  }) => {
-    const formData = new FormData();
-    formData.append("intent", lineItemMode === "create" ? "createLineItem" : "updateLineItem");
-    formData.append("name", data.name);
-    formData.append("description", data.description);
-    formData.append("quantity", data.quantity.toString());
-    formData.append("unitPrice", data.unitPrice);
-    
-    // Include partId if present
-    if (data.partId) {
-      formData.append("partId", data.partId);
-    }
-    
-    if (lineItemMode === "edit" && selectedLineItem) {
-      formData.append("lineItemId", selectedLineItem.id.toString());
-      // Preserve existing notes when editing (they're edited inline, not in the modal)
-      formData.append("notes", selectedLineItem.notes || "");
-    } else {
-      // For new line items, start with empty notes
-      formData.append("notes", "");
-    }
-    
-    lineItemFetcher.submit(formData, {
-      method: "post",
-    });
-  }, [lineItemMode, selectedLineItem, lineItemFetcher]);
+  const handleLineItemSubmit = useCallback(
+    (data: {
+      name: string;
+      description: string;
+      quantity: number;
+      unitPrice: string;
+      partId?: string | null;
+    }) => {
+      const formData = new FormData();
+      formData.append(
+        "intent",
+        lineItemMode === "create" ? "createLineItem" : "updateLineItem"
+      );
+      formData.append("name", data.name);
+      formData.append("description", data.description);
+      formData.append("quantity", data.quantity.toString());
+      formData.append("unitPrice", data.unitPrice);
 
-  const handleStartEditNote = (lineItemId: number, currentNote: string | null) => {
+      // Include partId if present
+      if (data.partId) {
+        formData.append("partId", data.partId);
+      }
+
+      if (lineItemMode === "edit" && selectedLineItem) {
+        formData.append("lineItemId", selectedLineItem.id.toString());
+        // Preserve existing notes when editing (they're edited inline, not in the modal)
+        formData.append("notes", selectedLineItem.notes || "");
+      } else {
+        // For new line items, start with empty notes
+        formData.append("notes", "");
+      }
+
+      lineItemFetcher.submit(formData, {
+        method: "post",
+      });
+    },
+    [lineItemMode, selectedLineItem, lineItemFetcher]
+  );
+
+  const handleStartEditNote = (
+    lineItemId: number,
+    currentNote: string | null
+  ) => {
     setEditingNoteId(lineItemId);
     setEditingNoteValue(currentNote || "");
   };
@@ -508,11 +670,11 @@ export default function OrderDetails() {
     formData.append("intent", "updateLineItemNote");
     formData.append("lineItemId", lineItemId.toString());
     formData.append("notes", editingNoteValue);
-    
+
     notesFetcher.submit(formData, {
       method: "post",
     });
-    
+
     setEditingNoteId(null);
     setEditingNoteValue("");
   };
@@ -522,24 +684,107 @@ export default function OrderDetails() {
     setEditingNoteValue("");
   };
 
-  const handleView3DModel = (part: { id: string; partName: string | null; partMeshUrl?: string | null; partFileUrl?: string | null; thumbnailUrl?: string | null }) => {
+  const handleView3DModel = (part: {
+    id: string;
+    partName: string | null;
+    partMeshUrl?: string | null;
+    partFileUrl?: string | null;
+    thumbnailUrl?: string | null;
+  }) => {
     if (part) {
       setSelectedPart3D({
         partId: part.id,
         partName: part.partName || undefined,
         modelUrl: part.partMeshUrl || undefined,
         solidModelUrl: part.partFileUrl || undefined,
-        thumbnailUrl: part.thumbnailUrl || undefined
+        thumbnailUrl: part.thumbnailUrl || undefined,
       });
       setPart3DModalOpen(true);
     }
   };
 
+  // Status transition handlers
+  const handleSendToShops = () => {
+    if (
+      confirm(
+        "Are you sure you want to send this order to shops? The order will move to 'Waiting for Shop Selection' status."
+      )
+    ) {
+      const formData = new FormData();
+      formData.append("intent", "updateStatus");
+      formData.append("status", "Waiting_For_Shop_Selection");
+      lineItemFetcher.submit(formData, { method: "post" });
+    }
+  };
+
+  const handleAssignShop = () => {
+    setSelectedVendorId(order.vendorId);
+    setAssignShopModalOpen(true);
+  };
+
+  const handleAssignShopSubmit = () => {
+    if (!selectedVendorId) {
+      alert("Please select a vendor");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("intent", "assignShop");
+    formData.append("vendorId", selectedVendorId.toString());
+    lineItemFetcher.submit(formData, { method: "post" });
+    setAssignShopModalOpen(false);
+  };
+
+  const handleStartInspection = () => {
+    if (
+      confirm(
+        "Are you sure you want to start inspection? The order will move to 'In Inspection' status."
+      )
+    ) {
+      const formData = new FormData();
+      formData.append("intent", "updateStatus");
+      formData.append("status", "In_Inspection");
+      lineItemFetcher.submit(formData, { method: "post" });
+    }
+  };
+
+  const handleShipOrder = () => {
+    if (confirm("Are you sure you want to mark this order as shipped?")) {
+      const formData = new FormData();
+      formData.append("intent", "updateStatus");
+      formData.append("status", "Shipped");
+      lineItemFetcher.submit(formData, { method: "post" });
+    }
+  };
+
+  const handleMarkAsDelivered = () => {
+    if (confirm("Are you sure you want to mark this order as delivered?")) {
+      const formData = new FormData();
+      formData.append("intent", "updateStatus");
+      formData.append("status", "Delivered");
+      lineItemFetcher.submit(formData, { method: "post" });
+    }
+  };
+
+  const handleCompleteOrder = () => {
+    if (
+      confirm(
+        "Are you sure you want to complete this order? The order will be marked as 'Completed'."
+      )
+    ) {
+      const formData = new FormData();
+      formData.append("intent", "updateStatus");
+      formData.append("status", "Completed");
+      lineItemFetcher.submit(formData, { method: "post" });
+    }
+  };
 
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
   const today = new Date();
-  const daysUntilShip = shipDate ? Math.ceil((shipDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const daysUntilShip = shipDate
+    ? Math.ceil((shipDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    : null;
 
   // Determine priority based on days until ship
   const getPriority = () => {
@@ -554,38 +799,51 @@ export default function OrderDetails() {
   // Format currency
   const formatCurrency = (amount: string | null) => {
     if (!amount) return "$0.00";
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
     }).format(parseFloat(amount));
   };
 
   // Format date
   const formatDate = (date: Date | string | null) => {
     if (!date) return "--";
-    const dateObj = typeof date === 'string' ? new Date(date) : date;
-    return dateObj.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric'
+    const dateObj = typeof date === "string" ? new Date(date) : date;
+    return dateObj.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
     });
   };
 
   // Calculate total price from line items
-  const calculatedTotalPrice = lineItems.reduce((sum: number, item: LineItemWithPart) => {
-    const lineItem = item.lineItem || item;
-    return sum + (lineItem.quantity * parseFloat(lineItem.unitPrice || "0"));
-  }, 0).toString();
-  
+  const calculatedTotalPrice = lineItems
+    .reduce((sum: number, item: LineItemWithPart) => {
+      const lineItem = item.lineItem || item;
+      return sum + lineItem.quantity * parseFloat(lineItem.unitPrice || "0");
+    }, 0)
+    .toString();
+
   // Calculate vendor pay from percentage
   const vendorPayPercentage = parseFloat(order.vendorPay || "70");
-  const calculatedVendorPay = (parseFloat(calculatedTotalPrice) * vendorPayPercentage / 100).toString();
+  const calculatedVendorPay = (
+    (parseFloat(calculatedTotalPrice) * vendorPayPercentage) /
+    100
+  ).toString();
 
   // Get status display
   const getStatusDisplay = (status: string) => {
     switch (status) {
-      case 'In_Production':
-        return 'In Production';
+      case "Waiting_For_Shop_Selection":
+        return "Waiting for Shop Selection";
+      case "In_Production":
+        return "In Production";
+      case "In_Inspection":
+        return "In Inspection";
+      case "Shipped":
+        return "Shipped";
+      case "Delivered":
+        return "Delivered";
       default:
         return status.charAt(0).toUpperCase() + status.slice(1);
     }
@@ -594,28 +852,36 @@ export default function OrderDetails() {
   // Get status color classes
   const getStatusClasses = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'pending':
-        return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
-      case 'in_production':
-        return 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300';
-      case 'completed':
-        return 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300';
-      case 'cancelled':
-        return 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300';
+      case "pending":
+        return "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300";
+      case "waiting_for_shop_selection":
+        return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+      case "in_production":
+        return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+      case "in_inspection":
+        return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
+      case "shipped":
+        return "bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300";
+      case "delivered":
+        return "bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-400";
+      case "completed":
+        return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
+      case "cancelled":
+        return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
       default:
-        return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
+        return "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300";
     }
   };
 
   // Get priority color classes
   const getPriorityClasses = (priority: string) => {
     switch (priority) {
-      case 'Critical':
-        return 'bg-red-200 text-red-900 dark:bg-red-800 dark:text-red-100';
-      case 'High':
-        return 'bg-orange-200 text-orange-900 dark:bg-orange-800 dark:text-orange-100';
+      case "Critical":
+        return "bg-red-200 text-red-900 dark:bg-red-800 dark:text-red-100";
+      case "High":
+        return "bg-orange-200 text-orange-900 dark:bg-orange-800 dark:text-orange-100";
       default:
-        return 'bg-green-200 text-green-900 dark:bg-green-800 dark:text-green-100';
+        return "bg-green-200 text-green-900 dark:bg-green-800 dark:text-green-100";
     }
   };
 
@@ -627,7 +893,10 @@ export default function OrderDetails() {
       <Navbar
         userName={userDetails?.name || user.email}
         userEmail={user.email}
-        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+        userInitials={
+          userDetails?.name?.charAt(0).toUpperCase() ||
+          user.email.charAt(0).toUpperCase()
+        }
         version={appConfig.version}
         isStaging={appConfig.isStaging}
         showEventsLink={showEventsLink}
@@ -635,23 +904,72 @@ export default function OrderDetails() {
       <div className="max-w-[1920px] mx-auto">
         {/* Custom breadcrumb bar with buttons */}
         <div className="flex justify-between items-center px-10 py-2.5">
-          <Breadcrumbs items={[
-            { label: "Dashboard", href: "/" },
-            { label: "Orders", href: "/orders" },
-            { label: order.orderNumber }
-          ]} />
+          <Breadcrumbs
+            items={[
+              { label: "Dashboard", href: "/" },
+              { label: "Orders", href: "/orders" },
+              { label: order.orderNumber },
+            ]}
+          />
           <div className="flex flex-wrap gap-3">
-            <Button variant="primary" className="bg-green-600 hover:bg-green-700">
-              Update Status
-            </Button>
-            <Button variant="primary" className="bg-blue-600 hover:bg-blue-700">
-              Edit Order
-            </Button>
+            {order.status === "Pending" && (
+              <Button
+                onClick={handleSendToShops}
+                variant="primary"
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                Send to Board
+              </Button>
+            )}
+            {order.status === "Waiting_For_Shop_Selection" && (
+              <Button
+                onClick={handleAssignShop}
+                variant="primary"
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                Assign Shop
+              </Button>
+            )}
+            {order.status === "In_Production" && (
+              <Button
+                onClick={handleStartInspection}
+                variant="primary"
+                className="bg-amber-600 hover:bg-amber-700"
+              >
+                Start Inspection
+              </Button>
+            )}
+            {order.status === "In_Inspection" && (
+              <Button
+                onClick={handleShipOrder}
+                variant="primary"
+                className="bg-teal-600 hover:bg-teal-700"
+              >
+                Ship Order
+              </Button>
+            )}
+            {order.status === "Shipped" && (
+              <Button
+                onClick={handleMarkAsDelivered}
+                variant="primary"
+                className="bg-green-600 hover:bg-green-700"
+              >
+                Mark as Delivered
+              </Button>
+            )}
+            {order.status === "Delivered" && (
+              <Button
+                onClick={handleCompleteOrder}
+                variant="primary"
+                className="bg-green-700 hover:bg-green-800"
+              >
+                Complete Order
+              </Button>
+            )}
           </div>
         </div>
-        
-        <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
 
+        <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
           {/* Notice Bar */}
           {showNotice && daysUntilShip && daysUntilShip <= 7 && (
             <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
@@ -659,12 +977,23 @@ export default function OrderDetails() {
                 onClick={() => setShowNotice(false)}
                 className="absolute top-2 right-2 text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
               <p className="font-semibold text-yellow-800 dark:text-yellow-200">
-                Attention: This order is approaching its due date ({daysUntilShip} days remaining)
+                Attention: This order is approaching its due date (
+                {daysUntilShip} days remaining)
               </p>
             </div>
           )}
@@ -673,23 +1002,37 @@ export default function OrderDetails() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             {/* Order Status Card */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-6 transform transition-all hover:scale-105">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Order Status</h3>
-              <div className={`px-4 py-3 rounded-full text-center font-semibold ${getStatusClasses(order.status)}`}>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                Order Status
+              </h3>
+              <div
+                className={`px-4 py-3 rounded-full text-center font-semibold ${getStatusClasses(
+                  order.status
+                )}`}
+              >
                 {getStatusDisplay(order.status)}
               </div>
             </div>
 
             {/* Priority Level Card */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-6 transform transition-all hover:scale-105">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Priority Level</h3>
-              <div className={`px-4 py-3 rounded-full text-center font-semibold ${getPriorityClasses(priority)}`}>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                Priority Level
+              </h3>
+              <div
+                className={`px-4 py-3 rounded-full text-center font-semibold ${getPriorityClasses(
+                  priority
+                )}`}
+              >
                 {priority} Priority
               </div>
             </div>
 
             {/* Order Value Card */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-6 transform transition-all hover:scale-105">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Order Value</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                Order Value
+              </h3>
               <p className="text-3xl font-bold text-gray-900 dark:text-gray-100">
                 {formatCurrency(calculatedTotalPrice)}
               </p>
@@ -697,9 +1040,11 @@ export default function OrderDetails() {
 
             {/* Progress Card */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-6 transform transition-all hover:scale-105">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Progress</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+                Progress
+              </h3>
               <div className="relative w-full h-8 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                <div 
+                <div
                   className="absolute top-0 left-0 h-full bg-green-500 dark:bg-green-600 rounded-full transition-all duration-500"
                   style={{ width: `${progress}%` }}
                 />
@@ -715,38 +1060,67 @@ export default function OrderDetails() {
             {/* Order Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                  Order Information
+                </h3>
               </div>
               <div className="p-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Order Number</p>
-                    <p className="text-lg text-gray-900 dark:text-gray-100">{order.orderNumber}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Order Date</p>
-                    <p className="text-lg text-gray-900 dark:text-gray-100">{formatDate(order.createdAt)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Ship Date</p>
-                    <p className="text-lg text-gray-900 dark:text-gray-100">{formatDate(order.shipDate)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Lead Time</p>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Order Number
+                    </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {order.leadTime ? `${order.leadTime} Business Days` : "--"}
+                      {order.orderNumber}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Vendor Pay</p>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Order Date
+                    </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {formatCurrency(calculatedVendorPay)} ({vendorPayPercentage}%)
+                      {formatDate(order.createdAt)}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Profit Margin</p>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Ship Date
+                    </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {formatCurrency((parseFloat(calculatedTotalPrice) - parseFloat(calculatedVendorPay)).toString())} ({100 - vendorPayPercentage}%)
+                      {formatDate(order.shipDate)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Lead Time
+                    </p>
+                    <p className="text-lg text-gray-900 dark:text-gray-100">
+                      {order.leadTime
+                        ? `${order.leadTime} Business Days`
+                        : "--"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Vendor Pay
+                    </p>
+                    <p className="text-lg text-gray-900 dark:text-gray-100">
+                      {formatCurrency(calculatedVendorPay)} (
+                      {vendorPayPercentage}%)
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Profit Margin
+                    </p>
+                    <p className="text-lg text-gray-900 dark:text-gray-100">
+                      {formatCurrency(
+                        (
+                          parseFloat(calculatedTotalPrice) -
+                          parseFloat(calculatedVendorPay)
+                        ).toString()
+                      )}{" "}
+                      ({100 - vendorPayPercentage}%)
                     </p>
                   </div>
                 </div>
@@ -756,7 +1130,9 @@ export default function OrderDetails() {
             {/* Customer Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Customer Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                  Customer Information
+                </h3>
                 {customer && (
                   <a
                     href={`/customers/${customer.id}`}
@@ -770,7 +1146,10 @@ export default function OrderDetails() {
                       fill="currentColor"
                       viewBox="0 0 16 16"
                     >
-                      <path fillRule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                      <path
+                        fillRule="evenodd"
+                        d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"
+                      />
                     </svg>
                   </a>
                 )}
@@ -779,23 +1158,41 @@ export default function OrderDetails() {
                 {customer ? (
                   <div className="space-y-4">
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Company</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.displayName}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                        Company
+                      </p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">
+                        {customer.displayName}
+                      </p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Customer ID</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">CUST-{customer.id.toString().padStart(5, '0')}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                        Customer ID
+                      </p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">
+                        CUST-{customer.id.toString().padStart(5, "0")}
+                      </p>
                     </div>
                     {customer.email && (
                       <div className="bg-blue-50 dark:bg-blue-900/30 rounded-lg p-4">
-                        <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Primary Contact</p>
-                        <p className="text-gray-900 dark:text-gray-100">{customer.email}</p>
-                        {customer.phone && <p className="text-gray-900 dark:text-gray-100">{customer.phone}</p>}
+                        <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                          Primary Contact
+                        </p>
+                        <p className="text-gray-900 dark:text-gray-100">
+                          {customer.email}
+                        </p>
+                        {customer.phone && (
+                          <p className="text-gray-900 dark:text-gray-100">
+                            {customer.phone}
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
                 ) : (
-                  <p className="text-gray-500 dark:text-gray-400">No customer information available</p>
+                  <p className="text-gray-500 dark:text-gray-400">
+                    No customer information available
+                  </p>
                 )}
               </div>
             </div>
@@ -804,8 +1201,12 @@ export default function OrderDetails() {
           {/* Line Items Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Line Items</h3>
-              <Button size="sm" onClick={handleAddLineItem}>Add Line Item</Button>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                Line Items
+              </h3>
+              <Button size="sm" onClick={handleAddLineItem}>
+                Add Line Item
+              </Button>
             </div>
             <div className="p-6">
               {lineItems && lineItems.length > 0 ? (
@@ -838,7 +1239,9 @@ export default function OrderDetails() {
                       {lineItems.map((item: LineItemWithPart) => {
                         const lineItem = item.lineItem || item;
                         const part = item.part;
-                        const total = lineItem.quantity * parseFloat(lineItem.unitPrice || "0");
+                        const total =
+                          lineItem.quantity *
+                          parseFloat(lineItem.unitPrice || "0");
                         const isEditingNote = editingNoteId === lineItem.id;
                         return (
                           <tr key={lineItem.id}>
@@ -854,7 +1257,9 @@ export default function OrderDetails() {
                                     >
                                       <img
                                         src={part.thumbnailUrl}
-                                        alt={`${part.partName || lineItem.name} thumbnail`}
+                                        alt={`${
+                                          part.partName || lineItem.name
+                                        } thumbnail`}
                                         className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                       />
                                     </button>
@@ -901,7 +1306,9 @@ export default function OrderDetails() {
                                 <div className="flex items-center space-x-2">
                                   <textarea
                                     value={editingNoteValue}
-                                    onChange={(e) => setEditingNoteValue(e.target.value)}
+                                    onChange={(e) =>
+                                      setEditingNoteValue(e.target.value)
+                                    }
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter" && !e.shiftKey) {
                                         e.preventDefault();
@@ -919,8 +1326,14 @@ export default function OrderDetails() {
                                     className="p-1 text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
                                     title="Save (Enter)"
                                   >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                                      <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="16"
+                                      height="16"
+                                      fill="currentColor"
+                                      viewBox="0 0 16 16"
+                                    >
+                                      <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
                                     </svg>
                                   </button>
                                   <button
@@ -928,27 +1341,45 @@ export default function OrderDetails() {
                                     className="p-1 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                                     title="Cancel (Esc)"
                                   >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                                      <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="16"
+                                      height="16"
+                                      fill="currentColor"
+                                      viewBox="0 0 16 16"
+                                    >
+                                      <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
                                     </svg>
                                   </button>
                                 </div>
                               ) : (
                                 <button
-                                  onClick={() => handleStartEditNote(lineItem.id, lineItem.notes)}
+                                  onClick={() =>
+                                    handleStartEditNote(
+                                      lineItem.id,
+                                      lineItem.notes
+                                    )
+                                  }
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
-                                      handleStartEditNote(lineItem.id, lineItem.notes);
+                                      handleStartEditNote(
+                                        lineItem.id,
+                                        lineItem.notes
+                                      );
                                     }
                                   }}
                                   className="cursor-pointer min-h-[28px] px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left w-full"
                                   title="Click to edit note"
                                 >
                                   {lineItem.notes ? (
-                                    <span className="text-sm break-words whitespace-pre-wrap">{lineItem.notes}</span>
+                                    <span className="text-sm break-words whitespace-pre-wrap">
+                                      {lineItem.notes}
+                                    </span>
                                   ) : (
-                                    <span className="text-sm text-gray-400 dark:text-gray-500 italic">Click to add note</span>
+                                    <span className="text-sm text-gray-400 dark:text-gray-500 italic">
+                                      Click to add note
+                                    </span>
                                   )}
                                 </button>
                               )}
@@ -976,11 +1407,13 @@ export default function OrderDetails() {
                                     fill="currentColor"
                                     viewBox="0 0 16 16"
                                   >
-                                    <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
+                                    <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
                                   </svg>
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteLineItem(lineItem.id)}
+                                  onClick={() =>
+                                    handleDeleteLineItem(lineItem.id)
+                                  }
                                   className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
                                   title="Delete"
                                 >
@@ -991,7 +1424,7 @@ export default function OrderDetails() {
                                     fill="currentColor"
                                     viewBox="0 0 16 16"
                                   >
-                                    <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
+                                    <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z" />
                                   </svg>
                                 </button>
                               </div>
@@ -1002,7 +1435,10 @@ export default function OrderDetails() {
                     </tbody>
                     <tfoot className="bg-gray-50 dark:bg-gray-700">
                       <tr>
-                        <td colSpan={5} className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100">
+                        <td
+                          colSpan={5}
+                          className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100"
+                        >
                           Subtotal:
                         </td>
                         <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
@@ -1026,7 +1462,9 @@ export default function OrderDetails() {
             {/* Notes */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Order Notes</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                  Order Notes
+                </h3>
                 {!isAddingNote && (
                   <Button size="sm" onClick={() => setIsAddingNote(true)}>
                     Add Note
@@ -1061,7 +1499,9 @@ export default function OrderDetails() {
           {vendor && (
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Vendor Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                  Vendor Information
+                </h3>
                 <a
                   href={`/vendors/${vendor.id}`}
                   className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 rounded-md transition-colors"
@@ -1074,30 +1514,49 @@ export default function OrderDetails() {
                     fill="currentColor"
                     viewBox="0 0 16 16"
                   >
-                    <path fillRule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                    <path
+                      fillRule="evenodd"
+                      d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"
+                    />
                   </svg>
                 </a>
               </div>
               <div className="p-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Vendor</p>
-                    <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.displayName}</p>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Vendor
+                    </p>
+                    <p className="text-lg text-gray-900 dark:text-gray-100">
+                      {vendor.displayName}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Company</p>
-                    <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.companyName || "--"}</p>
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Company
+                    </p>
+                    <p className="text-lg text-gray-900 dark:text-gray-100">
+                      {vendor.companyName || "--"}
+                    </p>
                   </div>
                   {vendor.contactName && (
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Contact</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.contactName}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                        Contact
+                      </p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">
+                        {vendor.contactName}
+                      </p>
                     </div>
                   )}
                   {vendor.email && (
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Email</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.email}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                        Email
+                      </p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">
+                        {vendor.email}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1108,13 +1567,17 @@ export default function OrderDetails() {
           {/* Attachments Card */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Attachments</h3>
-              <Button size="sm" onClick={handleFileUpload}>Upload File</Button>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                Attachments
+              </h3>
+              <Button size="sm" onClick={handleFileUpload}>
+                Upload File
+              </Button>
               <input
                 ref={fileInputRef}
                 type="file"
                 onChange={handleFileChange}
-                style={{ display: 'none' }}
+                style={{ display: "none" }}
                 accept="*/*"
               />
             </div>
@@ -1122,37 +1585,78 @@ export default function OrderDetails() {
               {order.attachments && order.attachments.length > 0 ? (
                 <div className="space-y-3">
                   {order.attachments.map((attachment: Attachment) => (
-                    <div 
-                      key={attachment.id} 
+                    <div
+                      key={attachment.id}
                       className={`
                         flex items-center justify-between p-4 rounded-lg
                         transition-all duration-300 ease-out
-                        ${isViewableFile(attachment.fileName, attachment.contentType) 
-                          ? 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:outline-none' 
-                          : 'bg-gray-50 dark:bg-gray-700'
+                        ${
+                          isViewableFile(
+                            attachment.fileName,
+                            attachment.contentType
+                          )
+                            ? "bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:outline-none"
+                            : "bg-gray-50 dark:bg-gray-700"
                         }
                       `}
-                      onClick={isViewableFile(attachment.fileName, attachment.contentType) ? () => handleViewFile(attachment) : undefined}
-                      onKeyDown={isViewableFile(attachment.fileName, attachment.contentType) ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          handleViewFile(attachment);
-                        }
-                      } : undefined}
-                      role={isViewableFile(attachment.fileName, attachment.contentType) ? "button" : undefined}
-                      tabIndex={isViewableFile(attachment.fileName, attachment.contentType) ? 0 : undefined}
+                      onClick={
+                        isViewableFile(
+                          attachment.fileName,
+                          attachment.contentType
+                        )
+                          ? () => handleViewFile(attachment)
+                          : undefined
+                      }
+                      onKeyDown={
+                        isViewableFile(
+                          attachment.fileName,
+                          attachment.contentType
+                        )
+                          ? (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                handleViewFile(attachment);
+                              }
+                            }
+                          : undefined
+                      }
+                      role={
+                        isViewableFile(
+                          attachment.fileName,
+                          attachment.contentType
+                        )
+                          ? "button"
+                          : undefined
+                      }
+                      tabIndex={
+                        isViewableFile(
+                          attachment.fileName,
+                          attachment.contentType
+                        )
+                          ? 0
+                          : undefined
+                      }
                     >
                       <div className="flex-1 pointer-events-none">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{attachment.fileName}</p>
-                          {isViewableFile(attachment.fileName, attachment.contentType) && (
+                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {attachment.fileName}
+                          </p>
+                          {isViewableFile(
+                            attachment.fileName,
+                            attachment.contentType
+                          ) && (
                             <span className="text-xs bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
-                              {getFileType(attachment.fileName, attachment.contentType).type.toUpperCase()}
+                              {getFileType(
+                                attachment.fileName,
+                                attachment.contentType
+                              ).type.toUpperCase()}
                             </span>
                           )}
                         </div>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {formatFileSize(attachment.fileSize || 0)} • Uploaded {formatDate(attachment.createdAt)}
+                          {formatFileSize(attachment.fileSize || 0)} • Uploaded{" "}
+                          {formatDate(attachment.createdAt)}
                         </p>
                       </div>
                       <div className="flex items-center space-x-2">
@@ -1169,8 +1673,8 @@ export default function OrderDetails() {
                             fill="currentColor"
                             viewBox="0 0 16 16"
                           >
-                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
                           </svg>
                         </a>
                         <button
@@ -1188,8 +1692,11 @@ export default function OrderDetails() {
                             fill="currentColor"
                             viewBox="0 0 16 16"
                           >
-                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
-                            <path fillRule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z" />
+                            <path
+                              fillRule="evenodd"
+                              d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"
+                            />
                           </svg>
                         </button>
                       </div>
@@ -1220,7 +1727,7 @@ export default function OrderDetails() {
           fileSize={selectedFile.fileSize}
         />
       )}
-      
+
       {/* Line Item Modal */}
       <LineItemModal
         isOpen={lineItemModalOpen}
@@ -1231,7 +1738,7 @@ export default function OrderDetails() {
         customerId={order.customerId}
         parts={parts}
       />
-      
+
       {/* 3D Viewer Modal */}
       {selectedPart3D && (
         <Part3DViewerModal
@@ -1251,6 +1758,72 @@ export default function OrderDetails() {
           autoGenerateThumbnail={true}
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
         />
+      )}
+
+      {/* Assign Shop Modal */}
+      {assignShopModalOpen && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Assign Shop to Order
+              </h2>
+              <button
+                onClick={() => setAssignShopModalOpen(false)}
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Select Vendor (Shop)
+                </label>
+                <select
+                  value={selectedVendorId || ""}
+                  onChange={(e) =>
+                    setSelectedVendorId(
+                      e.target.value ? parseInt(e.target.value) : null
+                    )
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">-- Select a vendor --</option>
+                  {vendors.map((v: Vendor) => (
+                    <option key={v.id} value={v.id}>
+                      {v.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  Assigning a shop will move the order to "In Production"
+                  status.
+                </p>
+              </div>
+
+              <div className="flex gap-3 justify-end mt-6">
+                <Button
+                  variant="secondary"
+                  onClick={() => setAssignShopModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={handleAssignShopSubmit}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Assign Shop
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

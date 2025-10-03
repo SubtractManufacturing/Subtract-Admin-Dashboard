@@ -17,7 +17,11 @@ export const statusStyles = {
   draft: "text-status-draft",
   sent: "text-status-sent",
   expired: "text-status-expired",
+  waitingForShopSelection: "text-status-waiting-for-shop-selection",
   inProduction: "text-status-in-production",
+  inInspection: "text-status-in-inspection",
+  shipped: "text-status-shipped",
+  delivered: "text-status-delivered",
   completed: "text-status-completed",
   cancelled: "text-status-cancelled",
   archived: "text-status-archived italic"

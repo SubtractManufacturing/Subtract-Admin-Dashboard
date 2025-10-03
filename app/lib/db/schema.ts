@@ -29,7 +29,11 @@ export const leadTimeEnum = pgEnum("lead_time", [
 ]);
 export const orderStatusEnum = pgEnum("order_status", [
   "Pending",
+  "Waiting_For_Shop_Selection",
   "In_Production",
+  "In_Inspection",
+  "Shipped",
+  "Delivered",
   "Completed",
   "Cancelled",
   "Archived",

@@ -30,8 +30,16 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
     switch (status.toLowerCase()) {
       case 'pending':
         return statusStyles.pending
+      case 'waiting_for_shop_selection':
+        return statusStyles.waitingForShopSelection
       case 'in_production':
         return statusStyles.inProduction
+      case 'in_inspection':
+        return statusStyles.inInspection
+      case 'shipped':
+        return statusStyles.shipped
+      case 'delivered':
+        return statusStyles.delivered
       case 'completed':
         return statusStyles.completed
       case 'cancelled':
@@ -45,8 +53,16 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
 
   const getStatusDisplay = (status: string) => {
     switch (status) {
+      case 'Waiting_For_Shop_Selection':
+        return 'Waiting for Shop Selection'
       case 'In_Production':
         return 'In Production'
+      case 'In_Inspection':
+        return 'In Inspection'
+      case 'Shipped':
+        return 'Shipped'
+      case 'Delivered':
+        return 'Delivered'
       default:
         return status
     }
