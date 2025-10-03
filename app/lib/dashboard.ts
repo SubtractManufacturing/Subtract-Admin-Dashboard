@@ -111,7 +111,7 @@ export async function getOrders(): Promise<Order[]> {
       customer_id: order.customer_id,
       customer_name: order.customer_name || 'Unknown',
       vendor_id: order.vendor_id,
-      vendor_name: order.vendor_name || 'Unknown',
+      vendor_name: order.vendor_name || 'Unassigned',
       status: order.status,
       quantity: 0, // This would need to be calculated from order_line_items
       po_amount: order.total_price,
@@ -151,7 +151,7 @@ export async function getQuotes(): Promise<Quote[]> {
       customer_id: quote.customer_id,
       customer_name: quote.customer_name || 'Unknown',
       vendor_id: quote.vendor_id,
-      vendor_name: quote.vendor_name || 'Unknown',
+      vendor_name: quote.vendor_name || 'Unassigned',
       status: quote.status,
       quantity: 0, // This would need to be calculated from quote_line_items
       total_price: quote.total_price,
