@@ -126,6 +126,18 @@ export async function action({ request }: ActionFunctionArgs) {
       const fileKey = formData.get(`parts[${i}][file]`) as string;
       const file = files.get(fileKey);
 
+      // Get drawings for this part
+      const drawings: Array<{ buffer: Buffer; fileName: string }> = [];
+      let drawingIndex = 0;
+      while (formData.get(`parts[${i}][drawings][${drawingIndex}]`)) {
+        const drawingKey = formData.get(`parts[${i}][drawings][${drawingIndex}]`) as string;
+        const drawing = files.get(drawingKey);
+        if (drawing) {
+          drawings.push(drawing);
+        }
+        drawingIndex++;
+      }
+
       partsData.push({
         file: file?.buffer,
         fileName: file?.fileName,
@@ -135,6 +147,7 @@ export async function action({ request }: ActionFunctionArgs) {
         surfaceFinish: formData.get(`parts[${i}][surfaceFinish]`) as string,
         quantity: parseInt(formData.get(`parts[${i}][quantity]`) as string) || 1,
         notes: formData.get(`parts[${i}][notes]`) as string,
+        drawings: drawings.length > 0 ? drawings : undefined,
       });
     }
 

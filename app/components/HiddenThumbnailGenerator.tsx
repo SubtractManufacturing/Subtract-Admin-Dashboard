@@ -131,8 +131,10 @@ export function HiddenThumbnailGenerator({
   entityType = "part",
 }: HiddenThumbnailGeneratorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const glRef = useRef<any>(null);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [hasCaptured, setHasCaptured] = useState(false);
+  const [isComplete, setIsComplete] = useState(false);
 
   const captureAndUploadThumbnail = useCallback(async () => {
     if (!canvasRef.current || hasCaptured) return;
@@ -163,7 +165,12 @@ export function HiddenThumbnailGenerator({
         });
 
         if (response.ok) {
-          console.log('Automatic thumbnail generated and uploaded successfully');
+          // Clean up WebGL context
+          if (glRef.current) {
+            glRef.current.dispose();
+            glRef.current.forceContextLoss();
+          }
+          setIsComplete(true);
           onComplete?.();
         } else {
           console.error('Failed to upload automatic thumbnail');
@@ -182,10 +189,25 @@ export function HiddenThumbnailGenerator({
       const timer = setTimeout(() => {
         captureAndUploadThumbnail();
       }, 2000);
-      
+
       return () => clearTimeout(timer);
     }
   }, [isModelLoaded, hasCaptured, captureAndUploadThumbnail]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (glRef.current) {
+        glRef.current.dispose();
+        glRef.current.forceContextLoss();
+      }
+    };
+  }, []);
+
+  // Don't render Canvas after completion to free up resources
+  if (isComplete) {
+    return null;
+  }
 
   return (
     <div 
@@ -209,6 +231,7 @@ export function HiddenThumbnailGenerator({
           preserveDrawingBuffer: true,
         }}
         onCreated={({ gl }) => {
+          glRef.current = gl;
           if (canvasRef.current) {
             (canvasRef.current as any) = gl.domElement;
           }

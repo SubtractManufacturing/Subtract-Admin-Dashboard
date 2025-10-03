@@ -159,6 +159,15 @@ export const partDrawings = pgTable("part_drawings", {
   pk: primaryKey({ columns: [table.partId, table.attachmentId] }),
 }));
 
+export const quotePartDrawings = pgTable("quote_part_drawings", {
+  quotePartId: uuid("quote_part_id").notNull().references(() => quoteParts.id),
+  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.quotePartId, table.attachmentId] }),
+}));
+
 export const partModels = pgTable("part_models", {
   partId: uuid("part_id").notNull().references(() => parts.id),
   attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
@@ -343,6 +352,8 @@ export type Attachment = typeof attachments.$inferSelect;
 export type NewAttachment = typeof attachments.$inferInsert;
 export type PartDrawing = typeof partDrawings.$inferSelect;
 export type NewPartDrawing = typeof partDrawings.$inferInsert;
+export type QuotePartDrawing = typeof quotePartDrawings.$inferSelect;
+export type NewQuotePartDrawing = typeof quotePartDrawings.$inferInsert;
 export type PartModel = typeof partModels.$inferSelect;
 export type NewPartModel = typeof partModels.$inferInsert;
 export type OrderLineItem = typeof orderLineItems.$inferSelect;

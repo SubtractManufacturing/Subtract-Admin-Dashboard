@@ -23,12 +23,14 @@ export default function AddQuoteLineItemModal({
     totalPrice: "",
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedDrawings, setSelectedDrawings] = useState<File[]>([]);
   const [errors, setErrors] = useState({
     name: "",
     unitPrice: "",
     quantity: "",
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const drawingInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -42,6 +44,7 @@ export default function AddQuoteLineItemModal({
         totalPrice: "",
       });
       setSelectedFile(null);
+      setSelectedDrawings([]);
       setErrors({ name: "", unitPrice: "", quantity: "" });
     }
   }, [isOpen]);
@@ -69,6 +72,7 @@ export default function AddQuoteLineItemModal({
       totalPrice: "",
     });
     setSelectedFile(null);
+    setSelectedDrawings([]);
     setErrors({ name: "", unitPrice: "", quantity: "" });
     onClose();
   };
@@ -112,6 +116,27 @@ export default function AddQuoteLineItemModal({
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const handleDrawingSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files) {
+      const validExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.dwg', '.dxf'];
+      const newDrawings = Array.from(files).filter(file => {
+        const fileName = file.name.toLowerCase();
+        return validExtensions.some(ext => fileName.endsWith(ext));
+      });
+
+      if (newDrawings.length !== files.length) {
+        alert('Some files were skipped. Only PDF, PNG, JPG, DWG, and DXF files are supported.');
+      }
+
+      setSelectedDrawings(prev => [...prev, ...newDrawings]);
+    }
+  };
+
+  const handleRemoveDrawing = (index: number) => {
+    setSelectedDrawings(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -162,6 +187,12 @@ export default function AddQuoteLineItemModal({
     if (selectedFile) {
       submitData.append("file", selectedFile);
     }
+
+    // Add technical drawings
+    selectedDrawings.forEach((drawing, index) => {
+      submitData.append(`drawing_${index}`, drawing);
+    });
+    submitData.append("drawingCount", selectedDrawings.length.toString());
 
     onSubmit(submitData);
     handleClose();
@@ -352,6 +383,53 @@ export default function AddQuoteLineItemModal({
             className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
           />
         </div>
+
+        {/* Technical Drawings */}
+        {selectedFile && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Technical Drawings (Optional)
+            </label>
+
+            {selectedDrawings.length > 0 && (
+              <div className="space-y-2 mb-3">
+                {selectedDrawings.map((drawing, index) => (
+                  <div key={index} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700 p-2 rounded">
+                    <span className="text-sm text-gray-900 dark:text-gray-100 truncate">
+                      {drawing.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveDrawing(index)}
+                      className="ml-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <input
+              ref={drawingInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.png,.jpg,.jpeg,.dwg,.dxf"
+              onChange={handleDrawingSelect}
+              className="hidden"
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => drawingInputRef.current?.click()}
+            >
+              Add Drawing
+            </Button>
+          </div>
+        )}
 
         {/* Quantity and Prices Grid */}
         <div className="grid grid-cols-3 gap-4">

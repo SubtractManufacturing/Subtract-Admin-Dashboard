@@ -1,5 +1,5 @@
 import { db } from "./db/index.js"
-import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts } from "./db/schema.js"
+import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings } from "./db/schema.js"
 import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
 import type { Customer, Vendor, QuoteLineItem, QuotePart, Quote, NewQuote } from "./db/schema.js"
 import { getNextQuoteNumber, getNextOrderNumber } from "./number-generator.js"
@@ -674,6 +674,39 @@ export async function createQuoteWithParts(
       // Trigger mesh conversion if applicable
       if (partFileUrl) {
         await triggerQuotePartMeshConversion(quotePart.id, partFileUrl)
+      }
+
+      // Upload technical drawings if provided
+      if (part.drawings && part.drawings.length > 0) {
+        for (const drawing of part.drawings) {
+          const timestamp = Date.now()
+          const randomString = crypto.randomBytes(8).toString('hex')
+          const sanitizedFileName = drawing.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '')
+          const key = `quote-parts/${quotePart.id}/drawings/${timestamp}-${randomString}-${sanitizedFileName}`
+
+          const uploadResult = await uploadFile({
+            key,
+            buffer: drawing.buffer,
+            contentType: drawing.fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png',
+            fileName: sanitizedFileName
+          })
+
+          // Create attachment record
+          const [attachment] = await db.insert(attachments).values({
+            s3Bucket: process.env.S3_BUCKET || 'default-bucket',
+            s3Key: uploadResult.key,
+            fileName: drawing.fileName,
+            contentType: drawing.fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png',
+            fileSize: drawing.buffer.length
+          }).returning()
+
+          // Link attachment to quote part
+          await db.insert(quotePartDrawings).values({
+            quotePartId: quotePart.id,
+            attachmentId: attachment.id,
+            version: 1
+          })
+        }
       }
 
       await db.insert(quoteLineItems).values({

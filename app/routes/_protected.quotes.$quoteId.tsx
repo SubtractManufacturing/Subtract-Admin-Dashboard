@@ -46,7 +46,7 @@ import {
 } from "~/lib/notes";
 import { getEventsByEntity, createEvent } from "~/lib/events";
 import { db } from "~/lib/db";
-import { quoteAttachments, attachments, quotes } from "~/lib/db/schema";
+import { quoteAttachments, attachments, quotes, quotePartDrawings } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 import Navbar from "~/components/Navbar";
@@ -89,7 +89,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     getVendors(),
   ]);
 
-  // Generate signed URLs for quote parts with meshes, solid files, and thumbnails
+  // Generate signed URLs for quote parts with meshes, solid files, thumbnails, and drawings
   const partsWithSignedUrls = await Promise.all(
     (quote.parts || []).map(async (part) => {
       let signedMeshUrl = undefined;
@@ -151,7 +151,49 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         }
       }
 
-      return { ...part, signedMeshUrl, signedFileUrl, signedThumbnailUrl };
+      // Fetch technical drawings for this part
+      const drawingRecords = await db
+        .select({
+          drawing: quotePartDrawings,
+          attachment: attachments,
+        })
+        .from(quotePartDrawings)
+        .leftJoin(attachments, eq(quotePartDrawings.attachmentId, attachments.id))
+        .where(eq(quotePartDrawings.quotePartId, part.id));
+
+      const drawings = await Promise.all(
+        drawingRecords
+          .filter((record) => record.attachment !== null)
+          .map(async (record) => {
+            const attachment = record.attachment!;
+            try {
+              const signedUrl = await getDownloadUrl(attachment.s3Key, 3600);
+              return {
+                id: attachment.id,
+                fileName: attachment.fileName,
+                contentType: attachment.contentType,
+                fileSize: attachment.fileSize,
+                signedUrl,
+              };
+            } catch (error) {
+              console.error(
+                "Error getting signed URL for drawing",
+                attachment.id,
+                ":",
+                error
+              );
+              return null;
+            }
+          })
+      );
+
+      return {
+        ...part,
+        signedMeshUrl,
+        signedFileUrl,
+        signedThumbnailUrl,
+        drawings: drawings.filter((d) => d !== null),
+      };
     })
   );
 
@@ -343,6 +385,54 @@ export async function action({ request, params }: ActionFunctionArgs) {
               error
             );
           });
+
+          // Handle technical drawings if provided
+          const drawingCount = parseInt(formData.get("drawingCount") as string) || 0;
+          if (drawingCount > 0) {
+            const { attachments, quotePartDrawings } = await import("~/lib/db/schema");
+
+            for (let i = 0; i < drawingCount; i++) {
+              const drawing = formData.get(`drawing_${i}`) as File | null;
+              if (drawing && drawing.size > 0) {
+                // Convert drawing File to Buffer
+                const drawingArrayBuffer = await drawing.arrayBuffer();
+                const drawingBuffer = Buffer.from(drawingArrayBuffer);
+
+                // Sanitize drawing filename
+                const sanitizedDrawingName = drawing.name
+                  .replace(/\s+/g, "-")
+                  .replace(/[^a-zA-Z0-9._-]/g, "");
+
+                // Upload drawing to S3
+                const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+                const drawingUploadResult = await uploadFile({
+                  key: drawingKey,
+                  buffer: drawingBuffer,
+                  contentType: drawing.type || "application/pdf",
+                  fileName: sanitizedDrawingName,
+                });
+
+                // Create attachment record
+                const [attachment] = await db
+                  .insert(attachments)
+                  .values({
+                    s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                    s3Key: drawingUploadResult.key,
+                    fileName: drawing.name,
+                    contentType: drawing.type || "application/pdf",
+                    fileSize: drawing.size,
+                  })
+                  .returning();
+
+                // Link attachment to quote part
+                await db.insert(quotePartDrawings).values({
+                  quotePartId: newQuotePart.id,
+                  attachmentId: attachment.id,
+                  version: 1,
+                });
+              }
+            }
+          }
         }
 
         // Create quote line item with event context
@@ -371,12 +461,74 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
     }
 
-    // Handle regular file attachment upload
-    const file = formData.get("file") as File;
+    // Handle add drawing to existing part
+    if (intent === "addDrawingToExistingPart") {
+      const quotePartId = formData.get("quotePartId") as string;
+      const drawingCount = parseInt(formData.get("drawingCount") as string) || 0;
 
-    if (!file) {
-      return json({ error: "No file provided" }, { status: 400 });
+      if (!quotePartId || drawingCount === 0) {
+        return json({ error: "Missing quote part ID or drawings" }, { status: 400 });
+      }
+
+      try {
+        const { attachments, quotePartDrawings } = await import("~/lib/db/schema");
+
+        for (let i = 0; i < drawingCount; i++) {
+          const drawing = formData.get(`drawing_${i}`) as File | null;
+          if (drawing && drawing.size > 0) {
+            // Convert drawing File to Buffer
+            const drawingArrayBuffer = await drawing.arrayBuffer();
+            const drawingBuffer = Buffer.from(drawingArrayBuffer);
+
+            // Sanitize drawing filename
+            const sanitizedDrawingName = drawing.name
+              .replace(/\s+/g, "-")
+              .replace(/[^a-zA-Z0-9._-]/g, "");
+
+            // Upload drawing to S3
+            const drawingKey = `quote-parts/${quotePartId}/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+            const drawingUploadResult = await uploadFile({
+              key: drawingKey,
+              buffer: drawingBuffer,
+              contentType: drawing.type || "application/pdf",
+              fileName: sanitizedDrawingName,
+            });
+
+            // Create attachment record
+            const [attachment] = await db
+              .insert(attachments)
+              .values({
+                s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                s3Key: drawingUploadResult.key,
+                fileName: drawing.name,
+                contentType: drawing.type || "application/pdf",
+                fileSize: drawing.size,
+              })
+              .returning();
+
+            // Link attachment to quote part
+            await db.insert(quotePartDrawings).values({
+              quotePartId: quotePartId,
+              attachmentId: attachment.id,
+              version: 1,
+            });
+          }
+        }
+
+        return redirect(`/quotes/${quoteId}`);
+      } catch (error) {
+        console.error("Error adding drawings to existing part:", error);
+        return json({ error: "Failed to add drawings" }, { status: 500 });
+      }
     }
+
+    // Handle regular file attachment upload (for quote attachments, not technical drawings)
+    if (intent === "uploadAttachment" || !intent) {
+      const file = formData.get("file") as File;
+
+      if (!file) {
+        return json({ error: "No file provided" }, { status: 400 });
+      }
 
     if (file.size > MAX_FILE_SIZE) {
       return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
@@ -422,6 +574,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       console.error("Upload error:", error);
       return json({ error: "Failed to upload file" }, { status: 500 });
     }
+    }
+
+    // If we get here with multipart data but unhandled intent, return error
+    return json({ error: "Invalid multipart request" }, { status: 400 });
   }
 
   // Handle other form submissions
@@ -734,6 +890,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
           };
 
           await deleteAttachment(attachmentId, eventContext);
+        }
+
+        return redirect(`/quotes/${quoteId}`);
+      }
+
+      case "deleteDrawing": {
+        const drawingId = formData.get("drawingId") as string;
+        const quotePartId = formData.get("quotePartId") as string;
+
+        if (!drawingId || !quotePartId) {
+          return json({ error: "Missing drawing or quote part ID" }, { status: 400 });
+        }
+
+        // Unlink drawing from quote part
+        await db
+          .delete(quotePartDrawings)
+          .where(eq(quotePartDrawings.attachmentId, drawingId));
+
+        // Get attachment to delete S3 file
+        const attachment = await getAttachment(drawingId);
+        if (attachment) {
+          await deleteFile(attachment.s3Key);
+
+          const eventContext: AttachmentEventContext = {
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          };
+
+          await deleteAttachment(drawingId, eventContext);
         }
 
         return redirect(`/quotes/${quoteId}`);
@@ -2047,7 +2232,7 @@ export default function QuoteDetail() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        window.location.href = `/orders/${quote.convertedToOrderId}`;
+                        window.location.href = `/orders/${convertedOrder.orderNumber}`;
                       }}
                       className="text-base font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                     >

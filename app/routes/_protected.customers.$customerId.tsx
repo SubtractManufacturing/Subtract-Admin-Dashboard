@@ -1,5 +1,5 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
-import { useLoaderData, Link, useFetcher } from "@remix-run/react";
+import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/react";
 import { useState, useRef, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
@@ -62,11 +62,77 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     getEventsByEntity("customer", customer.id.toString(), 10),
   ]);
 
-  // Hydrate thumbnails for customer parts (convert S3 keys to signed URLs)
-  const parts = await hydratePartThumbnails(rawParts);
+  // Hydrate thumbnails and mesh URLs for customer parts (convert S3 keys to signed URLs)
+  const partsWithSignedUrls = await Promise.all(
+    rawParts.map(async (part) => {
+      let signedMeshUrl = undefined;
+      let signedThumbnailUrl = undefined;
+
+      // Get signed mesh URL if mesh exists and conversion is completed
+      if (part.partMeshUrl && part.meshConversionStatus === "completed") {
+        try {
+          const { getDownloadUrl } = await import('~/lib/s3.server');
+          let meshKey: string;
+
+          // Extract S3 key from the URL - handle both formats:
+          // 1. Full S3 URLs from mesh conversion: https://...supabase.co/.../testing-bucket/parts/xxx/mesh/file.glb
+          // 2. Relative paths from manual uploads: /attachments/s3/parts/xxx/mesh/file.glb
+          if (part.partMeshUrl.startsWith('http')) {
+            // For full URLs, just extract everything starting from 'parts/'
+            // This works for Supabase URLs like: https://.../storage/v1/s3/testing-bucket/parts/...
+            const partsIndex = part.partMeshUrl.indexOf('parts/');
+            if (partsIndex >= 0) {
+              meshKey = part.partMeshUrl.substring(partsIndex);
+
+              // Check if the key contains duplicated paths (from old buggy URLs)
+              // e.g., "parts/.../.../parts/..." - fix by taking only the last occurrence
+              const secondPartsIndex = meshKey.indexOf('parts/', 1);
+              if (secondPartsIndex > 0) {
+                console.warn(`Found duplicated 'parts/' in mesh URL for part ${part.id}, using last occurrence`);
+                meshKey = meshKey.substring(secondPartsIndex);
+              }
+            } else {
+              console.error(`Could not find 'parts/' in URL for part ${part.id}: ${part.partMeshUrl}`);
+              // Skip this part's mesh URL
+              return { ...part, signedMeshUrl: undefined, thumbnailUrl: signedThumbnailUrl };
+            }
+          } else if (part.partMeshUrl.startsWith('/attachments/s3/')) {
+            meshKey = part.partMeshUrl.replace('/attachments/s3/', '');
+          } else {
+            // Assume it's already just the key
+            meshKey = part.partMeshUrl;
+          }
+
+          signedMeshUrl = await getDownloadUrl(meshKey, 3600);
+        } catch (error) {
+          console.error(`Failed to generate mesh URL for part ${part.id}:`, error);
+          // Continue without mesh URL for this part
+        }
+      }
+
+      // Get signed thumbnail URL
+      if (part.thumbnailUrl && !part.thumbnailUrl.startsWith('http')) {
+        try {
+          const { getDownloadUrl } = await import('~/lib/s3.server');
+          signedThumbnailUrl = await getDownloadUrl(part.thumbnailUrl, 3600);
+        } catch (error) {
+          console.error(`Failed to generate thumbnail URL for part ${part.id}:`, error);
+          signedThumbnailUrl = null;
+        }
+      } else {
+        signedThumbnailUrl = part.thumbnailUrl;
+      }
+
+      return {
+        ...part,
+        signedMeshUrl,
+        thumbnailUrl: signedThumbnailUrl,
+      };
+    })
+  );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events }),
+    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, events }),
     headers
   );
 }
@@ -581,6 +647,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function CustomerDetails() {
   const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events } = useLoaderData<typeof loader>();
+  const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -592,40 +659,41 @@ export default function CustomerDetails() {
   const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
   const [part3DViewerOpen, setPart3DViewerOpen] = useState(false);
   const [selected3DPart, setSelected3DPart] = useState<Part | null>(null);
-  const [thumbnailGeneratorData, setThumbnailGeneratorData] = useState<{ modelUrl: string; partId: string } | null>(null);
-  const [failedThumbnailParts, setFailedThumbnailParts] = useState<Set<string>>(new Set());
+  const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
   const updateFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const partsFetcher = useFetcher();
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check for parts that need thumbnail generation
+  // Check if any parts are currently converting
+  const hasConvertingParts = parts?.some(
+    (part: Part) =>
+      part.meshConversionStatus === "in_progress" ||
+      part.meshConversionStatus === "queued" ||
+      part.meshConversionStatus === "pending"
+  );
+
+  // Set up polling for parts conversion status
   useEffect(() => {
-    // Only check if we're not currently generating a thumbnail
-    if (thumbnailGeneratorData) return;
-    
-    // Find the first part with a mesh but no thumbnail that hasn't failed
-    // Only process parts with S3-based mesh URLs (starting with /attachments/)
-    // Supabase storage URLs require authentication and won't work for automatic generation
-    const partNeedingThumbnail = parts.find(
-      (part: Part) => 
-        part.partMeshUrl && 
-        !part.thumbnailUrl && 
-        !failedThumbnailParts.has(part.id) &&
-        part.partMeshUrl.startsWith('/attachments/')
-    );
-    
-    if (partNeedingThumbnail && partNeedingThumbnail.partMeshUrl) {
-      // For S3 URLs, we need to use the full URL with the domain
-      const fullUrl = `${window.location.origin}${partNeedingThumbnail.partMeshUrl}`;
-      setThumbnailGeneratorData({
-        modelUrl: fullUrl,
-        partId: partNeedingThumbnail.id
-      });
+    if (hasConvertingParts && !pollInterval) {
+      const interval = setInterval(() => {
+        // Revalidate the page data to get updated conversion status
+        revalidator.revalidate();
+      }, 5000); // Poll every 5 seconds
+      setPollInterval(interval);
+    } else if (!hasConvertingParts && pollInterval) {
+      clearInterval(pollInterval);
+      setPollInterval(null);
     }
-  }, [parts, thumbnailGeneratorData, failedThumbnailParts]);
+
+    return () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
+  }, [hasConvertingParts, pollInterval, revalidator]);
 
   const handleSaveInfo = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1250,50 +1318,69 @@ export default function CustomerDetails() {
                       </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                      {parts.map((part: Part) => (
-                        <tr key={part.id}>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center gap-3">
-                              {part.thumbnailUrl ? (
-                                <button
-                                  onClick={() => handleView3DPart(part)}
-                                  className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
-                                  title="View 3D model"
-                                  type="button"
-                                >
-                                  <img
-                                    src={part.thumbnailUrl}
-                                    alt={`${part.partName} thumbnail`}
-                                    className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
-                                  />
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleView3DPart(part)}
-                                  className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0"
-                                  title="View 3D model"
-                                  type="button"
-                                >
-                                  <svg
-                                    className="h-5 w-5 text-gray-400 dark:text-gray-500"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
+                      {parts.map((part: Part & { signedMeshUrl?: string }) => {
+                        // Show spinner if:
+                        // 1. Conversion is in progress
+                        // 2. Conversion completed but thumbnail not generated yet
+                        // 3. Thumbnail exists but signed URL not loaded yet
+                        // 4. Part has file but no conversion status
+                        const isProcessing =
+                          part.meshConversionStatus === "in_progress" ||
+                          part.meshConversionStatus === "queued" ||
+                          part.meshConversionStatus === "pending" ||
+                          (part.meshConversionStatus === "completed" && !part.thumbnailUrl) ||
+                          (part.partFileUrl && !part.meshConversionStatus);
+
+                        return (
+                          <tr key={part.id}>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="flex items-center gap-3">
+                                {part.thumbnailUrl ? (
+                                  <button
+                                    onClick={() => handleView3DPart(part)}
+                                    className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
+                                    title="View 3D model"
+                                    type="button"
                                   >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                    <img
+                                      src={part.thumbnailUrl}
+                                      alt={`${part.partName} thumbnail`}
+                                      className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                     />
-                                  </svg>
-                                </button>
-                              )}
-                              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                {part.partName || "--"}
-                              </span>
-                            </div>
-                          </td>
+                                  </button>
+                                ) : (
+                                  <div className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                                    {isProcessing ? (
+                                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleView3DPart(part)}
+                                        className="h-full w-full flex items-center justify-center cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors rounded-lg border-0 p-0"
+                                        title="View 3D model"
+                                        type="button"
+                                      >
+                                        <svg
+                                          className="h-5 w-5 text-gray-400 dark:text-gray-500"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          viewBox="0 0 24 24"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                          />
+                                        </svg>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                  {part.partName || "--"}
+                                </span>
+                              </div>
+                            </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                             {part.material || "--"}
                           </td>
@@ -1341,7 +1428,8 @@ export default function CustomerDetails() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1393,32 +1481,33 @@ export default function CustomerDetails() {
         partId={selected3DPart?.id}
         onThumbnailUpdate={() => {
           // Refresh the page to show the updated thumbnail
-          window.location.reload();
+          revalidator.revalidate();
         }}
         autoGenerateThumbnail={true}
         existingThumbnailUrl={selected3DPart?.thumbnailUrl || undefined}
       />
-      
-      {/* Hidden Thumbnail Generator */}
-      {thumbnailGeneratorData && (
-        <HiddenThumbnailGenerator
-          modelUrl={thumbnailGeneratorData.modelUrl}
-          partId={thumbnailGeneratorData.partId}
-          onComplete={() => {
-            setThumbnailGeneratorData(null);
-            // Reload the page to show the new thumbnail
-            window.location.reload();
-          }}
-          onError={(error) => {
-            console.error('Thumbnail generation failed:', error);
-            // Add this part to the failed set to prevent retry
-            if (thumbnailGeneratorData) {
-              setFailedThumbnailParts(prev => new Set(prev).add(thumbnailGeneratorData.partId));
-            }
-            setThumbnailGeneratorData(null);
-          }}
-        />
-      )}
+
+      {/* Hidden Thumbnail Generators for parts without thumbnails */}
+      {parts?.map((part: Part & { signedMeshUrl?: string }) => {
+        if (
+          part.signedMeshUrl &&
+          part.meshConversionStatus === "completed" &&
+          !part.thumbnailUrl
+        ) {
+          return (
+            <HiddenThumbnailGenerator
+              key={part.id}
+              modelUrl={part.signedMeshUrl}
+              partId={part.id}
+              entityType="part"
+              onComplete={() => {
+                revalidator.revalidate();
+              }}
+            />
+          );
+        }
+        return null;
+      })}
     </div>
   );
 }
