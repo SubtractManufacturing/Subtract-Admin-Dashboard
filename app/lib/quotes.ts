@@ -412,14 +412,24 @@ export async function convertQuoteToOrder(
         .returning()
 
       // Update quote with converted order ID and status
-      await tx
+      // Use atomic check to prevent race condition - only update if not already converted
+      const updatedQuotes = await tx
         .update(quotes)
         .set({
           convertedToOrderId: order.id,
           status: 'Accepted',
           updatedAt: new Date()
         })
-        .where(eq(quotes.id, quoteId))
+        .where(and(
+          eq(quotes.id, quoteId),
+          isNull(quotes.convertedToOrderId)
+        ))
+        .returning()
+
+      // If no rows were updated, quote was already converted by another request
+      if (updatedQuotes.length === 0) {
+        throw new Error('Quote has already been converted to an order')
+      }
 
       // Convert quote parts to customer parts and create order line items
       if (quote.parts && quote.parts.length > 0) {

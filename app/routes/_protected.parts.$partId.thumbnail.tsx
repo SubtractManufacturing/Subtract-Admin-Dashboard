@@ -1,7 +1,7 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { updatePart, getPart } from "~/lib/parts";
-import { uploadFile, getDownloadUrl, deleteFile } from "~/lib/s3.server";
+import { uploadFile, deleteFile } from "~/lib/s3.server";
 import { createAttachment, deleteAttachmentByS3Key } from "~/lib/attachments";
 import { requireAuth } from "~/lib/auth.server";
 

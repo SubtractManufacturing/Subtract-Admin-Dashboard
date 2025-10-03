@@ -77,7 +77,7 @@ export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsM
       }
     };
 
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = () => {
       if (showDrawingsMenu) {
         setShowDrawingsMenu(null);
       }
@@ -97,7 +97,7 @@ export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsM
   // Monitor upload fetcher state
   useEffect(() => {
     if (uploadFetcher.state === 'idle' && uploadFetcher.data) {
-      if ('error' in uploadFetcher.data) {
+      if (typeof uploadFetcher.data === 'object' && uploadFetcher.data !== null && 'error' in uploadFetcher.data) {
         console.error('Upload error:', uploadFetcher.data.error);
         alert(`Upload failed: ${uploadFetcher.data.error}`);
       }
@@ -518,7 +518,6 @@ export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsM
             setSelectedFile(null);
           }}
           fileUrl={selectedFile.url}
-          fileType={selectedFile.type}
           fileName={selectedFile.fileName}
           contentType={selectedFile.contentType}
           fileSize={selectedFile.fileSize}

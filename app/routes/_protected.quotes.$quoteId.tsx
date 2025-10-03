@@ -940,7 +940,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const sanitizeS3Key = (key: string): string => {
             return key
               .replace(/\s+/g, "-") // Replace spaces with hyphens
-              .replace(/[^a-zA-Z0-9._\/-]/g, ""); // Remove any other special characters except slashes
+              .replace(/[^a-zA-Z0-9._/-]/g, ""); // Remove any other special characters except slashes
           };
 
           let quotePart = null;
@@ -1000,11 +1000,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
               try {
                 await deleteFile(fileKey);
                 console.log(`Deleted S3 file: ${fileKey}`);
-              } catch (error: any) {
+              } catch (error: unknown) {
                 // Log but don't fail if file doesn't exist
+                const err = error as { Code?: string; name?: string };
                 if (
-                  error?.Code === "NoSuchKey" ||
-                  error?.name === "NoSuchKey"
+                  err?.Code === "NoSuchKey" ||
+                  err?.name === "NoSuchKey"
                 ) {
                   console.log(
                     `S3 file not found (already deleted?): ${fileKey}`
@@ -1263,15 +1264,6 @@ export default function QuoteDetail() {
     }
   };
 
-  const handleConvertToOrder = () => {
-    if (
-      confirm(
-        "Are you sure you want to convert this quote to an order? This action cannot be undone."
-      )
-    ) {
-      fetcher.submit({ intent: "convertToOrder" }, { method: "post" });
-    }
-  };
 
   const handleReviseQuote = () => {
     if (
@@ -1967,7 +1959,6 @@ export default function QuoteDetail() {
                         }
                       }}
                       onBlur={() => setEditingCustomer(false)}
-                      autoFocus
                       className="w-full px-3 py-2 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
                     >
                       {customers.map(
@@ -2168,7 +2159,6 @@ export default function QuoteDetail() {
                           setEditingVendor(false);
                         }}
                         onBlur={() => setEditingVendor(false)}
-                        autoFocus
                         className="w-full px-3 py-2 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
                       >
                         <option value="">No Vendor</option>
@@ -2376,7 +2366,6 @@ export default function QuoteDetail() {
                             {editingLineItem?.id === item.id &&
                             editingLineItem?.field === "description" ? (
                               <textarea
-                                autoFocus
                                 className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white resize-none"
                                 value={editingLineItem.value}
                                 onChange={(e) =>
@@ -2422,7 +2411,6 @@ export default function QuoteDetail() {
                             {editingLineItem?.id === item.id &&
                             editingLineItem?.field === "notes" ? (
                               <textarea
-                                autoFocus
                                 className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white resize-none"
                                 value={editingLineItem.value}
                                 onChange={(e) =>

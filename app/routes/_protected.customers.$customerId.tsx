@@ -5,7 +5,7 @@ import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCus
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
-import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, hydratePartThumbnails, type PartInput, type PartEventContext } from "~/lib/parts";
+import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";

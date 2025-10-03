@@ -243,7 +243,7 @@ export default function EventsPage() {
         setPageSize(filters.limit);
       }
     }
-  }, [events, totalCount, filters.limit]);
+  }, [events, totalCount, filters.limit, isLoadingMore, pageSize]);
 
   const applyFilters = () => {
 

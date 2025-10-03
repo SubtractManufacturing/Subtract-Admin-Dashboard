@@ -244,13 +244,13 @@ export default function AddQuoteLineItemModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 3D Model Upload */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          <label htmlFor="model-file-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             3D Model (Optional)
           </label>
 
           {!selectedFile ? (
             <div className="flex items-center justify-center w-full">
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
+              <label htmlFor="model-file-input" aria-label="Upload 3D model file" className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
                 <div className="flex flex-col items-center justify-center pt-5 pb-6">
                   <svg
                     className="w-8 h-8 mb-2 text-gray-500 dark:text-gray-400"
@@ -274,6 +274,7 @@ export default function AddQuoteLineItemModal({
                   </p>
                 </div>
                 <input
+                  id="model-file-input"
                   ref={fileInputRef}
                   type="file"
                   className="hidden"
@@ -369,10 +370,11 @@ export default function AddQuoteLineItemModal({
 
         {/* Notes Field */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="notes-textarea" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Notes
           </label>
           <textarea
+            id="notes-textarea"
             name="notes"
             value={formData.notes}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
@@ -387,7 +389,7 @@ export default function AddQuoteLineItemModal({
         {/* Technical Drawings */}
         {selectedFile && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="drawing-file-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Technical Drawings (Optional)
             </label>
 
@@ -413,6 +415,7 @@ export default function AddQuoteLineItemModal({
             )}
 
             <input
+              id="drawing-file-input"
               ref={drawingInputRef}
               type="file"
               multiple

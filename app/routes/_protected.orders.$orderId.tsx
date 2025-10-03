@@ -452,7 +452,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         await updateOrder(
           order.id,
-          { status: status as any },
+          { status: status as 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived' },
           orderEventContext
         );
 
@@ -494,7 +494,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const updates: any = {};
+        const updates: Partial<{ shipDate: Date; leadTime: number; vendorPay: string }> = {};
         if (shipDate) updates.shipDate = new Date(shipDate);
         if (leadTime) updates.leadTime = parseInt(leadTime);
         if (vendorPay) updates.vendorPay = vendorPay;
@@ -817,7 +817,7 @@ export default function OrderDetails() {
     setEditOrderModalOpen(true);
   };
 
-  const handleEditOrderSubmit = () => {
+  const handleEditOrderSubmit = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "updateOrderInfo");
     if (editOrderForm.shipDate) {
@@ -831,7 +831,7 @@ export default function OrderDetails() {
     }
     orderEditFetcher.submit(formData, { method: "post" });
     setEditOrderModalOpen(false);
-  };
+  }, [editOrderForm, orderEditFetcher]);
 
   // Handle keyboard shortcuts for edit order modal
   useEffect(() => {
@@ -848,7 +848,7 @@ export default function OrderDetails() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [editOrderModalOpen, editOrderForm]);
+  }, [editOrderModalOpen, handleEditOrderSubmit]);
 
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
@@ -1867,10 +1867,11 @@ export default function OrderDetails() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label htmlFor="vendor-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Select Vendor (Shop)
                 </label>
                 <select
+                  id="vendor-select"
                   value={selectedVendorId || ""}
                   onChange={(e) =>
                     setSelectedVendorId(
@@ -1890,7 +1891,7 @@ export default function OrderDetails() {
 
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                 <p className="text-sm text-blue-800 dark:text-blue-200">
-                  Assigning a shop will move the order to "In Production"
+                  Assigning a shop will move the order to &quot;In Production&quot;
                   status.
                 </p>
               </div>
@@ -1933,10 +1934,11 @@ export default function OrderDetails() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label htmlFor="ship-date-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Ship Date
                 </label>
                 <input
+                  id="ship-date-input"
                   type="date"
                   value={editOrderForm.shipDate}
                   onChange={(e) =>
@@ -1950,10 +1952,11 @@ export default function OrderDetails() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label htmlFor="lead-time-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Lead Time (Business Days)
                 </label>
                 <input
+                  id="lead-time-input"
                   type="number"
                   value={editOrderForm.leadTime}
                   onChange={(e) =>
@@ -1969,10 +1972,11 @@ export default function OrderDetails() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label htmlFor="vendor-pay-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Vendor Pay (%)
                 </label>
                 <input
+                  id="vendor-pay-input"
                   type="number"
                   value={editOrderForm.vendorPay}
                   onChange={(e) =>
