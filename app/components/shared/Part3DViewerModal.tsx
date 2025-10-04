@@ -8,6 +8,7 @@ interface Part3DViewerModalProps {
   modelUrl?: string;
   solidModelUrl?: string;
   partId?: string;
+  quotePartId?: string;
   onThumbnailUpdate?: (thumbnailUrl: string) => void;
   autoGenerateThumbnail?: boolean;
   existingThumbnailUrl?: string;
@@ -21,6 +22,7 @@ export function Part3DViewerModal({
   modelUrl,
   solidModelUrl,
   partId,
+  quotePartId,
   onThumbnailUpdate,
   autoGenerateThumbnail,
   existingThumbnailUrl,
@@ -98,6 +100,7 @@ export function Part3DViewerModal({
           modelUrl={modelUrl}
           solidModelUrl={solidModelUrl}
           partId={partId}
+          quotePartId={quotePartId}
           onThumbnailUpdate={onThumbnailUpdate}
           autoGenerateThumbnail={autoGenerateThumbnail}
           existingThumbnailUrl={existingThumbnailUrl}
