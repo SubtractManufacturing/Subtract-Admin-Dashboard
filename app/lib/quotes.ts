@@ -12,7 +12,7 @@
  * All errors are logged to console. Critical errors are also logged as events for tracking.
  */
 import { db } from "./db/index.js"
-import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings } from "./db/schema.js"
+import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings, quoteAttachments, orderAttachments, notes, partDrawings } from "./db/schema.js"
 import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
 import type { Customer, Vendor, QuoteLineItem, QuotePart, Quote, NewQuote } from "./db/schema.js"
 import { getNextQuoteNumber, getNextOrderNumber } from "./number-generator.js"
@@ -507,6 +507,24 @@ export async function convertQuoteToOrder(
             })
             .returning()
 
+          // Migrate quote part drawings to the new customer part
+          const quotePartDrawingRecords = await tx
+            .select({ attachmentId: quotePartDrawings.attachmentId, version: quotePartDrawings.version })
+            .from(quotePartDrawings)
+            .where(eq(quotePartDrawings.quotePartId, quotePart.id))
+
+          if (quotePartDrawingRecords.length > 0) {
+            await tx
+              .insert(partDrawings)
+              .values(
+                quotePartDrawingRecords.map(record => ({
+                  partId: customerPart.id,
+                  attachmentId: record.attachmentId,
+                  version: record.version,
+                }))
+              )
+          }
+
           // Find the corresponding line item for this quote part
           const lineItem = quote.lineItems?.find(li => li.quotePartId === quotePart.id)
 
@@ -552,6 +570,49 @@ export async function convertQuoteToOrder(
               }))
             )
         }
+      }
+
+      // Migrate attachments from quote to order
+      const quoteAttachmentRecords = await tx
+        .select({ attachmentId: quoteAttachments.attachmentId })
+        .from(quoteAttachments)
+        .where(eq(quoteAttachments.quoteId, quoteId))
+
+      if (quoteAttachmentRecords.length > 0) {
+        await tx
+          .insert(orderAttachments)
+          .values(
+            quoteAttachmentRecords.map(record => ({
+              orderId: order.id,
+              attachmentId: record.attachmentId,
+            }))
+          )
+      }
+
+      // Migrate notes from quote to order
+      const quoteNotes = await tx
+        .select()
+        .from(notes)
+        .where(
+          and(
+            eq(notes.entityType, 'quote'),
+            eq(notes.entityId, quoteId.toString()),
+            eq(notes.isArchived, false)
+          )
+        )
+
+      if (quoteNotes.length > 0) {
+        await tx
+          .insert(notes)
+          .values(
+            quoteNotes.map(note => ({
+              entityType: 'order',
+              entityId: order.id.toString(),
+              content: note.content,
+              createdBy: note.createdBy,
+              isArchived: false,
+            }))
+          )
       }
 
       return { orderId: order.id, orderNumber: order.orderNumber }

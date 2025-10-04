@@ -46,26 +46,39 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   const [hasHandledSuccess, setHasHandledSuccess] = useState(false);
   const [isContentTransitioning, setIsContentTransitioning] = useState(false);
 
+  // Reset flag when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setHasHandledSuccess(false);
+    }
+  }, [isOpen]);
+
   useEffect(() => {
     const fetcherData = fetcher.data as { success?: boolean; error?: string } | undefined;
 
-    // Only process when fetcher is idle (not submitting)
-    if (fetcher.state === 'idle') {
+    // Only process when fetcher is idle (not submitting) and we have data
+    if (fetcher.state === 'idle' && fetcherData) {
       // Handle successful creation
-      if (fetcherData?.success && !hasHandledSuccess) {
+      if (fetcherData.success && !hasHandledSuccess) {
         setHasHandledSuccess(true);
-        // Call onSuccess first to trigger revalidation on the parent page
+        // Reset form state first
+        setCurrentStep("upload");
+        setPartFiles([]);
+        setPartConfigs([]);
+        setSelectedCustomer(null);
+        setCreateNewCustomer(false);
+        setNewCustomerData({
+          displayName: "",
+          email: "",
+          phone: "",
+          zipCode: ""
+        });
+        // Call onSuccess which will close modal and revalidate
         onSuccess?.();
-        // Small delay to ensure parent state updates before closing
-        setTimeout(() => {
-          handleReset();
-          // Reset the flag after modal closes
-          setTimeout(() => setHasHandledSuccess(false), 100);
-        }, 100);
       }
 
       // Handle errors
-      if (fetcherData?.error) {
+      if (fetcherData.error) {
         console.error("Quote creation error:", fetcherData.error);
         alert(`Failed to create quote: ${fetcherData.error}`);
       }
@@ -226,49 +239,98 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
 
   const handleSubmit = async () => {
     const formData = new FormData();
-    formData.append("intent", "createWithParts");
 
-    // Add customer data
-    if (createNewCustomer) {
-      if (!newCustomerData.displayName || !newCustomerData.email) {
-        alert("Please provide customer name and email");
+    // Check if we have parts to add
+    const hasParts = partConfigs.length > 0;
+
+    if (hasParts) {
+      // Submit with parts to the /quotes/new route
+      formData.append("intent", "createWithParts");
+
+      // Add customer data
+      if (createNewCustomer) {
+        if (!newCustomerData.displayName || !newCustomerData.email) {
+          alert("Please provide customer name and email");
+          return;
+        }
+        formData.append("createCustomer", "true");
+        formData.append("customerName", newCustomerData.displayName);
+        formData.append("customerEmail", newCustomerData.email);
+        formData.append("customerPhone", newCustomerData.phone || "");
+        formData.append("customerZipCode", newCustomerData.zipCode || "");
+      } else if (selectedCustomer) {
+        formData.append("customerId", selectedCustomer.id.toString());
+      } else {
+        alert("Please select or create a customer");
         return;
       }
-      formData.append("createCustomer", "true");
-      formData.append("customerName", newCustomerData.displayName);
-      formData.append("customerEmail", newCustomerData.email);
-      formData.append("customerPhone", newCustomerData.phone || "");
-      formData.append("customerZipCode", newCustomerData.zipCode || "");
-    } else if (selectedCustomer) {
-      formData.append("customerId", selectedCustomer.id.toString());
+
+      // Add parts data
+      partConfigs.forEach((config, index) => {
+        formData.append(`parts[${index}][file]`, config.file);
+        formData.append(`parts[${index}][name]`, config.partName || config.file.name);
+        formData.append(`parts[${index}][material]`, config.material || "");
+        formData.append(`parts[${index}][tolerances]`, config.tolerances || "");
+        formData.append(`parts[${index}][surfaceFinish]`, config.surfaceFinish || "");
+        formData.append(`parts[${index}][quantity]`, (config.quantity || 1).toString());
+        formData.append(`parts[${index}][notes]`, config.notes || "");
+
+        // Add drawings for this part
+        if (config.drawings) {
+          config.drawings.forEach((drawing, drawingIndex) => {
+            formData.append(`parts[${index}][drawings][${drawingIndex}]`, drawing);
+          });
+        }
+      });
+
+      fetcher.submit(formData, {
+        method: "post",
+        action: "/quotes/new",
+        encType: "multipart/form-data"
+      });
     } else {
-      alert("Please select or create a customer");
-      return;
-    }
+      // Create empty quote
+      if (createNewCustomer) {
+        // Need to use /quotes/new route to create customer
+        formData.append("intent", "createWithParts");
 
-    // Add parts data
-    partConfigs.forEach((config, index) => {
-      formData.append(`parts[${index}][file]`, config.file);
-      formData.append(`parts[${index}][name]`, config.partName || config.file.name);
-      formData.append(`parts[${index}][material]`, config.material || "");
-      formData.append(`parts[${index}][tolerances]`, config.tolerances || "");
-      formData.append(`parts[${index}][surfaceFinish]`, config.surfaceFinish || "");
-      formData.append(`parts[${index}][quantity]`, (config.quantity || 1).toString());
-      formData.append(`parts[${index}][notes]`, config.notes || "");
+        if (!newCustomerData.displayName || !newCustomerData.email) {
+          alert("Please provide customer name and email");
+          return;
+        }
+        formData.append("createCustomer", "true");
+        formData.append("customerName", newCustomerData.displayName);
+        formData.append("customerEmail", newCustomerData.email);
+        formData.append("customerPhone", newCustomerData.phone || "");
+        formData.append("customerZipCode", newCustomerData.zipCode || "");
 
-      // Add drawings for this part
-      if (config.drawings) {
-        config.drawings.forEach((drawing, drawingIndex) => {
-          formData.append(`parts[${index}][drawings][${drawingIndex}]`, drawing);
+        // Submit empty parts array
+        fetcher.submit(formData, {
+          method: "post",
+          action: "/quotes/new",
+          encType: "multipart/form-data"
+        });
+      } else {
+        // Use simpler action on current page for existing customer
+        formData.append("intent", "create");
+
+        if (selectedCustomer) {
+          formData.append("customerId", selectedCustomer.id.toString());
+        } else {
+          alert("Please select a customer");
+          return;
+        }
+
+        // Use default values for empty quote
+        formData.append("status", "RFQ");
+        formData.append("expirationDays", "14");
+
+        // Submit to current page action instead of /quotes/new
+        fetcher.submit(formData, {
+          method: "post"
         });
       }
-    });
-
-    fetcher.submit(formData, {
-      method: "post",
-      action: "/quotes/new",
-      encType: "multipart/form-data"
-    });
+    }
   };
 
   const renderUploadStep = () => (
@@ -766,12 +828,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   return (
     <Modal
       isOpen={isOpen}
-      onClose={() => {
-        // Don't allow closing while submitting
-        if (fetcher.state !== 'submitting') {
-          handleReset();
-        }
-      }}
+      onClose={handleReset}
       title={getModalTitle()}
       size={modalSize}
     >
