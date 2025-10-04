@@ -479,6 +479,9 @@ export async function convertQuoteToOrder(
         throw new Error('Quote has already been converted to an order')
       }
 
+      // Track which line items have been processed (those with associated parts)
+      const processedLineItemIds = new Set<number>()
+
       // Convert quote parts to customer parts and create order line items
       if (quote.parts && quote.parts.length > 0) {
         for (const quotePart of quote.parts) {
@@ -520,23 +523,35 @@ export async function convertQuoteToOrder(
                 unitPrice: lineItem.unitPrice,
                 notes: lineItem.notes || null,
               })
+
+            // Mark this line item as processed
+            processedLineItemIds.add(lineItem.id)
           }
         }
-      } else if (quote.lineItems && quote.lineItems.length > 0) {
-        // Fallback: if no parts exist, create simple line items
-        await tx
-          .insert(orderLineItems)
-          .values(
-            quote.lineItems.map(item => ({
-              orderId: order.id,
-              partId: null,
-              name: `Part from quote ${quote.quoteNumber}`,
-              description: item.description || '',
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              notes: item.notes || null,
-            }))
-          )
+      }
+
+      // Now handle any line items that don't have associated parts
+      if (quote.lineItems && quote.lineItems.length > 0) {
+        const unprocessedLineItems = quote.lineItems.filter(
+          item => !processedLineItemIds.has(item.id)
+        )
+
+        if (unprocessedLineItems.length > 0) {
+          // Create order line items for items without parts
+          await tx
+            .insert(orderLineItems)
+            .values(
+              unprocessedLineItems.map(item => ({
+                orderId: order.id,
+                partId: null,
+                name: item.name || `Line item from quote ${quote.quoteNumber}`,
+                description: item.description || '',
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                notes: item.notes || null,
+              }))
+            )
+        }
       }
 
       return { orderId: order.id, orderNumber: order.orderNumber }

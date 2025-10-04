@@ -47,15 +47,31 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   const [isContentTransitioning, setIsContentTransitioning] = useState(false);
 
   useEffect(() => {
-    if ((fetcher.data as { success?: boolean })?.success && !hasHandledSuccess) {
-      setHasHandledSuccess(true);
-      handleReset();
-      onSuccess?.();
-      // Reset the flag after a delay to allow for new submissions
-      setTimeout(() => setHasHandledSuccess(false), 1000);
+    const fetcherData = fetcher.data as { success?: boolean; error?: string } | undefined;
+
+    // Only process when fetcher is idle (not submitting)
+    if (fetcher.state === 'idle') {
+      // Handle successful creation
+      if (fetcherData?.success && !hasHandledSuccess) {
+        setHasHandledSuccess(true);
+        // Call onSuccess first to trigger revalidation on the parent page
+        onSuccess?.();
+        // Small delay to ensure parent state updates before closing
+        setTimeout(() => {
+          handleReset();
+          // Reset the flag after modal closes
+          setTimeout(() => setHasHandledSuccess(false), 100);
+        }, 100);
+      }
+
+      // Handle errors
+      if (fetcherData?.error) {
+        console.error("Quote creation error:", fetcherData.error);
+        alert(`Failed to create quote: ${fetcherData.error}`);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetcher.data, hasHandledSuccess]);
+  }, [fetcher.data, fetcher.state, hasHandledSuccess]);
 
   const handleReset = () => {
     setCurrentStep("upload");
@@ -69,6 +85,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       phone: "",
       zipCode: ""
     });
+    setHasHandledSuccess(false);
     onClose();
   };
 
@@ -749,7 +766,12 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   return (
     <Modal
       isOpen={isOpen}
-      onClose={handleReset}
+      onClose={() => {
+        // Don't allow closing while submitting
+        if (fetcher.state !== 'submitting') {
+          handleReset();
+        }
+      }}
       title={getModalTitle()}
       size={modalSize}
     >
