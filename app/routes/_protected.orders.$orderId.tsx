@@ -900,8 +900,11 @@ export default function OrderDetails() {
     });
   };
 
-  // Calculate total price from line items
-  const calculatedTotalPrice = lineItems
+  // Use the stored total price from the database (maintained by line item operations)
+  const orderTotalPrice = order.totalPrice || "0";
+
+  // Also calculate from line items for verification (can be used for debugging)
+  const calculatedFromLineItems = lineItems
     .reduce((sum: number, item: LineItemWithPart) => {
       // Always access through item.lineItem since getLineItemsByOrderId returns { lineItem, part }
       const quantity = item.lineItem?.quantity || 0;
@@ -910,10 +913,10 @@ export default function OrderDetails() {
     }, 0)
     .toString();
 
-  // Calculate vendor pay from percentage
+  // Calculate vendor pay from percentage using the stored total
   const vendorPayPercentage = parseFloat(order.vendorPay || "70");
   const calculatedVendorPay = (
-    (parseFloat(calculatedTotalPrice) * vendorPayPercentage) /
+    (parseFloat(orderTotalPrice) * vendorPayPercentage) /
     100
   ).toString();
 
@@ -1130,7 +1133,7 @@ export default function OrderDetails() {
                 Order Value
               </h3>
               <p className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-                {formatCurrency(calculatedTotalPrice)}
+                {formatCurrency(orderTotalPrice)}
               </p>
             </div>
 
@@ -1230,7 +1233,7 @@ export default function OrderDetails() {
                     <p className="text-lg text-gray-900 dark:text-gray-100">
                       {formatCurrency(
                         (
-                          parseFloat(calculatedTotalPrice) -
+                          parseFloat(orderTotalPrice) -
                           parseFloat(calculatedVendorPay)
                         ).toString()
                       )}{" "}
@@ -1556,7 +1559,7 @@ export default function OrderDetails() {
                           Subtotal:
                         </td>
                         <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
-                          {formatCurrency(calculatedTotalPrice)}
+                          {formatCurrency(orderTotalPrice)}
                         </td>
                         <td></td>
                       </tr>

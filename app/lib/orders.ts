@@ -185,7 +185,8 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
       .values({
         ...orderDataWithoutPercentage,
         orderNumber: orderNumber as string,
-        vendorPay
+        vendorPay,
+        totalPrice: "0" // Initialize with 0, will be updated when line items are added
       })
       .returning()
 

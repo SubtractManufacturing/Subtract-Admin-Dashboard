@@ -447,6 +447,11 @@ export async function convertQuoteToOrder(
     // Start a transaction
     const result = await db.transaction(async (tx) => {
       // Create the order
+      // Calculate total from quote line items to ensure accuracy
+      const calculatedTotal = quote.lineItems?.reduce((sum, item) => {
+        return sum + (item.quantity * parseFloat(item.unitPrice || '0'))
+      }, 0) || 0
+
       const [order] = await tx
         .insert(orders)
         .values({
@@ -455,7 +460,8 @@ export async function convertQuoteToOrder(
           vendorId: quote.vendorId,
           sourceQuoteId: quoteId,
           status: 'Pending',
-          totalPrice: quote.total,
+          totalPrice: calculatedTotal.toFixed(2),
+          vendorPay: '70', // Default vendor pay percentage
         })
         .returning()
 

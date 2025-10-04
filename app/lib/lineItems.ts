@@ -2,6 +2,7 @@ import { db } from "./db/client";
 import {
   orderLineItems,
   parts,
+  orders,
   type OrderLineItem,
   type NewOrderLineItem,
   type Part,
@@ -32,11 +33,38 @@ export async function getLineItemsByOrderId(
     .where(eq(orderLineItems.orderId, orderId));
 }
 
+// Helper function to recalculate and update order total
+async function updateOrderTotal(orderId: number): Promise<number> {
+  const lineItems = await db
+    .select()
+    .from(orderLineItems)
+    .where(eq(orderLineItems.orderId, orderId));
+
+  const total = lineItems.reduce((sum, item) => {
+    const itemTotal = parseFloat(item.unitPrice || "0") * (item.quantity || 0);
+    return sum + itemTotal;
+  }, 0);
+
+  // Update the order's totalPrice
+  await db
+    .update(orders)
+    .set({
+      totalPrice: total.toFixed(2),
+      updatedAt: new Date()
+    })
+    .where(eq(orders.id, orderId));
+
+  return total;
+}
+
 export async function createLineItem(
   data: NewOrderLineItem,
   eventContext?: LineItemEventContext
 ): Promise<OrderLineItem> {
   const [lineItem] = await db.insert(orderLineItems).values(data).returning();
+
+  // Update the order's totalPrice
+  const newTotal = await updateOrderTotal(data.orderId);
 
   // Log event
   await createEvent({
@@ -51,6 +79,7 @@ export async function createLineItem(
       partId: data.partId,
       quantity: data.quantity,
       unitPrice: data.unitPrice,
+      newOrderTotal: newTotal.toFixed(2),
     },
     userId: eventContext?.userId,
     userEmail: eventContext?.userEmail,
@@ -87,16 +116,8 @@ export async function updateLineItem(
     .where(eq(orderLineItems.id, id))
     .returning();
 
-  // Calculate the new order total after the update
-  const updatedLineItems = await db
-    .select()
-    .from(orderLineItems)
-    .where(eq(orderLineItems.orderId, updated.orderId));
-
-  const newOrderTotal = updatedLineItems.reduce((sum, item) => {
-    const itemTotal = parseFloat(item.unitPrice || "0") * (item.quantity || 0);
-    return sum + itemTotal;
-  }, 0);
+  // Update the order's totalPrice and get the new total
+  const newOrderTotal = await updateOrderTotal(updated.orderId);
 
   // Create separate events for each field that changed
   const eventPromises: Promise<unknown>[] = [];
@@ -279,27 +300,34 @@ export async function deleteLineItem(
   // Get line item details before deletion for logging
   const lineItem = await getLineItem(id);
 
+  if (!lineItem) {
+    return; // Line item doesn't exist, nothing to delete
+  }
+
+  // Delete the line item
   await db.delete(orderLineItems).where(eq(orderLineItems.id, id));
 
-  // Log event if line item existed
-  if (lineItem) {
-    await createEvent({
-      entityType: "order",
-      entityId: lineItem.orderId.toString(),
-      eventType: "line_item_deleted",
-      eventCategory: "system",
-      title: "Line Item Deleted",
-      description: `Deleted line item ${id}`,
-      metadata: {
-        lineItemId: id,
-        partId: lineItem.partId,
-        quantity: lineItem.quantity,
-        unitPrice: lineItem.unitPrice,
-      },
-      userId: eventContext?.userId,
-      userEmail: eventContext?.userEmail,
-    });
-  }
+  // Update the order's totalPrice
+  const newTotal = await updateOrderTotal(lineItem.orderId);
+
+  // Log event
+  await createEvent({
+    entityType: "order",
+    entityId: lineItem.orderId.toString(),
+    eventType: "line_item_deleted",
+    eventCategory: "system",
+    title: "Line Item Deleted",
+    description: `Deleted line item ${id}`,
+    metadata: {
+      lineItemId: id,
+      partId: lineItem.partId,
+      quantity: lineItem.quantity,
+      unitPrice: lineItem.unitPrice,
+      newOrderTotal: newTotal.toFixed(2),
+    },
+    userId: eventContext?.userId,
+    userEmail: eventContext?.userEmail,
+  });
 }
 
 export async function getLineItem(id: number): Promise<OrderLineItem | null> {

@@ -1,5 +1,5 @@
 import { db } from "./db/index.js"
-import { vendors, orders, customers, orderLineItems } from "./db/schema.js"
+import { vendors, orders, customers } from "./db/schema.js"
 import { eq, desc } from 'drizzle-orm'
 import type { Vendor } from "./db/schema.js"
 import { getVendorAttachments } from "./attachments.js"
@@ -171,28 +171,7 @@ export async function getVendorOrders(vendorId: number) {
       .where(eq(orders.vendorId, vendorId))
       .orderBy(desc(orders.createdAt))
 
-    // Fetch line items for each order and calculate actual total
-    const ordersWithCalculatedTotals = await Promise.all(
-      result.map(async (order) => {
-        const lineItems = await db
-          .select()
-          .from(orderLineItems)
-          .where(eq(orderLineItems.orderId, order.id))
-
-        // Calculate total from line items
-        const calculatedTotal = lineItems.reduce((sum, item) => {
-          return sum + (item.quantity * parseFloat(item.unitPrice || '0'))
-        }, 0)
-
-        return {
-          ...order,
-          totalPrice: calculatedTotal.toFixed(2), // Use calculated total instead of stored value
-          lineItems
-        }
-      })
-    )
-
-    return ordersWithCalculatedTotals
+    return result
   } catch (error) {
     console.error('Error fetching vendor orders:', error)
     return []
@@ -208,7 +187,7 @@ export async function getVendorStats(vendorId: number) {
       activeOrders: vendorOrders.filter(o => o.status === 'In_Production' || o.status === 'Pending').length,
       completedOrders: vendorOrders.filter(o => o.status === 'Completed').length,
       totalEarnings: vendorOrders.reduce((sum, o) => {
-        // totalPrice is now the correctly calculated value from line items
+        // totalPrice is stored and maintained when line items change
         const orderTotal = parseFloat(o.totalPrice || '0')
         const vendorPayPercentage = parseFloat(o.vendorPay || '0')
         const vendorEarnings = (orderTotal * vendorPayPercentage) / 100
