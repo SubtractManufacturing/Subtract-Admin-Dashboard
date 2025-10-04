@@ -623,7 +623,7 @@ export default function OrderDetails() {
   };
 
   const handleEditLineItem = (item: LineItemWithPart) => {
-    const lineItem = item.lineItem || item;
+    const lineItem = item.lineItem;
     setSelectedLineItem(lineItem);
     setLineItemMode("edit");
     setLineItemModalOpen(true);
@@ -903,8 +903,10 @@ export default function OrderDetails() {
   // Calculate total price from line items
   const calculatedTotalPrice = lineItems
     .reduce((sum: number, item: LineItemWithPart) => {
-      const lineItem = item.lineItem || item;
-      return sum + lineItem.quantity * parseFloat(lineItem.unitPrice || "0");
+      // Always access through item.lineItem since getLineItemsByOrderId returns { lineItem, part }
+      const quantity = item.lineItem?.quantity || 0;
+      const unitPrice = parseFloat(item.lineItem?.unitPrice || "0");
+      return sum + quantity * unitPrice;
     }, 0)
     .toString();
 
@@ -1349,14 +1351,14 @@ export default function OrderDetails() {
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                       {lineItems.map((item: LineItemWithPart) => {
-                        const lineItem = item.lineItem || item;
+                        const lineItem = item.lineItem;
                         const part = item.part;
                         const total =
-                          lineItem.quantity *
-                          parseFloat(lineItem.unitPrice || "0");
-                        const isEditingNote = editingNoteId === lineItem.id;
+                          (lineItem?.quantity || 0) *
+                          parseFloat(lineItem?.unitPrice || "0");
+                        const isEditingNote = editingNoteId === lineItem?.id;
                         return (
-                          <tr key={lineItem.id}>
+                          <tr key={lineItem?.id}>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center gap-3">
                                 {part ? (
@@ -1370,7 +1372,7 @@ export default function OrderDetails() {
                                       <img
                                         src={part.thumbnailUrl}
                                         alt={`${
-                                          part.partName || lineItem.name
+                                          part.partName || lineItem?.name || ""
                                         } thumbnail`}
                                         className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                       />
@@ -1400,7 +1402,7 @@ export default function OrderDetails() {
                                 ) : null}
                                 <div className="flex flex-col">
                                   <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                    {lineItem.name || "--"}
+                                    {lineItem?.name || "--"}
                                   </span>
                                   {part && (
                                     <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -1411,7 +1413,7 @@ export default function OrderDetails() {
                               </div>
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                              {lineItem.description || "--"}
+                              {lineItem?.description || "--"}
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 w-[25%] max-w-[25%]">
                               {isEditingNote ? (
@@ -1424,7 +1426,7 @@ export default function OrderDetails() {
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter" && !e.shiftKey) {
                                         e.preventDefault();
-                                        handleSaveNote(lineItem.id);
+                                        handleSaveNote(lineItem?.id || 0);
                                       } else if (e.key === "Escape") {
                                         handleCancelEditNote();
                                       }
@@ -1434,7 +1436,7 @@ export default function OrderDetails() {
                                     rows={2}
                                   />
                                   <button
-                                    onClick={() => handleSaveNote(lineItem.id)}
+                                    onClick={() => handleSaveNote(lineItem?.id || 0)}
                                     className="p-1 text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
                                     title="Save (Enter)"
                                   >
@@ -1468,25 +1470,25 @@ export default function OrderDetails() {
                                 <button
                                   onClick={() =>
                                     handleStartEditNote(
-                                      lineItem.id,
-                                      lineItem.notes
+                                      lineItem?.id || 0,
+                                      lineItem?.notes || ""
                                     )
                                   }
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
                                       handleStartEditNote(
-                                        lineItem.id,
-                                        lineItem.notes
+                                        lineItem?.id || 0,
+                                        lineItem?.notes || ""
                                       );
                                     }
                                   }}
                                   className="cursor-pointer min-h-[28px] px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left w-full"
                                   title="Click to edit note"
                                 >
-                                  {lineItem.notes ? (
+                                  {lineItem?.notes ? (
                                     <span className="text-sm break-words whitespace-pre-wrap">
-                                      {lineItem.notes}
+                                      {lineItem?.notes}
                                     </span>
                                   ) : (
                                     <span className="text-sm text-gray-400 dark:text-gray-500 italic">
@@ -1497,10 +1499,10 @@ export default function OrderDetails() {
                               )}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                              {lineItem.quantity}
+                              {lineItem?.quantity || 0}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                              {formatCurrency(lineItem.unitPrice)}
+                              {formatCurrency(lineItem?.unitPrice || "0")}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                               {formatCurrency(total.toString())}
@@ -1524,7 +1526,7 @@ export default function OrderDetails() {
                                 </button>
                                 <button
                                   onClick={() =>
-                                    handleDeleteLineItem(lineItem.id)
+                                    handleDeleteLineItem(lineItem?.id || 0)
                                   }
                                   className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
                                   title="Delete"
