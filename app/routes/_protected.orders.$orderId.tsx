@@ -744,6 +744,19 @@ export default function OrderDetails() {
     }
   };
 
+  const handleStartProduction = () => {
+    if (
+      confirm(
+        "Are you sure you want to start production? The order will move to 'In Production' status."
+      )
+    ) {
+      const formData = new FormData();
+      formData.append("intent", "updateStatus");
+      formData.append("status", "In_Production");
+      lineItemFetcher.submit(formData, { method: "post" });
+    }
+  };
+
   const handleAssignShop = () => {
     setSelectedVendorId(order.vendorId);
     setAssignShopModalOpen(true);
@@ -984,13 +997,23 @@ export default function OrderDetails() {
           />
           <div className="flex flex-wrap gap-3">
             {order.status === "Pending" && (
-              <Button
-                onClick={handleSendToShops}
-                variant="primary"
-                className="bg-purple-600 hover:bg-purple-700"
-              >
-                Send to Board
-              </Button>
+              order.vendorId ? (
+                <Button
+                  onClick={handleStartProduction}
+                  variant="primary"
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Start Production
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleSendToShops}
+                  variant="primary"
+                  className="bg-purple-600 hover:bg-purple-700"
+                >
+                  Send to Board
+                </Button>
+              )
             )}
             {order.status === "Waiting_For_Shop_Selection" && (
               <Button
