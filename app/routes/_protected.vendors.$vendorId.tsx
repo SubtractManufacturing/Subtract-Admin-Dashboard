@@ -720,11 +720,11 @@ export default function VendorDetails() {
                             {formatCurrency(parseFloat(order.totalPrice || '0'))}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                            {formatCurrency(
-                              (parseFloat(order.totalPrice || '0') * parseFloat(order.vendorPay || '0')) / 100
-                            )}
+                            {formatCurrency(parseFloat(order.vendorPay || '0'))}
                             <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
-                              ({order.vendorPay || '0'}%)
+                              ({parseFloat(order.totalPrice || '0') > 0
+                                ? ((parseFloat(order.vendorPay || '0') / parseFloat(order.totalPrice || '1')) * 100).toFixed(1)
+                                : '0'}%)
                             </span>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm">

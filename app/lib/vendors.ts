@@ -187,10 +187,8 @@ export async function getVendorStats(vendorId: number) {
       activeOrders: vendorOrders.filter(o => o.status === 'In_Production' || o.status === 'Pending').length,
       completedOrders: vendorOrders.filter(o => o.status === 'Completed').length,
       totalEarnings: vendorOrders.reduce((sum, o) => {
-        // totalPrice is stored and maintained when line items change
-        const orderTotal = parseFloat(o.totalPrice || '0')
-        const vendorPayPercentage = parseFloat(o.vendorPay || '0')
-        const vendorEarnings = (orderTotal * vendorPayPercentage) / 100
+        // vendorPay is now stored as a dollar amount
+        const vendorEarnings = parseFloat(o.vendorPay || '0')
         return sum + vendorEarnings
       }, 0),
       averageLeadTime: 0

@@ -557,7 +557,8 @@ export default function OrderDetails() {
   const [editOrderForm, setEditOrderForm] = useState({
     shipDate: "",
     leadTime: "",
-    vendorPay: "",
+    vendorPayDollar: "",
+    vendorPayPercent: "",
   });
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -820,12 +821,18 @@ export default function OrderDetails() {
   };
 
   const handleEditOrder = () => {
+    // Initialize with the existing vendor pay dollar amount
+    const vendorPayAmount = Math.max(0, parseFloat(order.vendorPay || "0"));
+    const orderTotal = Math.max(0, parseFloat(order.totalPrice || "0"));
+    const vendorPayPercentCalc = orderTotal > 0 ? Math.min(100, (vendorPayAmount / orderTotal * 100)) : 70;
+
     setEditOrderForm({
       shipDate: order.shipDate
         ? new Date(order.shipDate).toISOString().split("T")[0]
         : "",
       leadTime: order.leadTime?.toString() || "",
-      vendorPay: order.vendorPay || "70",
+      vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
+      vendorPayPercent: vendorPayPercentCalc > 0 ? vendorPayPercentCalc.toFixed(1) : "",
     });
     setEditOrderModalOpen(true);
   };
@@ -833,15 +840,27 @@ export default function OrderDetails() {
   const handleEditOrderSubmit = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "updateOrderInfo");
+
     if (editOrderForm.shipDate) {
       formData.append("shipDate", editOrderForm.shipDate);
     }
+
     if (editOrderForm.leadTime) {
-      formData.append("leadTime", editOrderForm.leadTime);
+      const leadTime = parseInt(editOrderForm.leadTime);
+      if (!isNaN(leadTime) && leadTime >= 0) {
+        formData.append("leadTime", leadTime.toString());
+      }
     }
-    if (editOrderForm.vendorPay) {
-      formData.append("vendorPay", editOrderForm.vendorPay);
+
+    // Validate and submit vendor pay
+    const vendorPayDollar = parseFloat(editOrderForm.vendorPayDollar || "0");
+    if (!isNaN(vendorPayDollar) && vendorPayDollar >= 0) {
+      formData.append("vendorPay", vendorPayDollar.toFixed(2));
+    } else {
+      // Default to 0 if invalid
+      formData.append("vendorPay", "0.00");
     }
+
     orderEditFetcher.submit(formData, { method: "post" });
     setEditOrderModalOpen(false);
   }, [editOrderForm, orderEditFetcher]);
@@ -903,22 +922,22 @@ export default function OrderDetails() {
   // Use the stored total price from the database (maintained by line item operations)
   const orderTotalPrice = order.totalPrice || "0";
 
-  // Also calculate from line items for verification (can be used for debugging)
-  const calculatedFromLineItems = lineItems
-    .reduce((sum: number, item: LineItemWithPart) => {
-      // Always access through item.lineItem since getLineItemsByOrderId returns { lineItem, part }
-      const quantity = item.lineItem?.quantity || 0;
-      const unitPrice = parseFloat(item.lineItem?.unitPrice || "0");
-      return sum + quantity * unitPrice;
-    }, 0)
-    .toString();
+  // For debugging: calculate from line items to verify stored total is correct
+  // const calculatedFromLineItems = lineItems
+  //   .reduce((sum: number, item: LineItemWithPart) => {
+  //     const quantity = item.lineItem?.quantity || 0;
+  //     const unitPrice = parseFloat(item.lineItem?.unitPrice || "0");
+  //     return sum + quantity * unitPrice;
+  //   }, 0)
+  //   .toString();
 
-  // Calculate vendor pay from percentage using the stored total
-  const vendorPayPercentage = parseFloat(order.vendorPay || "70");
-  const calculatedVendorPay = (
-    (parseFloat(orderTotalPrice) * vendorPayPercentage) /
-    100
-  ).toString();
+  // Vendor pay is now stored as a dollar amount
+  const vendorPayAmount = parseFloat(order.vendorPay || "0");
+
+  // Calculate the percentage for display purposes
+  const vendorPayPercentage = parseFloat(orderTotalPrice) > 0
+    ? (vendorPayAmount / parseFloat(orderTotalPrice)) * 100
+    : 0;
 
   // Get status display
   const getStatusDisplay = (status: string) => {
@@ -1222,8 +1241,8 @@ export default function OrderDetails() {
                       Vendor Pay
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {formatCurrency(calculatedVendorPay)} (
-                      {vendorPayPercentage}%)
+                      {formatCurrency(vendorPayAmount.toString())} (
+                      {vendorPayPercentage.toFixed(1)}%)
                     </p>
                   </div>
                   <div>
@@ -1234,10 +1253,10 @@ export default function OrderDetails() {
                       {formatCurrency(
                         (
                           parseFloat(orderTotalPrice) -
-                          parseFloat(calculatedVendorPay)
+                          vendorPayAmount
                         ).toString()
                       )}{" "}
-                      ({100 - vendorPayPercentage}%)
+                      ({(100 - vendorPayPercentage).toFixed(1)}%)
                     </p>
                   </div>
                 </div>
@@ -1999,26 +2018,162 @@ export default function OrderDetails() {
                 />
               </div>
 
-              <div>
-                <label htmlFor="vendor-pay-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Vendor Pay (%)
-                </label>
-                <input
-                  id="vendor-pay-input"
-                  type="number"
-                  value={editOrderForm.vendorPay}
-                  onChange={(e) =>
-                    setEditOrderForm({
-                      ...editOrderForm,
-                      vendorPay: e.target.value,
-                    })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  placeholder="e.g., 70"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                />
+              <div className="space-y-4">
+                <div className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Vendor Pay
+                </div>
+
+                {/* Dual synchronized inputs */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Percentage Input */}
+                  <div>
+                    <label htmlFor="vendor-pay-percent" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                      Percentage
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="vendor-pay-percent"
+                        type="number"
+                        value={editOrderForm.vendorPayPercent}
+                        onChange={(e) => {
+                          const input = e.target.value;
+                          // Allow empty input
+                          if (input === "") {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayPercent: "",
+                              vendorPayDollar: "",
+                            });
+                            return;
+                          }
+
+                          // Validate and clamp percentage between 0-100
+                          let percentage = parseFloat(input);
+                          if (isNaN(percentage)) return; // Don't update if invalid
+                          percentage = Math.max(0, Math.min(100, percentage));
+
+                          const total = Math.max(0, parseFloat(order.totalPrice || "0"));
+                          const dollarAmount = ((percentage / 100) * total).toFixed(2);
+
+                          setEditOrderForm({
+                            ...editOrderForm,
+                            vendorPayPercent: input,
+                            vendorPayDollar: dollarAmount,
+                          });
+                        }}
+                        onBlur={(e) => {
+                          // Clean up display on blur
+                          const percentage = parseFloat(e.target.value);
+                          if (!isNaN(percentage)) {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayPercent: Math.max(0, Math.min(100, percentage)).toFixed(1),
+                            });
+                          }
+                        }}
+                        className="w-full pl-3 pr-8 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder="70"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                      />
+                      <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-gray-400 pointer-events-none">
+                        %
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Dollar Input */}
+                  <div>
+                    <label htmlFor="vendor-pay-dollar" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                      Dollar Amount
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-gray-400 pointer-events-none">
+                        $
+                      </span>
+                      <input
+                        id="vendor-pay-dollar"
+                        type="number"
+                        value={editOrderForm.vendorPayDollar}
+                        onChange={(e) => {
+                          const input = e.target.value;
+                          // Allow empty input
+                          if (input === "") {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayDollar: "",
+                              vendorPayPercent: "",
+                            });
+                            return;
+                          }
+
+                          // Validate input
+                          let dollarAmount = parseFloat(input);
+                          if (isNaN(dollarAmount)) return; // Don't update if invalid
+                          dollarAmount = Math.max(0, dollarAmount);
+
+                          const total = Math.max(0, parseFloat(order.totalPrice || "0"));
+                          const percentage = total > 0
+                            ? Math.min(100, (dollarAmount / total * 100)).toFixed(1)
+                            : "0";
+
+                          setEditOrderForm({
+                            ...editOrderForm,
+                            vendorPayDollar: input,
+                            vendorPayPercent: percentage,
+                          });
+                        }}
+                        onBlur={(e) => {
+                          // Clean up display on blur
+                          const dollarAmount = parseFloat(e.target.value);
+                          if (!isNaN(dollarAmount)) {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayDollar: Math.max(0, dollarAmount).toFixed(2),
+                            });
+                          }
+                        }}
+                        className="w-full pl-8 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder="500.00"
+                        min="0"
+                        step="0.01"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Summary info */}
+                <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md text-sm space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">Order Total:</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      ${parseFloat(order.totalPrice || "0").toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">Vendor Pay:</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {(() => {
+                        const dollarVal = parseFloat(editOrderForm.vendorPayDollar || "0");
+                        const percentVal = parseFloat(editOrderForm.vendorPayPercent || "0");
+                        return `$${dollarVal.toFixed(2)} (${percentVal.toFixed(1)}%)`;
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-gray-200 dark:border-gray-700">
+                    <span className="text-gray-600 dark:text-gray-400">Profit Margin:</span>
+                    <span className="font-semibold text-green-600 dark:text-green-400">
+                      {(() => {
+                        const orderTotal = parseFloat(order.totalPrice || "0");
+                        const vendorPay = parseFloat(editOrderForm.vendorPayDollar || "0");
+                        const profit = Math.max(0, orderTotal - vendorPay);
+                        const profitPercent = orderTotal > 0 ? ((profit / orderTotal) * 100) : 0;
+                        return `$${profit.toFixed(2)} (${profitPercent.toFixed(1)}%)`;
+                      })()}
+                    </span>
+                  </div>
+                </div>
               </div>
 
               <div className="flex gap-3 justify-end mt-6">

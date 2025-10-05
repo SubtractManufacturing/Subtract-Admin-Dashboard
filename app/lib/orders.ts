@@ -173,19 +173,22 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
     // Use provided orderNumber or generate a new one
     const orderNumber = orderData.orderNumber || await getNextOrderNumber()
 
-    // Extract vendorPayPercentage and store it as vendorPay
-    const { vendorPayPercentage, ...orderDataWithoutPercentage } = orderData
-    delete orderDataWithoutPercentage.orderNumber
+    // Remove orderNumber from orderData before inserting
+    const orderDataWithoutOrderNumber = { ...orderData }
+    delete orderDataWithoutOrderNumber.orderNumber
+    delete orderDataWithoutOrderNumber.vendorPayPercentage // Remove if present for backwards compatibility
 
-    // Store the percentage in vendorPay field (e.g., "70" for 70%)
-    const vendorPay = vendorPayPercentage ? vendorPayPercentage.toString() : "70"
+    // Calculate vendor pay as 70% of total price (default) or use provided amount
+    // Since this is a new order with no line items yet, vendor pay starts at 0
+    // It should be set manually or calculated when line items are added
+    const vendorPay = orderData.vendorPay || "0"
 
     const insertResult = await db
       .insert(orders)
       .values({
-        ...orderDataWithoutPercentage,
+        ...orderDataWithoutOrderNumber,
         orderNumber: orderNumber as string,
-        vendorPay,
+        vendorPay, // Store as dollar amount
         totalPrice: "0" // Initialize with 0, will be updated when line items are added
       })
       .returning()

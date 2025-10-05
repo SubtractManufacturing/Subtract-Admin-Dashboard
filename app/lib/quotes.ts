@@ -452,6 +452,9 @@ export async function convertQuoteToOrder(
         return sum + (item.quantity * parseFloat(item.unitPrice || '0'))
       }, 0) || 0
 
+      // Calculate vendor pay as 70% of total by default
+      const defaultVendorPay = (calculatedTotal * 0.7).toFixed(2)
+
       const [order] = await tx
         .insert(orders)
         .values({
@@ -461,7 +464,7 @@ export async function convertQuoteToOrder(
           sourceQuoteId: quoteId,
           status: 'Pending',
           totalPrice: calculatedTotal.toFixed(2),
-          vendorPay: '70', // Default vendor pay percentage
+          vendorPay: defaultVendorPay, // Store as dollar amount (70% of total)
         })
         .returning()
 
@@ -568,7 +571,7 @@ export async function convertQuoteToOrder(
               unprocessedLineItems.map(item => ({
                 orderId: order.id,
                 partId: null,
-                name: item.name || `Line item from quote ${quote.quoteNumber}`,
+                name: `Line item from quote ${quote.quoteNumber}`,
                 description: item.description || '',
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,

@@ -5,6 +5,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
 import {
   getOrdersWithRelations,
+  getOrder,
   createOrder,
   updateOrder,
   archiveOrder,
@@ -97,8 +98,8 @@ export async function action({ request }: ActionFunctionArgs) {
           }
         }
 
-        const vendorPayPercentage =
-          parseInt(formData.get("vendorPayPercentage") as string) || 70;
+        // For new orders, we don't have a total yet, so store "0"
+        // Vendor pay will be calculated when line items are added
         const orderData: OrderInput = {
           orderNumber,
           customerId: formData.get("customerId")
@@ -108,7 +109,7 @@ export async function action({ request }: ActionFunctionArgs) {
             ? parseInt(formData.get("vendorId") as string)
             : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
-          vendorPayPercentage,
+          vendorPay: "0", // Will be set properly when line items are added
           shipDate: formData.get("shipDate")
             ? new Date(formData.get("shipDate") as string)
             : null,
@@ -119,7 +120,18 @@ export async function action({ request }: ActionFunctionArgs) {
       case "update": {
         const orderId = parseInt(formData.get("orderId") as string);
         const vendorPayPercentage =
-          parseInt(formData.get("vendorPayPercentage") as string) || 70;
+          parseFloat(formData.get("vendorPayPercentage") as string) || 70;
+
+        // Get the current order to calculate vendor pay amount from percentage
+        const order = await getOrder(orderId);
+        if (!order) {
+          return json({ error: "Order not found" }, { status: 404 });
+        }
+
+        // Calculate vendor pay amount from percentage and total
+        const orderTotal = parseFloat(order.totalPrice || "0");
+        const vendorPayAmount = (orderTotal * vendorPayPercentage / 100).toFixed(2);
+
         const orderData: OrderInput = {
           customerId: formData.get("customerId")
             ? parseInt(formData.get("customerId") as string)
@@ -128,7 +140,7 @@ export async function action({ request }: ActionFunctionArgs) {
             ? parseInt(formData.get("vendorId") as string)
             : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
-          vendorPayPercentage,
+          vendorPay: vendorPayAmount, // Store as dollar amount
           shipDate: formData.get("shipDate")
             ? new Date(formData.get("shipDate") as string)
             : null,
@@ -215,8 +227,10 @@ export default function Orders() {
     setEditingOrder(order);
     setOrderNumber(order.orderNumber);
     setOrderNumberError("");
-    // vendorPay now stores the percentage directly
-    const percentage = parseFloat(order.vendorPay || "70");
+    // vendorPay now stores a dollar amount - calculate percentage for UI
+    const vendorPayAmount = parseFloat(order.vendorPay || "0");
+    const orderTotal = parseFloat(order.totalPrice || "0");
+    const percentage = orderTotal > 0 ? (vendorPayAmount / orderTotal) * 100 : 70;
     setVendorPayPercentage(percentage);
     setModalOpen(true);
   };
@@ -397,19 +411,15 @@ export default function Orders() {
                   </td>
                   <td className={tableStyles.cell}>
                     {(() => {
-                      const total =
-                        order.lineItems?.reduce(
-                          (sum, item) =>
-                            sum +
-                            item.quantity * parseFloat(item.unitPrice || "0"),
-                          0
-                        ) || 0;
-                      const percentage = parseFloat(order.vendorPay || "70");
-                      const vendorPayAmount = (total * percentage) / 100;
-                      if (total > 0) {
+                      // vendorPay is now stored as a dollar amount
+                      const vendorPayAmount = parseFloat(order.vendorPay || "0");
+                      const total = parseFloat(order.totalPrice || "0");
+                      const percentage = total > 0 ? (vendorPayAmount / total) * 100 : 0;
+
+                      if (vendorPayAmount > 0) {
                         return `${formatCurrency(
                           vendorPayAmount.toString()
-                        )} (${percentage}%)`;
+                        )} (${percentage.toFixed(1)}%)`;
                       }
                       return "--";
                     })()}
