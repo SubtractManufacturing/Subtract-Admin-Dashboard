@@ -873,12 +873,12 @@ export async function createQuoteWithParts(
           })
 
           // Create attachment record
-          if (!process.env.S3_Bucket) {
-            throw new Error('S3_Bucket environment variable is not configured')
+          if (!process.env.S3_BUCKET) {
+            throw new Error('S3_BUCKET environment variable is not configured')
           }
 
           const [attachment] = await db.insert(attachments).values({
-            s3Bucket: process.env.S3_Bucket,
+            s3Bucket: process.env.S3_BUCKET,
             s3Key: uploadResult.key,
             fileName: drawing.fileName,
             contentType: drawing.fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png',
