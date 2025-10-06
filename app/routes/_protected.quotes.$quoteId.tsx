@@ -442,7 +442,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 const [attachment] = await db
                   .insert(attachments)
                   .values({
-                    s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                    s3Bucket: process.env.S3_Bucket || "default-bucket",
                     s3Key: drawingUploadResult.key,
                     fileName: drawing.name,
                     contentType: drawing.type || "application/pdf",
@@ -532,7 +532,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             const [attachment] = await db
               .insert(attachments)
               .values({
-                s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                s3Bucket: process.env.S3_Bucket || "default-bucket",
                 s3Key: drawingUploadResult.key,
                 fileName: drawing.name,
                 contentType: drawing.type || "application/pdf",
