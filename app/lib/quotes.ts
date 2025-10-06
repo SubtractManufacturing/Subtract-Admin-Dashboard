@@ -404,6 +404,48 @@ export async function archiveQuote(
   }
 }
 
+export async function restoreQuote(
+  id: number,
+  context?: QuoteEventContext
+): Promise<boolean> {
+  try {
+    const quote = await getQuote(id)
+    if (!quote) {
+      throw new Error('Quote not found')
+    }
+
+    await db
+      .update(quotes)
+      .set({
+        isArchived: false,
+        archivedAt: null,
+        updatedAt: new Date()
+      })
+      .where(eq(quotes.id, id))
+
+    // Log event
+    await createEvent({
+      entityType: 'quote',
+      entityId: id.toString(),
+      eventType: 'quote_restored',
+      eventCategory: 'system',
+      title: 'Quote Restored',
+      description: `Quote ${quote.quoteNumber} was restored from archive`,
+      metadata: {
+        quoteNumber: quote.quoteNumber,
+        status: quote.status,
+      },
+      userId: context?.userId,
+      userEmail: context?.userEmail,
+    })
+
+    return true
+  } catch (error) {
+    console.error('Error restoring quote:', error)
+    return false
+  }
+}
+
 export async function convertQuoteToOrder(
   quoteId: number,
   context?: QuoteEventContext

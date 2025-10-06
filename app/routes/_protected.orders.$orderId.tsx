@@ -10,6 +10,7 @@ import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
   getOrderByNumberWithAttachments,
   updateOrder,
+  restoreOrder,
   type OrderEventContext,
 } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
@@ -452,7 +453,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         await updateOrder(
           order.id,
-          { status: status as 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived' },
+          {
+            status: status as
+              | "Pending"
+              | "Waiting_For_Shop_Selection"
+              | "In_Production"
+              | "In_Inspection"
+              | "Shipped"
+              | "Delivered"
+              | "Completed"
+              | "Cancelled"
+              | "Archived",
+          },
           orderEventContext
         );
 
@@ -494,13 +506,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const updates: Partial<{ shipDate: Date; leadTime: number; vendorPay: string }> = {};
+        const updates: Partial<{
+          shipDate: Date;
+          leadTime: number;
+          vendorPay: string;
+        }> = {};
         if (shipDate) updates.shipDate = new Date(shipDate);
         if (leadTime) updates.leadTime = parseInt(leadTime);
         if (vendorPay) updates.vendorPay = vendorPay;
 
         await updateOrder(order.id, updates, orderEventContext);
 
+        return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "restoreOrder": {
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await restoreOrder(order.id, orderEventContext);
         return redirect(`/orders/${orderNumber}`);
       }
 
@@ -824,7 +850,8 @@ export default function OrderDetails() {
     // Initialize with the existing vendor pay dollar amount
     const vendorPayAmount = Math.max(0, parseFloat(order.vendorPay || "0"));
     const orderTotal = Math.max(0, parseFloat(order.totalPrice || "0"));
-    const vendorPayPercentCalc = orderTotal > 0 ? Math.min(100, (vendorPayAmount / orderTotal * 100)) : 70;
+    const vendorPayPercentCalc =
+      orderTotal > 0 ? Math.min(100, (vendorPayAmount / orderTotal) * 100) : 70;
 
     setEditOrderForm({
       shipDate: order.shipDate
@@ -832,7 +859,8 @@ export default function OrderDetails() {
         : "",
       leadTime: order.leadTime?.toString() || "",
       vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
-      vendorPayPercent: vendorPayPercentCalc > 0 ? vendorPayPercentCalc.toFixed(1) : "",
+      vendorPayPercent:
+        vendorPayPercentCalc > 0 ? vendorPayPercentCalc.toFixed(1) : "",
     });
     setEditOrderModalOpen(true);
   };
@@ -935,9 +963,10 @@ export default function OrderDetails() {
   const vendorPayAmount = parseFloat(order.vendorPay || "0");
 
   // Calculate the percentage for display purposes
-  const vendorPayPercentage = parseFloat(orderTotalPrice) > 0
-    ? (vendorPayAmount / parseFloat(orderTotalPrice)) * 100
-    : 0;
+  const vendorPayPercentage =
+    parseFloat(orderTotalPrice) > 0
+      ? (vendorPayAmount / parseFloat(orderTotalPrice)) * 100
+      : 0;
 
   // Get status display
   const getStatusDisplay = (status: string) => {
@@ -952,6 +981,8 @@ export default function OrderDetails() {
         return "Shipped";
       case "Delivered":
         return "Delivered";
+      case "Archived":
+        return "Archived";
       default:
         return status.charAt(0).toUpperCase() + status.slice(1);
     }
@@ -976,6 +1007,8 @@ export default function OrderDetails() {
         return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
       case "cancelled":
         return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
+      case "archived":
+        return "bg-gray-900 text-gray-100 dark:bg-gray-950 dark:text-gray-300";
       default:
         return "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300";
     }
@@ -1020,8 +1053,8 @@ export default function OrderDetails() {
             ]}
           />
           <div className="flex flex-wrap gap-3">
-            {order.status === "Pending" && (
-              order.vendorId ? (
+            {order.status === "Pending" &&
+              (order.vendorId ? (
                 <Button
                   onClick={handleStartProduction}
                   variant="primary"
@@ -1037,8 +1070,7 @@ export default function OrderDetails() {
                 >
                   Send to Board
                 </Button>
-              )
-            )}
+              ))}
             {order.status === "Waiting_For_Shop_Selection" && (
               <Button
                 onClick={handleAssignShop}
@@ -1084,19 +1116,17 @@ export default function OrderDetails() {
                 Complete Order
               </Button>
             )}
+            {/* No action buttons for archived orders - restore button is in the banner */}
           </div>
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
-          {/* Notice Bar */}
-          {showNotice && daysUntilShip && daysUntilShip <= 7 && (
-            <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
-              <button
-                onClick={() => setShowNotice(false)}
-                className="absolute top-2 right-2 text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
-              >
+          {/* Archived Notice Bar */}
+          {order.status === "Archived" && (
+            <div className="relative bg-gray-900 dark:bg-gray-950 border-2 border-gray-700 dark:border-gray-800 rounded-lg p-4">
+              <div className="flex items-center gap-3">
                 <svg
-                  className="w-5 h-5"
+                  className="w-6 h-6 text-gray-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -1105,16 +1135,48 @@ export default function OrderDetails() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
+                    d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
                   />
                 </svg>
-              </button>
-              <p className="font-semibold text-yellow-800 dark:text-yellow-200">
-                Attention: This order is approaching its due date (
-                {daysUntilShip} days remaining)
-              </p>
+                <div>
+                  <p className="font-semibold text-gray-100">
+                    This order has been archived
+                  </p>
+                </div>
+              </div>
             </div>
           )}
+
+          {/* Notice Bar */}
+          {showNotice &&
+            daysUntilShip &&
+            daysUntilShip <= 7 &&
+            order.status !== "Archived" && (
+              <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
+                <button
+                  onClick={() => setShowNotice(false)}
+                  className="absolute top-2 right-2 text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+                <p className="font-semibold text-yellow-800 dark:text-yellow-200">
+                  Attention: This order is approaching its due date (
+                  {daysUntilShip} days remaining)
+                </p>
+              </div>
+            )}
 
           {/* Status Cards - Always at top */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
@@ -1231,9 +1293,7 @@ export default function OrderDetails() {
                       Lead Time
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {order.leadTime
-                        ? `${order.leadTime} Days`
-                        : "--"}
+                      {order.leadTime ? `${order.leadTime} Days` : "--"}
                     </p>
                   </div>
                   <div>
@@ -1252,8 +1312,7 @@ export default function OrderDetails() {
                     <p className="text-lg text-gray-900 dark:text-gray-100">
                       {formatCurrency(
                         (
-                          parseFloat(orderTotalPrice) -
-                          vendorPayAmount
+                          parseFloat(orderTotalPrice) - vendorPayAmount
                         ).toString()
                       )}{" "}
                       ({(100 - vendorPayPercentage).toFixed(1)}%)
@@ -1458,7 +1517,9 @@ export default function OrderDetails() {
                                     rows={2}
                                   />
                                   <button
-                                    onClick={() => handleSaveNote(lineItem?.id || 0)}
+                                    onClick={() =>
+                                      handleSaveNote(lineItem?.id || 0)
+                                    }
                                     className="p-1 text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
                                     title="Save (Enter)"
                                   >
@@ -1914,7 +1975,10 @@ export default function OrderDetails() {
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="vendor-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label
+                  htmlFor="vendor-select"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
                   Select Vendor (Shop)
                 </label>
                 <select
@@ -1938,8 +2002,8 @@ export default function OrderDetails() {
 
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                 <p className="text-sm text-blue-800 dark:text-blue-200">
-                  Assigning a shop will move the order to &quot;In Production&quot;
-                  status.
+                  Assigning a shop will move the order to &quot;In
+                  Production&quot; status.
                 </p>
               </div>
 
@@ -1981,7 +2045,10 @@ export default function OrderDetails() {
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="ship-date-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label
+                  htmlFor="ship-date-input"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
                   Due Date
                 </label>
                 <input
@@ -2004,7 +2071,9 @@ export default function OrderDetails() {
                     today.setHours(0, 0, 0, 0);
                     const shipDate = new Date(newShipDate);
                     const diffInMs = shipDate.getTime() - today.getTime();
-                    const diffInDays = Math.round(diffInMs / (1000 * 60 * 60 * 24));
+                    const diffInDays = Math.round(
+                      diffInMs / (1000 * 60 * 60 * 24)
+                    );
 
                     setEditOrderForm({
                       ...editOrderForm,
@@ -2017,7 +2086,10 @@ export default function OrderDetails() {
               </div>
 
               <div>
-                <label htmlFor="lead-time-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label
+                  htmlFor="lead-time-input"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
                   Lead Time (Days)
                 </label>
                 <input
@@ -2040,7 +2112,9 @@ export default function OrderDetails() {
 
                     // Calculate ship date by adding lead time days to today
                     const today = new Date();
-                    const shipDate = new Date(today.getTime() + leadTimeDays * 24 * 60 * 60 * 1000);
+                    const shipDate = new Date(
+                      today.getTime() + leadTimeDays * 24 * 60 * 60 * 1000
+                    );
                     const shipDateString = shipDate.toISOString().split("T")[0];
 
                     setEditOrderForm({
@@ -2064,7 +2138,10 @@ export default function OrderDetails() {
                 <div className="grid grid-cols-2 gap-3">
                   {/* Percentage Input */}
                   <div>
-                    <label htmlFor="vendor-pay-percent" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                    <label
+                      htmlFor="vendor-pay-percent"
+                      className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+                    >
                       Percentage
                     </label>
                     <div className="relative">
@@ -2089,8 +2166,14 @@ export default function OrderDetails() {
                           if (isNaN(percentage)) return; // Don't update if invalid
                           percentage = Math.max(0, Math.min(100, percentage));
 
-                          const total = Math.max(0, parseFloat(order.totalPrice || "0"));
-                          const dollarAmount = ((percentage / 100) * total).toFixed(2);
+                          const total = Math.max(
+                            0,
+                            parseFloat(order.totalPrice || "0")
+                          );
+                          const dollarAmount = (
+                            (percentage / 100) *
+                            total
+                          ).toFixed(2);
 
                           setEditOrderForm({
                             ...editOrderForm,
@@ -2104,7 +2187,10 @@ export default function OrderDetails() {
                           if (!isNaN(percentage)) {
                             setEditOrderForm({
                               ...editOrderForm,
-                              vendorPayPercent: Math.max(0, Math.min(100, percentage)).toFixed(1),
+                              vendorPayPercent: Math.max(
+                                0,
+                                Math.min(100, percentage)
+                              ).toFixed(1),
                             });
                           }
                         }}
@@ -2122,7 +2208,10 @@ export default function OrderDetails() {
 
                   {/* Dollar Input */}
                   <div>
-                    <label htmlFor="vendor-pay-dollar" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                    <label
+                      htmlFor="vendor-pay-dollar"
+                      className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+                    >
                       Dollar Amount
                     </label>
                     <div className="relative">
@@ -2150,10 +2239,17 @@ export default function OrderDetails() {
                           if (isNaN(dollarAmount)) return; // Don't update if invalid
                           dollarAmount = Math.max(0, dollarAmount);
 
-                          const total = Math.max(0, parseFloat(order.totalPrice || "0"));
-                          const percentage = total > 0
-                            ? Math.min(100, (dollarAmount / total * 100)).toFixed(1)
-                            : "0";
+                          const total = Math.max(
+                            0,
+                            parseFloat(order.totalPrice || "0")
+                          );
+                          const percentage =
+                            total > 0
+                              ? Math.min(
+                                  100,
+                                  (dollarAmount / total) * 100
+                                ).toFixed(1)
+                              : "0";
 
                           setEditOrderForm({
                             ...editOrderForm,
@@ -2167,7 +2263,10 @@ export default function OrderDetails() {
                           if (!isNaN(dollarAmount)) {
                             setEditOrderForm({
                               ...editOrderForm,
-                              vendorPayDollar: Math.max(0, dollarAmount).toFixed(2),
+                              vendorPayDollar: Math.max(
+                                0,
+                                dollarAmount
+                              ).toFixed(2),
                             });
                           }
                         }}
@@ -2183,30 +2282,47 @@ export default function OrderDetails() {
                 {/* Summary info */}
                 <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md text-sm space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-600 dark:text-gray-400">Order Total:</span>
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Order Total:
+                    </span>
                     <span className="font-medium text-gray-900 dark:text-gray-100">
                       ${parseFloat(order.totalPrice || "0").toFixed(2)}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-600 dark:text-gray-400">Vendor Pay:</span>
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Vendor Pay:
+                    </span>
                     <span className="font-medium text-gray-900 dark:text-gray-100">
                       {(() => {
-                        const dollarVal = parseFloat(editOrderForm.vendorPayDollar || "0");
-                        const percentVal = parseFloat(editOrderForm.vendorPayPercent || "0");
-                        return `$${dollarVal.toFixed(2)} (${percentVal.toFixed(1)}%)`;
+                        const dollarVal = parseFloat(
+                          editOrderForm.vendorPayDollar || "0"
+                        );
+                        const percentVal = parseFloat(
+                          editOrderForm.vendorPayPercent || "0"
+                        );
+                        return `$${dollarVal.toFixed(2)} (${percentVal.toFixed(
+                          1
+                        )}%)`;
                       })()}
                     </span>
                   </div>
                   <div className="flex justify-between items-center pt-2 border-t border-gray-200 dark:border-gray-700">
-                    <span className="text-gray-600 dark:text-gray-400">Profit Margin:</span>
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Profit Margin:
+                    </span>
                     <span className="font-semibold text-green-600 dark:text-green-400">
                       {(() => {
                         const orderTotal = parseFloat(order.totalPrice || "0");
-                        const vendorPay = parseFloat(editOrderForm.vendorPayDollar || "0");
+                        const vendorPay = parseFloat(
+                          editOrderForm.vendorPayDollar || "0"
+                        );
                         const profit = Math.max(0, orderTotal - vendorPay);
-                        const profitPercent = orderTotal > 0 ? ((profit / orderTotal) * 100) : 0;
-                        return `$${profit.toFixed(2)} (${profitPercent.toFixed(1)}%)`;
+                        const profitPercent =
+                          orderTotal > 0 ? (profit / orderTotal) * 100 : 0;
+                        return `$${profit.toFixed(2)} (${profitPercent.toFixed(
+                          1
+                        )}%)`;
                       })()}
                     </span>
                   </div>

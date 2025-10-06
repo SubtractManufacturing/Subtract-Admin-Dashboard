@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useFetcher, Link, useRevalidator } from "@remix-run/react";
+import { useFetcher, Link, useRevalidator, useNavigate } from "@remix-run/react";
 import type { EventLog } from "~/lib/events";
 import Button from "~/components/shared/Button";
 import { formatEventForTimeline } from "~/utils/eventFormatters";
@@ -24,7 +24,9 @@ export function EventTimeline({
   const [selectedEvent, setSelectedEvent] = useState<EventLog | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const revalidator = useRevalidator();
+  const navigate = useNavigate();
   const dismissFetcher = useFetcher();
+  const restoreFetcher = useFetcher();
 
   useEffect(() => {
     if (initialEvents && initialEvents.length > 0) {
@@ -72,6 +74,44 @@ export function EventTimeline({
 
     // Revalidate to get fresh data
     setTimeout(() => revalidator.revalidate(), 100);
+  };
+
+  const handleRestoreEntity = () => {
+    if (!selectedEvent) return;
+
+    const formData = new FormData();
+
+    if (selectedEvent.eventType === 'order_archived') {
+      formData.append('intent', 'restoreOrder');
+      formData.append('orderId', selectedEvent.entityId);
+
+      restoreFetcher.submit(formData, {
+        method: 'post',
+        action: `/orders/${selectedEvent.entityId}`
+      });
+    } else if (selectedEvent.eventType === 'quote_archived') {
+      formData.append('intent', 'restoreQuote');
+      formData.append('quoteId', selectedEvent.entityId);
+
+      restoreFetcher.submit(formData, {
+        method: 'post',
+        action: `/quotes/${selectedEvent.entityId}`
+      });
+    }
+
+    // Close modal and navigate to the entity
+    setSelectedEvent(null);
+    setTimeout(() => {
+      if (selectedEvent.eventType === 'order_archived') {
+        const metadata = selectedEvent.metadata as Record<string, unknown> | null;
+        const orderNumber = metadata?.orderNumber;
+        if (orderNumber) {
+          navigate(`/orders/${orderNumber}`);
+        }
+      } else if (selectedEvent.eventType === 'quote_archived') {
+        navigate(`/quotes/${selectedEvent.entityId}`);
+      }
+    }, 100);
   };
 
   const getEventIcon = (event: EventLog) => {
@@ -441,6 +481,30 @@ export function EventTimeline({
                   <p>Entity: {selectedEvent.entityType} ({selectedEvent.entityId})</p>
                 </div>
               </div>
+
+              {/* Restore button for archived orders and quotes */}
+              {(selectedEvent.eventType === 'order_archived' || selectedEvent.eventType === 'quote_archived') && (
+                <div className="pt-4 flex justify-end">
+                  <button
+                    onClick={handleRestoreEntity}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+                  >
+                    {restoreFetcher.state === 'submitting' ? (
+                      <span className="flex items-center gap-2">
+                        <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Restoring...
+                      </span>
+                    ) : (
+                      <>
+                        Restore {selectedEvent.eventType === 'order_archived' ? 'Order' : 'Quote'}
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
             </div>
           </div>

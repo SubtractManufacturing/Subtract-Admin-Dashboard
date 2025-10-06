@@ -442,6 +442,35 @@ export async function archiveOrder(id: number, eventContext?: OrderEventContext)
   }
 }
 
+export async function restoreOrder(id: number, eventContext?: OrderEventContext): Promise<void> {
+  try {
+    const [order] = await db
+      .update(orders)
+      .set({ status: 'Pending' })
+      .where(eq(orders.id, id))
+      .returning()
+
+    // Log event for order restoration
+    await createEvent({
+      entityType: "order",
+      entityId: id.toString(),
+      eventType: "order_restored",
+      eventCategory: "system",
+      title: `Order #${order.orderNumber} restored`,
+      description: `Order has been restored from archive`,
+      metadata: {
+        orderNumber: order.orderNumber,
+        previousStatus: 'Archived',
+        newStatus: 'Pending'
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
+  } catch (error) {
+    throw new Error(`Failed to restore order: ${error}`)
+  }
+}
+
 export async function getOrderWithAttachments(id: number) {
   const order = await getOrder(id)
   if (!order) return null

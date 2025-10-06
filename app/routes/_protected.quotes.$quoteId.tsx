@@ -12,6 +12,7 @@ import {
   getQuote,
   updateQuote,
   archiveQuote,
+  restoreQuote,
   convertQuoteToOrder,
 } from "~/lib/quotes";
 import type { QuoteEventContext } from "~/lib/quotes";
@@ -46,7 +47,12 @@ import {
 } from "~/lib/notes";
 import { getEventsByEntity, createEvent } from "~/lib/events";
 import { db } from "~/lib/db";
-import { quoteAttachments, attachments, quotes, quotePartDrawings } from "~/lib/db/schema";
+import {
+  quoteAttachments,
+  attachments,
+  quotes,
+  quotePartDrawings,
+} from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 import Navbar from "~/components/Navbar";
@@ -158,7 +164,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
           attachment: attachments,
         })
         .from(quotePartDrawings)
-        .leftJoin(attachments, eq(quotePartDrawings.attachmentId, attachments.id))
+        .leftJoin(
+          attachments,
+          eq(quotePartDrawings.attachmentId, attachments.id)
+        )
         .where(eq(quotePartDrawings.quotePartId, part.id));
 
       const drawings = await Promise.all(
@@ -289,11 +298,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   // Helper function to auto-convert RFQ to Draft when editing starts
   const autoConvertRFQToDraft = async () => {
     if (quote.status === "RFQ") {
-      await updateQuote(
-        quote.id,
-        { status: "Draft" },
-        eventContext
-      );
+      await updateQuote(quote.id, { status: "Draft" }, eventContext);
     }
   };
 
@@ -403,9 +408,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           });
 
           // Handle technical drawings if provided
-          const drawingCount = parseInt(formData.get("drawingCount") as string) || 0;
+          const drawingCount =
+            parseInt(formData.get("drawingCount") as string) || 0;
           if (drawingCount > 0) {
-            const { attachments, quotePartDrawings } = await import("~/lib/db/schema");
+            const { attachments, quotePartDrawings } = await import(
+              "~/lib/db/schema"
+            );
 
             for (let i = 0; i < drawingCount; i++) {
               const drawing = formData.get(`drawing_${i}`) as File | null;
@@ -420,7 +428,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   .replace(/[^a-zA-Z0-9._-]/g, "");
 
                 // Upload drawing to S3
-                const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+                const drawingKey = `quote-parts/${
+                  newQuotePart.id
+                }/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
                 const drawingUploadResult = await uploadFile({
                   key: drawingKey,
                   buffer: drawingBuffer,
@@ -460,7 +470,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
             quantity: parseInt(quantity),
             unitPrice: parseFloat(unitPrice),
             // If there's a file/part, use description field; if no file, use name as description
-            description: quotePartId ? (description || undefined) : (name || undefined),
+            description: quotePartId
+              ? description || undefined
+              : name || undefined,
             notes: notes || undefined,
           },
           eventContext
@@ -480,14 +492,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Handle add drawing to existing part
     if (intent === "addDrawingToExistingPart") {
       const quotePartId = formData.get("quotePartId") as string;
-      const drawingCount = parseInt(formData.get("drawingCount") as string) || 0;
+      const drawingCount =
+        parseInt(formData.get("drawingCount") as string) || 0;
 
       if (!quotePartId || drawingCount === 0) {
-        return json({ error: "Missing quote part ID or drawings" }, { status: 400 });
+        return json(
+          { error: "Missing quote part ID or drawings" },
+          { status: 400 }
+        );
       }
 
       try {
-        const { attachments, quotePartDrawings } = await import("~/lib/db/schema");
+        const { attachments, quotePartDrawings } = await import(
+          "~/lib/db/schema"
+        );
 
         for (let i = 0; i < drawingCount; i++) {
           const drawing = formData.get(`drawing_${i}`) as File | null;
@@ -546,50 +564,50 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ error: "No file provided" }, { status: 400 });
       }
 
-    if (file.size > MAX_FILE_SIZE) {
-      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
-    }
+      if (file.size > MAX_FILE_SIZE) {
+        return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
+      }
 
-    try {
-      // Convert File to Buffer
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+      try {
+        // Convert File to Buffer
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
 
-      // Generate S3 key
-      const key = generateFileKey(quote.id, file.name);
+        // Generate S3 key
+        const key = generateFileKey(quote.id, file.name);
 
-      // Upload to S3
-      const uploadResult = await uploadFile({
-        key,
-        buffer,
-        contentType: file.type || "application/octet-stream",
-        fileName: file.name,
-      });
+        // Upload to S3
+        const uploadResult = await uploadFile({
+          key,
+          buffer,
+          contentType: file.type || "application/octet-stream",
+          fileName: file.name,
+        });
 
-      // Create attachment record
-      const attachment = await createAttachment(
-        {
-          s3Bucket: uploadResult.bucket,
-          s3Key: uploadResult.key,
-          fileName: uploadResult.fileName,
-          contentType: uploadResult.contentType,
-          fileSize: uploadResult.size,
-        },
-        eventContext
-      );
+        // Create attachment record
+        const attachment = await createAttachment(
+          {
+            s3Bucket: uploadResult.bucket,
+            s3Key: uploadResult.key,
+            fileName: uploadResult.fileName,
+            contentType: uploadResult.contentType,
+            fileSize: uploadResult.size,
+          },
+          eventContext
+        );
 
-      // Link to quote
-      await db.insert(quoteAttachments).values({
-        quoteId: quote.id,
-        attachmentId: attachment.id,
-      });
+        // Link to quote
+        await db.insert(quoteAttachments).values({
+          quoteId: quote.id,
+          attachmentId: attachment.id,
+        });
 
-      // Return a redirect to refresh the page
-      return redirect(`/quotes/${quoteId}`);
-    } catch (error) {
-      console.error("Upload error:", error);
-      return json({ error: "Failed to upload file" }, { status: 500 });
-    }
+        // Return a redirect to refresh the page
+        return redirect(`/quotes/${quoteId}`);
+      } catch (error) {
+        console.error("Upload error:", error);
+        return json({ error: "Failed to upload file" }, { status: 500 });
+      }
     }
 
     // If we get here with multipart data but unhandled intent, return error
@@ -829,6 +847,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect("/quotes");
       }
 
+      case "restoreQuote": {
+        await restoreQuote(quote.id, eventContext);
+        return redirect(`/quotes/${quote.id}`);
+      }
+
       case "getNotes": {
         const notes = await getNotes("quote", quote.id.toString());
         return withAuthHeaders(json({ notes }), headers);
@@ -926,7 +949,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const quotePartId = formData.get("quotePartId") as string;
 
         if (!drawingId || !quotePartId) {
-          return json({ error: "Missing drawing or quote part ID" }, { status: 400 });
+          return json(
+            { error: "Missing drawing or quote part ID" },
+            { status: 400 }
+          );
         }
 
         // Unlink drawing from quote part
@@ -1035,13 +1061,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
             } catch (error: unknown) {
               // Log but don't fail - database is already consistent
               const err = error as { Code?: string; name?: string };
-              if (
-                err?.Code === "NoSuchKey" ||
-                err?.name === "NoSuchKey"
-              ) {
-                console.log(
-                  `S3 file not found (already deleted?): ${fileKey}`
-                );
+              if (err?.Code === "NoSuchKey" || err?.name === "NoSuchKey") {
+                console.log(`S3 file not found (already deleted?): ${fileKey}`);
               } else {
                 console.error(`Error deleting S3 file ${fileKey}:`, error);
                 // TODO: Add to cleanup queue for retry
@@ -1320,7 +1341,6 @@ export default function QuoteDetail() {
       );
     }
   };
-
 
   const handleReviseQuote = () => {
     if (
@@ -1607,52 +1627,49 @@ export default function QuoteDetail() {
             ]}
           />
           <div className="flex flex-wrap gap-3">
-            <div className="relative">
-              <Button
-                ref={actionsButtonRef}
-                onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
-                variant="secondary"
-              >
-                Actions
-              </Button>
-              <QuoteActionsDropdown
-                isOpen={isActionsDropdownOpen}
-                onClose={() => setIsActionsDropdownOpen(false)}
-                excludeRef={actionsButtonRef}
-                quoteStatus={quote.status}
-                onReviseQuote={handleReviseQuote}
-              />
-            </div>
-            {(quote.status === "RFQ" || quote.status === "Draft") && (
-              <Button onClick={handleSendQuote} variant="primary">
-                Send Quote
-              </Button>
+            {!quote.isArchived && (
+              <>
+                <div className="relative">
+                  <Button
+                    ref={actionsButtonRef}
+                    onClick={() =>
+                      setIsActionsDropdownOpen(!isActionsDropdownOpen)
+                    }
+                    variant="secondary"
+                  >
+                    Actions
+                  </Button>
+                  <QuoteActionsDropdown
+                    isOpen={isActionsDropdownOpen}
+                    onClose={() => setIsActionsDropdownOpen(false)}
+                    excludeRef={actionsButtonRef}
+                    quoteStatus={quote.status}
+                    onReviseQuote={handleReviseQuote}
+                  />
+                </div>
+                {(quote.status === "RFQ" || quote.status === "Draft") && (
+                  <Button onClick={handleSendQuote} variant="primary">
+                    Send Quote
+                  </Button>
+                )}
+                {quote.status === "Sent" && !quote.convertedToOrderId && (
+                  <Button onClick={handleMarkAsAccepted} variant="primary">
+                    Mark as Accepted
+                  </Button>
+                )}
+              </>
             )}
-            {quote.status === "Sent" && !quote.convertedToOrderId && (
-              <Button onClick={handleMarkAsAccepted} variant="primary">
-                Mark as Accepted
-              </Button>
-            )}
+            {/* No action buttons for archived quotes - restore button is in the banner */}
           </div>
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
-          {/* Locked Quote Banner */}
-          {(quote.status === "Sent" || quote.status === "Accepted") && (
-            <div
-              className={`relative border-2 rounded-lg p-4 ${
-                quote.status === "Accepted"
-                  ? "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700"
-                  : "bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700"
-              }`}
-            >
-              <div className="flex items-start gap-3">
+          {/* Archived Quote Banner */}
+          {quote.isArchived && (
+            <div className="relative bg-gray-900 dark:bg-gray-950 border-2 border-gray-700 dark:border-gray-800 rounded-lg p-4">
+              <div className="flex items-center gap-3">
                 <svg
-                  className={`w-6 h-6 flex-shrink-0 ${
-                    quote.status === "Accepted"
-                      ? "text-green-600 dark:text-green-400"
-                      : "text-blue-600 dark:text-blue-400"
-                  }`}
+                  className="w-6 h-6 text-gray-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -1661,42 +1678,80 @@ export default function QuoteDetail() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                    d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
                   />
                 </svg>
-                <div className="flex-1">
-                  <p
-                    className={`font-semibold ${
-                      quote.status === "Accepted"
-                        ? "text-green-800 dark:text-green-200"
-                        : "text-blue-800 dark:text-blue-200"
-                    }`}
-                  >
-                    {quote.status === "Accepted"
-                      ? "Quote Accepted"
-                      : "Quote Sent"}
-                  </p>
-                  <p
-                    className={`text-sm mt-1 ${
-                      quote.status === "Accepted"
-                        ? "text-green-700 dark:text-green-300"
-                        : "text-blue-700 dark:text-blue-300"
-                    }`}
-                  >
-                    {quote.status === "Accepted"
-                      ? "Accepted quotes are immutable."
-                      : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
+                <div>
+                  <p className="font-semibold text-gray-100">
+                    This quote has been archived
                   </p>
                 </div>
               </div>
             </div>
           )}
 
+          {/* Locked Quote Banner */}
+          {(quote.status === "Sent" || quote.status === "Accepted") &&
+            !quote.isArchived && (
+              <div
+                className={`relative border-2 rounded-lg p-4 ${
+                  quote.status === "Accepted"
+                    ? "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700"
+                    : "bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <svg
+                    className={`w-6 h-6 flex-shrink-0 ${
+                      quote.status === "Accepted"
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-blue-600 dark:text-blue-400"
+                    }`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                    />
+                  </svg>
+                  <div className="flex-1">
+                    <p
+                      className={`font-semibold ${
+                        quote.status === "Accepted"
+                          ? "text-green-800 dark:text-green-200"
+                          : "text-blue-800 dark:text-blue-200"
+                      }`}
+                    >
+                      {quote.status === "Accepted"
+                        ? "Quote Accepted"
+                        : "Quote Sent"}
+                    </p>
+                    <p
+                      className={`text-sm mt-1 ${
+                        quote.status === "Accepted"
+                          ? "text-green-700 dark:text-green-300"
+                          : "text-blue-700 dark:text-blue-300"
+                      }`}
+                    >
+                      {quote.status === "Accepted"
+                        ? "Accepted quotes are immutable."
+                        : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
           {/* Expiry Notice Bar */}
           {daysUntilExpiry &&
             daysUntilExpiry > 0 &&
             daysUntilExpiry <= 7 &&
-            quote.status === "Sent" && (
+            quote.status === "Sent" &&
+            !quote.isArchived && (
               <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
                 <p className="font-semibold text-yellow-800 dark:text-yellow-200">
                   Attention: This quote expires in {daysUntilExpiry} days
@@ -1712,11 +1767,16 @@ export default function QuoteDetail() {
                 Quote Status
               </h3>
               <div
-                className={`px-4 py-3 rounded-full text-center font-semibold ${getStatusClasses(
-                  quote.status
-                )}`}
+                className={`px-4 py-3 rounded-full text-center font-semibold ${
+                  quote.isArchived
+                    ? "bg-gray-900 text-gray-100 dark:bg-gray-950 dark:text-gray-300"
+                    : getStatusClasses(quote.status)
+                }`}
               >
-                {quote.status.charAt(0).toUpperCase() + quote.status.slice(1)}
+                {quote.isArchived
+                  ? "Archived"
+                  : quote.status.charAt(0).toUpperCase() +
+                    quote.status.slice(1)}
               </div>
             </div>
 
@@ -2402,7 +2462,11 @@ export default function QuoteDetail() {
                                   )}
                                 </>
                               )}
-                              <span>{part?.partName || item.description || "Line Item"}</span>
+                              <span>
+                                {part?.partName ||
+                                  item.description ||
+                                  "Line Item"}
+                              </span>
                             </div>
                           </td>
                           <td
