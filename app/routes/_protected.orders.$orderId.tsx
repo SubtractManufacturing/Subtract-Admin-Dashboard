@@ -1232,7 +1232,7 @@ export default function OrderDetails() {
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
                       {order.leadTime
-                        ? `${order.leadTime} Business Days`
+                        ? `${order.leadTime} Days`
                         : "--"}
                     </p>
                   </div>
@@ -1982,36 +1982,73 @@ export default function OrderDetails() {
             <div className="space-y-4">
               <div>
                 <label htmlFor="ship-date-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Ship Date
+                  Due Date
                 </label>
                 <input
                   id="ship-date-input"
                   type="date"
                   value={editOrderForm.shipDate}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const newShipDate = e.target.value;
+                    if (!newShipDate) {
+                      setEditOrderForm({
+                        ...editOrderForm,
+                        shipDate: "",
+                        leadTime: "",
+                      });
+                      return;
+                    }
+
+                    // Calculate lead time in calendar days from today to the new ship date
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const shipDate = new Date(newShipDate);
+                    const diffInMs = shipDate.getTime() - today.getTime();
+                    const diffInDays = Math.round(diffInMs / (1000 * 60 * 60 * 24));
+
                     setEditOrderForm({
                       ...editOrderForm,
-                      shipDate: e.target.value,
-                    })
-                  }
+                      shipDate: newShipDate,
+                      leadTime: diffInDays >= 0 ? diffInDays.toString() : "0",
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
               </div>
 
               <div>
                 <label htmlFor="lead-time-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Lead Time (Business Days)
+                  Lead Time (Days)
                 </label>
                 <input
                   id="lead-time-input"
                   type="number"
                   value={editOrderForm.leadTime}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const input = e.target.value;
+                    if (input === "") {
+                      setEditOrderForm({
+                        ...editOrderForm,
+                        leadTime: "",
+                        shipDate: "",
+                      });
+                      return;
+                    }
+
+                    const leadTimeDays = parseInt(input);
+                    if (isNaN(leadTimeDays) || leadTimeDays < 0) return;
+
+                    // Calculate ship date by adding lead time days to today
+                    const today = new Date();
+                    const shipDate = new Date(today.getTime() + leadTimeDays * 24 * 60 * 60 * 1000);
+                    const shipDateString = shipDate.toISOString().split("T")[0];
+
                     setEditOrderForm({
                       ...editOrderForm,
-                      leadTime: e.target.value,
-                    })
-                  }
+                      leadTime: input,
+                      shipDate: shipDateString,
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   placeholder="e.g., 10"
                   min="0"
