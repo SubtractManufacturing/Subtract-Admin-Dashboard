@@ -381,3 +381,71 @@ export type FeatureFlag = typeof featureFlags.$inferSelect;
 export type NewFeatureFlag = typeof featureFlags.$inferInsert;
 export type EventLog = typeof eventLogs.$inferSelect;
 export type NewEventLog = typeof eventLogs.$inferInsert;
+
+// Quote Pricing Calculator Schema
+export const quotePriceCalculations = pgTable("quote_price_calculations", {
+  id: serial("id").primaryKey(),
+  quoteId: integer("quote_id").notNull().references(() => quotes.id),
+  quoteLineItemId: integer("quote_line_item_id").references(() => quoteLineItems.id),
+  quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
+
+  // Base inputs
+  toolpathGrandTotal: numeric("toolpath_grand_total", { precision: 10, scale: 2 }).notNull(),
+
+  // Lead time
+  leadTimeOption: text("lead_time_option").notNull(), // "3-5 Days", "5-7 Days", "7-12 Days"
+  leadTimeMultiplier: numeric("lead_time_multiplier", { precision: 4, scale: 2 }).notNull(),
+
+  // Thread costs
+  smallThreadCount: integer("small_thread_count").default(0).notNull(),
+  smallThreadRate: numeric("small_thread_rate", { precision: 6, scale: 2 }).default("0.90").notNull(),
+  mediumThreadCount: integer("medium_thread_count").default(0).notNull(),
+  mediumThreadRate: numeric("medium_thread_rate", { precision: 6, scale: 2 }).default("0.75").notNull(),
+  largeThreadCount: integer("large_thread_count").default(0).notNull(),
+  largeThreadRate: numeric("large_thread_rate", { precision: 6, scale: 2 }).default("1.10").notNull(),
+  totalThreadCost: numeric("total_thread_cost", { precision: 10, scale: 2 }).notNull(),
+
+  // Multipliers
+  complexityMultiplier: numeric("complexity_multiplier", { precision: 4, scale: 2 }).notNull(),
+  toleranceMultiplier: numeric("tolerance_multiplier", { precision: 4, scale: 2 }).notNull(),
+
+  // Optional tooling
+  toolingCost: numeric("tooling_cost", { precision: 10, scale: 2 }),
+  toolingMarkup: numeric("tooling_markup", { precision: 10, scale: 2 }),
+
+  // Calculated prices
+  basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
+  adjustedPrice: numeric("adjusted_price", { precision: 10, scale: 2 }).notNull(),
+  finalPrice: numeric("final_price", { precision: 10, scale: 2 }).notNull(),
+
+  // Metadata
+  notes: text("notes"),
+  calculatedBy: text("calculated_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const quotePriceCalculationTemplates = pgTable("quote_price_calculation_templates", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+
+  // Default values
+  leadTimeOption: text("lead_time_option"),
+  smallThreadCount: integer("small_thread_count"),
+  mediumThreadCount: integer("medium_thread_count"),
+  largeThreadCount: integer("large_thread_count"),
+  complexityMultiplier: numeric("complexity_multiplier", { precision: 4, scale: 2 }),
+  toleranceMultiplier: numeric("tolerance_multiplier", { precision: 4, scale: 2 }),
+
+  // Metadata
+  isGlobal: boolean("is_global").default(false).notNull(),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
+export type NewQuotePriceCalculation = typeof quotePriceCalculations.$inferInsert;
+export type QuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferSelect;
+export type NewQuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferInsert;

@@ -64,9 +64,14 @@ import { EventTimeline } from "~/components/EventTimeline";
 import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
 import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
+import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
+import {
+  createPriceCalculation,
+  getLatestCalculationsForQuote
+} from "~/lib/quotePriceCalculations";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -248,6 +253,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     ? await getOrder(quote.convertedToOrderId)
     : null;
 
+  // Fetch existing price calculations for the quote
+  const priceCalculations = await getLatestCalculationsForQuote(quote.id);
+
   return withAuthHeaders(
     json({
       quote: quoteWithSignedUrls,
@@ -259,6 +267,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       attachments: attachmentsWithUrls,
       user,
       userDetails,
+      priceCalculations,
       appConfig,
       showEventsLink,
       showQuotesLink,
@@ -1151,6 +1160,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "savePriceCalculation": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
+        const calculationDataStr = formData.get("calculationData") as string;
+
+        if (!calculationDataStr) {
+          return json({ error: "Missing calculation data" }, { status: 400 });
+        }
+
+        const calculationData = JSON.parse(calculationDataStr);
+
+        // Create the price calculation record
+        await createPriceCalculation(
+          calculationData,
+          user?.id || userDetails?.id
+        );
+
+        return json({ success: true });
+      }
+
       default:
         return json({ error: "Invalid action" }, { status: 400 });
     }
@@ -1171,6 +1201,7 @@ export default function QuoteDetail() {
     attachments,
     user,
     userDetails,
+    priceCalculations,
     appConfig,
     showEventsLink,
     showQuotesLink,
@@ -1230,6 +1261,9 @@ export default function QuoteDetail() {
   const lineItemFetcher = useFetcher();
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
+  const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] = useState(0);
+  const calculatorFetcher = useFetcher();
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1396,6 +1430,28 @@ export default function QuoteDetail() {
       method: "post",
       encType: "multipart/form-data",
     });
+  };
+
+  const handleOpenCalculator = () => {
+    setIsCalculatorOpen(true);
+    setCurrentCalculatorPartIndex(0);
+  };
+
+  const handleSaveCalculation = (calculationData: any) => {
+    const formData = new FormData();
+    formData.append("intent", "savePriceCalculation");
+    formData.append("calculationData", JSON.stringify(calculationData));
+
+    calculatorFetcher.submit(formData, {
+      method: "post",
+    });
+
+    // If this is the last part, close the modal
+    if (currentCalculatorPartIndex >= (quote.parts?.length || 1) - 1) {
+      setIsCalculatorOpen(false);
+      // Revalidate to get the updated prices
+      revalidator.revalidate();
+    }
   };
 
   const handleDeleteLineItem = (lineItemId: number, quotePartId?: string) => {
@@ -1645,6 +1701,7 @@ export default function QuoteDetail() {
                     excludeRef={actionsButtonRef}
                     quoteStatus={quote.status}
                     onReviseQuote={handleReviseQuote}
+                    onCalculatePricing={handleOpenCalculator}
                   />
                 </div>
                 {(quote.status === "RFQ" || quote.status === "Draft") && (
@@ -2974,6 +3031,18 @@ export default function QuoteDetail() {
         isOpen={isAddLineItemModalOpen}
         onClose={() => setIsAddLineItemModalOpen(false)}
         onSubmit={handleAddLineItemSubmit}
+      />
+
+      <QuotePriceCalculatorModal
+        isOpen={isCalculatorOpen}
+        onClose={() => setIsCalculatorOpen(false)}
+        quoteParts={quote.parts || []}
+        quoteLineItems={quote.lineItems || []}
+        quoteId={quote.id}
+        onSave={handleSaveCalculation}
+        currentPartIndex={currentCalculatorPartIndex}
+        onPartChange={setCurrentCalculatorPartIndex}
+        existingCalculations={priceCalculations || []}
       />
     </div>
   );
