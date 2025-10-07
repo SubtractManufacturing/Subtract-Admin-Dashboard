@@ -1026,8 +1026,23 @@ export default function OrderDetails() {
     }
   };
 
-  // Mock progress (in real app, this would come from order data)
-  const progress = 65;
+  // Calculate progress based on order status
+  const getOrderProgress = (status: string): number => {
+    const statusProgress: Record<string, number> = {
+      "Pending": 10,
+      "Waiting_For_Shop_Selection": 20,
+      "In_Production": 50,
+      "In_Inspection": 75,
+      "Shipped": 90,
+      "Delivered": 95,
+      "Completed": 100,
+      "Cancelled": 0,
+      "Archived": 100,
+    };
+    return statusProgress[status] ?? 0;
+  };
+
+  const progress = getOrderProgress(order.status);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
