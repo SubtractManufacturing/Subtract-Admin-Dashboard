@@ -53,7 +53,7 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
             <th className={tableStyles.headerCell}>Customer</th>
             <th className={tableStyles.headerCell}>Vendor</th>
             <th className={tableStyles.headerCell}>Status</th>
-            <th className={tableStyles.headerCell}>Qty</th>
+            <th className={tableStyles.headerCell}>Items</th>
             <th className={tableStyles.headerCell}>Quote Amount</th>
             <th className={tableStyles.headerCell}>Valid Until</th>
             <th className={tableStyles.headerCell}>Date Created</th>

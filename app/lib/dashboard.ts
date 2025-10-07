@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
-import { orders, quotes, customers, vendors } from "./db/schema.js"
-import { eq, count, sum, gte, inArray, and, ne } from 'drizzle-orm'
+import { orders, quotes, customers, vendors, orderLineItems, quoteLineItems } from "./db/schema.js"
+import { eq, count, sum, gte, inArray, and, ne, sql } from 'drizzle-orm'
 
 export type DashboardStats = {
   actionItems: number
@@ -96,12 +96,15 @@ export async function getOrders(): Promise<Order[]> {
         ship_date: orders.shipDate,
         created_at: orders.createdAt,
         customer_name: customers.displayName,
-        vendor_name: vendors.displayName
+        vendor_name: vendors.displayName,
+        line_item_count: sql<number>`COALESCE(COUNT(DISTINCT ${orderLineItems.id}), 0)`
       })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .leftJoin(vendors, eq(orders.vendorId, vendors.id))
+      .leftJoin(orderLineItems, eq(orders.id, orderLineItems.orderId))
       .where(ne(orders.status, 'Archived'))
+      .groupBy(orders.id, customers.displayName, vendors.displayName)
       .orderBy(orders.createdAt)
       .limit(10)
 
@@ -113,7 +116,7 @@ export async function getOrders(): Promise<Order[]> {
       vendor_id: order.vendor_id,
       vendor_name: order.vendor_name || 'Unassigned',
       status: order.status,
-      quantity: 0, // This would need to be calculated from order_line_items
+      quantity: Number(order.line_item_count) || 0,
       po_amount: order.total_price,
       ship_date: order.ship_date,
       created_at: order.created_at
@@ -137,11 +140,18 @@ export async function getQuotes(): Promise<Quote[]> {
         valid_until: quotes.validUntil,
         created_at: quotes.createdAt,
         customer_name: customers.displayName,
-        vendor_name: vendors.displayName
+        vendor_name: vendors.displayName,
+        line_item_count: sql<number>`COALESCE(COUNT(DISTINCT ${quoteLineItems.id}), 0)`
       })
       .from(quotes)
       .leftJoin(customers, eq(quotes.customerId, customers.id))
       .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
+      .leftJoin(quoteLineItems, eq(quotes.id, quoteLineItems.quoteId))
+      .where(and(
+        inArray(quotes.status, ['RFQ', 'Draft', 'Sent']),
+        eq(quotes.isArchived, false)
+      ))
+      .groupBy(quotes.id, customers.displayName, vendors.displayName)
       .orderBy(quotes.createdAt)
       .limit(10)
 
@@ -153,7 +163,7 @@ export async function getQuotes(): Promise<Quote[]> {
       vendor_id: quote.vendor_id,
       vendor_name: quote.vendor_name || 'Unassigned',
       status: quote.status,
-      quantity: 0, // This would need to be calculated from quote_line_items
+      quantity: Number(quote.line_item_count) || 0,
       total_price: quote.total_price,
       valid_until: quote.valid_until,
       created_at: quote.created_at
