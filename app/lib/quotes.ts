@@ -613,7 +613,7 @@ export async function convertQuoteToOrder(
               unprocessedLineItems.map(item => ({
                 orderId: order.id,
                 partId: null,
-                name: `Line item from quote ${quote.quoteNumber}`,
+                name: item.name || `Line item from quote ${quote.quoteNumber}`,
                 description: item.description || '',
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
@@ -1078,6 +1078,7 @@ export async function createQuoteLineItem(
   quoteId: number,
   itemData: {
     quotePartId?: string
+    name?: string
     quantity: number
     unitPrice: number
     leadTimeDays?: number
@@ -1095,6 +1096,7 @@ export async function createQuoteLineItem(
       .values({
         quoteId,
         quotePartId: itemData.quotePartId || null,
+        name: itemData.name || null,
         quantity: itemData.quantity,
         unitPrice: itemData.unitPrice.toFixed(2),
         totalPrice,

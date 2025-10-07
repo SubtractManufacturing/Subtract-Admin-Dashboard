@@ -95,6 +95,7 @@ export async function getQuoteLineItems(quoteId: number): Promise<QuoteLineItemW
         id: quoteLineItems.id,
         quoteId: quoteLineItems.quoteId,
         quotePartId: quoteLineItems.quotePartId,
+        name: quoteLineItems.name,
         quantity: quoteLineItems.quantity,
         unitPrice: quoteLineItems.unitPrice,
         totalPrice: quoteLineItems.totalPrice,
@@ -126,6 +127,8 @@ export async function createQuoteLineItem(quoteId: number, lineItemData: LineIte
       .values({
         quoteId,
         quotePartId: lineItemData.partId,
+        name: lineItemData.name,
+        description: lineItemData.description,
         quantity: lineItemData.quantity,
         unitPrice: lineItemData.unitPrice,
         totalPrice: totalPrice,

@@ -479,12 +479,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
           quote.id,
           {
             quotePartId: quotePartId || undefined,
+            name: name || undefined,
             quantity: parseInt(quantity),
             unitPrice: parseFloat(unitPrice),
-            // If there's a file/part, use description field; if no file, use name as description
-            description: quotePartId
-              ? description || undefined
-              : name || undefined,
+            description: description || undefined,
             notes: notes || undefined,
           },
           eventContext
@@ -1233,6 +1231,7 @@ export default function QuoteDetail() {
   type LineItem = {
     id: number;
     quotePartId: string | null;
+    name: string | null;
     quantity: number;
     unitPrice: string;
     totalPrice: string;
@@ -2576,6 +2575,7 @@ export default function QuoteDetail() {
                               )}
                               <span>
                                 {part?.partName ||
+                                  item.name ||
                                   item.description ||
                                   "Line Item"}
                               </span>

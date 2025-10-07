@@ -218,6 +218,7 @@ export const quoteLineItems = pgTable("quote_line_items", {
   id: serial("id").primaryKey(),
   quoteId: integer("quote_id").notNull().references(() => quotes.id),
   quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
+  name: text("name"),
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
   totalPrice: numeric("total_price", { precision: 10, scale: 2 }).notNull(),
