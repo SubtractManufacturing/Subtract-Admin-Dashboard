@@ -29,8 +29,6 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import {
   shouldShowEventsInNav,
-  shouldShowQuotesInNav,
-  canUserManageQuotes,
   canUserAccessPriceCalculator,
 } from "~/lib/featureFlags";
 import {
@@ -81,11 +79,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const quoteId = params.quoteId;
   if (!quoteId) {
     throw new Response("Quote ID is required", { status: 400 });
-  }
-
-  const canManageQuotes = await canUserManageQuotes();
-  if (!canManageQuotes) {
-    throw new Response("Not authorized to view quotes", { status: 403 });
   }
 
   const quote = await getQuote(parseInt(quoteId));
@@ -243,9 +236,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, showQuotesLink, canAccessPriceCalculator, events] = await Promise.all([
+  const [showEventsLink, canAccessPriceCalculator, events] = await Promise.all([
     shouldShowEventsInNav(),
-    shouldShowQuotesInNav(),
     canUserAccessPriceCalculator(userDetails?.role),
     getEventsByEntity("quote", quote.id.toString(), 10),
   ]);
@@ -272,7 +264,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       priceCalculations,
       appConfig,
       showEventsLink,
-      showQuotesLink,
       canAccessPriceCalculator,
       events,
       convertedOrder,
@@ -289,11 +280,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const quoteId = params.quoteId;
   if (!quoteId) {
     return json({ error: "Quote ID is required" }, { status: 400 });
-  }
-
-  const canManageQuotes = await canUserManageQuotes();
-  if (!canManageQuotes) {
-    return json({ error: "Not authorized to manage quotes" }, { status: 403 });
   }
 
   const quote = await getQuote(parseInt(quoteId));
@@ -1205,7 +1191,6 @@ export default function QuoteDetail() {
     priceCalculations,
     appConfig,
     showEventsLink,
-    showQuotesLink,
     canAccessPriceCalculator,
     events,
     convertedOrder,
@@ -1437,11 +1422,13 @@ export default function QuoteDetail() {
   };
 
   const handleOpenCalculator = () => {
+    if (!canAccessPriceCalculator) return;
     setIsCalculatorOpen(true);
     setCurrentCalculatorPartIndex(0);
   };
 
   const handleOpenCalculatorForPart = (partId: string) => {
+    if (!canAccessPriceCalculator) return;
     // Find the index of the part in the quote.parts array
     const partIndex = quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
     setCurrentCalculatorPartIndex(partIndex);
@@ -1721,7 +1708,6 @@ export default function QuoteDetail() {
         version={appConfig.version}
         isStaging={appConfig.isStaging}
         showEventsLink={showEventsLink}
-        showQuotesLink={showQuotesLink}
       />
 
       <div className="max-w-[1920px] mx-auto">
@@ -3120,7 +3106,7 @@ export default function QuoteDetail() {
 
       {canAccessPriceCalculator && (
         <QuotePriceCalculatorModal
-          isOpen={isCalculatorOpen}
+          isOpen={isCalculatorOpen && canAccessPriceCalculator}
           onClose={() => setIsCalculatorOpen(false)}
           quoteParts={quote.parts || []}
           quoteLineItems={quote.lineItems || []}

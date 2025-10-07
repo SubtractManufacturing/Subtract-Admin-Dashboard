@@ -78,7 +78,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
             <th className={tableStyles.headerCell}>Customer</th>
             <th className={tableStyles.headerCell}>Vendor</th>
             <th className={tableStyles.headerCell}>Status</th>
-            <th className={tableStyles.headerCell}>Qty</th>
+            <th className={tableStyles.headerCell}>Items</th>
             <th className={tableStyles.headerCell}>PO Amount</th>
             <th className={tableStyles.headerCell}>Due Date</th>
             <th className={tableStyles.headerCell}>Date Created</th>

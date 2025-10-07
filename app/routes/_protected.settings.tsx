@@ -581,32 +581,6 @@ export default function Settings() {
                     </div>
 
                     <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
-                        Access Control
-                      </h4>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                        Control access to features for all users. Admin and Dev
-                        users always have access to Events.
-                      </p>
-                      <div className="space-y-2">
-                        {localFeatureFlags
-                          ?.filter(
-                            (flag: FeatureFlag) =>
-                              flag.key === "events_access_all" ||
-                              flag.key === "events_nav_visible"
-                          )
-                          .map((flag: FeatureFlag) => (
-                            <FeatureFlagItem
-                              key={flag.id}
-                              flag={flag}
-                              onToggle={handleFeatureFlagToggle}
-                              disabled={isSaving}
-                            />
-                          ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
                       <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
                         Admin Actions
                       </h4>
@@ -645,14 +619,12 @@ export default function Settings() {
                     <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
                       Feature Flags
                     </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                      Control feature availability and access for all users.
+                    </p>
                     <div>
                       {localFeatureFlags
-                        ?.filter(
-                          (flag: FeatureFlag) =>
-                            flag.key !== "events_access_all" &&
-                            flag.key !== "events_nav_visible"
-                        )
-                        .sort((a: FeatureFlag, b: FeatureFlag) =>
+                        ?.sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key)
                         )
                         .map((flag: FeatureFlag) => (

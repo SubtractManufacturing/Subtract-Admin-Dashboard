@@ -51,9 +51,8 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
           <tr>
             <th className={tableStyles.headerCell}>Quote #</th>
             <th className={tableStyles.headerCell}>Customer</th>
-            <th className={tableStyles.headerCell}>Vendor</th>
             <th className={tableStyles.headerCell}>Status</th>
-            <th className={tableStyles.headerCell}>Qty</th>
+            <th className={tableStyles.headerCell}>Items</th>
             <th className={tableStyles.headerCell}>Quote Amount</th>
             <th className={tableStyles.headerCell}>Valid Until</th>
             <th className={tableStyles.headerCell}>Date Created</th>
@@ -80,21 +79,6 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
                   </button>
                 ) : (
                   <span>{quote.customer_name}</span>
-                )}
-              </td>
-              <td className={tableStyles.cell}>
-                {quote.vendor_id ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      navigate(`/vendors/${quote.vendor_id}`)
-                    }}
-                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
-                  >
-                    {quote.vendor_name}
-                  </button>
-                ) : (
-                  <span>{quote.vendor_name}</span>
                 )}
               </td>
               <td className={`${tableStyles.cell} ${statusStyles.base} ${getStatusStyle(quote.status)}`}>
