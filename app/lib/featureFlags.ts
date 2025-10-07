@@ -10,6 +10,8 @@ export const FEATURE_FLAGS = {
   EVENTS_NAV_VISIBLE: "events_nav_visible",
   QUOTES_MANAGEMENT: "quotes_management",
   QUOTES_NAV_VISIBLE: "quotes_nav_visible",
+  PRICE_CALCULATOR_DEV: "price_calculator_dev",
+  PRICE_CALCULATOR_ALL: "price_calculator_all",
 } as const;
 
 // Default feature flags with their metadata
@@ -49,6 +51,18 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     name: "Show Quotes in Navigation",
     description: "Display the Quotes link in the navigation bar",
     enabled: true,
+  },
+  {
+    key: FEATURE_FLAGS.PRICE_CALCULATOR_DEV,
+    name: "Enable Price Calculator for Admins/Devs",
+    description: "Allow users with Admin or Developer role to access the quote price calculator",
+    enabled: true,
+  },
+  {
+    key: FEATURE_FLAGS.PRICE_CALCULATOR_ALL,
+    name: "Enable Price Calculator for All Users",
+    description: "Allow all users to access the quote price calculator",
+    enabled: false,
   },
 ];
 
@@ -155,4 +169,18 @@ export async function shouldShowQuotesInNav() {
   // Check if quotes should be shown in navigation
   const navVisible = await isFeatureEnabled(FEATURE_FLAGS.QUOTES_NAV_VISIBLE);
   return navVisible;
+}
+
+export async function canUserAccessPriceCalculator(userRole?: string | null) {
+  // Check if price calculator is enabled for all users
+  const allUsersEnabled = await isFeatureEnabled(FEATURE_FLAGS.PRICE_CALCULATOR_ALL);
+  if (allUsersEnabled) return true;
+
+  // Check if price calculator is enabled for admins/devs and user has elevated role
+  if (userRole === "Admin" || userRole === "Dev") {
+    const devEnabled = await isFeatureEnabled(FEATURE_FLAGS.PRICE_CALCULATOR_DEV);
+    return devEnabled;
+  }
+
+  return false;
 }

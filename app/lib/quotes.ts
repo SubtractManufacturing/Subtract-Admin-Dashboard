@@ -1,5 +1,18 @@
+/**
+ * Quotes Management Module
+ *
+ * Error Handling Convention:
+ * - Query functions (getQuote, getQuotes): Return null on error, log to console
+ * - Creation functions (createQuote, createQuotePart): Return null on error, log to console
+ * - Update functions (updateQuote, updateQuotePart): Return null on error, log to console
+ * - Delete/Archive functions: Return boolean (false on error)
+ * - Validation functions: Throw Error with descriptive message
+ * - Conversion functions: Return {success: boolean, error?: string} object
+ *
+ * All errors are logged to console. Critical errors are also logged as events for tracking.
+ */
 import { db } from "./db/index.js"
-import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings } from "./db/schema.js"
+import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings, quoteAttachments, orderAttachments, notes, partDrawings } from "./db/schema.js"
 import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
 import type { Customer, Vendor, QuoteLineItem, QuotePart, Quote, NewQuote } from "./db/schema.js"
 import { getNextQuoteNumber, getNextOrderNumber } from "./number-generator.js"
@@ -20,7 +33,6 @@ export type QuoteWithRelations = {
   expiredAt: Date | null
   archivedAt: Date | null
   subtotal: string | null
-  tax: string | null
   total: string | null
   createdById: string | null
   convertedToOrderId: number | null
@@ -55,45 +67,59 @@ export async function getQuotes(includeArchived = false): Promise<QuoteWithRelat
     // Check and update expired quotes before fetching
     await checkAndUpdateExpiredQuotes()
 
-    const quotesResult = await db
-      .select()
+    // Fetch all quotes with customers and vendors using joins
+    const quotesWithBasicRelations = await db
+      .select({
+        quote: quotes,
+        customer: customers,
+        vendor: vendors,
+      })
       .from(quotes)
+      .leftJoin(customers, eq(quotes.customerId, customers.id))
+      .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
       .where(includeArchived ? sql`1=1` : eq(quotes.isArchived, false))
       .orderBy(desc(quotes.createdAt))
 
-    if (!quotesResult.length) return []
+    if (!quotesWithBasicRelations.length) return []
 
-    const quotesWithRelations = await Promise.all(
-      quotesResult.map(async quote => {
-        const [customer, vendor, lineItems, parts] = await Promise.all([
-          quote.customerId
-            ? db.select().from(customers).where(eq(customers.id, quote.customerId)).limit(1)
-            : [null],
-          quote.vendorId
-            ? db.select().from(vendors).where(eq(vendors.id, quote.vendorId)).limit(1)
-            : [null],
-          db
-            .select()
-            .from(quoteLineItems)
-            .where(eq(quoteLineItems.quoteId, quote.id))
-            .orderBy(quoteLineItems.sortOrder),
-          db
-            .select()
-            .from(quoteParts)
-            .where(eq(quoteParts.quoteId, quote.id))
-        ])
+    // Fetch all line items for these quotes in bulk
+    const quoteIds = quotesWithBasicRelations.map(q => q.quote.id)
+    const allLineItems = await db
+      .select()
+      .from(quoteLineItems)
+      .where(sql`${quoteLineItems.quoteId} IN ${sql.raw(`(${quoteIds.join(',')})`)}`)
+      .orderBy(quoteLineItems.sortOrder)
 
-        return {
-          ...quote,
-          customer: customer[0],
-          vendor: vendor[0],
-          lineItems,
-          parts
-        }
-      })
-    )
+    // Fetch all parts for these quotes in bulk
+    const allParts = await db
+      .select()
+      .from(quoteParts)
+      .where(sql`${quoteParts.quoteId} IN ${sql.raw(`(${quoteIds.join(',')})`)}`);
 
-    return quotesWithRelations
+    // Group line items and parts by quote ID
+    const lineItemsByQuote = new Map<number, typeof allLineItems>()
+    const partsByQuote = new Map<number, typeof allParts>()
+
+    allLineItems.forEach(item => {
+      const items = lineItemsByQuote.get(item.quoteId) || []
+      items.push(item)
+      lineItemsByQuote.set(item.quoteId, items)
+    })
+
+    allParts.forEach(part => {
+      const parts = partsByQuote.get(part.quoteId) || []
+      parts.push(part)
+      partsByQuote.set(part.quoteId, parts)
+    })
+
+    // Assemble final results
+    return quotesWithBasicRelations.map(({ quote, customer, vendor }) => ({
+      ...quote,
+      customer,
+      vendor,
+      lineItems: lineItemsByQuote.get(quote.id) || [],
+      parts: partsByQuote.get(quote.id) || []
+    }))
   } catch (error) {
     console.error('Error fetching quotes:', error)
     return []
@@ -378,6 +404,48 @@ export async function archiveQuote(
   }
 }
 
+export async function restoreQuote(
+  id: number,
+  context?: QuoteEventContext
+): Promise<boolean> {
+  try {
+    const quote = await getQuote(id)
+    if (!quote) {
+      throw new Error('Quote not found')
+    }
+
+    await db
+      .update(quotes)
+      .set({
+        isArchived: false,
+        archivedAt: null,
+        updatedAt: new Date()
+      })
+      .where(eq(quotes.id, id))
+
+    // Log event
+    await createEvent({
+      entityType: 'quote',
+      entityId: id.toString(),
+      eventType: 'quote_restored',
+      eventCategory: 'system',
+      title: 'Quote Restored',
+      description: `Quote ${quote.quoteNumber} was restored from archive`,
+      metadata: {
+        quoteNumber: quote.quoteNumber,
+        status: quote.status,
+      },
+      userId: context?.userId,
+      userEmail: context?.userEmail,
+    })
+
+    return true
+  } catch (error) {
+    console.error('Error restoring quote:', error)
+    return false
+  }
+}
+
 export async function convertQuoteToOrder(
   quoteId: number,
   context?: QuoteEventContext
@@ -396,9 +464,77 @@ export async function convertQuoteToOrder(
       return { success: false, error: 'Quote has already been converted to an order' }
     }
 
+    // Validation: Ensure quote has line items
+    if (!quote.lineItems || quote.lineItems.length === 0) {
+      return { success: false, error: 'Cannot convert quote with no line items' }
+    }
+
+    // Validation: Ensure all line items have valid quantities and prices
+    for (const item of quote.lineItems) {
+      if (item.quantity <= 0) {
+        return { success: false, error: `Line item has invalid quantity: ${item.quantity}` }
+      }
+      const unitPrice = parseFloat(item.unitPrice || '0')
+      if (unitPrice < 0) {
+        return { success: false, error: `Line item has invalid price: ${unitPrice}` }
+      }
+    }
+
+    // Validation: Ensure quote total is greater than 0
+    const total = parseFloat(quote.total || '0')
+    if (total <= 0) {
+      return { success: false, error: 'Cannot convert quote with $0 total' }
+    }
+
+    // Additional validation: Check if any quote parts have pending conversions
+    if (quote.parts && quote.parts.length > 0) {
+      const pendingConversions = quote.parts.filter(
+        part => part.conversionStatus === 'in_progress' ||
+        part.conversionStatus === 'queued' ||
+        (part.conversionStatus === 'pending' && part.partFileUrl)
+      )
+
+      if (pendingConversions.length > 0) {
+        return {
+          success: false,
+          error: `Cannot convert quote while ${pendingConversions.length} part(s) have pending mesh conversions. Please wait for all conversions to complete.`
+        }
+      }
+
+      // Warn about failed conversions but allow conversion to proceed
+      const failedConversions = quote.parts.filter(
+        part => part.conversionStatus === 'failed'
+      )
+
+      if (failedConversions.length > 0) {
+        console.warn(`Converting quote ${quoteId} with ${failedConversions.length} failed mesh conversions`)
+      }
+
+      // Validate that all quote parts have required fields
+      for (const part of quote.parts) {
+        if (!part.partName || part.partName.trim() === '') {
+          return { success: false, error: `Quote part ${part.partNumber} is missing a name` }
+        }
+
+        // Check if part has a corresponding line item
+        const hasLineItem = quote.lineItems?.some(item => item.quotePartId === part.id)
+        if (!hasLineItem) {
+          return { success: false, error: `Quote part ${part.partName} has no associated line item with pricing` }
+        }
+      }
+    }
+
     // Start a transaction
     const result = await db.transaction(async (tx) => {
       // Create the order
+      // Calculate total from quote line items to ensure accuracy
+      const calculatedTotal = quote.lineItems?.reduce((sum, item) => {
+        return sum + (item.quantity * parseFloat(item.unitPrice || '0'))
+      }, 0) || 0
+
+      // Calculate vendor pay as 70% of total by default
+      const defaultVendorPay = (calculatedTotal * 0.7).toFixed(2)
+
       const [order] = await tx
         .insert(orders)
         .values({
@@ -407,7 +543,8 @@ export async function convertQuoteToOrder(
           vendorId: quote.vendorId,
           sourceQuoteId: quoteId,
           status: 'Pending',
-          totalPrice: quote.total,
+          totalPrice: calculatedTotal.toFixed(2),
+          vendorPay: defaultVendorPay, // Store as dollar amount (70% of total)
         })
         .returning()
 
@@ -431,62 +568,148 @@ export async function convertQuoteToOrder(
         throw new Error('Quote has already been converted to an order')
       }
 
+      // Track which line items have been processed (those with associated parts)
+      const processedLineItemIds = new Set<number>()
+
       // Convert quote parts to customer parts and create order line items
       if (quote.parts && quote.parts.length > 0) {
         for (const quotePart of quote.parts) {
-          // Create a customer part from the quote part
-          // Copy the S3 key directly - loaders will generate signed URLs on-demand
-          const [customerPart] = await tx
-            .insert(parts)
-            .values({
-              customerId: quote.customerId,
-              partName: quotePart.partName,
-              material: quotePart.material || null,
-              tolerance: quotePart.tolerance || null,
-              finishing: quotePart.finish || null,
-              thumbnailUrl: quotePart.thumbnailUrl || null,
-              partFileUrl: quotePart.partFileUrl || null,
-              partMeshUrl: quotePart.partMeshUrl || null,
-              meshConversionStatus: quotePart.conversionStatus || 'pending',
-              meshConversionError: quotePart.meshConversionError || null,
-              meshConversionJobId: quotePart.meshConversionJobId || null,
-              meshConversionStartedAt: quotePart.meshConversionStartedAt || null,
-              meshConversionCompletedAt: quotePart.meshConversionCompletedAt || null,
-              notes: quotePart.description || null,
-            })
-            .returning()
+          try {
+            // Create a customer part from the quote part
+            // Copy the S3 key directly - loaders will generate signed URLs on-demand
+            const [customerPart] = await tx
+              .insert(parts)
+              .values({
+                customerId: quote.customerId,
+                partName: quotePart.partName,
+                material: quotePart.material || null,
+                tolerance: quotePart.tolerance || null,
+                finishing: quotePart.finish || null,
+                thumbnailUrl: quotePart.thumbnailUrl || null,
+                partFileUrl: quotePart.partFileUrl || null,
+                partMeshUrl: quotePart.partMeshUrl || null,
+                meshConversionStatus: quotePart.conversionStatus || 'pending',
+                meshConversionError: quotePart.meshConversionError || null,
+                meshConversionJobId: quotePart.meshConversionJobId || null,
+                meshConversionStartedAt: quotePart.meshConversionStartedAt || null,
+                meshConversionCompletedAt: quotePart.meshConversionCompletedAt || null,
+                notes: quotePart.description || null,
+              })
+              .returning()
+
+            if (!customerPart) {
+              throw new Error(`Failed to create customer part for quote part: ${quotePart.partName}`)
+            }
+
+          // Migrate quote part drawings to the new customer part
+          const quotePartDrawingRecords = await tx
+            .select({ attachmentId: quotePartDrawings.attachmentId, version: quotePartDrawings.version })
+            .from(quotePartDrawings)
+            .where(eq(quotePartDrawings.quotePartId, quotePart.id))
+
+          if (quotePartDrawingRecords.length > 0) {
+            await tx
+              .insert(partDrawings)
+              .values(
+                quotePartDrawingRecords.map(record => ({
+                  partId: customerPart.id,
+                  attachmentId: record.attachmentId,
+                  version: record.version,
+                }))
+              )
+          }
 
           // Find the corresponding line item for this quote part
           const lineItem = quote.lineItems?.find(li => li.quotePartId === quotePart.id)
 
-          if (lineItem) {
-            // Create order line item with reference to the new customer part
-            await tx
-              .insert(orderLineItems)
-              .values({
-                orderId: order.id,
-                partId: customerPart.id,
-                name: quotePart.partName,
-                description: lineItem.description || quotePart.description || '',
-                quantity: lineItem.quantity,
-                unitPrice: lineItem.unitPrice,
-                notes: lineItem.notes || null,
-              })
+            if (lineItem) {
+              // Create order line item with reference to the new customer part
+              await tx
+                .insert(orderLineItems)
+                .values({
+                  orderId: order.id,
+                  partId: customerPart.id,
+                  name: quotePart.partName,
+                  description: lineItem.description || quotePart.description || '',
+                  quantity: lineItem.quantity,
+                  unitPrice: lineItem.unitPrice,
+                  notes: lineItem.notes || null,
+                })
+
+              // Mark this line item as processed
+              processedLineItemIds.add(lineItem.id)
+            }
+          } catch (partConversionError) {
+            // If any part conversion fails, rollback the entire transaction
+            console.error(`Failed to convert quote part ${quotePart.partName}:`, partConversionError)
+            throw new Error(`Failed to convert part "${quotePart.partName}": ${partConversionError instanceof Error ? partConversionError.message : 'Unknown error'}`)
           }
         }
-      } else if (quote.lineItems && quote.lineItems.length > 0) {
-        // Fallback: if no parts exist, create simple line items
+      }
+
+      // Now handle any line items that don't have associated parts
+      if (quote.lineItems && quote.lineItems.length > 0) {
+        const unprocessedLineItems = quote.lineItems.filter(
+          item => !processedLineItemIds.has(item.id)
+        )
+
+        if (unprocessedLineItems.length > 0) {
+          // Create order line items for items without parts
+          await tx
+            .insert(orderLineItems)
+            .values(
+              unprocessedLineItems.map(item => ({
+                orderId: order.id,
+                partId: null,
+                name: item.name || `Line item from quote ${quote.quoteNumber}`,
+                description: item.description || '',
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                notes: item.notes || null,
+              }))
+            )
+        }
+      }
+
+      // Migrate attachments from quote to order
+      const quoteAttachmentRecords = await tx
+        .select({ attachmentId: quoteAttachments.attachmentId })
+        .from(quoteAttachments)
+        .where(eq(quoteAttachments.quoteId, quoteId))
+
+      if (quoteAttachmentRecords.length > 0) {
         await tx
-          .insert(orderLineItems)
+          .insert(orderAttachments)
           .values(
-            quote.lineItems.map(item => ({
+            quoteAttachmentRecords.map(record => ({
               orderId: order.id,
-              partId: null,
-              name: `Part from quote ${quote.quoteNumber}`,
-              description: item.description || '',
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              notes: item.notes || null,
+              attachmentId: record.attachmentId,
+            }))
+          )
+      }
+
+      // Migrate notes from quote to order
+      const quoteNotes = await tx
+        .select()
+        .from(notes)
+        .where(
+          and(
+            eq(notes.entityType, 'quote'),
+            eq(notes.entityId, quoteId.toString()),
+            eq(notes.isArchived, false)
+          )
+        )
+
+      if (quoteNotes.length > 0) {
+        await tx
+          .insert(notes)
+          .values(
+            quoteNotes.map(note => ({
+              entityType: 'order',
+              entityId: order.id.toString(),
+              content: note.content,
+              createdBy: note.createdBy,
+              isArchived: false,
             }))
           )
       }
@@ -540,7 +763,6 @@ export async function convertQuoteToOrder(
 
 export async function calculateQuoteTotals(quoteId: number): Promise<{
   subtotal: number
-  tax: number
   total: number
 } | null> {
   try {
@@ -554,23 +776,20 @@ export async function calculateQuoteTotals(quoteId: number): Promise<{
       return sum + totalPrice
     }, 0)
 
-    // Simple tax calculation (you may want to make this configurable)
-    const taxRate = 0.08 // 8% tax
-    const tax = subtotal * taxRate
-    const total = subtotal + tax
+    // Total is same as subtotal - tax handled by financial platform
+    const total = subtotal
 
     // Update the quote with calculated totals
     await db
       .update(quotes)
       .set({
         subtotal: subtotal.toFixed(2),
-        tax: tax.toFixed(2),
         total: total.toFixed(2),
         updatedAt: new Date()
       })
       .where(eq(quotes.id, quoteId))
 
-    return { subtotal, tax, total }
+    return { subtotal, total }
   } catch (error) {
     console.error('Error calculating quote totals:', error)
     return null
@@ -702,8 +921,12 @@ export async function createQuoteWithParts(
           })
 
           // Create attachment record
+          if (!process.env.S3_BUCKET) {
+            throw new Error('S3_BUCKET environment variable is not configured')
+          }
+
           const [attachment] = await db.insert(attachments).values({
-            s3Bucket: process.env.S3_BUCKET || 'default-bucket',
+            s3Bucket: process.env.S3_BUCKET,
             s3Key: uploadResult.key,
             fileName: drawing.fileName,
             contentType: drawing.fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png',
@@ -903,6 +1126,7 @@ export async function createQuoteLineItem(
   quoteId: number,
   itemData: {
     quotePartId?: string
+    name?: string
     quantity: number
     unitPrice: number
     leadTimeDays?: number
@@ -920,6 +1144,7 @@ export async function createQuoteLineItem(
       .values({
         quoteId,
         quotePartId: itemData.quotePartId || null,
+        name: itemData.name || null,
         quantity: itemData.quantity,
         unitPrice: itemData.unitPrice.toFixed(2),
         totalPrice,

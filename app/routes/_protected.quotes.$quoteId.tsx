@@ -6,12 +6,13 @@ import {
   unstable_parseMultipartFormData,
   unstable_createMemoryUploadHandler,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, useRouteError, isRouteErrorResponse } from "@remix-run/react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   getQuote,
   updateQuote,
   archiveQuote,
+  restoreQuote,
   convertQuoteToOrder,
 } from "~/lib/quotes";
 import type { QuoteEventContext } from "~/lib/quotes";
@@ -30,6 +31,7 @@ import {
   shouldShowEventsInNav,
   shouldShowQuotesInNav,
   canUserManageQuotes,
+  canUserAccessPriceCalculator,
 } from "~/lib/featureFlags";
 import {
   uploadFile,
@@ -46,7 +48,12 @@ import {
 } from "~/lib/notes";
 import { getEventsByEntity, createEvent } from "~/lib/events";
 import { db } from "~/lib/db";
-import { quoteAttachments, attachments, quotes, quotePartDrawings } from "~/lib/db/schema";
+import {
+  quoteAttachments,
+  attachments,
+  quotes,
+  quotePartDrawings,
+} from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 import Navbar from "~/components/Navbar";
@@ -58,9 +65,14 @@ import { EventTimeline } from "~/components/EventTimeline";
 import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
 import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
+import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
+import {
+  createPriceCalculation,
+  getLatestCalculationsForQuote
+} from "~/lib/quotePriceCalculations";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -158,7 +170,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
           attachment: attachments,
         })
         .from(quotePartDrawings)
-        .leftJoin(attachments, eq(quotePartDrawings.attachmentId, attachments.id))
+        .leftJoin(
+          attachments,
+          eq(quotePartDrawings.attachmentId, attachments.id)
+        )
         .where(eq(quotePartDrawings.quotePartId, part.id));
 
       const drawings = await Promise.all(
@@ -228,9 +243,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, showQuotesLink, events] = await Promise.all([
+  const [showEventsLink, showQuotesLink, canAccessPriceCalculator, events] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowQuotesInNav(),
+    canUserAccessPriceCalculator(userDetails?.role),
     getEventsByEntity("quote", quote.id.toString(), 10),
   ]);
 
@@ -238,6 +254,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const convertedOrder = quote.convertedToOrderId
     ? await getOrder(quote.convertedToOrderId)
     : null;
+
+  // Fetch existing price calculations for the quote
+  const priceCalculations = await getLatestCalculationsForQuote(quote.id);
 
   return withAuthHeaders(
     json({
@@ -250,9 +269,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       attachments: attachmentsWithUrls,
       user,
       userDetails,
+      priceCalculations,
       appConfig,
       showEventsLink,
       showQuotesLink,
+      canAccessPriceCalculator,
       events,
       convertedOrder,
     }),
@@ -260,7 +281,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -289,11 +310,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   // Helper function to auto-convert RFQ to Draft when editing starts
   const autoConvertRFQToDraft = async () => {
     if (quote.status === "RFQ") {
-      await updateQuote(
-        quote.id,
-        { status: "Draft" },
-        eventContext
-      );
+      await updateQuote(quote.id, { status: "Draft" }, eventContext);
     }
   };
 
@@ -379,17 +396,36 @@ export async function action({ request, params }: ActionFunctionArgs) {
           triggerQuotePartMeshConversion(
             newQuotePart.id,
             uploadResult.key
-          ).catch((error) => {
+          ).catch(async (error) => {
             console.error(
               `Failed to trigger mesh conversion for quote part ${newQuotePart.id}:`,
               error
             );
+            // Log error event for tracking
+            const { createEvent } = await import("~/lib/events");
+            await createEvent({
+              entityType: "quote",
+              entityId: quoteId,
+              eventType: "mesh_conversion_failed",
+              eventCategory: "system",
+              title: "Mesh Conversion Failed",
+              description: `Failed to trigger mesh conversion for part ${newQuotePart.partName}`,
+              metadata: {
+                quotePartId: newQuotePart.id,
+                error: error instanceof Error ? error.message : String(error),
+              },
+              userId: eventContext?.userId,
+              userEmail: eventContext?.userEmail,
+            }).catch((err) => console.error("Failed to log event:", err));
           });
 
           // Handle technical drawings if provided
-          const drawingCount = parseInt(formData.get("drawingCount") as string) || 0;
+          const drawingCount =
+            parseInt(formData.get("drawingCount") as string) || 0;
           if (drawingCount > 0) {
-            const { attachments, quotePartDrawings } = await import("~/lib/db/schema");
+            const { attachments, quotePartDrawings } = await import(
+              "~/lib/db/schema"
+            );
 
             for (let i = 0; i < drawingCount; i++) {
               const drawing = formData.get(`drawing_${i}`) as File | null;
@@ -404,7 +440,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   .replace(/[^a-zA-Z0-9._-]/g, "");
 
                 // Upload drawing to S3
-                const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+                const drawingKey = `quote-parts/${
+                  newQuotePart.id
+                }/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
                 const drawingUploadResult = await uploadFile({
                   key: drawingKey,
                   buffer: drawingBuffer,
@@ -441,10 +479,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
           quote.id,
           {
             quotePartId: quotePartId || undefined,
+            name: name || undefined,
             quantity: parseInt(quantity),
             unitPrice: parseFloat(unitPrice),
-            // If there's a file/part, use description field; if no file, use name as description
-            description: quotePartId ? (description || undefined) : (name || undefined),
+            description: description || undefined,
             notes: notes || undefined,
           },
           eventContext
@@ -464,14 +502,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Handle add drawing to existing part
     if (intent === "addDrawingToExistingPart") {
       const quotePartId = formData.get("quotePartId") as string;
-      const drawingCount = parseInt(formData.get("drawingCount") as string) || 0;
+      const drawingCount =
+        parseInt(formData.get("drawingCount") as string) || 0;
 
       if (!quotePartId || drawingCount === 0) {
-        return json({ error: "Missing quote part ID or drawings" }, { status: 400 });
+        return json(
+          { error: "Missing quote part ID or drawings" },
+          { status: 400 }
+        );
       }
 
       try {
-        const { attachments, quotePartDrawings } = await import("~/lib/db/schema");
+        const { attachments, quotePartDrawings } = await import(
+          "~/lib/db/schema"
+        );
 
         for (let i = 0; i < drawingCount; i++) {
           const drawing = formData.get(`drawing_${i}`) as File | null;
@@ -530,50 +574,50 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ error: "No file provided" }, { status: 400 });
       }
 
-    if (file.size > MAX_FILE_SIZE) {
-      return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
-    }
+      if (file.size > MAX_FILE_SIZE) {
+        return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
+      }
 
-    try {
-      // Convert File to Buffer
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+      try {
+        // Convert File to Buffer
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
 
-      // Generate S3 key
-      const key = generateFileKey(quote.id, file.name);
+        // Generate S3 key
+        const key = generateFileKey(quote.id, file.name);
 
-      // Upload to S3
-      const uploadResult = await uploadFile({
-        key,
-        buffer,
-        contentType: file.type || "application/octet-stream",
-        fileName: file.name,
-      });
+        // Upload to S3
+        const uploadResult = await uploadFile({
+          key,
+          buffer,
+          contentType: file.type || "application/octet-stream",
+          fileName: file.name,
+        });
 
-      // Create attachment record
-      const attachment = await createAttachment(
-        {
-          s3Bucket: uploadResult.bucket,
-          s3Key: uploadResult.key,
-          fileName: uploadResult.fileName,
-          contentType: uploadResult.contentType,
-          fileSize: uploadResult.size,
-        },
-        eventContext
-      );
+        // Create attachment record
+        const attachment = await createAttachment(
+          {
+            s3Bucket: uploadResult.bucket,
+            s3Key: uploadResult.key,
+            fileName: uploadResult.fileName,
+            contentType: uploadResult.contentType,
+            fileSize: uploadResult.size,
+          },
+          eventContext
+        );
 
-      // Link to quote
-      await db.insert(quoteAttachments).values({
-        quoteId: quote.id,
-        attachmentId: attachment.id,
-      });
+        // Link to quote
+        await db.insert(quoteAttachments).values({
+          quoteId: quote.id,
+          attachmentId: attachment.id,
+        });
 
-      // Return a redirect to refresh the page
-      return redirect(`/quotes/${quoteId}`);
-    } catch (error) {
-      console.error("Upload error:", error);
-      return json({ error: "Failed to upload file" }, { status: 500 });
-    }
+        // Return a redirect to refresh the page
+        return redirect(`/quotes/${quoteId}`);
+      } catch (error) {
+        console.error("Upload error:", error);
+        return json({ error: "Failed to upload file" }, { status: 500 });
+      }
     }
 
     // If we get here with multipart data but unhandled intent, return error
@@ -629,7 +673,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const updates: { expirationDays?: number } = {};
         if (expirationDays !== null) {
-          updates.expirationDays = parseInt(expirationDays as string);
+          const days = parseInt(expirationDays as string);
+
+          // Validate expiration days: must be between 1 and 365 days
+          if (isNaN(days) || days < 1 || days > 365) {
+            return json(
+              { error: "Expiration days must be between 1 and 365" },
+              { status: 400 }
+            );
+          }
+
+          updates.expirationDays = days;
         }
 
         await updateQuote(quote.id, updates, eventContext);
@@ -803,6 +857,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect("/quotes");
       }
 
+      case "restoreQuote": {
+        await restoreQuote(quote.id, eventContext);
+        return redirect(`/quotes/${quote.id}`);
+      }
+
       case "getNotes": {
         const notes = await getNotes("quote", quote.id.toString());
         return withAuthHeaders(json({ notes }), headers);
@@ -900,7 +959,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const quotePartId = formData.get("quotePartId") as string;
 
         if (!drawingId || !quotePartId) {
-          return json({ error: "Missing drawing or quote part ID" }, { status: 400 });
+          return json(
+            { error: "Missing drawing or quote part ID" },
+            { status: 400 }
+          );
         }
 
         // Unlink drawing from quote part
@@ -944,6 +1006,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           };
 
           let quotePart = null;
+          const filesToDelete: string[] = [];
 
           // If there's an associated quote part, get its details first
           if (quotePartId) {
@@ -957,67 +1020,64 @@ export async function action({ request, params }: ActionFunctionArgs) {
               .limit(1);
 
             quotePart = part;
+
+            // Collect all S3 file keys to delete
+            if (quotePart) {
+              // Add source file (sanitize the key)
+              if (quotePart.partFileUrl) {
+                filesToDelete.push(sanitizeS3Key(quotePart.partFileUrl));
+              }
+
+              // Add mesh file
+              if (quotePart.partMeshUrl) {
+                const meshUrl = quotePart.partMeshUrl;
+                if (meshUrl.includes("quote-parts/")) {
+                  const urlParts = meshUrl.split("/");
+                  const quotePartsIndex = urlParts.findIndex(
+                    (p) => p === "quote-parts"
+                  );
+                  if (quotePartsIndex >= 0) {
+                    const meshKey = urlParts.slice(quotePartsIndex).join("/");
+                    filesToDelete.push(meshKey);
+                  }
+                }
+              }
+
+              // Add thumbnail file
+              if (quotePart.thumbnailUrl) {
+                filesToDelete.push(quotePart.thumbnailUrl);
+              }
+            }
           }
 
-          // Delete the line item FIRST (to avoid foreign key constraint)
-          const { deleteQuoteLineItem } = await import("~/lib/quotes");
-          await deleteQuoteLineItem(parseInt(lineItemId), eventContext);
+          // Step 1: Delete database records in transaction (atomic operation)
+          await db.transaction(async (tx) => {
+            const { deleteQuoteLineItem } = await import("~/lib/quotes");
+            await deleteQuoteLineItem(parseInt(lineItemId), eventContext);
 
-          // Now delete the quote part and its S3 files
-          if (quotePart) {
-            const { quoteParts } = await import("~/lib/db/schema");
-            const filesToDelete = [];
-
-            // Add source file (sanitize the key)
-            if (quotePart.partFileUrl) {
-              filesToDelete.push(sanitizeS3Key(quotePart.partFileUrl));
+            // Delete quote part from database if it exists
+            if (quotePart && quotePartId) {
+              const { quoteParts } = await import("~/lib/db/schema");
+              await tx.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
             }
+          });
 
-            // Add mesh file
-            if (quotePart.partMeshUrl) {
-              // Extract key from mesh URL
-              const meshUrl = quotePart.partMeshUrl;
-              if (meshUrl.includes("quote-parts/")) {
-                const urlParts = meshUrl.split("/");
-                const quotePartsIndex = urlParts.findIndex(
-                  (p) => p === "quote-parts"
-                );
-                if (quotePartsIndex >= 0) {
-                  const meshKey = urlParts.slice(quotePartsIndex).join("/");
-                  // Mesh files are already sanitized during conversion
-                  filesToDelete.push(meshKey);
-                }
+          // Step 2: Delete S3 files AFTER successful database operations
+          // If this fails, files become orphaned but database is consistent
+          for (const fileKey of filesToDelete) {
+            try {
+              await deleteFile(fileKey);
+              console.log(`Deleted S3 file: ${fileKey}`);
+            } catch (error: unknown) {
+              // Log but don't fail - database is already consistent
+              const err = error as { Code?: string; name?: string };
+              if (err?.Code === "NoSuchKey" || err?.name === "NoSuchKey") {
+                console.log(`S3 file not found (already deleted?): ${fileKey}`);
+              } else {
+                console.error(`Error deleting S3 file ${fileKey}:`, error);
+                // TODO: Add to cleanup queue for retry
               }
             }
-
-            // Add thumbnail file
-            if (quotePart.thumbnailUrl) {
-              filesToDelete.push(quotePart.thumbnailUrl);
-            }
-
-            // Delete all files from S3
-            for (const fileKey of filesToDelete) {
-              try {
-                await deleteFile(fileKey);
-                console.log(`Deleted S3 file: ${fileKey}`);
-              } catch (error: unknown) {
-                // Log but don't fail if file doesn't exist
-                const err = error as { Code?: string; name?: string };
-                if (
-                  err?.Code === "NoSuchKey" ||
-                  err?.name === "NoSuchKey"
-                ) {
-                  console.log(
-                    `S3 file not found (already deleted?): ${fileKey}`
-                  );
-                } else {
-                  console.error(`Error deleting S3 file ${fileKey}:`, error);
-                }
-              }
-            }
-
-            // Delete quote part from database
-            await db.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
           }
 
           // Recalculate quote totals
@@ -1075,12 +1135,49 @@ export async function action({ request, params }: ActionFunctionArgs) {
         triggerQuotePartMeshConversion(
           quotePart.id,
           quotePart.partFileUrl
-        ).catch((error) => {
+        ).catch(async (error) => {
           console.error(
             `Failed to regenerate mesh for quote part ${quotePart.id}:`,
             error
           );
+          // Log error event for tracking
+          const { createEvent } = await import("~/lib/events");
+          await createEvent({
+            entityType: "quote",
+            entityId: quoteId,
+            eventType: "mesh_conversion_failed",
+            eventCategory: "system",
+            title: "Mesh Regeneration Failed",
+            description: `Failed to regenerate mesh for part ${quotePart.partName}`,
+            metadata: {
+              quotePartId: quotePart.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            userId: eventContext?.userId,
+            userEmail: eventContext?.userEmail,
+          }).catch((err) => console.error("Failed to log event:", err));
         });
+
+        return json({ success: true });
+      }
+
+      case "savePriceCalculation": {
+        // Auto-convert RFQ to Draft when editing starts
+        await autoConvertRFQToDraft();
+
+        const calculationDataStr = formData.get("calculationData") as string;
+
+        if (!calculationDataStr) {
+          return json({ error: "Missing calculation data" }, { status: 400 });
+        }
+
+        const calculationData = JSON.parse(calculationDataStr);
+
+        // Create the price calculation record
+        await createPriceCalculation(
+          calculationData,
+          user?.id || userDetails?.id
+        );
 
         return json({ success: true });
       }
@@ -1105,9 +1202,11 @@ export default function QuoteDetail() {
     attachments,
     user,
     userDetails,
+    priceCalculations,
     appConfig,
     showEventsLink,
     showQuotesLink,
+    canAccessPriceCalculator,
     events,
     convertedOrder,
   } = useLoaderData<typeof loader>();
@@ -1123,6 +1222,7 @@ export default function QuoteDetail() {
   const [isFileViewerOpen, setIsFileViewerOpen] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const [pollCount, setPollCount] = useState(0);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(false);
@@ -1131,6 +1231,7 @@ export default function QuoteDetail() {
   type LineItem = {
     id: number;
     quotePartId: string | null;
+    name: string | null;
     quantity: number;
     unitPrice: string;
     totalPrice: string;
@@ -1163,6 +1264,10 @@ export default function QuoteDetail() {
   const lineItemFetcher = useFetcher();
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
+  const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] = useState(0);
+  const calculatorFetcher = useFetcher();
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1179,15 +1284,26 @@ export default function QuoteDetail() {
 
   // Set up polling for parts conversion status
   useEffect(() => {
-    if (hasConvertingParts && !pollInterval) {
+    const MAX_POLL_COUNT = 120; // Max 10 minutes (120 * 5 seconds)
+
+    if (hasConvertingParts && !pollInterval && pollCount < MAX_POLL_COUNT) {
       const interval = setInterval(() => {
+        setPollCount((prev) => prev + 1);
         // Revalidate the page data to get updated conversion status
         revalidator.revalidate();
       }, 5000); // Poll every 5 seconds
       setPollInterval(interval);
     } else if (!hasConvertingParts && pollInterval) {
+      // Conversion completed - clear interval and reset count
       clearInterval(pollInterval);
       setPollInterval(null);
+      setPollCount(0);
+    } else if (pollCount >= MAX_POLL_COUNT && pollInterval) {
+      // Timeout reached - stop polling
+      console.warn("Mesh conversion polling timeout reached (10 minutes)");
+      clearInterval(pollInterval);
+      setPollInterval(null);
+      setPollCount(0);
     }
 
     return () => {
@@ -1195,7 +1311,7 @@ export default function QuoteDetail() {
         clearInterval(pollInterval);
       }
     };
-  }, [hasConvertingParts, pollInterval, revalidator]);
+  }, [hasConvertingParts, pollInterval, pollCount, revalidator]);
 
   // Update optimistic line items when the actual data changes
   useEffect(() => {
@@ -1264,7 +1380,6 @@ export default function QuoteDetail() {
     }
   };
 
-
   const handleReviseQuote = () => {
     if (
       confirm(
@@ -1319,6 +1434,76 @@ export default function QuoteDetail() {
       method: "post",
       encType: "multipart/form-data",
     });
+  };
+
+  const handleOpenCalculator = () => {
+    setIsCalculatorOpen(true);
+    setCurrentCalculatorPartIndex(0);
+  };
+
+  const handleOpenCalculatorForPart = (partId: string) => {
+    // Find the index of the part in the quote.parts array
+    const partIndex = quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
+    setCurrentCalculatorPartIndex(partIndex);
+    setIsCalculatorOpen(true);
+  };
+
+  const handleDownloadFiles = async () => {
+    setIsDownloading(true);
+
+    try {
+      const downloadUrl = `/quotes/${quote.id}/download`;
+      const response = await fetch(downloadUrl);
+
+      if (!response.ok) {
+        throw new Error("Failed to download files");
+      }
+
+      // Get the blob from the response
+      const blob = await response.blob();
+
+      // Get filename from Content-Disposition header or use default
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `Quote-${quote.quoteNumber}-Files.zip`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Create a download link and trigger it
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Download error:", error);
+      alert("Failed to download files. Please try again.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleSaveCalculation = (calculationData: Record<string, unknown>) => {
+    const formData = new FormData();
+    formData.append("intent", "savePriceCalculation");
+    formData.append("calculationData", JSON.stringify(calculationData));
+
+    calculatorFetcher.submit(formData, {
+      method: "post",
+    });
+
+    // If this is the last part, close the modal
+    if (currentCalculatorPartIndex >= (quote.parts?.length || 1) - 1) {
+      setIsCalculatorOpen(false);
+      // Revalidate to get the updated prices
+      revalidator.revalidate();
+    }
   };
 
   const handleDeleteLineItem = (lineItemId: number, quotePartId?: string) => {
@@ -1550,52 +1735,52 @@ export default function QuoteDetail() {
             ]}
           />
           <div className="flex flex-wrap gap-3">
-            <div className="relative">
-              <Button
-                ref={actionsButtonRef}
-                onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
-                variant="secondary"
-              >
-                Actions
-              </Button>
-              <QuoteActionsDropdown
-                isOpen={isActionsDropdownOpen}
-                onClose={() => setIsActionsDropdownOpen(false)}
-                excludeRef={actionsButtonRef}
-                quoteStatus={quote.status}
-                onReviseQuote={handleReviseQuote}
-              />
-            </div>
-            {(quote.status === "RFQ" || quote.status === "Draft") && (
-              <Button onClick={handleSendQuote} variant="primary">
-                Send Quote
-              </Button>
+            {!quote.isArchived && (
+              <>
+                <div className="relative">
+                  <Button
+                    ref={actionsButtonRef}
+                    onClick={() =>
+                      setIsActionsDropdownOpen(!isActionsDropdownOpen)
+                    }
+                    variant="secondary"
+                  >
+                    Actions
+                  </Button>
+                  <QuoteActionsDropdown
+                    isOpen={isActionsDropdownOpen}
+                    onClose={() => setIsActionsDropdownOpen(false)}
+                    excludeRef={actionsButtonRef}
+                    quoteStatus={quote.status}
+                    onReviseQuote={handleReviseQuote}
+                    onCalculatePricing={canAccessPriceCalculator ? handleOpenCalculator : undefined}
+                    onDownloadFiles={handleDownloadFiles}
+                    isDownloading={isDownloading}
+                  />
+                </div>
+                {(quote.status === "RFQ" || quote.status === "Draft") && (
+                  <Button onClick={handleSendQuote} variant="primary">
+                    Send Quote
+                  </Button>
+                )}
+                {quote.status === "Sent" && !quote.convertedToOrderId && (
+                  <Button onClick={handleMarkAsAccepted} variant="primary">
+                    Mark as Accepted
+                  </Button>
+                )}
+              </>
             )}
-            {quote.status === "Sent" && !quote.convertedToOrderId && (
-              <Button onClick={handleMarkAsAccepted} variant="primary">
-                Mark as Accepted
-              </Button>
-            )}
+            {/* No action buttons for archived quotes - restore button is in the banner */}
           </div>
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
-          {/* Locked Quote Banner */}
-          {(quote.status === "Sent" || quote.status === "Accepted") && (
-            <div
-              className={`relative border-2 rounded-lg p-4 ${
-                quote.status === "Accepted"
-                  ? "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700"
-                  : "bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700"
-              }`}
-            >
-              <div className="flex items-start gap-3">
+          {/* Archived Quote Banner */}
+          {quote.isArchived && (
+            <div className="relative bg-gray-900 dark:bg-gray-950 border-2 border-gray-700 dark:border-gray-800 rounded-lg p-4">
+              <div className="flex items-center gap-3">
                 <svg
-                  className={`w-6 h-6 flex-shrink-0 ${
-                    quote.status === "Accepted"
-                      ? "text-green-600 dark:text-green-400"
-                      : "text-blue-600 dark:text-blue-400"
-                  }`}
+                  className="w-6 h-6 text-gray-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -1604,42 +1789,80 @@ export default function QuoteDetail() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                    d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
                   />
                 </svg>
-                <div className="flex-1">
-                  <p
-                    className={`font-semibold ${
-                      quote.status === "Accepted"
-                        ? "text-green-800 dark:text-green-200"
-                        : "text-blue-800 dark:text-blue-200"
-                    }`}
-                  >
-                    {quote.status === "Accepted"
-                      ? "Quote Accepted"
-                      : "Quote Sent"}
-                  </p>
-                  <p
-                    className={`text-sm mt-1 ${
-                      quote.status === "Accepted"
-                        ? "text-green-700 dark:text-green-300"
-                        : "text-blue-700 dark:text-blue-300"
-                    }`}
-                  >
-                    {quote.status === "Accepted"
-                      ? "Accepted quotes are immutable."
-                      : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
+                <div>
+                  <p className="font-semibold text-gray-100">
+                    This quote has been archived
                   </p>
                 </div>
               </div>
             </div>
           )}
 
+          {/* Locked Quote Banner */}
+          {(quote.status === "Sent" || quote.status === "Accepted") &&
+            !quote.isArchived && (
+              <div
+                className={`relative border-2 rounded-lg p-4 ${
+                  quote.status === "Accepted"
+                    ? "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700"
+                    : "bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <svg
+                    className={`w-6 h-6 flex-shrink-0 ${
+                      quote.status === "Accepted"
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-blue-600 dark:text-blue-400"
+                    }`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                    />
+                  </svg>
+                  <div className="flex-1">
+                    <p
+                      className={`font-semibold ${
+                        quote.status === "Accepted"
+                          ? "text-green-800 dark:text-green-200"
+                          : "text-blue-800 dark:text-blue-200"
+                      }`}
+                    >
+                      {quote.status === "Accepted"
+                        ? "Quote Accepted"
+                        : "Quote Sent"}
+                    </p>
+                    <p
+                      className={`text-sm mt-1 ${
+                        quote.status === "Accepted"
+                          ? "text-green-700 dark:text-green-300"
+                          : "text-blue-700 dark:text-blue-300"
+                      }`}
+                    >
+                      {quote.status === "Accepted"
+                        ? "Accepted quotes are immutable."
+                        : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
           {/* Expiry Notice Bar */}
           {daysUntilExpiry &&
             daysUntilExpiry > 0 &&
             daysUntilExpiry <= 7 &&
-            quote.status === "Sent" && (
+            quote.status === "Sent" &&
+            !quote.isArchived && (
               <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
                 <p className="font-semibold text-yellow-800 dark:text-yellow-200">
                   Attention: This quote expires in {daysUntilExpiry} days
@@ -1655,11 +1878,16 @@ export default function QuoteDetail() {
                 Quote Status
               </h3>
               <div
-                className={`px-4 py-3 rounded-full text-center font-semibold ${getStatusClasses(
-                  quote.status
-                )}`}
+                className={`px-4 py-3 rounded-full text-center font-semibold ${
+                  quote.isArchived
+                    ? "bg-gray-900 text-gray-100 dark:bg-gray-950 dark:text-gray-300"
+                    : getStatusClasses(quote.status)
+                }`}
               >
-                {quote.status.charAt(0).toUpperCase() + quote.status.slice(1)}
+                {quote.isArchived
+                  ? "Archived"
+                  : quote.status.charAt(0).toUpperCase() +
+                    quote.status.slice(1)}
               </div>
             </div>
 
@@ -2345,7 +2573,12 @@ export default function QuoteDetail() {
                                   )}
                                 </>
                               )}
-                              <span>{part?.partName || item.description || "Line Item"}</span>
+                              <span>
+                                {part?.partName ||
+                                  item.name ||
+                                  item.description ||
+                                  "Line Item"}
+                              </span>
                             </div>
                           </td>
                           <td
@@ -2560,28 +2793,58 @@ export default function QuoteDetail() {
                                 )}
                               </div>
                               {!isQuoteLocked && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteLineItem(item.id, part?.id);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                                  title="Delete line item"
-                                >
-                                  <svg
-                                    className="w-4 h-4"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
+                                <div className="flex items-center gap-2">
+                                  {part && canAccessPriceCalculator && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenCalculatorForPart(part.id);
+                                        // Remove focus after click
+                                        (e.target as HTMLButtonElement).blur();
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all outline-none focus:outline-none"
+                                      title="Calculate price for this part"
+                                    >
+                                      <svg
+                                        className="w-4 h-4"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                                        />
+                                      </svg>
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteLineItem(item.id, part?.id);
+                                      // Remove focus after click
+                                      (e.target as HTMLButtonElement).blur();
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus:outline-none"
+                                    title="Delete line item"
                                   >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                                    />
-                                  </svg>
-                                </button>
+                                    <svg
+                                      className="w-4 h-4"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </td>
@@ -2854,6 +3117,80 @@ export default function QuoteDetail() {
         onClose={() => setIsAddLineItemModalOpen(false)}
         onSubmit={handleAddLineItemSubmit}
       />
+
+      {canAccessPriceCalculator && (
+        <QuotePriceCalculatorModal
+          isOpen={isCalculatorOpen}
+          onClose={() => setIsCalculatorOpen(false)}
+          quoteParts={quote.parts || []}
+          quoteLineItems={quote.lineItems || []}
+          quoteId={quote.id}
+          onSave={handleSaveCalculation}
+          currentPartIndex={currentCalculatorPartIndex}
+          onPartChange={setCurrentCalculatorPartIndex}
+          existingCalculations={priceCalculations || []}
+        />
+      )}
+    </div>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+
+  if (isRouteErrorResponse(error)) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+          <h1 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-2">
+            {error.status} {error.statusText}
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
+            {error.data || "An error occurred while loading the quote."}
+          </p>
+          <div className="flex gap-4">
+            <a
+              href="/quotes"
+              className="inline-block px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+            >
+              Back to Quotes
+            </a>
+            <button
+              onClick={() => window.location.reload()}
+              className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
+      <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+        <h1 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-2">
+          Unexpected Error
+        </h1>
+        <p className="text-gray-600 dark:text-gray-400 mb-4">
+          {error instanceof Error ? error.message : "An unexpected error occurred while loading the quote."}
+        </p>
+        <div className="flex gap-4">
+          <a
+            href="/quotes"
+            className="inline-block px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+          >
+            Back to Quotes
+          </a>
+          <button
+            onClick={() => window.location.reload()}
+            className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

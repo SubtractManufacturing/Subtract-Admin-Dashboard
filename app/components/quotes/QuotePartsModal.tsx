@@ -388,7 +388,7 @@ export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsM
                             modelUrl={part.signedMeshUrl}
                             solidModelUrl={part.signedFileUrl}
                             partName={part.partName}
-                            partId={part.id}
+                            quotePartId={part.id}
                             hideControls={true}
                             isQuotePart={true}
                           />
@@ -504,7 +504,7 @@ export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsM
           partName={selectedPart.partName}
           modelUrl={selectedPart.signedMeshUrl}
           solidModelUrl={selectedPart.signedFileUrl}
-          partId={selectedPart.id}
+          quotePartId={selectedPart.id}
           isQuotePart={true}
         />
       )}

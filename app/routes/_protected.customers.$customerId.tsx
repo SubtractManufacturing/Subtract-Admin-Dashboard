@@ -137,7 +137,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 async function handlePartsAction(
   formData: FormData,
@@ -425,7 +425,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
+      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
     }
 
     try {

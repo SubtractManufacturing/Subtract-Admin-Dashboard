@@ -181,15 +181,19 @@ export async function getVendorOrders(vendorId: number) {
 export async function getVendorStats(vendorId: number) {
   try {
     const vendorOrders = await getVendorOrders(vendorId)
-    
+
     const stats = {
       totalOrders: vendorOrders.length,
       activeOrders: vendorOrders.filter(o => o.status === 'In_Production' || o.status === 'Pending').length,
       completedOrders: vendorOrders.filter(o => o.status === 'Completed').length,
-      totalEarnings: vendorOrders.reduce((sum, o) => sum + parseFloat(o.vendorPay || '0'), 0),
+      totalEarnings: vendorOrders.reduce((sum, o) => {
+        // vendorPay is now stored as a dollar amount
+        const vendorEarnings = parseFloat(o.vendorPay || '0')
+        return sum + vendorEarnings
+      }, 0),
       averageLeadTime: 0
     }
-    
+
     return stats
   } catch (error) {
     console.error('Error fetching vendor stats:', error)

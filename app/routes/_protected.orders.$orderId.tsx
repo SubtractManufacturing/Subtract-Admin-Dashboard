@@ -10,6 +10,7 @@ import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
   getOrderByNumberWithAttachments,
   updateOrder,
+  restoreOrder,
   type OrderEventContext,
 } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
@@ -131,7 +132,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -163,7 +164,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
+      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
     }
 
     try {
@@ -452,7 +453,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         await updateOrder(
           order.id,
-          { status: status as 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived' },
+          {
+            status: status as
+              | "Pending"
+              | "Waiting_For_Shop_Selection"
+              | "In_Production"
+              | "In_Inspection"
+              | "Shipped"
+              | "Delivered"
+              | "Completed"
+              | "Cancelled"
+              | "Archived",
+          },
           orderEventContext
         );
 
@@ -494,13 +506,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const updates: Partial<{ shipDate: Date; leadTime: number; vendorPay: string }> = {};
+        const updates: Partial<{
+          shipDate: Date;
+          leadTime: number;
+          vendorPay: string;
+        }> = {};
         if (shipDate) updates.shipDate = new Date(shipDate);
         if (leadTime) updates.leadTime = parseInt(leadTime);
         if (vendorPay) updates.vendorPay = vendorPay;
 
         await updateOrder(order.id, updates, orderEventContext);
 
+        return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "restoreOrder": {
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await restoreOrder(order.id, orderEventContext);
         return redirect(`/orders/${orderNumber}`);
       }
 
@@ -557,7 +583,8 @@ export default function OrderDetails() {
   const [editOrderForm, setEditOrderForm] = useState({
     shipDate: "",
     leadTime: "",
-    vendorPay: "",
+    vendorPayDollar: "",
+    vendorPayPercent: "",
   });
   const uploadFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -623,7 +650,7 @@ export default function OrderDetails() {
   };
 
   const handleEditLineItem = (item: LineItemWithPart) => {
-    const lineItem = item.lineItem || item;
+    const lineItem = item.lineItem;
     setSelectedLineItem(lineItem);
     setLineItemMode("edit");
     setLineItemModalOpen(true);
@@ -744,6 +771,19 @@ export default function OrderDetails() {
     }
   };
 
+  const handleStartProduction = () => {
+    if (
+      confirm(
+        "Are you sure you want to start production? The order will move to 'In Production' status."
+      )
+    ) {
+      const formData = new FormData();
+      formData.append("intent", "updateStatus");
+      formData.append("status", "In_Production");
+      lineItemFetcher.submit(formData, { method: "post" });
+    }
+  };
+
   const handleAssignShop = () => {
     setSelectedVendorId(order.vendorId);
     setAssignShopModalOpen(true);
@@ -807,12 +847,20 @@ export default function OrderDetails() {
   };
 
   const handleEditOrder = () => {
+    // Initialize with the existing vendor pay dollar amount
+    const vendorPayAmount = Math.max(0, parseFloat(order.vendorPay || "0"));
+    const orderTotal = Math.max(0, parseFloat(order.totalPrice || "0"));
+    const vendorPayPercentCalc =
+      orderTotal > 0 ? Math.min(100, (vendorPayAmount / orderTotal) * 100) : 70;
+
     setEditOrderForm({
       shipDate: order.shipDate
         ? new Date(order.shipDate).toISOString().split("T")[0]
         : "",
       leadTime: order.leadTime?.toString() || "",
-      vendorPay: order.vendorPay || "70",
+      vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
+      vendorPayPercent:
+        vendorPayPercentCalc > 0 ? vendorPayPercentCalc.toFixed(1) : "",
     });
     setEditOrderModalOpen(true);
   };
@@ -820,15 +868,27 @@ export default function OrderDetails() {
   const handleEditOrderSubmit = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "updateOrderInfo");
+
     if (editOrderForm.shipDate) {
       formData.append("shipDate", editOrderForm.shipDate);
     }
+
     if (editOrderForm.leadTime) {
-      formData.append("leadTime", editOrderForm.leadTime);
+      const leadTime = parseInt(editOrderForm.leadTime);
+      if (!isNaN(leadTime) && leadTime >= 0) {
+        formData.append("leadTime", leadTime.toString());
+      }
     }
-    if (editOrderForm.vendorPay) {
-      formData.append("vendorPay", editOrderForm.vendorPay);
+
+    // Validate and submit vendor pay
+    const vendorPayDollar = parseFloat(editOrderForm.vendorPayDollar || "0");
+    if (!isNaN(vendorPayDollar) && vendorPayDollar >= 0) {
+      formData.append("vendorPay", vendorPayDollar.toFixed(2));
+    } else {
+      // Default to 0 if invalid
+      formData.append("vendorPay", "0.00");
     }
+
     orderEditFetcher.submit(formData, { method: "post" });
     setEditOrderModalOpen(false);
   }, [editOrderForm, orderEditFetcher]);
@@ -887,20 +947,26 @@ export default function OrderDetails() {
     });
   };
 
-  // Calculate total price from line items
-  const calculatedTotalPrice = lineItems
-    .reduce((sum: number, item: LineItemWithPart) => {
-      const lineItem = item.lineItem || item;
-      return sum + lineItem.quantity * parseFloat(lineItem.unitPrice || "0");
-    }, 0)
-    .toString();
+  // Use the stored total price from the database (maintained by line item operations)
+  const orderTotalPrice = order.totalPrice || "0";
 
-  // Calculate vendor pay from percentage
-  const vendorPayPercentage = parseFloat(order.vendorPay || "70");
-  const calculatedVendorPay = (
-    (parseFloat(calculatedTotalPrice) * vendorPayPercentage) /
-    100
-  ).toString();
+  // For debugging: calculate from line items to verify stored total is correct
+  // const calculatedFromLineItems = lineItems
+  //   .reduce((sum: number, item: LineItemWithPart) => {
+  //     const quantity = item.lineItem?.quantity || 0;
+  //     const unitPrice = parseFloat(item.lineItem?.unitPrice || "0");
+  //     return sum + quantity * unitPrice;
+  //   }, 0)
+  //   .toString();
+
+  // Vendor pay is now stored as a dollar amount
+  const vendorPayAmount = parseFloat(order.vendorPay || "0");
+
+  // Calculate the percentage for display purposes
+  const vendorPayPercentage =
+    parseFloat(orderTotalPrice) > 0
+      ? (vendorPayAmount / parseFloat(orderTotalPrice)) * 100
+      : 0;
 
   // Get status display
   const getStatusDisplay = (status: string) => {
@@ -915,6 +981,8 @@ export default function OrderDetails() {
         return "Shipped";
       case "Delivered":
         return "Delivered";
+      case "Archived":
+        return "Archived";
       default:
         return status.charAt(0).toUpperCase() + status.slice(1);
     }
@@ -939,6 +1007,8 @@ export default function OrderDetails() {
         return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
       case "cancelled":
         return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
+      case "archived":
+        return "bg-gray-900 text-gray-100 dark:bg-gray-950 dark:text-gray-300";
       default:
         return "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300";
     }
@@ -956,8 +1026,23 @@ export default function OrderDetails() {
     }
   };
 
-  // Mock progress (in real app, this would come from order data)
-  const progress = 65;
+  // Calculate progress based on order status
+  const getOrderProgress = (status: string): number => {
+    const statusProgress: Record<string, number> = {
+      "Pending": 10,
+      "Waiting_For_Shop_Selection": 20,
+      "In_Production": 50,
+      "In_Inspection": 75,
+      "Shipped": 90,
+      "Delivered": 95,
+      "Completed": 100,
+      "Cancelled": 0,
+      "Archived": 100,
+    };
+    return statusProgress[status] ?? 0;
+  };
+
+  const progress = getOrderProgress(order.status);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -983,15 +1068,24 @@ export default function OrderDetails() {
             ]}
           />
           <div className="flex flex-wrap gap-3">
-            {order.status === "Pending" && (
-              <Button
-                onClick={handleSendToShops}
-                variant="primary"
-                className="bg-purple-600 hover:bg-purple-700"
-              >
-                Send to Board
-              </Button>
-            )}
+            {order.status === "Pending" &&
+              (order.vendorId ? (
+                <Button
+                  onClick={handleStartProduction}
+                  variant="primary"
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Start Production
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleSendToShops}
+                  variant="primary"
+                  className="bg-purple-600 hover:bg-purple-700"
+                >
+                  Send to Board
+                </Button>
+              ))}
             {order.status === "Waiting_For_Shop_Selection" && (
               <Button
                 onClick={handleAssignShop}
@@ -1037,19 +1131,17 @@ export default function OrderDetails() {
                 Complete Order
               </Button>
             )}
+            {/* No action buttons for archived orders - restore button is in the banner */}
           </div>
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
-          {/* Notice Bar */}
-          {showNotice && daysUntilShip && daysUntilShip <= 7 && (
-            <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
-              <button
-                onClick={() => setShowNotice(false)}
-                className="absolute top-2 right-2 text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
-              >
+          {/* Archived Notice Bar */}
+          {order.status === "Archived" && (
+            <div className="relative bg-gray-900 dark:bg-gray-950 border-2 border-gray-700 dark:border-gray-800 rounded-lg p-4">
+              <div className="flex items-center gap-3">
                 <svg
-                  className="w-5 h-5"
+                  className="w-6 h-6 text-gray-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -1058,16 +1150,48 @@ export default function OrderDetails() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
+                    d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
                   />
                 </svg>
-              </button>
-              <p className="font-semibold text-yellow-800 dark:text-yellow-200">
-                Attention: This order is approaching its due date (
-                {daysUntilShip} days remaining)
-              </p>
+                <div>
+                  <p className="font-semibold text-gray-100">
+                    This order has been archived
+                  </p>
+                </div>
+              </div>
             </div>
           )}
+
+          {/* Notice Bar */}
+          {showNotice &&
+            daysUntilShip &&
+            daysUntilShip <= 7 &&
+            order.status !== "Archived" && (
+              <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
+                <button
+                  onClick={() => setShowNotice(false)}
+                  className="absolute top-2 right-2 text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+                <p className="font-semibold text-yellow-800 dark:text-yellow-200">
+                  Attention: This order is approaching its due date (
+                  {daysUntilShip} days remaining)
+                </p>
+              </div>
+            )}
 
           {/* Status Cards - Always at top */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
@@ -1105,7 +1229,7 @@ export default function OrderDetails() {
                 Order Value
               </h3>
               <p className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-                {formatCurrency(calculatedTotalPrice)}
+                {formatCurrency(orderTotalPrice)}
               </p>
             </div>
 
@@ -1184,9 +1308,7 @@ export default function OrderDetails() {
                       Lead Time
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {order.leadTime
-                        ? `${order.leadTime} Business Days`
-                        : "--"}
+                      {order.leadTime ? `${order.leadTime} Days` : "--"}
                     </p>
                   </div>
                   <div>
@@ -1194,8 +1316,8 @@ export default function OrderDetails() {
                       Vendor Pay
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {formatCurrency(calculatedVendorPay)} (
-                      {vendorPayPercentage}%)
+                      {formatCurrency(vendorPayAmount.toString())} (
+                      {vendorPayPercentage.toFixed(1)}%)
                     </p>
                   </div>
                   <div>
@@ -1205,11 +1327,10 @@ export default function OrderDetails() {
                     <p className="text-lg text-gray-900 dark:text-gray-100">
                       {formatCurrency(
                         (
-                          parseFloat(calculatedTotalPrice) -
-                          parseFloat(calculatedVendorPay)
+                          parseFloat(orderTotalPrice) - vendorPayAmount
                         ).toString()
                       )}{" "}
-                      ({100 - vendorPayPercentage}%)
+                      ({(100 - vendorPayPercentage).toFixed(1)}%)
                     </p>
                   </div>
                 </div>
@@ -1326,14 +1447,14 @@ export default function OrderDetails() {
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                       {lineItems.map((item: LineItemWithPart) => {
-                        const lineItem = item.lineItem || item;
+                        const lineItem = item.lineItem;
                         const part = item.part;
                         const total =
-                          lineItem.quantity *
-                          parseFloat(lineItem.unitPrice || "0");
-                        const isEditingNote = editingNoteId === lineItem.id;
+                          (lineItem?.quantity || 0) *
+                          parseFloat(lineItem?.unitPrice || "0");
+                        const isEditingNote = editingNoteId === lineItem?.id;
                         return (
-                          <tr key={lineItem.id}>
+                          <tr key={lineItem?.id}>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center gap-3">
                                 {part ? (
@@ -1347,7 +1468,7 @@ export default function OrderDetails() {
                                       <img
                                         src={part.thumbnailUrl}
                                         alt={`${
-                                          part.partName || lineItem.name
+                                          part.partName || lineItem?.name || ""
                                         } thumbnail`}
                                         className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                       />
@@ -1377,7 +1498,7 @@ export default function OrderDetails() {
                                 ) : null}
                                 <div className="flex flex-col">
                                   <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                    {lineItem.name || "--"}
+                                    {lineItem?.name || "--"}
                                   </span>
                                   {part && (
                                     <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -1388,7 +1509,7 @@ export default function OrderDetails() {
                               </div>
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                              {lineItem.description || "--"}
+                              {lineItem?.description || "--"}
                             </td>
                             <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 w-[25%] max-w-[25%]">
                               {isEditingNote ? (
@@ -1401,7 +1522,7 @@ export default function OrderDetails() {
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter" && !e.shiftKey) {
                                         e.preventDefault();
-                                        handleSaveNote(lineItem.id);
+                                        handleSaveNote(lineItem?.id || 0);
                                       } else if (e.key === "Escape") {
                                         handleCancelEditNote();
                                       }
@@ -1411,7 +1532,9 @@ export default function OrderDetails() {
                                     rows={2}
                                   />
                                   <button
-                                    onClick={() => handleSaveNote(lineItem.id)}
+                                    onClick={() =>
+                                      handleSaveNote(lineItem?.id || 0)
+                                    }
                                     className="p-1 text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
                                     title="Save (Enter)"
                                   >
@@ -1445,25 +1568,25 @@ export default function OrderDetails() {
                                 <button
                                   onClick={() =>
                                     handleStartEditNote(
-                                      lineItem.id,
-                                      lineItem.notes
+                                      lineItem?.id || 0,
+                                      lineItem?.notes || ""
                                     )
                                   }
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
                                       handleStartEditNote(
-                                        lineItem.id,
-                                        lineItem.notes
+                                        lineItem?.id || 0,
+                                        lineItem?.notes || ""
                                       );
                                     }
                                   }}
                                   className="cursor-pointer min-h-[28px] px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left w-full"
                                   title="Click to edit note"
                                 >
-                                  {lineItem.notes ? (
+                                  {lineItem?.notes ? (
                                     <span className="text-sm break-words whitespace-pre-wrap">
-                                      {lineItem.notes}
+                                      {lineItem?.notes}
                                     </span>
                                   ) : (
                                     <span className="text-sm text-gray-400 dark:text-gray-500 italic">
@@ -1474,10 +1597,10 @@ export default function OrderDetails() {
                               )}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                              {lineItem.quantity}
+                              {lineItem?.quantity || 0}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                              {formatCurrency(lineItem.unitPrice)}
+                              {formatCurrency(lineItem?.unitPrice || "0")}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                               {formatCurrency(total.toString())}
@@ -1501,7 +1624,7 @@ export default function OrderDetails() {
                                 </button>
                                 <button
                                   onClick={() =>
-                                    handleDeleteLineItem(lineItem.id)
+                                    handleDeleteLineItem(lineItem?.id || 0)
                                   }
                                   className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
                                   title="Delete"
@@ -1531,7 +1654,7 @@ export default function OrderDetails() {
                           Subtotal:
                         </td>
                         <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-gray-100">
-                          {formatCurrency(calculatedTotalPrice)}
+                          {formatCurrency(orderTotalPrice)}
                         </td>
                         <td></td>
                       </tr>
@@ -1867,7 +1990,10 @@ export default function OrderDetails() {
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="vendor-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label
+                  htmlFor="vendor-select"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
                   Select Vendor (Shop)
                 </label>
                 <select
@@ -1891,8 +2017,8 @@ export default function OrderDetails() {
 
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                 <p className="text-sm text-blue-800 dark:text-blue-200">
-                  Assigning a shop will move the order to &quot;In Production&quot;
-                  status.
+                  Assigning a shop will move the order to &quot;In
+                  Production&quot; status.
                 </p>
               </div>
 
@@ -1934,63 +2060,288 @@ export default function OrderDetails() {
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="ship-date-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Ship Date
+                <label
+                  htmlFor="ship-date-input"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  Due Date
                 </label>
                 <input
                   id="ship-date-input"
                   type="date"
                   value={editOrderForm.shipDate}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const newShipDate = e.target.value;
+                    if (!newShipDate) {
+                      setEditOrderForm({
+                        ...editOrderForm,
+                        shipDate: "",
+                        leadTime: "",
+                      });
+                      return;
+                    }
+
+                    // Calculate lead time in calendar days from today to the new ship date
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const shipDate = new Date(newShipDate);
+                    const diffInMs = shipDate.getTime() - today.getTime();
+                    const diffInDays = Math.round(
+                      diffInMs / (1000 * 60 * 60 * 24)
+                    );
+
                     setEditOrderForm({
                       ...editOrderForm,
-                      shipDate: e.target.value,
-                    })
-                  }
+                      shipDate: newShipDate,
+                      leadTime: diffInDays >= 0 ? diffInDays.toString() : "0",
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
               </div>
 
               <div>
-                <label htmlFor="lead-time-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Lead Time (Business Days)
+                <label
+                  htmlFor="lead-time-input"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  Lead Time (Days)
                 </label>
                 <input
                   id="lead-time-input"
                   type="number"
                   value={editOrderForm.leadTime}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const input = e.target.value;
+                    if (input === "") {
+                      setEditOrderForm({
+                        ...editOrderForm,
+                        leadTime: "",
+                        shipDate: "",
+                      });
+                      return;
+                    }
+
+                    const leadTimeDays = parseInt(input);
+                    if (isNaN(leadTimeDays) || leadTimeDays < 0) return;
+
+                    // Calculate ship date by adding lead time days to today
+                    const today = new Date();
+                    const shipDate = new Date(
+                      today.getTime() + leadTimeDays * 24 * 60 * 60 * 1000
+                    );
+                    const shipDateString = shipDate.toISOString().split("T")[0];
+
                     setEditOrderForm({
                       ...editOrderForm,
-                      leadTime: e.target.value,
-                    })
-                  }
+                      leadTime: input,
+                      shipDate: shipDateString,
+                    });
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   placeholder="e.g., 10"
                   min="0"
                 />
               </div>
 
-              <div>
-                <label htmlFor="vendor-pay-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Vendor Pay (%)
-                </label>
-                <input
-                  id="vendor-pay-input"
-                  type="number"
-                  value={editOrderForm.vendorPay}
-                  onChange={(e) =>
-                    setEditOrderForm({
-                      ...editOrderForm,
-                      vendorPay: e.target.value,
-                    })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  placeholder="e.g., 70"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                />
+              <div className="space-y-4">
+                <div className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Vendor Pay
+                </div>
+
+                {/* Dual synchronized inputs */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Percentage Input */}
+                  <div>
+                    <label
+                      htmlFor="vendor-pay-percent"
+                      className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+                    >
+                      Percentage
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="vendor-pay-percent"
+                        type="number"
+                        value={editOrderForm.vendorPayPercent}
+                        onChange={(e) => {
+                          const input = e.target.value;
+                          // Allow empty input
+                          if (input === "") {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayPercent: "",
+                              vendorPayDollar: "",
+                            });
+                            return;
+                          }
+
+                          // Validate and clamp percentage between 0-100
+                          let percentage = parseFloat(input);
+                          if (isNaN(percentage)) return; // Don't update if invalid
+                          percentage = Math.max(0, Math.min(100, percentage));
+
+                          const total = Math.max(
+                            0,
+                            parseFloat(order.totalPrice || "0")
+                          );
+                          const dollarAmount = (
+                            (percentage / 100) *
+                            total
+                          ).toFixed(2);
+
+                          setEditOrderForm({
+                            ...editOrderForm,
+                            vendorPayPercent: input,
+                            vendorPayDollar: dollarAmount,
+                          });
+                        }}
+                        onBlur={(e) => {
+                          // Clean up display on blur
+                          const percentage = parseFloat(e.target.value);
+                          if (!isNaN(percentage)) {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayPercent: Math.max(
+                                0,
+                                Math.min(100, percentage)
+                              ).toFixed(1),
+                            });
+                          }
+                        }}
+                        className="w-full pl-3 pr-8 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder="70"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                      />
+                      <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-gray-400 pointer-events-none">
+                        %
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Dollar Input */}
+                  <div>
+                    <label
+                      htmlFor="vendor-pay-dollar"
+                      className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+                    >
+                      Dollar Amount
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 dark:text-gray-400 pointer-events-none">
+                        $
+                      </span>
+                      <input
+                        id="vendor-pay-dollar"
+                        type="number"
+                        value={editOrderForm.vendorPayDollar}
+                        onChange={(e) => {
+                          const input = e.target.value;
+                          // Allow empty input
+                          if (input === "") {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayDollar: "",
+                              vendorPayPercent: "",
+                            });
+                            return;
+                          }
+
+                          // Validate input
+                          let dollarAmount = parseFloat(input);
+                          if (isNaN(dollarAmount)) return; // Don't update if invalid
+                          dollarAmount = Math.max(0, dollarAmount);
+
+                          const total = Math.max(
+                            0,
+                            parseFloat(order.totalPrice || "0")
+                          );
+                          const percentage =
+                            total > 0
+                              ? Math.min(
+                                  100,
+                                  (dollarAmount / total) * 100
+                                ).toFixed(1)
+                              : "0";
+
+                          setEditOrderForm({
+                            ...editOrderForm,
+                            vendorPayDollar: input,
+                            vendorPayPercent: percentage,
+                          });
+                        }}
+                        onBlur={(e) => {
+                          // Clean up display on blur
+                          const dollarAmount = parseFloat(e.target.value);
+                          if (!isNaN(dollarAmount)) {
+                            setEditOrderForm({
+                              ...editOrderForm,
+                              vendorPayDollar: Math.max(
+                                0,
+                                dollarAmount
+                              ).toFixed(2),
+                            });
+                          }
+                        }}
+                        className="w-full pl-8 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        placeholder="500.00"
+                        min="0"
+                        step="0.01"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Summary info */}
+                <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md text-sm space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Order Total:
+                    </span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      ${parseFloat(order.totalPrice || "0").toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Vendor Pay:
+                    </span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {(() => {
+                        const dollarVal = parseFloat(
+                          editOrderForm.vendorPayDollar || "0"
+                        );
+                        const percentVal = parseFloat(
+                          editOrderForm.vendorPayPercent || "0"
+                        );
+                        return `$${dollarVal.toFixed(2)} (${percentVal.toFixed(
+                          1
+                        )}%)`;
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-gray-200 dark:border-gray-700">
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Profit Margin:
+                    </span>
+                    <span className="font-semibold text-green-600 dark:text-green-400">
+                      {(() => {
+                        const orderTotal = parseFloat(order.totalPrice || "0");
+                        const vendorPay = parseFloat(
+                          editOrderForm.vendorPayDollar || "0"
+                        );
+                        const profit = Math.max(0, orderTotal - vendorPay);
+                        const profitPercent =
+                          orderTotal > 0 ? (profit / orderTotal) * 100 : 0;
+                        return `$${profit.toFixed(2)} (${profitPercent.toFixed(
+                          1
+                        )}%)`;
+                      })()}
+                    </span>
+                  </div>
+                </div>
               </div>
 
               <div className="flex gap-3 justify-end mt-6">

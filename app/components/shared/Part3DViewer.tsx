@@ -20,6 +20,7 @@ interface Part3DViewerProps {
   modelUrl?: string;
   solidModelUrl?: string;
   partId?: string;
+  quotePartId?: string; // ID for quote parts
   onThumbnailUpdate?: (thumbnailUrl: string) => void;
   autoGenerateThumbnail?: boolean;
   existingThumbnailUrl?: string;
@@ -250,6 +251,7 @@ export function Part3DViewer({
   modelUrl,
   solidModelUrl,
   partId,
+  quotePartId,
   onThumbnailUpdate,
   autoGenerateThumbnail = false,
   existingThumbnailUrl,
@@ -440,82 +442,19 @@ export function Part3DViewer({
   };
 
   const handleDownload = () => {
-    // Prefer solid model for download, fall back to mesh if not available
-    const downloadUrl = solidModelUrl || signedModelUrl || modelUrl;
+    // Use appropriate route based on whether it's a quote part or regular part
+    if (quotePartId && solidModelUrl) {
+      window.open(`/quote-parts/${quotePartId}/file`, '_blank');
+      return;
+    } else if (partId && solidModelUrl) {
+      window.open(`/parts/${partId}/file`, '_blank');
+      return;
+    }
 
+    // Otherwise, fall back to the mesh URL
+    const downloadUrl = signedModelUrl || modelUrl;
     if (downloadUrl) {
-      // Extract just the original filename from the URL, removing query parameters
-      const urlWithoutQuery = downloadUrl.split('?')[0];
-      const urlParts = urlWithoutQuery.split('/');
-      const fullFilename = decodeURIComponent(urlParts[urlParts.length - 1]);
-
-      let originalFilename = fullFilename;
-
-      // Pattern for quote-parts: timestamp-quote-part-uuid-originalname.ext
-      // Pattern for parts: timestamp-part-uuid-originalname.ext
-      const quotePartFileRegex = /^\d+-quote-part-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
-      const partFileRegex = /^\d+-part-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
-      const partMeshRegex = /^\d+-part-mesh-[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}-(.+)$/i;
-
-      let match = fullFilename.match(quotePartFileRegex);
-      if (match) {
-        originalFilename = match[1];
-      } else {
-        match = fullFilename.match(partFileRegex);
-        if (match) {
-          originalFilename = match[1];
-        } else {
-          match = fullFilename.match(partMeshRegex);
-          if (match) {
-            originalFilename = match[1];
-          }
-        }
-      }
-
-      // If regex didn't match, try simpler approach - look for last occurrence of UUID pattern
-      if (originalFilename === fullFilename) {
-        const uuidIndex = fullFilename.search(/[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}/i);
-        if (uuidIndex > 0) {
-          const afterUuid = uuidIndex + 36 + 1;
-          if (afterUuid < fullFilename.length) {
-            originalFilename = fullFilename.substring(afterUuid);
-          }
-        }
-      }
-
-      // Final fallback - use part name with extension
-      if (!originalFilename || originalFilename === fullFilename) {
-        const urlWithoutParams = downloadUrl.split('?')[0];
-        const extension = urlWithoutParams.split(".").pop()?.split('/').pop();
-        originalFilename = `${partName || "part"}.${extension || "step"}`;
-      }
-
-      // Fetch the file and create a blob URL to ensure the download attribute works
-      fetch(downloadUrl, {
-        method: 'GET',
-        mode: 'cors',
-      })
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-          return response.blob();
-        })
-        .then(blob => {
-          const blobUrl = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = blobUrl;
-          link.download = originalFilename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
-        })
-        .catch(error => {
-          console.error("Fetch download failed, trying direct download:", error);
-          // Fallback to direct download using the signed URL
-          window.open(downloadUrl, '_blank');
-        });
+      window.open(downloadUrl, '_blank');
     }
   };
 

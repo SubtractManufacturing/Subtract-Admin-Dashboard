@@ -3,21 +3,21 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 import https from 'https'
 
-const S3_ENDPOINT = process.env.S3_Endpoint
-const S3_REGION = process.env.S3_Region || 'us-east-1'
-const S3_ACCESS_KEY_ID = process.env.S3_Access_Key_ID
-const S3_SECRET_ACCESS_KEY = process.env.S3_Secret_Access_Key
-const S3_BUCKET = process.env.S3_Bucket || 'subtract-attachments'
+const S3_ENDPOINT = process.env.S3_ENDPOINT
+const S3_REGION = process.env.S3_REGION || 'us-east-1'
+const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID
+const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY
+const S3_BUCKET = process.env.S3_BUCKET || 'subtract-attachments'
 
 // Create S3 client lazily to avoid initialization errors
 let s3Client: S3Client | null = null
 
-function getS3Client() {
+export function getS3Client() {
   if (!s3Client) {
     if (!S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
-      throw new Error('S3 credentials not configured. Please set S3_Access_Key_ID and S3_Secret_Access_Key environment variables.')
+      throw new Error('S3 credentials not configured. Please set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY environment variables.')
     }
-    
+
     s3Client = new S3Client({
       region: S3_REGION,
       endpoint: S3_ENDPOINT,

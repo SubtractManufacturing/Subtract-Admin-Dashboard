@@ -173,19 +173,23 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
     // Use provided orderNumber or generate a new one
     const orderNumber = orderData.orderNumber || await getNextOrderNumber()
 
-    // Extract vendorPayPercentage and store it as vendorPay
-    const { vendorPayPercentage, ...orderDataWithoutPercentage } = orderData
-    delete orderDataWithoutPercentage.orderNumber
+    // Remove orderNumber from orderData before inserting
+    const orderDataWithoutOrderNumber = { ...orderData }
+    delete orderDataWithoutOrderNumber.orderNumber
+    delete orderDataWithoutOrderNumber.vendorPayPercentage // Remove if present for backwards compatibility
 
-    // Store the percentage in vendorPay field (e.g., "70" for 70%)
-    const vendorPay = vendorPayPercentage ? vendorPayPercentage.toString() : "70"
+    // Calculate vendor pay as 70% of total price (default) or use provided amount
+    // Since this is a new order with no line items yet, vendor pay starts at 0
+    // It should be set manually or calculated when line items are added
+    const vendorPay = orderData.vendorPay || "0"
 
     const insertResult = await db
       .insert(orders)
       .values({
-        ...orderDataWithoutPercentage,
+        ...orderDataWithoutOrderNumber,
         orderNumber: orderNumber as string,
-        vendorPay
+        vendorPay, // Store as dollar amount
+        totalPrice: "0" // Initialize with 0, will be updated when line items are added
       })
       .returning()
 
@@ -435,6 +439,35 @@ export async function archiveOrder(id: number, eventContext?: OrderEventContext)
     })
   } catch (error) {
     throw new Error(`Failed to archive order: ${error}`)
+  }
+}
+
+export async function restoreOrder(id: number, eventContext?: OrderEventContext): Promise<void> {
+  try {
+    const [order] = await db
+      .update(orders)
+      .set({ status: 'Pending' })
+      .where(eq(orders.id, id))
+      .returning()
+
+    // Log event for order restoration
+    await createEvent({
+      entityType: "order",
+      entityId: id.toString(),
+      eventType: "order_restored",
+      eventCategory: "system",
+      title: `Order #${order.orderNumber} restored`,
+      description: `Order has been restored from archive`,
+      metadata: {
+        orderNumber: order.orderNumber,
+        previousStatus: 'Archived',
+        newStatus: 'Pending'
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
+  } catch (error) {
+    throw new Error(`Failed to restore order: ${error}`)
   }
 }
 

@@ -14,7 +14,8 @@ import {
 import type { EventLog } from "~/lib/db/schema";
 import { getCustomers } from "~/lib/customers";
 import { getVendors } from "~/lib/vendors";
-import { getOrdersWithRelations } from "~/lib/orders";
+import { getOrdersWithRelations, restoreOrder } from "~/lib/orders";
+import { restoreQuote } from "~/lib/quotes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserAccessEvents, shouldShowEventsInNav } from "~/lib/featureFlags";
@@ -99,7 +100,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { userDetails } = await requireAuth(request);
+  const { user, userDetails } = await requireAuth(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -157,6 +158,34 @@ export async function action({ request }: ActionFunctionArgs) {
         if (!result) {
           return json({ error: "Event not found" }, { status: 404 });
         }
+
+        return json({ success: true });
+      }
+
+      case "restoreOrder": {
+        const orderId = formData.get("orderId") as string;
+        if (!orderId) {
+          return json({ error: "Missing order ID" }, { status: 400 });
+        }
+
+        await restoreOrder(parseInt(orderId), {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.email || undefined,
+        });
+
+        return json({ success: true });
+      }
+
+      case "restoreQuote": {
+        const quoteId = formData.get("quoteId") as string;
+        if (!quoteId) {
+          return json({ error: "Missing quote ID" }, { status: 400 });
+        }
+
+        await restoreQuote(parseInt(quoteId), {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.email || undefined,
+        });
 
         return json({ success: true });
       }
@@ -374,6 +403,43 @@ export default function EventsPage() {
 
     // Close modal after restore
     setShowDetailsModal(false);
+  };
+
+  const handleRestoreEntity = () => {
+    if (!selectedEvent) return;
+
+    const formData = new FormData();
+
+    if (selectedEvent.eventType === 'order_archived') {
+      formData.append('intent', 'restoreOrder');
+      formData.append('orderId', selectedEvent.entityId);
+    } else if (selectedEvent.eventType === 'quote_archived') {
+      formData.append('intent', 'restoreQuote');
+      formData.append('quoteId', selectedEvent.entityId);
+    } else {
+      return;
+    }
+
+    restoreFetcher.submit(formData, {
+      method: 'post',
+      action: '/events'
+    });
+
+    // Close modal and navigate
+    setShowDetailsModal(false);
+
+    // Navigate to the restored entity after a short delay
+    setTimeout(() => {
+      if (selectedEvent.eventType === 'order_archived') {
+        const metadata = selectedEvent.metadata as Record<string, unknown> | null;
+        const orderNumber = metadata?.orderNumber;
+        if (orderNumber) {
+          navigate(`/orders/${orderNumber}`);
+        }
+      } else if (selectedEvent.eventType === 'quote_archived') {
+        navigate(`/quotes/${selectedEvent.entityId}`);
+      }
+    }, 100);
   };
 
 
@@ -837,7 +903,7 @@ export default function EventsPage() {
               )}
           </div>
           <div className="mt-6 flex justify-between">
-            <div>
+            <div className="flex gap-2">
               {selectedEvent.isDismissed && (
                 <Button
                   onClick={() => handleRestoreEvent(selectedEvent.id)}
@@ -845,6 +911,18 @@ export default function EventsPage() {
                   size="sm"
                 >
                   Restore Event
+                </Button>
+              )}
+              {(selectedEvent.eventType === 'order_archived' || selectedEvent.eventType === 'quote_archived') && (
+                <Button
+                  onClick={handleRestoreEntity}
+                  variant="primary"
+                  size="sm"
+                  disabled={restoreFetcher.state === 'submitting'}
+                >
+                  {restoreFetcher.state === 'submitting'
+                    ? 'Restoring...'
+                    : `Restore ${selectedEvent.eventType === 'order_archived' ? 'Order' : 'Quote'}`}
                 </Button>
               )}
             </div>

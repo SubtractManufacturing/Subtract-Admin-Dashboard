@@ -61,7 +61,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 }
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -90,7 +90,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return json({ error: "File size exceeds 50MB limit" }, { status: 400 });
+      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
     }
 
     try {
@@ -687,6 +687,9 @@ export default function VendorDetails() {
                           Status
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Order Total
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                           Vendor Pay
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -714,7 +717,15 @@ export default function VendorDetails() {
                             </span>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                            {formatCurrency(parseFloat(order.totalPrice || '0'))}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                             {formatCurrency(parseFloat(order.vendorPay || '0'))}
+                            <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
+                              ({parseFloat(order.totalPrice || '0') > 0
+                                ? ((parseFloat(order.vendorPay || '0') / parseFloat(order.totalPrice || '1')) * 100).toFixed(1)
+                                : '0'}%)
+                            </span>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm">
                             <Link

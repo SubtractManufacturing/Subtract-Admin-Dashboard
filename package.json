@@ -29,6 +29,8 @@
     "@remix-run/serve": "^2.16.8",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.50.3",
+    "@types/archiver": "^6.0.3",
+    "archiver": "^7.0.1",
     "drizzle-kit": "^0.31.4",
     "drizzle-orm": "^0.44.2",
     "isbot": "^4.1.0",
