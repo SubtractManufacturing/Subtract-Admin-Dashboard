@@ -1,7 +1,6 @@
 import { LoaderFunctionArgs } from "@remix-run/node";
 import { useRouteError, isRouteErrorResponse } from "@remix-run/react";
 import { requireAuth } from "~/lib/auth.server";
-import { canUserManageQuotes } from "~/lib/featureFlags";
 import { downloadQuoteFiles } from "~/lib/downloadQuoteFiles";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -10,11 +9,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const quoteId = params.quoteId;
   if (!quoteId) {
     throw new Response("Quote ID is required", { status: 400 });
-  }
-
-  const canManageQuotes = await canUserManageQuotes();
-  if (!canManageQuotes) {
-    throw new Response("Not authorized to download files", { status: 403 });
   }
 
   try {

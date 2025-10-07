@@ -30,8 +30,6 @@ import { getAppConfig } from "~/lib/config.server";
 import { getNextQuoteNumber } from "~/lib/number-generator";
 import {
   shouldShowEventsInNav,
-  shouldShowQuotesInNav,
-  canUserManageQuotes,
 } from "~/lib/featureFlags";
 
 import Navbar from "~/components/Navbar";
@@ -43,11 +41,6 @@ import NewQuoteModal from "~/components/quotes/NewQuoteModal";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
-
-  const canManageQuotes = await canUserManageQuotes();
-  if (!canManageQuotes) {
-    throw new Response("Not authorized to view quotes", { status: 403 });
-  }
 
   // Load customers and vendors first, separately, to ensure they always load
   let customers: Customer[] = [];
@@ -68,13 +61,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Now load the rest
   let quotes: QuoteWithRelations[] = [];
   let showEventsLink = true;
-  let showQuotesLink = true;
 
   try {
-    [quotes, showEventsLink, showQuotesLink] = await Promise.all([
+    [quotes, showEventsLink] = await Promise.all([
       getQuotes(),
       shouldShowEventsInNav(),
-      shouldShowQuotesInNav(),
     ]);
   } catch (error) {
     console.error("Failed to load quotes:", error);
@@ -90,7 +81,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       userDetails,
       appConfig,
       showEventsLink,
-      showQuotesLink,
     }),
     headers
   );
@@ -100,11 +90,6 @@ export async function action({ request }: ActionFunctionArgs) {
   const { user, userDetails } = await requireAuth(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
-
-  const canManageQuotes = await canUserManageQuotes();
-  if (!canManageQuotes) {
-    return json({ error: "Not authorized to manage quotes" }, { status: 403 });
-  }
 
   const eventContext: QuoteEventContext = {
     userId: user?.id,
