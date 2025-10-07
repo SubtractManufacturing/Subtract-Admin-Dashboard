@@ -11,6 +11,7 @@ import {
   boolean,
   jsonb,
   index,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 
 export const quoteStatusEnum = pgEnum("quote_status", [
@@ -386,7 +387,7 @@ export type NewEventLog = typeof eventLogs.$inferInsert;
 export const quotePriceCalculations = pgTable("quote_price_calculations", {
   id: serial("id").primaryKey(),
   quoteId: integer("quote_id").notNull().references(() => quotes.id),
-  quoteLineItemId: integer("quote_line_item_id").references(() => quoteLineItems.id),
+  quoteLineItemId: integer("quote_line_item_id"),
   quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
 
   // Base inputs
@@ -423,7 +424,13 @@ export const quotePriceCalculations = pgTable("quote_price_calculations", {
   calculatedBy: text("calculated_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  lineItemFk: foreignKey({
+    columns: [table.quoteLineItemId],
+    foreignColumns: [quoteLineItems.id],
+    name: "quote_calc_line_item_fk"
+  }).onDelete("cascade"),
+}));
 
 export const quotePriceCalculationTemplates = pgTable("quote_price_calculation_templates", {
   id: serial("id").primaryKey(),

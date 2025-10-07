@@ -105,7 +105,7 @@ export async function createPriceCalculation(
 // Update line item price based on calculation
 export async function updateLineItemPrice(
   lineItemId: number,
-  unitPrice: number,
+  totalPrice: number,
   userId: string
 ): Promise<void> {
   // Get the current line item to get quantity
@@ -120,14 +120,15 @@ export async function updateLineItemPrice(
   }
 
   const quantity = lineItem.quantity;
-  const totalPrice = unitPrice * quantity;
+  // Calculate unit price from total price
+  const unitPrice = quantity > 0 ? totalPrice / quantity : 0;
 
   // Update the line item prices
   await db
     .update(quoteLineItems)
     .set({
-      unitPrice: unitPrice.toString(),
-      totalPrice: totalPrice.toString(),
+      unitPrice: unitPrice.toFixed(2),
+      totalPrice: totalPrice.toFixed(2),
       updatedAt: new Date(),
     })
     .where(eq(quoteLineItems.id, lineItemId));
@@ -139,12 +140,12 @@ export async function updateLineItemPrice(
     eventType: "line_item_price_updated",
     eventCategory: "financial",
     title: "Line Item Price Updated",
-    description: `Line item price updated: $${unitPrice} × ${quantity} = $${totalPrice}`,
+    description: `Line item price updated: $${totalPrice} ÷ ${quantity} = $${unitPrice.toFixed(2)} per unit`,
     metadata: {
       lineItemId,
-      unitPrice,
+      unitPrice: unitPrice.toFixed(2),
       quantity,
-      totalPrice,
+      totalPrice: totalPrice.toFixed(2),
     },
     userId,
     userEmail: undefined,
