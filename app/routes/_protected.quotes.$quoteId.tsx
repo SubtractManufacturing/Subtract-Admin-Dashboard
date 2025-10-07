@@ -31,6 +31,7 @@ import {
   shouldShowEventsInNav,
   shouldShowQuotesInNav,
   canUserManageQuotes,
+  canUserAccessPriceCalculator,
 } from "~/lib/featureFlags";
 import {
   uploadFile,
@@ -242,9 +243,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, showQuotesLink, events] = await Promise.all([
+  const [showEventsLink, showQuotesLink, canAccessPriceCalculator, events] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowQuotesInNav(),
+    canUserAccessPriceCalculator(userDetails?.role),
     getEventsByEntity("quote", quote.id.toString(), 10),
   ]);
 
@@ -271,6 +273,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       appConfig,
       showEventsLink,
       showQuotesLink,
+      canAccessPriceCalculator,
       events,
       convertedOrder,
     }),
@@ -1205,6 +1208,7 @@ export default function QuoteDetail() {
     appConfig,
     showEventsLink,
     showQuotesLink,
+    canAccessPriceCalculator,
     events,
     convertedOrder,
   } = useLoaderData<typeof loader>();
@@ -1750,7 +1754,7 @@ export default function QuoteDetail() {
                     excludeRef={actionsButtonRef}
                     quoteStatus={quote.status}
                     onReviseQuote={handleReviseQuote}
-                    onCalculatePricing={handleOpenCalculator}
+                    onCalculatePricing={canAccessPriceCalculator ? handleOpenCalculator : undefined}
                     onDownloadFiles={handleDownloadFiles}
                     isDownloading={isDownloading}
                   />
@@ -2790,7 +2794,7 @@ export default function QuoteDetail() {
                               </div>
                               {!isQuoteLocked && (
                                 <div className="flex items-center gap-2">
-                                  {part && (
+                                  {part && canAccessPriceCalculator && (
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
@@ -3114,17 +3118,19 @@ export default function QuoteDetail() {
         onSubmit={handleAddLineItemSubmit}
       />
 
-      <QuotePriceCalculatorModal
-        isOpen={isCalculatorOpen}
-        onClose={() => setIsCalculatorOpen(false)}
-        quoteParts={quote.parts || []}
-        quoteLineItems={quote.lineItems || []}
-        quoteId={quote.id}
-        onSave={handleSaveCalculation}
-        currentPartIndex={currentCalculatorPartIndex}
-        onPartChange={setCurrentCalculatorPartIndex}
-        existingCalculations={priceCalculations || []}
-      />
+      {canAccessPriceCalculator && (
+        <QuotePriceCalculatorModal
+          isOpen={isCalculatorOpen}
+          onClose={() => setIsCalculatorOpen(false)}
+          quoteParts={quote.parts || []}
+          quoteLineItems={quote.lineItems || []}
+          quoteId={quote.id}
+          onSave={handleSaveCalculation}
+          currentPartIndex={currentCalculatorPartIndex}
+          onPartChange={setCurrentCalculatorPartIndex}
+          existingCalculations={priceCalculations || []}
+        />
+      )}
     </div>
   );
 }
