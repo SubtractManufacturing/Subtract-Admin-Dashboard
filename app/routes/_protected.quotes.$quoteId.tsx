@@ -1437,11 +1437,13 @@ export default function QuoteDetail() {
   };
 
   const handleOpenCalculator = () => {
+    if (!canAccessPriceCalculator) return;
     setIsCalculatorOpen(true);
     setCurrentCalculatorPartIndex(0);
   };
 
   const handleOpenCalculatorForPart = (partId: string) => {
+    if (!canAccessPriceCalculator) return;
     // Find the index of the part in the quote.parts array
     const partIndex = quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
     setCurrentCalculatorPartIndex(partIndex);
@@ -3120,7 +3122,7 @@ export default function QuoteDetail() {
 
       {canAccessPriceCalculator && (
         <QuotePriceCalculatorModal
-          isOpen={isCalculatorOpen}
+          isOpen={isCalculatorOpen && canAccessPriceCalculator}
           onClose={() => setIsCalculatorOpen(false)}
           quoteParts={quote.parts || []}
           quoteLineItems={quote.lineItems || []}
