@@ -7,6 +7,8 @@ interface QuoteActionsDropdownProps {
   quoteStatus: string;
   onReviseQuote: () => void;
   onCalculatePricing?: () => void;
+  onDownloadFiles?: () => void;
+  isDownloading?: boolean;
 }
 
 export default function QuoteActionsDropdown({
@@ -16,6 +18,8 @@ export default function QuoteActionsDropdown({
   quoteStatus,
   onReviseQuote,
   onCalculatePricing,
+  onDownloadFiles,
+  isDownloading = false,
 }: QuoteActionsDropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -68,14 +72,25 @@ export default function QuoteActionsDropdown({
         onClose();
       },
     }] : []),
-    {
-      icon: (
+    ...(onDownloadFiles ? [{
+      icon: isDownloading ? (
+        <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      ) : (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
         </svg>
       ),
-      label: "Action 2",
-    },
+      label: isDownloading ? "Downloading..." : "Download Files",
+      onClick: () => {
+        if (!isDownloading) {
+          onDownloadFiles();
+          onClose();
+        }
+      },
+      disabled: isDownloading,
+    }] : []),
     {
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,8 +158,13 @@ export default function QuoteActionsDropdown({
         {actionButtons.map((action, index) => (
           <button
             key={index}
-            className="flex flex-col items-center justify-center p-4 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors group"
+            className={`flex flex-col items-center justify-center p-4 rounded-lg border border-gray-200 dark:border-gray-700 transition-colors group ${
+              'disabled' in action && action.disabled
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+            }`}
             onClick={() => {
+              if ('disabled' in action && action.disabled) return;
               if ('onClick' in action && action.onClick) {
                 action.onClick();
               } else {
@@ -152,6 +172,7 @@ export default function QuoteActionsDropdown({
                 onClose();
               }
             }}
+            disabled={'disabled' in action ? action.disabled : false}
           >
             <div className="text-gray-600 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
               {action.icon}

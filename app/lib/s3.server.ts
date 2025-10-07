@@ -12,12 +12,12 @@ const S3_BUCKET = process.env.S3_BUCKET || 'subtract-attachments'
 // Create S3 client lazily to avoid initialization errors
 let s3Client: S3Client | null = null
 
-function getS3Client() {
+export function getS3Client() {
   if (!s3Client) {
     if (!S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
       throw new Error('S3 credentials not configured. Please set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY environment variables.')
     }
-    
+
     s3Client = new S3Client({
       region: S3_REGION,
       endpoint: S3_ENDPOINT,

@@ -1264,6 +1264,7 @@ export default function QuoteDetail() {
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] = useState(0);
   const calculatorFetcher = useFetcher();
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1437,7 +1438,55 @@ export default function QuoteDetail() {
     setCurrentCalculatorPartIndex(0);
   };
 
-  const handleSaveCalculation = (calculationData: any) => {
+  const handleOpenCalculatorForPart = (partId: string) => {
+    // Find the index of the part in the quote.parts array
+    const partIndex = quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
+    setCurrentCalculatorPartIndex(partIndex);
+    setIsCalculatorOpen(true);
+  };
+
+  const handleDownloadFiles = async () => {
+    setIsDownloading(true);
+
+    try {
+      const downloadUrl = `/quotes/${quote.id}/download`;
+      const response = await fetch(downloadUrl);
+
+      if (!response.ok) {
+        throw new Error("Failed to download files");
+      }
+
+      // Get the blob from the response
+      const blob = await response.blob();
+
+      // Get filename from Content-Disposition header or use default
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `Quote-${quote.quoteNumber}-Files.zip`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // Create a download link and trigger it
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Download error:", error);
+      alert("Failed to download files. Please try again.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleSaveCalculation = (calculationData: Record<string, unknown>) => {
     const formData = new FormData();
     formData.append("intent", "savePriceCalculation");
     formData.append("calculationData", JSON.stringify(calculationData));
@@ -1702,6 +1751,8 @@ export default function QuoteDetail() {
                     quoteStatus={quote.status}
                     onReviseQuote={handleReviseQuote}
                     onCalculatePricing={handleOpenCalculator}
+                    onDownloadFiles={handleDownloadFiles}
+                    isDownloading={isDownloading}
                   />
                 </div>
                 {(quote.status === "RFQ" || quote.status === "Draft") && (
@@ -2738,28 +2789,58 @@ export default function QuoteDetail() {
                                 )}
                               </div>
                               {!isQuoteLocked && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteLineItem(item.id, part?.id);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                                  title="Delete line item"
-                                >
-                                  <svg
-                                    className="w-4 h-4"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
+                                <div className="flex items-center gap-2">
+                                  {part && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenCalculatorForPart(part.id);
+                                        // Remove focus after click
+                                        (e.target as HTMLButtonElement).blur();
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all outline-none focus:outline-none"
+                                      title="Calculate price for this part"
+                                    >
+                                      <svg
+                                        className="w-4 h-4"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                                        />
+                                      </svg>
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteLineItem(item.id, part?.id);
+                                      // Remove focus after click
+                                      (e.target as HTMLButtonElement).blur();
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus:outline-none"
+                                    title="Delete line item"
                                   >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2}
-                                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                                    />
-                                  </svg>
-                                </button>
+                                    <svg
+                                      className="w-4 h-4"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </td>
