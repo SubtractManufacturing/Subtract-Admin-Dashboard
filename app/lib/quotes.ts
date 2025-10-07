@@ -486,6 +486,44 @@ export async function convertQuoteToOrder(
       return { success: false, error: 'Cannot convert quote with $0 total' }
     }
 
+    // Additional validation: Check if any quote parts have pending conversions
+    if (quote.parts && quote.parts.length > 0) {
+      const pendingConversions = quote.parts.filter(
+        part => part.conversionStatus === 'in_progress' ||
+        part.conversionStatus === 'queued' ||
+        (part.conversionStatus === 'pending' && part.partFileUrl)
+      )
+
+      if (pendingConversions.length > 0) {
+        return {
+          success: false,
+          error: `Cannot convert quote while ${pendingConversions.length} part(s) have pending mesh conversions. Please wait for all conversions to complete.`
+        }
+      }
+
+      // Warn about failed conversions but allow conversion to proceed
+      const failedConversions = quote.parts.filter(
+        part => part.conversionStatus === 'failed'
+      )
+
+      if (failedConversions.length > 0) {
+        console.warn(`Converting quote ${quoteId} with ${failedConversions.length} failed mesh conversions`)
+      }
+
+      // Validate that all quote parts have required fields
+      for (const part of quote.parts) {
+        if (!part.partName || part.partName.trim() === '') {
+          return { success: false, error: `Quote part ${part.partNumber} is missing a name` }
+        }
+
+        // Check if part has a corresponding line item
+        const hasLineItem = quote.lineItems?.some(item => item.quotePartId === part.id)
+        if (!hasLineItem) {
+          return { success: false, error: `Quote part ${part.partName} has no associated line item with pricing` }
+        }
+      }
+    }
+
     // Start a transaction
     const result = await db.transaction(async (tx) => {
       // Create the order
@@ -536,27 +574,32 @@ export async function convertQuoteToOrder(
       // Convert quote parts to customer parts and create order line items
       if (quote.parts && quote.parts.length > 0) {
         for (const quotePart of quote.parts) {
-          // Create a customer part from the quote part
-          // Copy the S3 key directly - loaders will generate signed URLs on-demand
-          const [customerPart] = await tx
-            .insert(parts)
-            .values({
-              customerId: quote.customerId,
-              partName: quotePart.partName,
-              material: quotePart.material || null,
-              tolerance: quotePart.tolerance || null,
-              finishing: quotePart.finish || null,
-              thumbnailUrl: quotePart.thumbnailUrl || null,
-              partFileUrl: quotePart.partFileUrl || null,
-              partMeshUrl: quotePart.partMeshUrl || null,
-              meshConversionStatus: quotePart.conversionStatus || 'pending',
-              meshConversionError: quotePart.meshConversionError || null,
-              meshConversionJobId: quotePart.meshConversionJobId || null,
-              meshConversionStartedAt: quotePart.meshConversionStartedAt || null,
-              meshConversionCompletedAt: quotePart.meshConversionCompletedAt || null,
-              notes: quotePart.description || null,
-            })
-            .returning()
+          try {
+            // Create a customer part from the quote part
+            // Copy the S3 key directly - loaders will generate signed URLs on-demand
+            const [customerPart] = await tx
+              .insert(parts)
+              .values({
+                customerId: quote.customerId,
+                partName: quotePart.partName,
+                material: quotePart.material || null,
+                tolerance: quotePart.tolerance || null,
+                finishing: quotePart.finish || null,
+                thumbnailUrl: quotePart.thumbnailUrl || null,
+                partFileUrl: quotePart.partFileUrl || null,
+                partMeshUrl: quotePart.partMeshUrl || null,
+                meshConversionStatus: quotePart.conversionStatus || 'pending',
+                meshConversionError: quotePart.meshConversionError || null,
+                meshConversionJobId: quotePart.meshConversionJobId || null,
+                meshConversionStartedAt: quotePart.meshConversionStartedAt || null,
+                meshConversionCompletedAt: quotePart.meshConversionCompletedAt || null,
+                notes: quotePart.description || null,
+              })
+              .returning()
+
+            if (!customerPart) {
+              throw new Error(`Failed to create customer part for quote part: ${quotePart.partName}`)
+            }
 
           // Migrate quote part drawings to the new customer part
           const quotePartDrawingRecords = await tx
@@ -579,22 +622,27 @@ export async function convertQuoteToOrder(
           // Find the corresponding line item for this quote part
           const lineItem = quote.lineItems?.find(li => li.quotePartId === quotePart.id)
 
-          if (lineItem) {
-            // Create order line item with reference to the new customer part
-            await tx
-              .insert(orderLineItems)
-              .values({
-                orderId: order.id,
-                partId: customerPart.id,
-                name: quotePart.partName,
-                description: lineItem.description || quotePart.description || '',
-                quantity: lineItem.quantity,
-                unitPrice: lineItem.unitPrice,
-                notes: lineItem.notes || null,
-              })
+            if (lineItem) {
+              // Create order line item with reference to the new customer part
+              await tx
+                .insert(orderLineItems)
+                .values({
+                  orderId: order.id,
+                  partId: customerPart.id,
+                  name: quotePart.partName,
+                  description: lineItem.description || quotePart.description || '',
+                  quantity: lineItem.quantity,
+                  unitPrice: lineItem.unitPrice,
+                  notes: lineItem.notes || null,
+                })
 
-            // Mark this line item as processed
-            processedLineItemIds.add(lineItem.id)
+              // Mark this line item as processed
+              processedLineItemIds.add(lineItem.id)
+            }
+          } catch (partConversionError) {
+            // If any part conversion fails, rollback the entire transaction
+            console.error(`Failed to convert quote part ${quotePart.partName}:`, partConversionError)
+            throw new Error(`Failed to convert part "${quotePart.partName}": ${partConversionError instanceof Error ? partConversionError.message : 'Unknown error'}`)
           }
         }
       }

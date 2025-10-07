@@ -4,6 +4,8 @@ import {
   useFetcher,
   useNavigate,
   useRevalidator,
+  useRouteError,
+  isRouteErrorResponse,
 } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
@@ -434,6 +436,50 @@ export default function QuotesIndex() {
           revalidator.revalidate();
         }}
       />
+    </div>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+
+  if (isRouteErrorResponse(error)) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+          <h1 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-2">
+            {error.status} {error.statusText}
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
+            {error.data || "An error occurred while loading quotes."}
+          </p>
+          <a
+            href="/quotes"
+            className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Try Again
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
+      <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+        <h1 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-2">
+          Unexpected Error
+        </h1>
+        <p className="text-gray-600 dark:text-gray-400 mb-4">
+          {error instanceof Error ? error.message : "An unexpected error occurred while loading quotes."}
+        </p>
+        <a
+          href="/quotes"
+          className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+        >
+          Try Again
+        </a>
+      </div>
     </div>
   );
 }
