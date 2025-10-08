@@ -11,6 +11,18 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
   const partsLineItems = (quote.lineItems || []).filter((item) => item.quotePartId !== null);
   const serviceLineItems = (quote.lineItems || []).filter((item) => item.quotePartId === null);
 
+  // Calculate valid until date
+  const calculateValidUntil = () => {
+    if (quote.validUntil) {
+      return formatDate(quote.validUntil);
+    }
+
+    const expirationDays = quote.expirationDays || 14;
+    return `${expirationDays} days from Issue`;
+  };
+
+  const validUntilDisplay = calculateValidUntil();
+
   const partsSubtotal = partsLineItems.reduce(
     (sum, item) => sum + parseFloat(item.totalPrice?.toString() || "0"),
     0
@@ -147,6 +159,11 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
             margin-bottom: 5px;
           }
 
+          .placeholder-text {
+            color: #9ca3af;
+            font-style: italic;
+          }
+
           .parts-section {
             padding: 20px 40px;
           }
@@ -199,6 +216,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
             font-size: 18px;
             font-weight: 700;
             color: #c41e3a;
+            white-space: nowrap;
           }
 
           .financial-section {
@@ -232,6 +250,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
             font-size: 18px;
             color: #c41e3a;
             font-weight: 700;
+            white-space: nowrap;
           }
 
           .services-header {
@@ -310,7 +329,15 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
               </div>
               <div className="info-item">
                 <span className="label">Valid Until</span>
-                <span className="value">{formatDate(quote.validUntil)}</span>
+                <span className="value">
+                  <span
+                    className={editable ? "editable" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    {validUntilDisplay}
+                  </span>
+                </span>
               </div>
             </div>
           </div>
@@ -337,24 +364,28 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                   {quote.customer?.email || ""}
                 </span>
               </p>
-              <p>
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  Address Line 1
-                </span>
-              </p>
-              <p>
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  City, State ZIP
-                </span>
-              </p>
+              {editable && (
+                <>
+                  <p>
+                    <span
+                      className="editable placeholder-text"
+                      contentEditable={editable}
+                      suppressContentEditableWarning
+                    >
+                      Address Line 1
+                    </span>
+                  </p>
+                  <p>
+                    <span
+                      className="editable placeholder-text"
+                      contentEditable={editable}
+                      suppressContentEditableWarning
+                    >
+                      City, State ZIP
+                    </span>
+                  </p>
+                </>
+              )}
             </div>
             <div className="detail-section">
               <h3>Shipping Information</h3>

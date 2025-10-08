@@ -6,12 +6,14 @@ interface GenerateQuotePdfModalProps {
   isOpen: boolean;
   onClose: () => void;
   quote: QuoteWithRelations;
+  autoDownload?: boolean;
 }
 
 export default function GenerateQuotePdfModal({
   isOpen,
   onClose,
   quote,
+  autoDownload = true,
 }: GenerateQuotePdfModalProps) {
   return (
     <PdfGenerationModal
@@ -21,6 +23,7 @@ export default function GenerateQuotePdfModal({
       apiEndpoint={`/api/quotes/${quote.id}/generate-pdf`}
       filename={`quote-${quote.quoteNumber}.pdf`}
       tipMessage="Click on any highlighted field to edit it before generating the PDF. Changes will only affect the generated PDF and won't modify the quote data."
+      autoDownload={autoDownload}
     >
       <QuotePdfTemplate quote={quote} editable={true} />
     </PdfGenerationModal>

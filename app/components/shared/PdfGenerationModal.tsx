@@ -10,6 +10,7 @@ interface PdfGenerationModalProps {
   filename: string;
   children: ReactNode;
   tipMessage?: string;
+  autoDownload?: boolean;
 }
 
 /**
@@ -24,6 +25,7 @@ export default function PdfGenerationModal({
   filename,
   children,
   tipMessage = "Click on any highlighted field to edit it before generating the PDF. Changes will only affect the generated PDF and won't modify the record data.",
+  autoDownload = true,
 }: PdfGenerationModalProps) {
   const templateRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -70,21 +72,24 @@ export default function PdfGenerationModal({
       // Get the PDF blob
       const blob = await response.blob();
 
-      // Create download link
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.style.display = "none";
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
+      // Only auto-download if feature flag is enabled
+      if (autoDownload) {
+        // Create download link
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.style.display = "none";
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
 
-      a.click();
+        a.click();
 
-      // Clean up download elements
-      setTimeout(() => {
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      }, 100);
+        // Clean up download elements
+        setTimeout(() => {
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        }, 100);
+      }
 
       // Show refreshing state
       setIsGenerating(false);

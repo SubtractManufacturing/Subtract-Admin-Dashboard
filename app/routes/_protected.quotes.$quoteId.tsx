@@ -30,6 +30,8 @@ import { getAppConfig } from "~/lib/config.server";
 import {
   shouldShowEventsInNav,
   canUserAccessPriceCalculator,
+  isFeatureEnabled,
+  FEATURE_FLAGS,
 } from "~/lib/featureFlags";
 import {
   uploadFile,
@@ -237,9 +239,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, canAccessPriceCalculator, events] = await Promise.all([
+  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, events] = await Promise.all([
     shouldShowEventsInNav(),
     canUserAccessPriceCalculator(userDetails?.role),
+    isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsByEntity("quote", quote.id.toString(), 10),
   ]);
 
@@ -266,6 +269,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       appConfig,
       showEventsLink,
       canAccessPriceCalculator,
+      pdfAutoDownload,
       events,
       convertedOrder,
     }),
@@ -1193,6 +1197,7 @@ export default function QuoteDetail() {
     appConfig,
     showEventsLink,
     canAccessPriceCalculator,
+    pdfAutoDownload,
     events,
     convertedOrder,
   } = useLoaderData<typeof loader>();
@@ -3129,6 +3134,7 @@ export default function QuoteDetail() {
         isOpen={isGeneratePdfModalOpen}
         onClose={() => setIsGeneratePdfModalOpen(false)}
         quote={quote}
+        autoDownload={pdfAutoDownload}
       />
     </div>
   );
