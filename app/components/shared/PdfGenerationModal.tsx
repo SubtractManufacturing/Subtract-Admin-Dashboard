@@ -9,7 +9,6 @@ interface PdfGenerationModalProps {
   apiEndpoint: string;
   filename: string;
   children: ReactNode;
-  tipMessage?: string;
   autoDownload?: boolean;
 }
 
@@ -24,7 +23,6 @@ export default function PdfGenerationModal({
   apiEndpoint,
   filename,
   children,
-  tipMessage = "Click on any highlighted field to edit it before generating the PDF. Changes will only affect the generated PDF and won't modify the record data.",
   autoDownload = true,
 }: PdfGenerationModalProps) {
   const templateRef = useRef<HTMLDivElement>(null);
@@ -48,7 +46,26 @@ export default function PdfGenerationModal({
     setError(null);
 
     try {
-      const htmlContent = templateRef.current.innerHTML;
+      // Clone the template to avoid modifying the displayed version
+      const clone = templateRef.current.cloneNode(true) as HTMLDivElement;
+
+      // Remove any placeholder text elements that still contain default values
+      const placeholders = clone.querySelectorAll('.placeholder-text');
+      placeholders.forEach((element) => {
+        const text = element.textContent?.trim() || '';
+        // List of known placeholder texts to remove
+        const defaultPlaceholders = [
+          'Address Line 1',
+          'City, State ZIP',
+        ];
+
+        if (defaultPlaceholders.includes(text)) {
+          // Remove the parent <p> element
+          element.parentElement?.remove();
+        }
+      });
+
+      const htmlContent = clone.innerHTML;
 
       const formData = new FormData();
       formData.append("htmlContent", htmlContent);
@@ -165,23 +182,14 @@ export default function PdfGenerationModal({
           </div>
         )}
 
-        {!isRefreshing && (
-          <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-            <p className="text-sm text-yellow-800 dark:text-yellow-200">
-              <strong>Tip:</strong> {tipMessage}
-            </p>
-          </div>
-        )}
-
         <div
           ref={templateRef}
-          className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-auto mb-6"
-          style={{ maxHeight: "80vh" }}
+          className="border border-gray-300 dark:border-gray-600 rounded-lg mb-6"
         >
           {children}
         </div>
 
-        <div className="flex justify-end gap-3">
+        <div className="flex justify-end gap-3 sticky bottom-0 bg-white dark:bg-gray-800 pt-4 pb-2 -mx-4 px-4 border-t border-gray-200 dark:border-gray-700">
           <button
             type="button"
             onClick={onClose}

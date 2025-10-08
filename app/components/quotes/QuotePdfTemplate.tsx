@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { QuoteWithRelations } from "~/lib/quotes";
 import { formatCurrency, formatDate, commonPdfStyles } from "~/lib/pdf-utils";
 
@@ -11,14 +12,120 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
   const partsLineItems = (quote.lineItems || []).filter((item) => item.quotePartId !== null);
   const serviceLineItems = (quote.lineItems || []).filter((item) => item.quotePartId === null);
 
+  // Handle placeholder behavior for address fields
+  useEffect(() => {
+    if (!editable) return;
+
+    const handlePlaceholderFocus = (e: FocusEvent) => {
+      const target = e.target as HTMLElement;
+      const defaultText = target.getAttribute('data-default-text');
+
+      if (defaultText && target.textContent?.trim() === defaultText) {
+        target.textContent = '';
+      }
+    };
+
+    const handlePlaceholderBlur = (e: FocusEvent) => {
+      const target = e.target as HTMLElement;
+      const defaultText = target.getAttribute('data-default-text');
+      const currentText = target.textContent?.trim() || '';
+
+      if (defaultText) {
+        if (currentText === '') {
+          // Restore placeholder if empty
+          target.textContent = defaultText;
+          target.classList.add('placeholder-text');
+        } else if (currentText !== defaultText) {
+          // Remove grey styling if text was customized
+          target.classList.remove('placeholder-text');
+        } else {
+          // Keep grey styling if still default
+          target.classList.add('placeholder-text');
+        }
+      }
+    };
+
+    const placeholders = document.querySelectorAll('.address-placeholder');
+    placeholders.forEach((element) => {
+      element.addEventListener('focus', handlePlaceholderFocus);
+      element.addEventListener('blur', handlePlaceholderBlur);
+    });
+
+    return () => {
+      placeholders.forEach((element) => {
+        element.removeEventListener('focus', handlePlaceholderFocus);
+        element.removeEventListener('blur', handlePlaceholderBlur);
+      });
+    };
+  }, [editable]);
+
+  // Sync widths of subtotal and total boxes
+  useEffect(() => {
+    const syncBoxWidths = () => {
+      const subtotalBox = document.querySelector('.parts-subtotal-box') as HTMLElement;
+      const totalBox = document.querySelector('.financial-summary') as HTMLElement;
+
+      if (subtotalBox && totalBox) {
+        // Reset widths to measure natural size
+        subtotalBox.style.width = 'max-content';
+        totalBox.style.width = 'max-content';
+
+        // Get the natural widths
+        const subtotalWidth = subtotalBox.offsetWidth;
+        const totalWidth = totalBox.offsetWidth;
+
+        // Set both to the larger width
+        const maxWidth = Math.max(subtotalWidth, totalWidth);
+        subtotalBox.style.width = `${maxWidth}px`;
+        totalBox.style.width = `${maxWidth}px`;
+      }
+    };
+
+    // Sync on mount and after a short delay to ensure content is rendered
+    syncBoxWidths();
+    const timeout = setTimeout(syncBoxWidths, 100);
+
+    // Watch for content changes when editable
+    let observer: MutationObserver | null = null;
+    if (editable) {
+      observer = new MutationObserver(() => {
+        syncBoxWidths();
+      });
+
+      const subtotalValue = document.querySelector('.parts-subtotal-value');
+      const totalValue = document.querySelector('.summary-value');
+
+      if (subtotalValue) {
+        observer.observe(subtotalValue, { characterData: true, childList: true, subtree: true });
+      }
+      if (totalValue) {
+        observer.observe(totalValue, { characterData: true, childList: true, subtree: true });
+      }
+    }
+
+    return () => {
+      clearTimeout(timeout);
+      observer?.disconnect();
+    };
+  }, [quote, editable]);
+
   // Calculate valid until date
   const calculateValidUntil = () => {
     if (quote.validUntil) {
       return formatDate(quote.validUntil);
     }
 
-    const expirationDays = quote.expirationDays || 14;
-    return `${expirationDays} days from Issue`;
+    const expirationDays = quote.expirationDays;
+
+    if (expirationDays) {
+      // Calculate the actual date by adding expiration days to created date
+      const createdDate = new Date(quote.createdAt);
+      const validUntilDate = new Date(createdDate);
+      validUntilDate.setDate(validUntilDate.getDate() + expirationDays);
+      return formatDate(validUntilDate);
+    }
+
+    return "14 days from Issue";
   };
 
   const validUntilDisplay = calculateValidUntil();
@@ -168,6 +275,72 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
             padding: 20px 40px;
           }
 
+          .parts-section table,
+          .line-items table {
+            table-layout: auto;
+            width: 100%;
+          }
+
+          .parts-section th,
+          .parts-section td,
+          .line-items th,
+          .line-items td {
+            white-space: normal;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+          }
+
+          /* Smart column sizing for parts table */
+          .parts-section th:nth-child(1),
+          .parts-section td:nth-child(1) {
+            width: auto;
+            min-width: 80px;
+            max-width: 150px;
+          }
+
+          .parts-section th:nth-child(2),
+          .parts-section td:nth-child(2) {
+            width: auto;
+            min-width: 200px;
+          }
+
+          .parts-section th:nth-child(3),
+          .parts-section td:nth-child(3) {
+            width: auto;
+            min-width: 120px;
+            max-width: 200px;
+          }
+
+          .parts-section th:nth-child(4),
+          .parts-section td:nth-child(4) {
+            width: 60px;
+            text-align: center;
+            white-space: nowrap;
+          }
+
+          /* Smart column sizing for services table */
+          .line-items th:nth-child(1),
+          .line-items td:nth-child(1) {
+            width: auto;
+            min-width: 100px;
+            max-width: 180px;
+          }
+
+          .line-items th:nth-child(2),
+          .line-items td:nth-child(2) {
+            width: auto;
+            min-width: 250px;
+          }
+
+          .line-items th:nth-child(3),
+          .line-items td:nth-child(3) {
+            width: auto;
+            min-width: 100px;
+            max-width: 150px;
+            text-align: right;
+            white-space: nowrap;
+          }
+
           .section-title {
             font-size: 16px;
             font-weight: 700;
@@ -189,68 +362,47 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
             letter-spacing: 0.5px;
           }
 
-          .parts-subtotal-box {
+          .parts-subtotal-box,
+          .financial-summary {
             background-color: #f8f9fa;
             border: 1px solid #dee2e6;
-            padding: 12px 20px;
+            padding: 8px 16px;
             margin-top: 12px;
-            width: 200px;
+            width: max-content;
+            min-width: 200px;
             margin-left: auto;
-          }
-
-          .parts-subtotal-row {
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: auto auto;
+            gap: 16px;
             align-items: center;
           }
 
-          .parts-subtotal-label {
-            font-size: 14px;
-            font-weight: 700;
-            color: #2c3e50;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+          .parts-subtotal-row,
+          .summary-row {
+            display: contents;
           }
 
-          .parts-subtotal-value {
-            font-size: 18px;
+          .parts-subtotal-label,
+          .summary-label {
+            font-size: 12px;
+            color: #2c3e50;
             font-weight: 700;
-            color: #c41e3a;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             white-space: nowrap;
+          }
+
+          .parts-subtotal-value,
+          .summary-value {
+            font-size: 16px;
+            color: #c41e3a;
+            font-weight: 700;
+            white-space: nowrap;
+            text-align: right;
           }
 
           .financial-section {
             padding: 20px 40px 20px;
-          }
-
-          .financial-summary {
-            background-color: #f8f9fa;
-            border: 1px solid #dee2e6;
-            padding: 12px 20px;
-            margin-top: 12px;
-            width: 200px;
-            margin-left: auto;
-          }
-
-          .summary-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          }
-
-          .summary-label {
-            font-size: 14px;
-            color: #2c3e50;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-          }
-
-          .summary-value {
-            font-size: 18px;
-            color: #c41e3a;
-            font-weight: 700;
-            white-space: nowrap;
           }
 
           .services-header {
@@ -368,18 +520,20 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                 <>
                   <p>
                     <span
-                      className="editable placeholder-text"
+                      className="editable placeholder-text address-placeholder"
                       contentEditable={editable}
                       suppressContentEditableWarning
+                      data-default-text="Address Line 1"
                     >
                       Address Line 1
                     </span>
                   </p>
                   <p>
                     <span
-                      className="editable placeholder-text"
+                      className="editable placeholder-text address-placeholder"
                       contentEditable={editable}
                       suppressContentEditableWarning
+                      data-default-text="City, State ZIP"
                     >
                       City, State ZIP
                     </span>
@@ -416,17 +570,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                   contentEditable={editable}
                   suppressContentEditableWarning
                 >
-                  Net 30
-                </span>
-              </p>
-              <p>
-                FOB:{" "}
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  Origin
+                  Payment in Advance
                 </span>
               </p>
             </div>
@@ -439,10 +583,10 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: "15%" }}>Name</th>
-                    <th style={{ width: "45%" }}>Description</th>
-                    <th style={{ width: "30%" }}>Material</th>
-                    <th style={{ width: "10%", textAlign: "center" }}>Qty</th>
+                    <th>Name</th>
+                    <th>Description</th>
+                    <th>Material</th>
+                    <th>Qty</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -477,7 +621,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                             {quotePart?.material || ""}
                           </span>
                         </td>
-                        <td style={{ textAlign: "center" }}>
+                        <td>
                           <span
                             className={editable ? "editable" : ""}
                             contentEditable={editable}
@@ -493,37 +637,39 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
               </table>
             </div>
           )}
+        </div>
 
-          {/* Additional Services */}
-          <div className="financial-section">
-            <div className="services-header">
-              <h2 className="secondary-section-title">Additional Services</h2>
-              {partsLineItems.length > 0 && (
-                <div className="parts-subtotal-box">
-                  <div className="parts-subtotal-row">
-                    <span className="parts-subtotal-label">Subtotal</span>
-                    <span
-                      className={
-                        editable ? "parts-subtotal-value editable" : "parts-subtotal-value"
-                      }
-                      contentEditable={editable}
-                      suppressContentEditableWarning
-                    >
-                      {formatCurrency(partsSubtotal)}
-                    </span>
+        {/* Additional Services */}
+        <div className="financial-section">
+          {serviceLineItems.length > 0 && (
+            <>
+              <div className="services-header">
+                <h2 className="secondary-section-title">Additional Services</h2>
+                {partsLineItems.length > 0 && (
+                  <div className="parts-subtotal-box">
+                    <div className="parts-subtotal-row">
+                      <span className="parts-subtotal-label">Subtotal</span>
+                      <span
+                        className={
+                          editable ? "parts-subtotal-value editable" : "parts-subtotal-value"
+                        }
+                        contentEditable={editable}
+                        suppressContentEditableWarning
+                      >
+                        {formatCurrency(partsSubtotal)}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            {serviceLineItems.length > 0 && (
               <div className="line-items">
                 <table>
                   <thead>
                     <tr>
-                      <th style={{ width: "20%" }}>Item</th>
-                      <th style={{ width: "60%" }}>Description</th>
-                      <th style={{ width: "20%", textAlign: "right" }}>Amount</th>
+                      <th>Item</th>
+                      <th>Description</th>
+                      <th>Amount</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -547,7 +693,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                             {item.description || ""}
                           </span>
                         </td>
-                        <td style={{ textAlign: "right" }}>
+                        <td>
                           <span
                             className={editable ? "editable" : ""}
                             contentEditable={editable}
@@ -561,20 +707,20 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                   </tbody>
                 </table>
               </div>
-            )}
+            </>
+          )}
 
-            {/* Summary */}
-            <div className="financial-summary">
-              <div className="summary-row">
-                <span className="summary-label">TOTAL</span>
-                <span
-                  className={editable ? "summary-value editable" : "summary-value"}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  {formatCurrency(grandTotal)}
-                </span>
-              </div>
+          {/* Summary */}
+          <div className="financial-summary">
+            <div className="summary-row">
+              <span className="summary-label">TOTAL</span>
+              <span
+                className={editable ? "summary-value editable" : "summary-value"}
+                contentEditable={editable}
+                suppressContentEditableWarning
+              >
+                {formatCurrency(grandTotal)}
+              </span>
             </div>
           </div>
         </div>

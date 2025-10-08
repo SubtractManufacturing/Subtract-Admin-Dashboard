@@ -20,6 +20,16 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50, s
       modalRef.current.focus()
     }
   }, [isOpen])
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = ''
+      }
+    }
+  }, [isOpen])
   useEffect(() => {
     if (!isOpen) return
     
