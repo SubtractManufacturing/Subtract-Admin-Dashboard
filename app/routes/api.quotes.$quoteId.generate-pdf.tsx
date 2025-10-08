@@ -1,11 +1,7 @@
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { getQuote } from "~/lib/quotes";
-import { generatePdf } from "~/lib/pdf-generator.server";
-import { uploadFile, generateFileKey } from "~/lib/s3.server";
-import { createAttachment, type AttachmentEventContext } from "~/lib/attachments";
-import { db } from "~/lib/db";
-import { quoteAttachments } from "~/lib/db/schema";
+import { generateDocumentPdf } from "~/lib/pdf-service.server";
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { user, userDetails } = await requireAuth(request);
@@ -37,58 +33,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
     }
 
-    // Wrap the HTML content in a full HTML document
-    const fullHtml = `
-      <!DOCTYPE html>
-      <html lang="en">
-        <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>Quote ${quote.quoteNumber}</title>
-        </head>
-        <body>
-          ${htmlContent}
-        </body>
-      </html>
-    `;
-
-    // Generate PDF
-    const pdfBuffer = await generatePdf({
-      html: fullHtml,
+    // Use generic PDF generation service
+    const { pdfBuffer } = await generateDocumentPdf({
+      entityType: "quote",
+      entityId: quote.id,
+      htmlContent,
       filename: `quote-${quote.quoteNumber}.pdf`,
-    });
-
-    // Upload PDF to S3
-    const fileName = `quote-${quote.quoteNumber}.pdf`;
-    const fileKey = generateFileKey(quote.id, fileName);
-    const uploadResult = await uploadFile({
-      key: fileKey,
-      buffer: pdfBuffer,
-      contentType: "application/pdf",
-      fileName,
-    });
-
-    const eventContext: AttachmentEventContext = {
       userId: user?.id,
       userEmail: user?.email || userDetails?.name || undefined,
-    };
-
-    // Create attachment record
-    const attachment = await createAttachment(
-      {
-        s3Bucket: uploadResult.bucket,
-        s3Key: uploadResult.key,
-        fileName: uploadResult.fileName,
-        contentType: uploadResult.contentType,
-        fileSize: uploadResult.size,
-      },
-      eventContext
-    );
-
-    // Link to quote
-    await db.insert(quoteAttachments).values({
-      quoteId: quote.id,
-      attachmentId: attachment.id,
     });
 
     // Return PDF as download
