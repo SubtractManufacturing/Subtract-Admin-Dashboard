@@ -10,6 +10,7 @@ export const FEATURE_FLAGS = {
   EVENTS_NAV_VISIBLE: "events_nav_visible",
   PRICE_CALCULATOR_DEV: "price_calculator_dev",
   PRICE_CALCULATOR_ALL: "price_calculator_all",
+  PDF_AUTO_DOWNLOAD: "pdf_auto_download",
 } as const;
 
 // Default feature flags with their metadata
@@ -49,6 +50,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     name: "Enable Price Calculator for All Users",
     description: "Allow all users to access the quote price calculator",
     enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.PDF_AUTO_DOWNLOAD,
+    name: "Auto-Download Generated PDFs",
+    description: "Automatically download PDFs to user's computer when generated (disable for development)",
+    enabled: true,
   },
 ];
 

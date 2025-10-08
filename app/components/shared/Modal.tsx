@@ -20,6 +20,16 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50, s
       modalRef.current.focus()
     }
   }, [isOpen])
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = ''
+      }
+    }
+  }, [isOpen])
   useEffect(() => {
     if (!isOpen) return
     
@@ -67,7 +77,7 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50, s
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
     '2xl': 'max-w-6xl',
-    full: 'max-w-[90vw]'
+    full: 'max-w-[95vw]'
   }
 
   const heightClasses = {
@@ -76,14 +86,19 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50, s
     lg: 'max-h-[80vh]',
     xl: 'max-h-[80vh]',
     '2xl': 'max-h-[85vh]',
-    full: 'max-h-[90vh] h-[90vh]'
+    full: 'max-h-[95vh] h-[95vh]'
   }
+
+  // Get base modal styles without max-width for custom sizing
+  const baseModalStyles = size === 'full'
+    ? 'bg-white dark:bg-gray-800 rounded-lg p-6 w-full mx-2 transition-colors duration-150'
+    : modalStyles.content;
 
   return (
     <div ref={overlayRef} className={`${modalStyles.overlay} modal-overlay`} style={{ zIndex }}>
       <div
         ref={modalRef}
-        className={`${modalStyles.content} ${sizeClasses[size]} ${heightClasses[size]} w-full ${size === 'full' ? 'flex flex-col' : 'overflow-auto'} shadow-lg transition-all duration-300`}
+        className={`${baseModalStyles} ${sizeClasses[size]} ${heightClasses[size]} ${size === 'full' ? 'flex flex-col' : 'overflow-auto'} shadow-lg transition-all duration-300`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
