@@ -69,23 +69,22 @@ export const commonPdfStyles = `
   .editable {
     transition: background-color 0.15s ease;
     border-radius: 3px;
-    padding: 4px 6px;
-    margin: -4px -6px;
+    padding: 2px 4px;
     min-width: 30px;
-    display: inline-block;
+    display: inline;
   }
 
   .editable:hover {
     background-color: #fff3cd;
     cursor: text;
-    outline: 2px dashed #ffc107;
-    outline-offset: 2px;
+    outline: 1px dashed #ffc107;
+    outline-offset: 1px;
   }
 
   .editable:focus {
     background-color: #fff8dc;
     outline: 2px solid #ffc107;
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
 
   table {

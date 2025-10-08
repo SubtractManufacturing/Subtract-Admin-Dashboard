@@ -319,33 +319,41 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
           <div className="customer-details">
             <div className="detail-section">
               <h3>Bill To</h3>
-              <p
-                className={editable ? "primary editable" : "primary"}
-                contentEditable={editable}
-                suppressContentEditableWarning
-              >
-                {quote.customer?.displayName || ""}
+              <p className="primary">
+                <span
+                  className={editable ? "editable" : ""}
+                  contentEditable={editable}
+                  suppressContentEditableWarning
+                >
+                  {quote.customer?.displayName || ""}
+                </span>
               </p>
-              <p
-                className={editable ? "editable" : ""}
-                contentEditable={editable}
-                suppressContentEditableWarning
-              >
-                {quote.customer?.email || ""}
+              <p>
+                <span
+                  className={editable ? "editable" : ""}
+                  contentEditable={editable}
+                  suppressContentEditableWarning
+                >
+                  {quote.customer?.email || ""}
+                </span>
               </p>
-              <p
-                className={editable ? "editable" : ""}
-                contentEditable={editable}
-                suppressContentEditableWarning
-              >
-                Address Line 1
+              <p>
+                <span
+                  className={editable ? "editable" : ""}
+                  contentEditable={editable}
+                  suppressContentEditableWarning
+                >
+                  Address Line 1
+                </span>
               </p>
-              <p
-                className={editable ? "editable" : ""}
-                contentEditable={editable}
-                suppressContentEditableWarning
-              >
-                City, State ZIP
+              <p>
+                <span
+                  className={editable ? "editable" : ""}
+                  contentEditable={editable}
+                  suppressContentEditableWarning
+                >
+                  City, State ZIP
+                </span>
               </p>
             </div>
             <div className="detail-section">
@@ -411,34 +419,41 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                     const quotePart = (quote.parts || []).find((p) => p.id === item.quotePartId);
                     return (
                       <tr key={index}>
-                        <td
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {item.name || quotePart?.partName || ""}
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {item.name || quotePart?.partName || ""}
+                          </span>
                         </td>
-                        <td
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {item.description || quotePart?.description || ""}
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {item.description || quotePart?.description || ""}
+                          </span>
                         </td>
-                        <td
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {quotePart?.material || ""}
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {quotePart?.material || ""}
+                          </span>
                         </td>
-                        <td
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                          style={{ textAlign: "center" }}
-                        >
-                          {item.quantity}
+                        <td style={{ textAlign: "center" }}>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {item.quantity}
+                          </span>
                         </td>
                       </tr>
                     );
@@ -483,27 +498,32 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                   <tbody>
                     {serviceLineItems.map((item, index) => (
                       <tr key={index}>
-                        <td
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {item.name || "Service"}
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {item.name || "Service"}
+                          </span>
                         </td>
-                        <td
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {item.description || ""}
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {item.description || ""}
+                          </span>
                         </td>
-                        <td
-                          style={{ textAlign: "right" }}
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {formatCurrency(item.totalPrice)}
+                        <td style={{ textAlign: "right" }}>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {formatCurrency(item.totalPrice)}
+                          </span>
                         </td>
                       </tr>
                     ))}
