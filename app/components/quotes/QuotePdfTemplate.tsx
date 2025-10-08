@@ -16,7 +16,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
   useEffect(() => {
     if (!editable) return;
 
-    const handlePlaceholderFocus = (e: FocusEvent) => {
+    const handlePlaceholderFocus = (e: Event) => {
       const target = e.target as HTMLElement;
       const defaultText = target.getAttribute('data-default-text');
 
@@ -25,7 +25,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
       }
     };
 
-    const handlePlaceholderBlur = (e: FocusEvent) => {
+    const handlePlaceholderBlur = (e: Event) => {
       const target = e.target as HTMLElement;
       const defaultText = target.getAttribute('data-default-text');
       const currentText = target.textContent?.trim() || '';

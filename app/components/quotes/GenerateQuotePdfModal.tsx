@@ -22,7 +22,6 @@ export default function GenerateQuotePdfModal({
       title="Generate Quote PDF"
       apiEndpoint={`/api/quotes/${quote.id}/generate-pdf`}
       filename={`quote-${quote.quoteNumber}.pdf`}
-      tipMessage="Click on any highlighted field to edit it before generating the PDF. Changes will only affect the generated PDF and won't modify the quote data."
       autoDownload={autoDownload}
     >
       <QuotePdfTemplate quote={quote} editable={true} />
