@@ -64,6 +64,7 @@ import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
 import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
+import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
@@ -1253,6 +1254,7 @@ export default function QuoteDetail() {
   const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] = useState(0);
   const calculatorFetcher = useFetcher();
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1425,6 +1427,10 @@ export default function QuoteDetail() {
     if (!canAccessPriceCalculator) return;
     setIsCalculatorOpen(true);
     setCurrentCalculatorPartIndex(0);
+  };
+
+  const handleGeneratePdf = () => {
+    setIsGeneratePdfModalOpen(true);
   };
 
   const handleOpenCalculatorForPart = (partId: string) => {
@@ -1741,6 +1747,7 @@ export default function QuoteDetail() {
                     onReviseQuote={handleReviseQuote}
                     onCalculatePricing={canAccessPriceCalculator ? handleOpenCalculator : undefined}
                     onDownloadFiles={handleDownloadFiles}
+                    onGeneratePdf={handleGeneratePdf}
                     isDownloading={isDownloading}
                   />
                 </div>
@@ -3117,6 +3124,12 @@ export default function QuoteDetail() {
           existingCalculations={priceCalculations || []}
         />
       )}
+
+      <GenerateQuotePdfModal
+        isOpen={isGeneratePdfModalOpen}
+        onClose={() => setIsGeneratePdfModalOpen(false)}
+        quote={quote}
+      />
     </div>
   );
 }
