@@ -9,6 +9,7 @@ export type { Attachment }
 export type AttachmentEventContext = {
   userId?: string
   userEmail?: string
+  skipEventLogging?: boolean  // Skip event logging for automated operations like PDF generation
 }
 
 export async function createAttachment(attachmentData: NewAttachment, eventContext?: AttachmentEventContext): Promise<Attachment> {
@@ -20,22 +21,24 @@ export async function createAttachment(attachmentData: NewAttachment, eventConte
 
     const attachment = result[0]
 
-    // Log event
-    await createEvent({
-      entityType: "attachment",
-      entityId: attachment.id,
-      eventType: "attachment_created",
-      eventCategory: "document",
-      title: "Attachment Created",
-      description: `Created attachment: ${attachment.fileName}`,
-      metadata: {
-        fileName: attachment.fileName,
-        contentType: attachment.contentType,
-        fileSize: attachment.fileSize
-      },
-      userId: eventContext?.userId,
-      userEmail: eventContext?.userEmail
-    })
+    // Log event (unless skipped for automated operations)
+    if (!eventContext?.skipEventLogging) {
+      await createEvent({
+        entityType: "attachment",
+        entityId: attachment.id,
+        eventType: "attachment_created",
+        eventCategory: "document",
+        title: "Attachment Created",
+        description: `Created attachment: ${attachment.fileName}`,
+        metadata: {
+          fileName: attachment.fileName,
+          contentType: attachment.contentType,
+          fileSize: attachment.fileSize
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail
+      })
+    }
 
     return attachment
   } catch (error) {
