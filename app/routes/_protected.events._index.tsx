@@ -495,8 +495,14 @@ export default function EventsPage() {
         const vendor = vendors.find((v: {id: number; displayName: string}) => v.id.toString() === event.entityId);
         return vendor ? vendor.displayName : `Vendor #${event.entityId}`;
       }
-      case "part":
-        return `Part #${event.entityId.substring(0, 8)}`;
+      case "part": {
+        const metadata = event.metadata as Record<string, unknown> | null;
+        const orderNumber = metadata?.orderNumber;
+        const partId = event.entityId.substring(0, 8);
+        return orderNumber
+          ? `Part #${partId} (${orderNumber})`
+          : `Part #${partId}`;
+      }
       case "quote":
         return `Quote #${event.entityId}`;
       default:

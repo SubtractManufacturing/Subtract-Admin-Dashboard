@@ -85,6 +85,33 @@ export async function getEventsByEntity(
     .limit(limit);
 }
 
+export async function getEventsForOrder(
+  orderId: number,
+  limit = 10
+): Promise<EventLog[]> {
+  // Get both direct order events and part events related to this order
+  return await db
+    .select()
+    .from(eventLogs)
+    .where(and(
+      or(
+        // Direct order events
+        and(
+          eq(eventLogs.entityType, "order"),
+          eq(eventLogs.entityId, orderId.toString())
+        ),
+        // Part events that reference this order in metadata
+        and(
+          eq(eventLogs.entityType, "part"),
+          sql`${eventLogs.metadata}->>'orderId' = ${orderId.toString()}`
+        )
+      ),
+      eq(eventLogs.isDismissed, false)
+    ))
+    .orderBy(desc(eventLogs.createdAt))
+    .limit(limit);
+}
+
 export async function getRecentEvents(filters: EventFilters = {}): Promise<{
   events: EventLog[];
   totalCount: number;

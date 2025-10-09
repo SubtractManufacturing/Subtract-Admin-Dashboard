@@ -478,7 +478,15 @@ export function EventTimeline({
               <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   <p>Event ID: {selectedEvent.id}</p>
-                  <p>Entity: {selectedEvent.entityType} ({selectedEvent.entityId})</p>
+                  <p>Entity: {selectedEvent.entityType} ({(() => {
+                    if (selectedEvent.entityType === 'part') {
+                      const metadata = selectedEvent.metadata as Record<string, unknown> | null;
+                      const orderNumber = metadata?.orderNumber;
+                      const partId = selectedEvent.entityId.substring(0, 8);
+                      return orderNumber ? `#${partId} (${orderNumber})` : selectedEvent.entityId;
+                    }
+                    return selectedEvent.entityId;
+                  })()})</p>
                 </div>
               </div>
 
