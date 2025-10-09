@@ -105,8 +105,8 @@ export const orders = pgTable("orders", {
   quoteId: integer("quote_id"),
   sourceQuoteId: integer("source_quote_id"),
   status: orderStatusEnum("status").default("Pending").notNull(),
-  totalPrice: numeric("total_price"),
-  vendorPay: numeric("vendor_pay"),
+  totalPrice: numeric("total_price", { precision: 10, scale: 2 }),
+  vendorPay: numeric("vendor_pay", { precision: 10, scale: 2 }),
   shipDate: timestamp("ship_date"),
   notes: text("notes"),
   leadTime: integer("lead_time"),
@@ -188,7 +188,7 @@ export const orderLineItems = pgTable("order_line_items", {
   name: text("name"),
   description: text("description"),
   quantity: integer("quantity").notNull(),
-  unitPrice: numeric("unit_price").notNull(),
+  unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
   notes: text("notes"),
 });
 
