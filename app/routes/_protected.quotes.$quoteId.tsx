@@ -60,6 +60,7 @@ import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
+import Modal from "~/components/shared/Modal";
 import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
 import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
@@ -239,10 +240,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, events] = await Promise.all([
+  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events] = await Promise.all([
     shouldShowEventsInNav(),
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
+    isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
   ]);
 
@@ -270,6 +272,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       showEventsLink,
       canAccessPriceCalculator,
       pdfAutoDownload,
+      rejectionReasonRequired,
       events,
       convertedOrder,
     }),
@@ -1239,6 +1242,7 @@ export default function QuoteDetail() {
     showEventsLink,
     canAccessPriceCalculator,
     pdfAutoDownload,
+    rejectionReasonRequired,
     events,
     convertedOrder,
   } = useLoaderData<typeof loader>();
@@ -1257,6 +1261,8 @@ export default function QuoteDetail() {
   const [pollCount, setPollCount] = useState(0);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
   // Define the line item type
@@ -1455,6 +1461,33 @@ export default function QuoteDetail() {
         { method: "post" }
       );
     }
+  };
+
+  const handleRejectQuote = () => {
+    setIsRejectModalOpen(true);
+  };
+
+  const handleRejectQuoteConfirm = () => {
+    if (rejectionReasonRequired && !rejectionReason.trim()) {
+      alert("Rejection reason is required.");
+      return;
+    }
+
+    fetcher.submit(
+      {
+        intent: "updateStatus",
+        status: "Rejected",
+        rejectionReason: rejectionReason.trim(),
+      },
+      { method: "post" }
+    );
+    setIsRejectModalOpen(false);
+    setRejectionReason("");
+  };
+
+  const handleRejectModalClose = () => {
+    setIsRejectModalOpen(false);
+    setRejectionReason("");
   };
 
   const handleAddLineItem = () => {
@@ -1803,9 +1836,14 @@ export default function QuoteDetail() {
                   </Button>
                 )}
                 {quote.status === "Sent" && !quote.convertedToOrderId && (
-                  <Button onClick={handleMarkAsAccepted} variant="primary">
-                    Mark as Accepted
-                  </Button>
+                  <>
+                    <Button onClick={handleMarkAsAccepted} variant="primary">
+                      Mark as Accepted
+                    </Button>
+                    <Button onClick={handleRejectQuote} variant="danger">
+                      Reject Quote
+                    </Button>
+                  </>
                 )}
               </>
             )}
@@ -3210,6 +3248,54 @@ export default function QuoteDetail() {
         quote={quote}
         autoDownload={pdfAutoDownload}
       />
+
+      <Modal
+        isOpen={isRejectModalOpen}
+        onClose={handleRejectModalClose}
+        title="Reject Quote"
+        size="md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            Are you sure you want to reject this quote?
+            {rejectionReasonRequired && (
+              <span className="font-medium"> A rejection reason is required.</span>
+            )}
+          </p>
+          <div>
+            <label
+              htmlFor="rejectionReason"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+            >
+              Rejection Reason {rejectionReasonRequired && <span className="text-red-500">*</span>}
+              {!rejectionReasonRequired && <span className="text-gray-500 font-normal">(Optional)</span>}
+            </label>
+            <textarea
+              id="rejectionReason"
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+              rows={4}
+              placeholder="Enter the reason for rejecting this quote..."
+              required={rejectionReasonRequired}
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-4">
+            <Button
+              onClick={handleRejectModalClose}
+              variant="secondary"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRejectQuoteConfirm}
+              variant="danger"
+            >
+              Reject Quote
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

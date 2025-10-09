@@ -117,7 +117,8 @@ db_template.DBMl
 page_template.html
 
 CLAUDE.md
-./.claude
+*.claude
+/.claude
 
 ./drizzle
 /drizzle

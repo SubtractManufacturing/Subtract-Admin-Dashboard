@@ -599,6 +599,35 @@ export default function Settings() {
                         </Button>
                       </div>
                     </div>
+
+                    <div>
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
+                        Feature Flags
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Control application features and behavior for all users.
+                      </p>
+                      <div>
+                        {localFeatureFlags
+                          ?.filter((flag: FeatureFlag) =>
+                            flag.key === 'events_access_all' ||
+                            flag.key === 'events_nav_visible' ||
+                            flag.key === 'pdf_auto_download' ||
+                            flag.key === 'quote_rejection_reason_required'
+                          )
+                          .sort((a: FeatureFlag, b: FeatureFlag) =>
+                            a.key.localeCompare(b.key)
+                          )
+                          .map((flag: FeatureFlag) => (
+                            <FeatureFlagItem
+                              key={flag.id}
+                              flag={flag}
+                              onToggle={handleFeatureFlagToggle}
+                              disabled={isSaving}
+                            />
+                          ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -617,14 +646,20 @@ export default function Settings() {
                 <div className="space-y-6">
                   <div>
                     <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
-                      Feature Flags
+                      Developer Feature Flags
                     </h4>
                     <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                      Control feature availability and access for all users.
+                      Advanced features and experimental functionality for developers.
                     </p>
                     <div>
                       {localFeatureFlags
-                        ?.sort((a: FeatureFlag, b: FeatureFlag) =>
+                        ?.filter((flag: FeatureFlag) =>
+                          flag.key === 'mesh_uploads_dev' ||
+                          flag.key === 'mesh_uploads_all' ||
+                          flag.key === 'price_calculator_dev' ||
+                          flag.key === 'price_calculator_all'
+                        )
+                        .sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key)
                         )
                         .map((flag: FeatureFlag) => (
