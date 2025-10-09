@@ -10,6 +10,7 @@ import {
 } from "./db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { createEvent } from "./events";
+import { calculateQuoteTotals } from "./quotes";
 
 export type PriceCalculationEventContext = {
   quoteId: number;
@@ -132,6 +133,9 @@ export async function updateLineItemPrice(
       updatedAt: new Date(),
     })
     .where(eq(quoteLineItems.id, lineItemId));
+
+  // Recalculate quote totals after updating line item
+  await calculateQuoteTotals(lineItem.quoteId);
 
   // Log event
   await createEvent({

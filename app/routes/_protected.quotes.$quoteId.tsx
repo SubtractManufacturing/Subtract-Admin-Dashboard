@@ -632,6 +632,59 @@ export async function action({ request, params }: ActionFunctionArgs) {
           | "Expired";
         const rejectionReason = formData.get("rejectionReason") as string;
 
+        // If status is Accepted, validate and convert to order BEFORE updating status
+        if (status === "Accepted") {
+          // Validate quote before conversion
+          const validationErrors = [];
+
+          // Check quote has valid pricing
+          const quoteTotal = parseFloat(quote.total || '0');
+          if (quoteTotal <= 0) {
+            validationErrors.push("Quote must have a valid total greater than $0. Please add pricing to line items.");
+          }
+
+          // Check quote has line items
+          if (!quote.lineItems || quote.lineItems.length === 0) {
+            validationErrors.push("Quote must have at least one line item.");
+          }
+
+          // Check for pending mesh conversions
+          if (quote.parts && quote.parts.length > 0) {
+            const pendingConversions = quote.parts.filter(
+              part => part.conversionStatus === 'in_progress' ||
+              part.conversionStatus === 'queued' ||
+              (part.conversionStatus === 'pending' && part.partFileUrl)
+            );
+            if (pendingConversions.length > 0) {
+              validationErrors.push(`Cannot accept quote while ${pendingConversions.length} part(s) have pending mesh conversions.`);
+            }
+          }
+
+          // If validation fails, return errors without changing status
+          if (validationErrors.length > 0) {
+            return json(
+              {
+                error: "Cannot accept quote",
+                validationErrors
+              },
+              { status: 400 }
+            );
+          }
+
+          // Attempt conversion
+          const result = await convertQuoteToOrder(quote.id, eventContext);
+          if (result.success && result.orderNumber) {
+            // Conversion succeeded, redirect to order
+            return redirect(`/orders/${result.orderNumber}`);
+          }
+          // Conversion failed, return error without changing status
+          return json(
+            { error: result.error || "Failed to convert quote to order" },
+            { status: 400 }
+          );
+        }
+
+        // For all other status changes, update normally
         await updateQuote(
           quote.id,
           {
@@ -640,18 +693,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
           },
           eventContext
         );
-
-        // If status is Accepted, automatically convert to order
-        if (status === "Accepted") {
-          const result = await convertQuoteToOrder(quote.id, eventContext);
-          if (result.success && result.orderNumber) {
-            return redirect(`/orders/${result.orderNumber}`);
-          }
-          return json(
-            { error: result.error || "Failed to convert quote to order" },
-            { status: 400 }
-          );
-        }
 
         return redirect(`/quotes/${quoteId}`);
       }
@@ -1773,6 +1814,39 @@ export default function QuoteDetail() {
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
+          {/* Error Banner */}
+          {fetcher.data && typeof fetcher.data === 'object' && 'error' in fetcher.data && fetcher.data.error && (
+            <div className="relative bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-700 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <svg
+                  className="w-6 h-6 flex-shrink-0 text-red-600 dark:text-red-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <div className="flex-1">
+                  <p className="font-semibold text-red-800 dark:text-red-200">
+                    {(fetcher.data as { error: string }).error}
+                  </p>
+                  {'validationErrors' in fetcher.data && Array.isArray(fetcher.data.validationErrors) && fetcher.data.validationErrors.length > 0 && (
+                    <ul className="mt-2 text-sm text-red-700 dark:text-red-300 list-disc list-inside space-y-1">
+                      {(fetcher.data.validationErrors as string[]).map((error: string, index: number) => (
+                        <li key={index}>{error}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Archived Quote Banner */}
           {quote.isArchived && (
             <div className="relative bg-gray-900 dark:bg-gray-950 border-2 border-gray-700 dark:border-gray-800 rounded-lg p-4">
