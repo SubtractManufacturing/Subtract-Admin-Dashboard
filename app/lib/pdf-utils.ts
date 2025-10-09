@@ -2,6 +2,32 @@
  * Shared utilities for PDF generation across different document types
  */
 
+/**
+ * Converts an image URL to a base64 data URI for embedding in PDFs
+ * This ensures images are baked into the PDF and don't require network access
+ */
+export async function imageUrlToBase64(url: string): Promise<string> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64 = buffer.toString('base64');
+
+    // Detect content type from response headers
+    const contentType = response.headers.get('content-type') || 'image/png';
+
+    return `data:${contentType};base64,${base64}`;
+  } catch (error) {
+    console.error('Error converting image to base64:', error);
+    // Return a transparent 1x1 pixel as fallback
+    return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  }
+}
+
 export function formatCurrency(amount: number | string | null): string {
   if (amount === null || amount === undefined) return "$0.00";
   const num = typeof amount === "string" ? parseFloat(amount) : amount;

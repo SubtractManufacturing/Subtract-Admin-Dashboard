@@ -2,6 +2,44 @@ import { useRef, useState, useEffect, type ReactNode } from "react";
 import { useRevalidator } from "@remix-run/react";
 import Modal from "~/components/shared/Modal";
 
+/**
+ * Converts an image URL to a base64 data URI in the browser
+ * This ensures images are embedded directly in the PDF
+ */
+async function imageToBase64(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; // Enable CORS for external images
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Failed to get canvas context'));
+        return;
+      }
+
+      ctx.drawImage(img, 0, 0);
+
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        resolve(dataUrl);
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    img.onerror = () => {
+      reject(new Error(`Failed to load image: ${url}`));
+    };
+
+    img.src = url;
+  });
+}
+
 interface PdfGenerationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -64,6 +102,23 @@ export default function PdfGenerationModal({
           element.parentElement?.remove();
         }
       });
+
+      // Convert all images to base64 to ensure they're embedded in the PDF
+      const images = clone.querySelectorAll('img');
+      await Promise.all(
+        Array.from(images).map(async (img) => {
+          const src = img.getAttribute('src');
+          if (src && !src.startsWith('data:')) {
+            try {
+              const base64 = await imageToBase64(src);
+              img.setAttribute('src', base64);
+            } catch (error) {
+              console.error('Failed to convert image to base64:', src, error);
+              // Leave the original URL if conversion fails
+            }
+          }
+        })
+      );
 
       const htmlContent = clone.innerHTML;
 

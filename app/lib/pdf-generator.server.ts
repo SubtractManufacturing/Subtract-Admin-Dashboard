@@ -37,7 +37,7 @@ export async function generatePdf(
     page.setDefaultTimeout(30000);
 
     await page.setContent(html, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "networkidle0", // Wait for all network requests (including images) to complete
       timeout: 30000,
     });
 
