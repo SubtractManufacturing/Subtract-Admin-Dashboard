@@ -26,7 +26,7 @@ import {
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav } from "~/lib/featureFlags";
+import { shouldShowEventsInNav, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import {
   uploadFile,
   generateFileKey,
@@ -39,6 +39,8 @@ import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
+import OrderActionsDropdown from "~/components/orders/OrderActionsDropdown";
+import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import {
   getNotes,
   createNote,
@@ -108,8 +110,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, events] = await Promise.all([
+  const [showEventsLink, pdfAutoDownload, events] = await Promise.all([
     shouldShowEventsInNav(),
+    isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsByEntity("order", order.id.toString(), 10),
   ]);
 
@@ -126,6 +129,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       userDetails,
       appConfig,
       showEventsLink,
+      pdfAutoDownload,
       events,
     }),
     headers
@@ -552,6 +556,7 @@ export default function OrderDetails() {
     userDetails,
     appConfig,
     showEventsLink,
+    pdfAutoDownload,
     events,
   } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
@@ -592,6 +597,9 @@ export default function OrderDetails() {
   const notesFetcher = useFetcher();
   const orderEditFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
+  const actionsButtonRef = useRef<HTMLButtonElement>(null);
+  const [isPOModalOpen, setIsPOModalOpen] = useState(false);
 
   const handleFileUpload = () => {
     if (fileInputRef.current) {
@@ -910,6 +918,13 @@ export default function OrderDetails() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [editOrderModalOpen, handleEditOrderSubmit]);
 
+  const handleGenerateInvoice = () => {
+  };
+
+  const handleGeneratePO = () => {
+    setIsPOModalOpen(true);
+  };
+
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
   const today = new Date();
@@ -1068,6 +1083,24 @@ export default function OrderDetails() {
             ]}
           />
           <div className="flex flex-wrap gap-3">
+            <div className="relative">
+              <Button
+                ref={actionsButtonRef}
+                onClick={() =>
+                  setIsActionsDropdownOpen(!isActionsDropdownOpen)
+                }
+                variant="secondary"
+              >
+                Actions
+              </Button>
+              <OrderActionsDropdown
+                isOpen={isActionsDropdownOpen}
+                onClose={() => setIsActionsDropdownOpen(false)}
+                excludeRef={actionsButtonRef}
+                onGenerateInvoice={handleGenerateInvoice}
+                onGeneratePO={handleGeneratePO}
+              />
+            </div>
             {order.status === "Pending" &&
               (order.vendorId ? (
                 <Button
@@ -1971,6 +2004,16 @@ export default function OrderDetails() {
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
         />
       )}
+
+      {/* Purchase Order PDF Modal */}
+      <GeneratePurchaseOrderPdfModal
+        isOpen={isPOModalOpen}
+        onClose={() => setIsPOModalOpen(false)}
+        order={order}
+        lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
+        parts={lineItems.map((item: LineItemWithPart) => item.part)}
+        autoDownload={pdfAutoDownload}
+      />
 
       {/* Assign Shop Modal */}
       {assignShopModalOpen && (
