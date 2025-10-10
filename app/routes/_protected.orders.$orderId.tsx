@@ -62,7 +62,7 @@ import { db } from "~/lib/db";
 import { parts } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 import LineItemModal from "~/components/LineItemModal";
-import type { OrderLineItem, Vendor, Part } from "~/lib/db/schema";
+import type { OrderLineItem, Vendor } from "~/lib/db/schema";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { EventTimeline } from "~/components/EventTimeline";
@@ -655,6 +655,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "updateVendor": {
+        const vendorId = formData.get("vendorId") as string | null;
+
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        // Update vendor (can be null to remove vendor)
+        await updateOrder(
+          order.id,
+          {
+            vendorId: vendorId ? parseInt(vendorId) : null,
+          },
+          orderEventContext
+        );
+
+        return redirect(`/orders/${orderNumber}`);
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -704,6 +724,7 @@ export default function OrderDetails() {
     thumbnailUrl?: string;
   } | null>(null);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
+  const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
   const [editOrderModalOpen, setEditOrderModalOpen] = useState(false);
   const [editOrderForm, setEditOrderForm] = useState({
@@ -1000,6 +1021,30 @@ export default function OrderDetails() {
     setAssignShopModalOpen(false);
   };
 
+  const handleManageVendor = () => {
+    setSelectedVendorId(order.vendorId);
+    setManageVendorModalOpen(true);
+  };
+
+  const handleManageVendorSubmit = () => {
+    const formData = new FormData();
+    formData.append("intent", "updateVendor");
+    if (selectedVendorId) {
+      formData.append("vendorId", selectedVendorId.toString());
+    }
+    lineItemFetcher.submit(formData, { method: "post" });
+    setManageVendorModalOpen(false);
+  };
+
+  const handleRemoveVendor = () => {
+    if (confirm("Are you sure you want to remove the vendor from this order?")) {
+      const formData = new FormData();
+      formData.append("intent", "updateVendor");
+      lineItemFetcher.submit(formData, { method: "post" });
+      setManageVendorModalOpen(false);
+    }
+  };
+
   const handleStartInspection = () => {
     if (
       confirm(
@@ -1289,6 +1334,7 @@ export default function OrderDetails() {
                 excludeRef={actionsButtonRef}
                 onGenerateInvoice={handleGenerateInvoice}
                 onGeneratePO={handleGeneratePO}
+                onManageVendor={handleManageVendor}
                 hasVendor={!!order.vendorId}
               />
             </div>
@@ -2498,6 +2544,82 @@ export default function OrderDetails() {
                 >
                   Assign Shop
                 </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manage Vendor Modal */}
+      {manageVendorModalOpen && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Manage Vendor
+              </h2>
+              <button
+                onClick={() => setManageVendorModalOpen(false)}
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="vendor-manage-select"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  Select Vendor
+                </label>
+                <select
+                  id="vendor-manage-select"
+                  value={selectedVendorId || ""}
+                  onChange={(e) =>
+                    setSelectedVendorId(
+                      e.target.value ? parseInt(e.target.value) : null
+                    )
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">-- No vendor --</option>
+                  {vendors.map((v: Vendor) => (
+                    <option key={v.id} value={v.id}>
+                      {v.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-3 justify-between mt-6">
+                <div className="flex gap-3">
+                  {order.vendorId && (
+                    <Button
+                      variant="secondary"
+                      onClick={handleRemoveVendor}
+                      className="bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30"
+                    >
+                      Remove Vendor
+                    </Button>
+                  )}
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => setManageVendorModalOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={handleManageVendorSubmit}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Update Vendor
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

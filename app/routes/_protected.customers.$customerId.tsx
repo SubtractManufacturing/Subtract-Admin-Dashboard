@@ -10,10 +10,11 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
+import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import Button from "~/components/shared/Button";
-import { InputField as FormField } from "~/components/shared/FormField";
+import { InputField as FormField, PhoneInputField } from "~/components/shared/FormField";
 import { Notes } from "~/components/shared/Notes";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
@@ -478,8 +479,31 @@ export async function action({ request, params }: ActionFunctionArgs) {
     switch (intent) {
       case "updateCustomer": {
         const displayName = formData.get("displayName") as string;
+        const companyName = formData.get("companyName") as string;
+        const contactName = formData.get("contactName") as string;
+        const title = formData.get("title") as string;
         const email = formData.get("email") as string;
         const phone = formData.get("phone") as string;
+        const isPrimaryContact = formData.get("isPrimaryContact") === "true";
+
+        // Billing address
+        const billingAddressLine1 = formData.get("billingAddressLine1") as string;
+        const billingAddressLine2 = formData.get("billingAddressLine2") as string;
+        const billingCity = formData.get("billingCity") as string;
+        const billingState = formData.get("billingState") as string;
+        const billingPostalCode = formData.get("billingPostalCode") as string;
+        const billingCountry = formData.get("billingCountry") as string;
+
+        // Shipping address
+        const shippingAddressLine1 = formData.get("shippingAddressLine1") as string;
+        const shippingAddressLine2 = formData.get("shippingAddressLine2") as string;
+        const shippingCity = formData.get("shippingCity") as string;
+        const shippingState = formData.get("shippingState") as string;
+        const shippingPostalCode = formData.get("shippingPostalCode") as string;
+        const shippingCountry = formData.get("shippingCountry") as string;
+
+        // Business terms
+        const paymentTerms = formData.get("paymentTerms") as string;
 
         const eventContext: CustomerEventContext = {
           userId: user?.id,
@@ -488,8 +512,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const updated = await updateCustomer(customer.id, {
           displayName,
+          companyName: companyName || null,
+          contactName: contactName || null,
+          title: title || null,
           email: email || null,
-          phone: phone || null
+          phone: phone || null,
+          isPrimaryContact,
+          billingAddressLine1: billingAddressLine1 || null,
+          billingAddressLine2: billingAddressLine2 || null,
+          billingCity: billingCity || null,
+          billingState: billingState || null,
+          billingPostalCode: billingPostalCode || null,
+          billingCountry: billingCountry || "US",
+          shippingAddressLine1: shippingAddressLine1 || null,
+          shippingAddressLine2: shippingAddressLine2 || null,
+          shippingCity: shippingCity || null,
+          shippingState: shippingState || null,
+          shippingPostalCode: shippingPostalCode || null,
+          shippingCountry: shippingCountry || "US",
+          paymentTerms: paymentTerms || null,
         }, eventContext);
 
         return withAuthHeaders(json({ customer: updated }), headers);
@@ -650,6 +691,8 @@ export default function CustomerDetails() {
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
+  const [isEditingBillingAddress, setIsEditingBillingAddress] = useState(false);
+  const [isEditingShippingAddress, setIsEditingShippingAddress] = useState(false);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
@@ -711,32 +754,122 @@ export default function CustomerDetails() {
     setIsEditingContact(false);
   };
 
+  const handleSaveBillingAddress = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    formData.append("intent", "updateCustomer");
+    updateFetcher.submit(formData, { method: "post" });
+    setIsEditingBillingAddress(false);
+  };
+
+  const handleSaveShippingAddress = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    formData.append("intent", "updateCustomer");
+    updateFetcher.submit(formData, { method: "post" });
+    setIsEditingShippingAddress(false);
+  };
+
+  const handleCopyBillingToShipping = () => {
+    // This will be handled by setting form values in the shipping address form
+    const billingFields = {
+      shippingAddressLine1: customer.billingAddressLine1 || '',
+      shippingAddressLine2: customer.billingAddressLine2 || '',
+      shippingCity: customer.billingCity || '',
+      shippingState: customer.billingState || '',
+      shippingPostalCode: customer.billingPostalCode || '',
+      shippingCountry: customer.billingCountry || 'US',
+    };
+
+    // Submit the update
+    const formData = new FormData();
+    formData.append("intent", "updateCustomer");
+    formData.append("displayName", customer.displayName);
+    formData.append("companyName", customer.companyName || '');
+    formData.append("contactName", customer.contactName || '');
+    formData.append("title", customer.title || '');
+    formData.append("email", customer.email || '');
+    formData.append("phone", customer.phone || '');
+    formData.append("isPrimaryContact", customer.isPrimaryContact ? 'true' : 'false');
+
+    // Billing address
+    formData.append("billingAddressLine1", customer.billingAddressLine1 || '');
+    formData.append("billingAddressLine2", customer.billingAddressLine2 || '');
+    formData.append("billingCity", customer.billingCity || '');
+    formData.append("billingState", customer.billingState || '');
+    formData.append("billingPostalCode", customer.billingPostalCode || '');
+    formData.append("billingCountry", customer.billingCountry || 'US');
+
+    // Shipping address (copied from billing)
+    Object.entries(billingFields).forEach(([key, value]) => {
+      formData.append(key, value);
+    });
+
+    formData.append("paymentTerms", customer.paymentTerms || '');
+
+    updateFetcher.submit(formData, { method: "post" });
+  };
+
+  const handleCopyShippingToBilling = () => {
+    // Copy shipping address fields to billing
+    const formData = new FormData();
+    formData.append("intent", "updateCustomer");
+    formData.append("displayName", customer.displayName);
+    formData.append("companyName", customer.companyName || '');
+    formData.append("contactName", customer.contactName || '');
+    formData.append("title", customer.title || '');
+    formData.append("email", customer.email || '');
+    formData.append("phone", customer.phone || '');
+    formData.append("isPrimaryContact", customer.isPrimaryContact ? 'true' : 'false');
+    formData.append("paymentTerms", customer.paymentTerms || '');
+
+    // Billing address (copied from shipping)
+    formData.append("billingAddressLine1", customer.shippingAddressLine1 || '');
+    formData.append("billingAddressLine2", customer.shippingAddressLine2 || '');
+    formData.append("billingCity", customer.shippingCity || '');
+    formData.append("billingState", customer.shippingState || '');
+    formData.append("billingPostalCode", customer.shippingPostalCode || '');
+    formData.append("billingCountry", customer.shippingCountry || 'US');
+
+    // Keep shipping address as is
+    formData.append("shippingAddressLine1", customer.shippingAddressLine1 || '');
+    formData.append("shippingAddressLine2", customer.shippingAddressLine2 || '');
+    formData.append("shippingCity", customer.shippingCity || '');
+    formData.append("shippingState", customer.shippingState || '');
+    formData.append("shippingPostalCode", customer.shippingPostalCode || '');
+    formData.append("shippingCountry", customer.shippingCountry || 'US');
+
+    updateFetcher.submit(formData, { method: "post" });
+  };
+
   // Add keyboard shortcuts for editing forms
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Check if we're in an editing mode
-      if (!isEditingInfo && !isEditingContact) return;
-      
+      if (!isEditingInfo && !isEditingContact && !isEditingBillingAddress && !isEditingShippingAddress) return;
+
       // Handle Escape key to cancel
       if (event.key === 'Escape') {
         event.preventDefault();
         setIsEditingInfo(false);
         setIsEditingContact(false);
+        setIsEditingBillingAddress(false);
+        setIsEditingShippingAddress(false);
       }
-      
+
       // Handle Enter key to save
       // For textareas, require Ctrl+Enter or Cmd+Enter
       // For other elements (inputs, buttons, etc.), just Enter works
       if (event.key === 'Enter') {
         const isTextarea = event.target instanceof HTMLTextAreaElement;
-        
+
         // If it's a textarea, require Ctrl or Cmd to be pressed
         if (isTextarea && !event.ctrlKey && !event.metaKey) {
           return;
         }
-        
+
         event.preventDefault();
-        
+
         if (isEditingInfo) {
           const form = document.querySelector('form[data-editing="info"]') as HTMLFormElement;
           if (form) {
@@ -746,7 +879,7 @@ export default function CustomerDetails() {
             setIsEditingInfo(false);
           }
         }
-        
+
         if (isEditingContact) {
           const form = document.querySelector('form[data-editing="contact"]') as HTMLFormElement;
           if (form) {
@@ -756,12 +889,32 @@ export default function CustomerDetails() {
             setIsEditingContact(false);
           }
         }
+
+        if (isEditingBillingAddress) {
+          const form = document.querySelector('form[data-editing="billing"]') as HTMLFormElement;
+          if (form) {
+            const formData = new FormData(form);
+            formData.append("intent", "updateCustomer");
+            updateFetcher.submit(formData, { method: "post" });
+            setIsEditingBillingAddress(false);
+          }
+        }
+
+        if (isEditingShippingAddress) {
+          const form = document.querySelector('form[data-editing="shipping"]') as HTMLFormElement;
+          if (form) {
+            const formData = new FormData(form);
+            formData.append("intent", "updateCustomer");
+            updateFetcher.submit(formData, { method: "post" });
+            setIsEditingShippingAddress(false);
+          }
+        }
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isEditingInfo, isEditingContact, updateFetcher]);
+  }, [isEditingInfo, isEditingContact, isEditingBillingAddress, isEditingShippingAddress, updateFetcher]);
 
   const handleFileUpload = () => {
     if (fileInputRef.current) {
@@ -971,12 +1124,12 @@ export default function CustomerDetails() {
             </div>
           </div>
 
-          {/* Information Sections */}
+          {/* Information Sections - 2x2 Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Customer Information */}
+            {/* Company Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Customer Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Company Information</h3>
                 {!isEditingInfo && (
                   <Button size="sm" onClick={() => setIsEditingInfo(true)}>
                     Edit
@@ -987,14 +1140,36 @@ export default function CustomerDetails() {
                 {isEditingInfo ? (
                   <updateFetcher.Form onSubmit={handleSaveInfo} data-editing="info">
                     <div className="space-y-4">
-                      <FormField
-                        label="Display Name"
-                        name="displayName"
-                        defaultValue={customer.displayName}
-                        required
-                      />
+                      <input type="hidden" name="displayName" value={customer.displayName} />
                       <input type="hidden" name="email" value={customer.email || ""} />
                       <input type="hidden" name="phone" value={customer.phone || ""} />
+                      <input type="hidden" name="title" value={customer.title || ""} />
+                      <input type="hidden" name="isPrimaryContact" value={customer.isPrimaryContact ? "true" : "false"} />
+                      <input type="hidden" name="billingAddressLine1" value={customer.billingAddressLine1 || ""} />
+                      <input type="hidden" name="billingAddressLine2" value={customer.billingAddressLine2 || ""} />
+                      <input type="hidden" name="billingCity" value={customer.billingCity || ""} />
+                      <input type="hidden" name="billingState" value={customer.billingState || ""} />
+                      <input type="hidden" name="billingPostalCode" value={customer.billingPostalCode || ""} />
+                      <input type="hidden" name="billingCountry" value={customer.billingCountry || "US"} />
+                      <input type="hidden" name="shippingAddressLine1" value={customer.shippingAddressLine1 || ""} />
+                      <input type="hidden" name="shippingAddressLine2" value={customer.shippingAddressLine2 || ""} />
+                      <input type="hidden" name="shippingCity" value={customer.shippingCity || ""} />
+                      <input type="hidden" name="shippingState" value={customer.shippingState || ""} />
+                      <input type="hidden" name="shippingPostalCode" value={customer.shippingPostalCode || ""} />
+                      <input type="hidden" name="shippingCountry" value={customer.shippingCountry || "US"} />
+
+                      <FormField
+                        label="Company Name"
+                        name="companyName"
+                        defaultValue={customer.companyName || ""}
+                        placeholder="Acme Manufacturing"
+                      />
+                      <FormField
+                        label="Payment Terms"
+                        name="paymentTerms"
+                        defaultValue={customer.paymentTerms || ""}
+                        placeholder="NET 30, Due on Receipt, etc."
+                      />
                       <div className="flex justify-between items-center">
                         <div className="flex gap-2">
                           <Button type="submit" variant="primary" size="sm">Save</Button>
@@ -1007,20 +1182,20 @@ export default function CustomerDetails() {
                 ) : (
                   <div className="space-y-4">
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Display Name</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.displayName}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Company Name</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.companyName || customer.displayName}</p>
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Customer ID</p>
                       <p className="text-lg text-gray-900 dark:text-gray-100">CUST-{customer.id.toString().padStart(5, '0')}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Status</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.isArchived ? 'Inactive' : 'Active'}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Payment Terms</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.paymentTerms || "--"}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Created Date</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{formatDate(customer.createdAt)}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Status</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.isArchived ? 'Inactive' : 'Active'}</p>
                     </div>
                   </div>
                 )}
@@ -1042,18 +1217,57 @@ export default function CustomerDetails() {
                   <updateFetcher.Form onSubmit={handleSaveContact} data-editing="contact">
                     <div className="space-y-4">
                       <input type="hidden" name="displayName" value={customer.displayName} />
+                      <input type="hidden" name="companyName" value={customer.companyName || ""} />
+                      <input type="hidden" name="paymentTerms" value={customer.paymentTerms || ""} />
+                      <input type="hidden" name="billingAddressLine1" value={customer.billingAddressLine1 || ""} />
+                      <input type="hidden" name="billingAddressLine2" value={customer.billingAddressLine2 || ""} />
+                      <input type="hidden" name="billingCity" value={customer.billingCity || ""} />
+                      <input type="hidden" name="billingState" value={customer.billingState || ""} />
+                      <input type="hidden" name="billingPostalCode" value={customer.billingPostalCode || ""} />
+                      <input type="hidden" name="billingCountry" value={customer.billingCountry || "US"} />
+                      <input type="hidden" name="shippingAddressLine1" value={customer.shippingAddressLine1 || ""} />
+                      <input type="hidden" name="shippingAddressLine2" value={customer.shippingAddressLine2 || ""} />
+                      <input type="hidden" name="shippingCity" value={customer.shippingCity || ""} />
+                      <input type="hidden" name="shippingState" value={customer.shippingState || ""} />
+                      <input type="hidden" name="shippingPostalCode" value={customer.shippingPostalCode || ""} />
+                      <input type="hidden" name="shippingCountry" value={customer.shippingCountry || "US"} />
+
+                      <FormField
+                        label="Contact Name"
+                        name="contactName"
+                        defaultValue={customer.contactName || ""}
+                        placeholder="John Smith"
+                      />
+                      <FormField
+                        label="Job Title"
+                        name="title"
+                        defaultValue={customer.title || ""}
+                        placeholder="Purchasing Manager"
+                      />
                       <FormField
                         label="Email"
                         name="email"
                         type="email"
                         defaultValue={customer.email || ""}
+                        placeholder="john@company.com"
                       />
-                      <FormField
+                      <PhoneInputField
                         label="Phone"
                         name="phone"
-                        type="tel"
                         defaultValue={customer.phone || ""}
                       />
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="isPrimaryContact"
+                          name="isPrimaryContact"
+                          defaultChecked={customer.isPrimaryContact}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        />
+                        <label htmlFor="isPrimaryContact" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
+                          Primary Contact
+                        </label>
+                      </div>
                       <div className="flex justify-between items-center">
                         <div className="flex gap-2">
                           <Button type="submit" variant="primary" size="sm">Save</Button>
@@ -1066,13 +1280,240 @@ export default function CustomerDetails() {
                 ) : (
                   <div className="space-y-4">
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Email (Primary)</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Contact Name</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.contactName || "--"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Job Title</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.title || "--"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Email</p>
                       <p className="text-lg text-gray-900 dark:text-gray-100">{customer.email || "--"}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Phone (Primary)</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Phone</p>
                       <p className="text-lg text-gray-900 dark:text-gray-100">{customer.phone || "--"}</p>
                     </div>
+                    {customer.isPrimaryContact && (
+                      <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                        <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        <span className="text-sm font-medium">Primary Contact</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Address Sections - 2x2 Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Billing Address */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Billing Address</h3>
+                <div className="flex gap-2">
+                  {!isEditingBillingAddress && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={handleCopyShippingToBilling}
+                      title="Copy shipping address to billing"
+                    >
+                      Copy from Shipping
+                    </Button>
+                  )}
+                  {!isEditingBillingAddress && (
+                    <Button size="sm" onClick={() => setIsEditingBillingAddress(true)}>
+                      Edit
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="p-6">
+                {isEditingBillingAddress ? (
+                  <updateFetcher.Form onSubmit={handleSaveBillingAddress} data-editing="billing">
+                    <div className="space-y-4">
+                      <input type="hidden" name="displayName" value={customer.displayName} />
+                      <input type="hidden" name="companyName" value={customer.companyName || ""} />
+                      <input type="hidden" name="contactName" value={customer.contactName || ""} />
+                      <input type="hidden" name="title" value={customer.title || ""} />
+                      <input type="hidden" name="email" value={customer.email || ""} />
+                      <input type="hidden" name="phone" value={customer.phone || ""} />
+                      <input type="hidden" name="isPrimaryContact" value={customer.isPrimaryContact ? "true" : "false"} />
+                      <input type="hidden" name="paymentTerms" value={customer.paymentTerms || ""} />
+                      <input type="hidden" name="shippingAddressLine1" value={customer.shippingAddressLine1 || ""} />
+                      <input type="hidden" name="shippingAddressLine2" value={customer.shippingAddressLine2 || ""} />
+                      <input type="hidden" name="shippingCity" value={customer.shippingCity || ""} />
+                      <input type="hidden" name="shippingState" value={customer.shippingState || ""} />
+                      <input type="hidden" name="shippingPostalCode" value={customer.shippingPostalCode || ""} />
+                      <input type="hidden" name="shippingCountry" value={customer.shippingCountry || "US"} />
+
+                      <FormField
+                        label="Address Line 1"
+                        name="billingAddressLine1"
+                        defaultValue={customer.billingAddressLine1 || ""}
+                        placeholder="123 Main Street"
+                      />
+                      <FormField
+                        label="Address Line 2"
+                        name="billingAddressLine2"
+                        defaultValue={customer.billingAddressLine2 || ""}
+                        placeholder="Suite 100 (optional)"
+                      />
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          label="City"
+                          name="billingCity"
+                          defaultValue={customer.billingCity || ""}
+                          placeholder="San Francisco"
+                        />
+                        <FormField
+                          label="State"
+                          name="billingState"
+                          defaultValue={customer.billingState || ""}
+                          placeholder="CA"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          label="ZIP Code"
+                          name="billingPostalCode"
+                          defaultValue={customer.billingPostalCode || ""}
+                          placeholder="94102"
+                        />
+                        <FormField
+                          label="Country"
+                          name="billingCountry"
+                          defaultValue={customer.billingCountry || "US"}
+                          placeholder="US"
+                        />
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex gap-2">
+                          <Button type="submit" variant="primary" size="sm">Save</Button>
+                          <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditingBillingAddress(false)}>Cancel</Button>
+                        </div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">Press Enter to save, Esc to cancel</span>
+                      </div>
+                    </div>
+                  </updateFetcher.Form>
+                ) : (
+                  <div className="space-y-2">
+                    {extractBillingAddress(customer).line1 ? (
+                      <div className="whitespace-pre-line text-gray-900 dark:text-gray-100">
+                        {formatAddress(extractBillingAddress(customer))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-500 dark:text-gray-400">No billing address set</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Shipping Address */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Shipping Address</h3>
+                <div className="flex gap-2">
+                  {extractBillingAddress(customer).line1 && !isEditingShippingAddress && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={handleCopyBillingToShipping}
+                      title="Copy billing address to shipping"
+                    >
+                      Copy from Billing
+                    </Button>
+                  )}
+                  {!isEditingShippingAddress && (
+                    <Button size="sm" onClick={() => setIsEditingShippingAddress(true)}>
+                      Edit
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="p-6">
+                {isEditingShippingAddress ? (
+                  <updateFetcher.Form onSubmit={handleSaveShippingAddress} data-editing="shipping">
+                    <div className="space-y-4">
+                      <input type="hidden" name="displayName" value={customer.displayName} />
+                      <input type="hidden" name="companyName" value={customer.companyName || ""} />
+                      <input type="hidden" name="contactName" value={customer.contactName || ""} />
+                      <input type="hidden" name="title" value={customer.title || ""} />
+                      <input type="hidden" name="email" value={customer.email || ""} />
+                      <input type="hidden" name="phone" value={customer.phone || ""} />
+                      <input type="hidden" name="isPrimaryContact" value={customer.isPrimaryContact ? "true" : "false"} />
+                      <input type="hidden" name="paymentTerms" value={customer.paymentTerms || ""} />
+                      <input type="hidden" name="billingAddressLine1" value={customer.billingAddressLine1 || ""} />
+                      <input type="hidden" name="billingAddressLine2" value={customer.billingAddressLine2 || ""} />
+                      <input type="hidden" name="billingCity" value={customer.billingCity || ""} />
+                      <input type="hidden" name="billingState" value={customer.billingState || ""} />
+                      <input type="hidden" name="billingPostalCode" value={customer.billingPostalCode || ""} />
+                      <input type="hidden" name="billingCountry" value={customer.billingCountry || "US"} />
+
+                      <FormField
+                        label="Address Line 1"
+                        name="shippingAddressLine1"
+                        defaultValue={customer.shippingAddressLine1 || ""}
+                        placeholder="123 Main Street"
+                      />
+                      <FormField
+                        label="Address Line 2"
+                        name="shippingAddressLine2"
+                        defaultValue={customer.shippingAddressLine2 || ""}
+                        placeholder="Suite 100 (optional)"
+                      />
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          label="City"
+                          name="shippingCity"
+                          defaultValue={customer.shippingCity || ""}
+                          placeholder="San Francisco"
+                        />
+                        <FormField
+                          label="State"
+                          name="shippingState"
+                          defaultValue={customer.shippingState || ""}
+                          placeholder="CA"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          label="ZIP Code"
+                          name="shippingPostalCode"
+                          defaultValue={customer.shippingPostalCode || ""}
+                          placeholder="94102"
+                        />
+                        <FormField
+                          label="Country"
+                          name="shippingCountry"
+                          defaultValue={customer.shippingCountry || "US"}
+                          placeholder="US"
+                        />
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <div className="flex gap-2">
+                          <Button type="submit" variant="primary" size="sm">Save</Button>
+                          <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditingShippingAddress(false)}>Cancel</Button>
+                        </div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">Press Enter to save, Esc to cancel</span>
+                      </div>
+                    </div>
+                  </updateFetcher.Form>
+                ) : (
+                  <div className="space-y-2">
+                    {extractShippingAddress(customer).line1 ? (
+                      <div className="whitespace-pre-line text-gray-900 dark:text-gray-100">
+                        {formatAddress(extractShippingAddress(customer))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-500 dark:text-gray-400">No shipping address set</p>
+                    )}
                   </div>
                 )}
               </div>

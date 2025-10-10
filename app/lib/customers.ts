@@ -9,8 +9,25 @@ export type { Customer }
 
 export type CustomerInput = {
   displayName: string
+  companyName?: string | null
+  contactName?: string | null
+  title?: string | null
   email?: string | null
   phone?: string | null
+  isPrimaryContact?: boolean
+  billingAddressLine1?: string | null
+  billingAddressLine2?: string | null
+  billingCity?: string | null
+  billingState?: string | null
+  billingPostalCode?: string | null
+  billingCountry?: string | null
+  shippingAddressLine1?: string | null
+  shippingAddressLine2?: string | null
+  shippingCity?: string | null
+  shippingState?: string | null
+  shippingPostalCode?: string | null
+  shippingCountry?: string | null
+  paymentTerms?: string | null
 }
 
 export type CustomerEventContext = {
@@ -83,7 +100,7 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
   try {
     const result = await db
       .update(customers)
-      .set(customerData)
+      .set({ ...customerData, updatedAt: new Date() })
       .where(eq(customers.id, id))
       .returning()
 
@@ -122,7 +139,7 @@ export async function archiveCustomer(id: number, eventContext?: CustomerEventCo
   try {
     const [customer] = await db
       .update(customers)
-      .set({ isArchived: true })
+      .set({ isArchived: true, updatedAt: new Date() })
       .where(eq(customers.id, id))
       .returning()
 

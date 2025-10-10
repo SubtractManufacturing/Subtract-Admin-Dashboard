@@ -11,8 +11,23 @@ export type VendorInput = {
   displayName: string
   companyName?: string | null
   contactName?: string | null
+  title?: string | null
   email?: string | null
   phone?: string | null
+  isPrimaryContact?: boolean
+  billingAddressLine1?: string | null
+  billingAddressLine2?: string | null
+  billingCity?: string | null
+  billingState?: string | null
+  billingPostalCode?: string | null
+  billingCountry?: string | null
+  shippingAddressLine1?: string | null
+  shippingAddressLine2?: string | null
+  shippingCity?: string | null
+  shippingState?: string | null
+  shippingPostalCode?: string | null
+  shippingCountry?: string | null
+  paymentTerms?: string | null
   address?: string | null
   notes?: string | null
   discordId?: string | null
@@ -89,7 +104,7 @@ export async function updateVendor(id: number, vendorData: Partial<VendorInput>,
   try {
     const result = await db
       .update(vendors)
-      .set(vendorData)
+      .set({ ...vendorData, updatedAt: new Date() })
       .where(eq(vendors.id, id))
       .returning()
 
@@ -128,7 +143,7 @@ export async function archiveVendor(id: number, eventContext?: VendorEventContex
   try {
     const [vendor] = await db
       .update(vendors)
-      .set({ isArchived: true })
+      .set({ isArchived: true, updatedAt: new Date() })
       .where(eq(vendors.id, id))
       .returning()
 
