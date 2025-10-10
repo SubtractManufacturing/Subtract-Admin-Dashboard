@@ -1289,6 +1289,7 @@ export default function OrderDetails() {
                 excludeRef={actionsButtonRef}
                 onGenerateInvoice={handleGenerateInvoice}
                 onGeneratePO={handleGeneratePO}
+                hasVendor={!!order.vendorId}
               />
             </div>
             {order.status === "Pending" &&

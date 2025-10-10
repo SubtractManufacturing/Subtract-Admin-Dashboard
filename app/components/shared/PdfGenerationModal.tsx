@@ -95,6 +95,10 @@ export default function PdfGenerationModal({
         const defaultPlaceholders = [
           'Address Line 1',
           'City, State ZIP',
+          'Phone Number',
+          'Mailing Address',
+          'Email',
+          'Phone',
         ];
 
         if (defaultPlaceholders.includes(text)) {

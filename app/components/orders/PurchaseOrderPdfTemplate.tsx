@@ -246,10 +246,19 @@ export function PurchaseOrderPdfTemplate({
             white-space: nowrap;
           }
 
-          .parts-section th:nth-child(7),
-          .parts-section td:nth-child(7) {
-            width: auto;
-            min-width: 150px;
+          .parts-section .notes-row td {
+            padding: 8px 12px;
+            border-top: none;
+            background-color: #f8f9fa;
+          }
+
+          .parts-section .notes-label {
+            font-weight: 600;
+            color: #6c757d;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-right: 8px;
           }
 
           .financial-section {
@@ -381,26 +390,30 @@ export function PurchaseOrderPdfTemplate({
                   contact@subtractmanufacturing.com
                 </span>
               </p>
-              <p>
-                <span
-                  className={editable ? "editable po-placeholder" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                  data-default-text="Phone Number"
-                >
-                  Phone Number
-                </span>
-              </p>
-              <p>
-                <span
-                  className={editable ? "editable po-placeholder" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                  data-default-text="Mailing Address"
-                >
-                  Mailing Address
-                </span>
-              </p>
+              {editable && (
+                <>
+                  <p>
+                    <span
+                      className="editable placeholder-text po-placeholder"
+                      contentEditable={editable}
+                      suppressContentEditableWarning
+                      data-default-text="Phone Number"
+                    >
+                      Phone Number
+                    </span>
+                  </p>
+                  <p>
+                    <span
+                      className="editable placeholder-text po-placeholder"
+                      contentEditable={editable}
+                      suppressContentEditableWarning
+                      data-default-text="Mailing Address"
+                    >
+                      Mailing Address
+                    </span>
+                  </p>
+                </>
+              )}
             </div>
             <div className="detail-section">
               <h3>To: Vendor / Shop</h3>
@@ -425,33 +438,72 @@ export function PurchaseOrderPdfTemplate({
                   </span>
                 </p>
               )}
-              <p>
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  {order.vendor?.email || "Email"}
-                </span>
-              </p>
-              <p>
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  {order.vendor?.phone || "Phone"}
-                </span>
-              </p>
-              <p>
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  {order.vendor?.address || "Mailing Address"}
-                </span>
-              </p>
+              {order.vendor?.email && (
+                <p>
+                  <span
+                    className={editable ? "editable" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    {order.vendor.email}
+                  </span>
+                </p>
+              )}
+              {editable && !order.vendor?.email && (
+                <p>
+                  <span
+                    className="editable placeholder-text"
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    Email
+                  </span>
+                </p>
+              )}
+              {order.vendor?.phone && (
+                <p>
+                  <span
+                    className={editable ? "editable" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    {order.vendor.phone}
+                  </span>
+                </p>
+              )}
+              {editable && !order.vendor?.phone && (
+                <p>
+                  <span
+                    className="editable placeholder-text"
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    Phone
+                  </span>
+                </p>
+              )}
+              {order.vendor?.address && (
+                <p>
+                  <span
+                    className={editable ? "editable" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    {order.vendor.address}
+                  </span>
+                </p>
+              )}
+              {editable && !order.vendor?.address && (
+                <p>
+                  <span
+                    className="editable placeholder-text"
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    Mailing Address
+                  </span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -466,80 +518,85 @@ export function PurchaseOrderPdfTemplate({
                   <th>Material</th>
                   <th>Tolerance</th>
                   <th>Finishing</th>
-                  <th>Print</th>
-                  <th>Notes / Description</th>
+                  <th>Print?</th>
                 </tr>
               </thead>
               <tbody>
                 {lineItems.map((item, index) => {
                   const part = parts.find((p) => p?.id === item.partId);
+                  const notesContent = item.description || item.notes || part?.notes || "";
                   return (
-                    <tr key={index}>
-                      <td>
-                        <span
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {item.name || part?.partName || "Part"}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {item.quantity}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {part?.material || "—"}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {part?.tolerance || "—"}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {part?.finishing || "—"}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={editable ? "editable po-placeholder" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                          data-default-text="Yes"
-                        >
-                          Yes
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={editable ? "editable" : ""}
-                          contentEditable={editable}
-                          suppressContentEditableWarning
-                        >
-                          {item.description || item.notes || part?.notes || ""}
-                        </span>
-                      </td>
-                    </tr>
+                    <>
+                      <tr key={`${index}-main`}>
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {item.name || part?.partName || "Part"}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {item.quantity}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {part?.material || "—"}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {part?.tolerance || "—"}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {part?.finishing || "—"}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className={editable ? "editable po-placeholder" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                            data-default-text="Yes"
+                          >
+                            Yes
+                          </span>
+                        </td>
+                      </tr>
+                      <tr key={`${index}-notes`} className="notes-row">
+                        <td colSpan={6}>
+                          <span className="notes-label">Notes:</span>
+                          <span
+                            className={editable ? "editable" : ""}
+                            contentEditable={editable}
+                            suppressContentEditableWarning
+                          >
+                            {notesContent}
+                          </span>
+                        </td>
+                      </tr>
+                    </>
                   );
                 })}
               </tbody>
