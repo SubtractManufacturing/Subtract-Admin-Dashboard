@@ -1638,6 +1638,35 @@ export default function OrderDetails() {
                 Line Items
               </h3>
               <div className="flex items-center gap-3">
+                <style>{`
+                  .specs-icon path {
+                    transition: transform 0.3s ease-in-out;
+                  }
+
+                  .specs-icon.open .layer-top {
+                    transform: translateY(-2px);
+                  }
+
+                  .specs-icon.open .layer-middle {
+                    transform: translateY(0px);
+                  }
+
+                  .specs-icon.open .layer-bottom {
+                    transform: translateY(2px);
+                  }
+
+                  .specs-icon.closed .layer-top {
+                    transform: translateY(0);
+                  }
+
+                  .specs-icon.closed .layer-middle {
+                    transform: translateY(0);
+                  }
+
+                  .specs-icon.closed .layer-bottom {
+                    transform: translateY(0);
+                  }
+                `}</style>
                 <button
                   onClick={() => setShowPartAttributes(!showPartAttributes)}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
@@ -1653,8 +1682,14 @@ export default function OrderDetails() {
                     height="16"
                     fill="currentColor"
                     viewBox="0 0 16 16"
+                    className={`specs-icon ${showPartAttributes ? 'open' : 'closed'}`}
                   >
-                    <path d="M8.235 1.559a.5.5 0 0 0-.47 0l-7.5 4a.5.5 0 0 0 0 .882L3.188 8 .264 9.559a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882L12.813 8l2.922-1.559a.5.5 0 0 0 0-.882l-7.5-4zm3.515 7.008L14.438 10 8 13.433 1.562 10 4.25 8.567l3.515 1.874a.5.5 0 0 0 .47 0l3.515-1.874zM8 9.433 1.562 6 8 2.567 14.438 6 8 9.433z" />
+                    {/* Top layer */}
+                    <path className="layer-top" d="M8.235 1.559a.5.5 0 0 0-.47 0l-7.5 4a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882l-7.5-4zM8 9.433 1.562 6 8 2.567 14.438 6 8 9.433z" />
+                    {/* Middle layer */}
+                    <path className="layer-middle" d="M3.188 8 .264 9.559a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882L12.813 8l-4.578 2.441a.5.5 0 0 1-.47 0L3.188 8z" style={{ opacity: 0.7 }} />
+                    {/* Bottom layer */}
+                    <path className="layer-bottom" d="M11.75 8.567l3.688 1.966L8 13.433l-6.438-2.9L4.25 8.567l3.515 1.874a.5.5 0 0 0 .47 0l3.515-1.874z" style={{ opacity: 0.5 }} />
                   </svg>
                   Specs
                 </button>
