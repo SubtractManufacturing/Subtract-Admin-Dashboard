@@ -394,22 +394,29 @@ export function PurchaseOrderPdfTemplate({
                 <>
                   <p>
                     <span
-                      className="editable placeholder-text po-placeholder"
+                      className={editable ? "editable" : ""}
                       contentEditable={editable}
                       suppressContentEditableWarning
-                      data-default-text="Phone Number"
                     >
-                      Phone Number
+                      +1 (317) 224-4251
                     </span>
                   </p>
                   <p>
                     <span
-                      className="editable placeholder-text po-placeholder"
+                      className={editable ? "editable" : ""}
                       contentEditable={editable}
                       suppressContentEditableWarning
-                      data-default-text="Mailing Address"
                     >
-                      Mailing Address
+                      7301 S County Road 400W
+                    </span>
+                  </p>
+                  <p>
+                    <span
+                      className={editable ? "editable" : ""}
+                      contentEditable={editable}
+                      suppressContentEditableWarning
+                    >
+                      Muncie, IN 47302
                     </span>
                   </p>
                 </>
