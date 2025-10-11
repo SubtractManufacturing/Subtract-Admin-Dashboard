@@ -868,13 +868,31 @@ export async function createQuoteWithParts(
 
     for (let i = 0; i < partsData.length; i++) {
       const part = partsData[i]
-      let partFileUrl: string | null = null
 
+      // Create the quote part first to get its ID
+      const [quotePart] = await db.insert(quoteParts).values({
+        quoteId: quote.id,
+        partName: part.partName || `Part ${i + 1}`,
+        partNumber: `PART-${Date.now()}-${i}`,
+        material: part.material || null,
+        finish: part.surfaceFinish || null,
+        tolerance: part.tolerances || null,
+        partFileUrl: null,
+        conversionStatus: 'pending',
+        specifications: {
+          tolerances: part.tolerances,
+          notes: part.notes
+        }
+      }).returning()
+
+      // Now upload the file using the structured path with the quote part ID
+      let partFileUrl: string | null = null
       if (part.file && part.fileName) {
         const timestamp = Date.now()
         const randomString = crypto.randomBytes(8).toString('hex')
+        const sanitizedFileName = part.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '')
         const extension = part.fileName.split('.').pop() || 'bin'
-        const key = `quotes/${timestamp}-${randomString}.${extension}`
+        const key = `quote-parts/${quotePart.id}/source/${timestamp}-${randomString}-${sanitizedFileName}`
 
         const uploadResult = await uploadFile({
           key,
@@ -883,25 +901,14 @@ export async function createQuoteWithParts(
           fileName: part.fileName
         })
         partFileUrl = uploadResult.key
-      }
 
-      const [quotePart] = await db.insert(quoteParts).values({
-        quoteId: quote.id,
-        partName: part.partName || `Part ${i + 1}`,
-        partNumber: `PART-${Date.now()}-${i}`,
-        material: part.material || null,
-        finish: part.surfaceFinish || null,
-        tolerance: part.tolerances || null,
-        partFileUrl,
-        conversionStatus: 'pending',
-        specifications: {
-          tolerances: part.tolerances,
-          notes: part.notes
-        }
-      }).returning()
+        // Update the quote part with the file URL
+        await db.update(quoteParts).set({
+          partFileUrl,
+          updatedAt: new Date()
+        }).where(eq(quoteParts.id, quotePart.id))
 
-      // Trigger mesh conversion if applicable
-      if (partFileUrl) {
+        // Trigger mesh conversion if applicable
         await triggerQuotePartMeshConversion(quotePart.id, partFileUrl)
       }
 
