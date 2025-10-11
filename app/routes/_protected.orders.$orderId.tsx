@@ -41,6 +41,7 @@ import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
 import OrderActionsDropdown from "~/components/orders/OrderActionsDropdown";
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
+import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import {
   getNotes,
   createNote,
@@ -742,6 +743,7 @@ export default function OrderDetails() {
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [editingAttributeField, setEditingAttributeField] = useState<{
     partId: string;
     field: 'material' | 'tolerance' | 'finishing';
@@ -1154,6 +1156,7 @@ export default function OrderDetails() {
   }, [editOrderModalOpen, handleEditOrderSubmit]);
 
   const handleGenerateInvoice = () => {
+    setIsInvoiceModalOpen(true);
   };
 
   const handleGeneratePO = () => {
@@ -1336,6 +1339,7 @@ export default function OrderDetails() {
                 onGeneratePO={handleGeneratePO}
                 onManageVendor={handleManageVendor}
                 hasVendor={!!order.vendorId}
+                hasCustomer={!!order.customerId}
               />
             </div>
             {order.status === "Pending" &&
@@ -2475,6 +2479,16 @@ export default function OrderDetails() {
         isOpen={isPOModalOpen}
         onClose={() => setIsPOModalOpen(false)}
         order={order}
+        lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
+        parts={lineItems.map((item: LineItemWithPart) => item.part)}
+        autoDownload={pdfAutoDownload}
+      />
+
+      {/* Invoice PDF Modal */}
+      <GenerateInvoicePdfModal
+        isOpen={isInvoiceModalOpen}
+        onClose={() => setIsInvoiceModalOpen(false)}
+        entity={order}
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
         autoDownload={pdfAutoDownload}

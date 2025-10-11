@@ -8,16 +8,18 @@ interface OrderActionsDropdownProps {
   onGeneratePO?: () => void;
   onManageVendor?: () => void;
   hasVendor?: boolean;
+  hasCustomer?: boolean;
 }
 
 export default function OrderActionsDropdown({
   isOpen,
   onClose,
   excludeRef,
-  onGenerateInvoice, // eslint-disable-line @typescript-eslint/no-unused-vars
+  onGenerateInvoice,
   onGeneratePO,
   onManageVendor,
   hasVendor = false,
+  hasCustomer = false,
 }: OrderActionsDropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +100,33 @@ export default function OrderActionsDropdown({
           },
         ]
       : []),
+    ...(onGenerateInvoice
+      ? [
+          {
+            icon: (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+            ),
+            label: "Invoice",
+            onClick: () => {
+              onGenerateInvoice();
+              onClose();
+            },
+            disabled: !hasCustomer,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -109,7 +138,17 @@ export default function OrderActionsDropdown({
         {actionButtons.map((action, index) => {
           const isDisabled = "disabled" in action && action.disabled;
           const isPOButton = action.label === "PO";
-          const showTooltip = isDisabled && isPOButton;
+          const isInvoiceButton = action.label === "Invoice";
+          const showTooltip = isDisabled && (isPOButton || isInvoiceButton);
+
+          let tooltipText = "";
+          if (showTooltip) {
+            if (isPOButton) {
+              tooltipText = "Purchase Orders require a vendor";
+            } else if (isInvoiceButton) {
+              tooltipText = "Invoices require a customer";
+            }
+          }
 
           return (
             <div key={index} className="relative group/tooltip">
@@ -136,7 +175,7 @@ export default function OrderActionsDropdown({
               </button>
               {showTooltip && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg whitespace-nowrap opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-opacity duration-200 pointer-events-none z-[60]">
-                  Purchase Orders require a vendor
+                  {tooltipText}
                   <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
                 </div>
               )}

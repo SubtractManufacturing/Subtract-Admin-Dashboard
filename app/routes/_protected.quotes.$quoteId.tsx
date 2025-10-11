@@ -68,6 +68,7 @@ import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
+import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
@@ -1307,6 +1308,7 @@ export default function QuoteDetail() {
   const calculatorFetcher = useFetcher();
   const [isDownloading, setIsDownloading] = useState(false);
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1510,6 +1512,10 @@ export default function QuoteDetail() {
 
   const handleGeneratePdf = () => {
     setIsGeneratePdfModalOpen(true);
+  };
+
+  const handleGenerateInvoice = () => {
+    setIsInvoiceModalOpen(true);
   };
 
   const handleOpenCalculatorForPart = (partId: string) => {
@@ -1827,7 +1833,9 @@ export default function QuoteDetail() {
                     onCalculatePricing={canAccessPriceCalculator ? handleOpenCalculator : undefined}
                     onDownloadFiles={handleDownloadFiles}
                     onGeneratePdf={handleGeneratePdf}
+                    onGenerateInvoice={handleGenerateInvoice}
                     isDownloading={isDownloading}
+                    hasCustomer={!!quote.customerId}
                   />
                 </div>
                 {(quote.status === "RFQ" || quote.status === "Draft") && (
@@ -3246,6 +3254,15 @@ export default function QuoteDetail() {
         isOpen={isGeneratePdfModalOpen}
         onClose={() => setIsGeneratePdfModalOpen(false)}
         quote={quote}
+        autoDownload={pdfAutoDownload}
+      />
+
+      <GenerateInvoicePdfModal
+        isOpen={isInvoiceModalOpen}
+        onClose={() => setIsInvoiceModalOpen(false)}
+        entity={quote}
+        lineItems={quote.lineItems || []}
+        parts={quote.parts || []}
         autoDownload={pdfAutoDownload}
       />
 

@@ -1,22 +1,28 @@
 import { useEffect } from "react";
 import type { OrderWithRelations } from "~/lib/orders";
-import type { Part, OrderLineItem } from "~/lib/db/schema";
+import type { QuoteWithRelations } from "~/lib/quotes";
+import type { Part, OrderLineItem, QuoteLineItem } from "~/lib/db/schema";
 import { formatCurrency, formatDate, commonPdfStyles } from "~/lib/pdf-utils";
 import { extractShippingAddress, isAddressComplete } from "~/lib/address-utils";
 
-interface PurchaseOrderPdfTemplateProps {
-  order: OrderWithRelations;
-  lineItems?: OrderLineItem[];
+interface InvoicePdfTemplateProps {
+  entity: OrderWithRelations | QuoteWithRelations;
+  lineItems?: (OrderLineItem | QuoteLineItem)[];
   parts?: (Part | null)[];
   editable?: boolean;
 }
 
-export function PurchaseOrderPdfTemplate({
-  order,
+export function InvoicePdfTemplate({
+  entity,
   lineItems = [],
   parts = [],
-  editable = false
-}: PurchaseOrderPdfTemplateProps) {
+  editable = false,
+}: InvoicePdfTemplateProps) {
+  // Determine if this is an order or quote
+  const isOrder = "orderNumber" in entity;
+  const documentNumber = isOrder
+    ? entity.orderNumber
+    : (entity as QuoteWithRelations).quoteNumber;
 
   // Handle placeholder behavior for fields
   useEffect(() => {
@@ -24,46 +30,59 @@ export function PurchaseOrderPdfTemplate({
 
     const handlePlaceholderFocus = (e: Event) => {
       const target = e.target as HTMLElement;
-      const defaultText = target.getAttribute('data-default-text');
+      const defaultText = target.getAttribute("data-default-text");
 
       if (defaultText && target.textContent?.trim() === defaultText) {
-        target.textContent = '';
+        target.textContent = "";
       }
     };
 
     const handlePlaceholderBlur = (e: Event) => {
       const target = e.target as HTMLElement;
-      const defaultText = target.getAttribute('data-default-text');
-      const currentText = target.textContent?.trim() || '';
+      const defaultText = target.getAttribute("data-default-text");
+      const currentText = target.textContent?.trim() || "";
 
       if (defaultText) {
-        if (currentText === '') {
+        if (currentText === "") {
           target.textContent = defaultText;
-          target.classList.add('placeholder-text');
+          target.classList.add("placeholder-text");
         } else if (currentText !== defaultText) {
-          target.classList.remove('placeholder-text');
+          target.classList.remove("placeholder-text");
         } else {
-          target.classList.add('placeholder-text');
+          target.classList.add("placeholder-text");
         }
       }
     };
 
-    const placeholders = document.querySelectorAll('.po-placeholder');
+    const placeholders = document.querySelectorAll(".invoice-placeholder");
     placeholders.forEach((element) => {
-      element.addEventListener('focus', handlePlaceholderFocus);
-      element.addEventListener('blur', handlePlaceholderBlur);
+      element.addEventListener("focus", handlePlaceholderFocus);
+      element.addEventListener("blur", handlePlaceholderBlur);
     });
 
     return () => {
       placeholders.forEach((element) => {
-        element.removeEventListener('focus', handlePlaceholderFocus);
-        element.removeEventListener('blur', handlePlaceholderBlur);
+        element.removeEventListener("focus", handlePlaceholderFocus);
+        element.removeEventListener("blur", handlePlaceholderBlur);
       });
     };
   }, [editable]);
 
+  // Calculate total
+  const calculateTotal = () => {
+    if (isOrder) {
+      const order = entity as OrderWithRelations;
+      return parseFloat(order.totalPrice || "0");
+    } else {
+      const quote = entity as QuoteWithRelations;
+      return parseFloat(quote.total || "0");
+    }
+  };
+
+  const total = calculateTotal();
+
   return (
-    <div className="po-pdf-container">
+    <div className="invoice-pdf-container">
       <style>
         {`
           ${commonPdfStyles}
@@ -95,12 +114,12 @@ export function PurchaseOrderPdfTemplate({
             width: auto;
           }
 
-          .po-title {
+          .invoice-title {
             flex: 1;
             text-align: center;
           }
 
-          .po-title h2 {
+          .invoice-title h2 {
             font-size: 26px;
             font-weight: 700;
             color: #c41e3a;
@@ -108,21 +127,21 @@ export function PurchaseOrderPdfTemplate({
             letter-spacing: -0.5px;
           }
 
-          .po-header-info {
+          .invoice-header-info {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 20px;
             margin-top: 15px;
             padding-top: 15px;
             border-top: 1px solid #e1e4e8;
           }
 
-          .po-header-info .info-item {
+          .invoice-header-info .info-item {
             display: flex;
             flex-direction: column;
           }
 
-          .po-header-info .label {
+          .invoice-header-info .label {
             font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -131,16 +150,16 @@ export function PurchaseOrderPdfTemplate({
             font-weight: 600;
           }
 
-          .po-header-info .value {
+          .invoice-header-info .value {
             font-size: 15px;
             font-weight: 600;
             color: #2c3e50;
           }
 
-          .vendor-details {
+          .party-details {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
-            gap: 20px;
+            gap: 30px;
             padding: 20px 40px;
             background-color: white;
             border-bottom: 3px solid #c41e3a;
@@ -176,7 +195,7 @@ export function PurchaseOrderPdfTemplate({
             font-style: italic;
           }
 
-          .parts-section {
+          .items-section {
             padding: 20px 40px;
             flex: 1;
           }
@@ -192,68 +211,53 @@ export function PurchaseOrderPdfTemplate({
             letter-spacing: 0.5px;
           }
 
-          .parts-section table {
+          .items-section table {
             table-layout: auto;
             width: 100%;
           }
 
-          .parts-section th,
-          .parts-section td {
+          .items-section th,
+          .items-section td {
             white-space: normal;
             word-wrap: break-word;
             overflow-wrap: break-word;
           }
 
-          /* Column sizing for PO parts table */
-          .parts-section th:nth-child(1),
-          .parts-section td:nth-child(1) {
+          /* Column sizing for invoice items table */
+          .items-section th:nth-child(1),
+          .items-section td:nth-child(1) {
             width: auto;
-            min-width: 120px;
-            max-width: 180px;
+            min-width: 200px;
           }
 
-          .parts-section th:nth-child(2),
-          .parts-section td:nth-child(2) {
-            width: 50px;
-            text-align: center;
-            white-space: nowrap;
-          }
-
-          .parts-section th:nth-child(3),
-          .parts-section td:nth-child(3) {
-            width: auto;
-            min-width: 100px;
-            max-width: 140px;
-          }
-
-          .parts-section th:nth-child(4),
-          .parts-section td:nth-child(4) {
-            width: auto;
-            min-width: 100px;
-            max-width: 140px;
-          }
-
-          .parts-section th:nth-child(5),
-          .parts-section td:nth-child(5) {
-            width: auto;
-            min-width: 100px;
-            max-width: 140px;
-          }
-
-          .parts-section th:nth-child(6),
-          .parts-section td:nth-child(6) {
+          .items-section th:nth-child(2),
+          .items-section td:nth-child(2) {
             width: 80px;
             text-align: center;
             white-space: nowrap;
           }
 
-          .parts-section .notes-row td {
+          .items-section th:nth-child(3),
+          .items-section td:nth-child(3) {
+            width: 120px;
+            text-align: right;
+            white-space: nowrap;
+          }
+
+          .items-section th:nth-child(4),
+          .items-section td:nth-child(4) {
+            width: 120px;
+            text-align: right;
+            white-space: nowrap;
+          }
+
+          .items-section .notes-row td {
             padding: 8px 12px;
             border-top: none;
             background-color: #f8f9fa;
           }
 
-          .parts-section .notes-label {
+          .items-section .notes-label {
             font-weight: 600;
             color: #6c757d;
             font-size: 11px;
@@ -272,11 +276,11 @@ export function PurchaseOrderPdfTemplate({
             padding: 12px 20px;
             margin-top: 12px;
             width: max-content;
-            min-width: 250px;
+            min-width: 300px;
             margin-left: auto;
             display: grid;
             grid-template-columns: auto auto;
-            gap: 20px;
+            gap: 8px 20px;
             align-items: center;
           }
 
@@ -287,18 +291,58 @@ export function PurchaseOrderPdfTemplate({
           .total-label {
             font-size: 14px;
             color: #2c3e50;
-            font-weight: 700;
+            font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             white-space: nowrap;
           }
 
+          .total-label.primary {
+            font-weight: 700;
+            font-size: 15px;
+            padding-top: 8px;
+            border-top: 2px solid #dee2e6;
+          }
+
           .total-value {
+            font-size: 16px;
+            color: #2c3e50;
+            font-weight: 600;
+            white-space: nowrap;
+            text-align: right;
+          }
+
+          .total-value.primary {
             font-size: 18px;
             color: #c41e3a;
             font-weight: 700;
-            white-space: nowrap;
-            text-align: right;
+            padding-top: 8px;
+            border-top: 2px solid #dee2e6;
+          }
+
+          .notes-section {
+            padding: 20px 40px;
+            background-color: white;
+          }
+
+          .notes-section h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+
+          .notes-content {
+            font-size: 14px;
+            color: #495057;
+            line-height: 1.6;
+            min-height: 60px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
           }
 
           .footer {
@@ -340,39 +384,66 @@ export function PurchaseOrderPdfTemplate({
                   className="logo-img"
                 />
               </div>
-              <div className="po-title">
-                <h2>PURCHASE ORDER</h2>
+              <div className="invoice-title">
+                <h2>INVOICE</h2>
               </div>
               <div style={{ width: "50px" }}></div>
             </div>
-            <div className="po-header-info">
+            <div className="invoice-header-info">
+              <div className="info-item">
+                <span className="label">Invoice Number</span>
+                <span className="value">{documentNumber}</span>
+              </div>
               <div className="info-item">
                 <span className="label">PO Number</span>
-                <span className="value">{order.orderNumber}</span>
+                <span className="value">
+                  <span
+                    className={editable ? "editable invoice-placeholder" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                    data-default-text="N/A"
+                  >
+                    N/A
+                  </span>
+                </span>
               </div>
               <div className="info-item">
-                <span className="label">Issue Date</span>
-                <span className="value">{formatDate(order.createdAt)}</span>
+                <span className="label">Invoice Date</span>
+                <span className="value">{formatDate(entity.createdAt)}</span>
               </div>
               <div className="info-item">
-                <span className="label">Ship Date</span>
+                <span className="label">Due Date</span>
                 <span className="value">
                   <span
                     className={editable ? "editable" : ""}
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.shipDate ? formatDate(order.shipDate) : "TBD"}
+                    {isOrder && entity.shipDate
+                      ? formatDate(entity.shipDate)
+                      : "Net 30"}
+                  </span>
+                </span>
+              </div>
+              <div className="info-item">
+                <span className="label">Payment Terms</span>
+                <span className="value">
+                  <span
+                    className={editable ? "editable" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    {entity.customer?.paymentTerms || "Net 30"}
                   </span>
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Vendor Details */}
-          <div className="vendor-details">
+          {/* Party Details */}
+          <div className="party-details">
             <div className="detail-section">
-              <h3>From: Subtract Manufacturing</h3>
+              <h3>From:</h3>
               <p className="primary">
                 <span
                   className={editable ? "editable" : ""}
@@ -399,15 +470,6 @@ export function PurchaseOrderPdfTemplate({
                       contentEditable={editable}
                       suppressContentEditableWarning
                     >
-                      +1 (317) 224-4251
-                    </span>
-                  </p>
-                  <p>
-                    <span
-                      className={editable ? "editable" : ""}
-                      contentEditable={editable}
-                      suppressContentEditableWarning
-                    >
                       7301 S County Road 400W
                     </span>
                   </p>
@@ -424,17 +486,19 @@ export function PurchaseOrderPdfTemplate({
               )}
             </div>
             <div className="detail-section">
-              <h3>To: Vendor / Shop</h3>
+              <h3>Bill To:</h3>
               <p className="primary">
                 <span
                   className={editable ? "editable" : ""}
                   contentEditable={editable}
                   suppressContentEditableWarning
                 >
-                  {order.vendor?.displayName || order.vendor?.companyName || "Vendor Name"}
+                  {entity.customer?.displayName ||
+                    entity.customer?.companyName ||
+                    "Customer Name"}
                 </span>
               </p>
-              {order.vendor?.contactName && (
+              {entity.customer?.contactName && (
                 <p>
                   Contact:{" "}
                   <span
@@ -442,22 +506,22 @@ export function PurchaseOrderPdfTemplate({
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.vendor.contactName}
+                    {entity.customer.contactName}
                   </span>
                 </p>
               )}
-              {order.vendor?.email && (
+              {entity.customer?.email && (
                 <p>
                   <span
                     className={editable ? "editable" : ""}
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.vendor.email}
+                    {entity.customer.email}
                   </span>
                 </p>
               )}
-              {editable && !order.vendor?.email && (
+              {editable && !entity.customer?.email && (
                 <p>
                   <span
                     className="editable placeholder-text"
@@ -468,18 +532,18 @@ export function PurchaseOrderPdfTemplate({
                   </span>
                 </p>
               )}
-              {order.vendor?.phone && (
+              {entity.customer?.phone && (
                 <p>
                   <span
                     className={editable ? "editable" : ""}
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.vendor.phone}
+                    {entity.customer.phone}
                   </span>
                 </p>
               )}
-              {editable && !order.vendor?.phone && (
+              {editable && !entity.customer?.phone && (
                 <p>
                   <span
                     className="editable placeholder-text"
@@ -490,100 +554,93 @@ export function PurchaseOrderPdfTemplate({
                   </span>
                 </p>
               )}
-              {/* Shipping Address */}
-              {order.vendor && (() => {
-                const shippingAddress = extractShippingAddress(order.vendor);
-                const hasShippingAddress = isAddressComplete(shippingAddress);
+              {/* Billing Address */}
+              {entity.customer &&
+                (() => {
+                  const billingAddress = extractShippingAddress(
+                    entity.customer
+                  );
+                  const hasBillingAddress = isAddressComplete(billingAddress);
 
-                if (hasShippingAddress) {
-                  return (
-                    <>
-                      {shippingAddress.line1 && (
+                  if (hasBillingAddress) {
+                    return (
+                      <>
+                        {billingAddress.line1 && (
+                          <p>
+                            <span
+                              className={editable ? "editable" : ""}
+                              contentEditable={editable}
+                              suppressContentEditableWarning
+                            >
+                              {billingAddress.line1}
+                            </span>
+                          </p>
+                        )}
+                        {billingAddress.line2 && (
+                          <p>
+                            <span
+                              className={editable ? "editable" : ""}
+                              contentEditable={editable}
+                              suppressContentEditableWarning
+                            >
+                              {billingAddress.line2}
+                            </span>
+                          </p>
+                        )}
                         <p>
                           <span
                             className={editable ? "editable" : ""}
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {shippingAddress.line1}
+                            {billingAddress.city}, {billingAddress.state}{" "}
+                            {billingAddress.postalCode}
                           </span>
                         </p>
-                      )}
-                      {shippingAddress.line2 && (
-                        <p>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {shippingAddress.line2}
-                          </span>
-                        </p>
-                      )}
+                        {billingAddress.country &&
+                          billingAddress.country !== "US" && (
+                            <p>
+                              <span
+                                className={editable ? "editable" : ""}
+                                contentEditable={editable}
+                                suppressContentEditableWarning
+                              >
+                                {billingAddress.country}
+                              </span>
+                            </p>
+                          )}
+                      </>
+                    );
+                  } else if (editable) {
+                    return (
                       <p>
                         <span
-                          className={editable ? "editable" : ""}
+                          className="editable placeholder-text"
                           contentEditable={editable}
                           suppressContentEditableWarning
                         >
-                          {shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}
+                          Billing Address
                         </span>
                       </p>
-                      {shippingAddress.country && shippingAddress.country !== "US" && (
-                        <p>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {shippingAddress.country}
-                          </span>
-                        </p>
-                      )}
-                    </>
-                  );
-                } else if (order.vendor?.address) {
-                  // Fallback to legacy address field if no structured address
-                  return (
-                    <p>
-                      <span
-                        className={editable ? "editable" : ""}
-                        contentEditable={editable}
-                        suppressContentEditableWarning
-                      >
-                        {order.vendor.address}
-                      </span>
-                    </p>
-                  );
-                } else if (editable) {
-                  // Show placeholder only in editable mode
-                  return (
-                    <p>
-                      <span
-                        className="editable placeholder-text"
-                        contentEditable={editable}
-                        suppressContentEditableWarning
-                      >
-                        Shipping Address
-                      </span>
-                    </p>
-                  );
-                }
-                return null;
-              })()}
+                    );
+                  }
+                  return null;
+                })()}
             </div>
             <div className="detail-section">
-              <h3>Deliver To: Customer</h3>
+              <h3>Ship To:</h3>
               <p className="primary">
                 <span
                   className={editable ? "editable" : ""}
                   contentEditable={editable}
                   suppressContentEditableWarning
                 >
-                  {order.customer?.displayName || order.customer?.companyName || "Customer Name"}
+                  {entity.customer?.displayName ||
+                    entity.customer?.companyName ||
+                    "Customer Name"}
                 </span>
               </p>
-              {order.customer?.contactName && (
+              {entity.customer?.contactName && (
                 <p>
                   Contact:{" "}
                   <span
@@ -591,22 +648,22 @@ export function PurchaseOrderPdfTemplate({
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.customer.contactName}
+                    {entity.customer.contactName}
                   </span>
                 </p>
               )}
-              {order.customer?.email && (
+              {entity.customer?.email && (
                 <p>
                   <span
                     className={editable ? "editable" : ""}
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.customer.email}
+                    {entity.customer.email}
                   </span>
                 </p>
               )}
-              {editable && !order.customer?.email && (
+              {editable && !entity.customer?.email && (
                 <p>
                   <span
                     className="editable placeholder-text"
@@ -617,18 +674,18 @@ export function PurchaseOrderPdfTemplate({
                   </span>
                 </p>
               )}
-              {order.customer?.phone && (
+              {entity.customer?.phone && (
                 <p>
                   <span
                     className={editable ? "editable" : ""}
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.customer.phone}
+                    {entity.customer.phone}
                   </span>
                 </p>
               )}
-              {editable && !order.customer?.phone && (
+              {editable && !entity.customer?.phone && (
                 <p>
                   <span
                     className="editable placeholder-text"
@@ -640,94 +697,110 @@ export function PurchaseOrderPdfTemplate({
                 </p>
               )}
               {/* Shipping Address */}
-              {order.customer && (() => {
-                const shippingAddress = extractShippingAddress(order.customer);
-                const hasShippingAddress = isAddressComplete(shippingAddress);
+              {entity.customer &&
+                (() => {
+                  const shippingAddress = extractShippingAddress(
+                    entity.customer
+                  );
+                  const hasShippingAddress = isAddressComplete(shippingAddress);
 
-                if (hasShippingAddress) {
-                  return (
-                    <>
-                      {shippingAddress.line1 && (
+                  if (hasShippingAddress) {
+                    return (
+                      <>
+                        {shippingAddress.line1 && (
+                          <p>
+                            <span
+                              className={editable ? "editable" : ""}
+                              contentEditable={editable}
+                              suppressContentEditableWarning
+                            >
+                              {shippingAddress.line1}
+                            </span>
+                          </p>
+                        )}
+                        {shippingAddress.line2 && (
+                          <p>
+                            <span
+                              className={editable ? "editable" : ""}
+                              contentEditable={editable}
+                              suppressContentEditableWarning
+                            >
+                              {shippingAddress.line2}
+                            </span>
+                          </p>
+                        )}
                         <p>
                           <span
                             className={editable ? "editable" : ""}
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {shippingAddress.line1}
+                            {shippingAddress.city}, {shippingAddress.state}{" "}
+                            {shippingAddress.postalCode}
                           </span>
                         </p>
-                      )}
-                      {shippingAddress.line2 && (
-                        <p>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {shippingAddress.line2}
-                          </span>
-                        </p>
-                      )}
+                        {shippingAddress.country &&
+                          shippingAddress.country !== "US" && (
+                            <p>
+                              <span
+                                className={editable ? "editable" : ""}
+                                contentEditable={editable}
+                                suppressContentEditableWarning
+                              >
+                                {shippingAddress.country}
+                              </span>
+                            </p>
+                          )}
+                      </>
+                    );
+                  } else if (editable) {
+                    return (
                       <p>
                         <span
-                          className={editable ? "editable" : ""}
+                          className="editable placeholder-text"
                           contentEditable={editable}
                           suppressContentEditableWarning
                         >
-                          {shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}
+                          Shipping Address
                         </span>
                       </p>
-                      {shippingAddress.country && shippingAddress.country !== "US" && (
-                        <p>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {shippingAddress.country}
-                          </span>
-                        </p>
-                      )}
-                    </>
-                  );
-                } else if (editable) {
-                  // Show placeholder only in editable mode
-                  return (
-                    <p>
-                      <span
-                        className="editable placeholder-text"
-                        contentEditable={editable}
-                        suppressContentEditableWarning
-                      >
-                        Shipping Address
-                      </span>
-                    </p>
-                  );
-                }
-                return null;
-              })()}
+                    );
+                  }
+                  return null;
+                })()}
             </div>
           </div>
 
-          {/* Parts Specification */}
-          <div className="parts-section">
-            <h2 className="section-title">Parts Specification</h2>
+          {/* Line Items */}
+          <div className="items-section">
+            <h2 className="section-title">Line Items</h2>
             <table>
               <thead>
                 <tr>
-                  <th>Part Name</th>
-                  <th>Qty</th>
-                  <th>Material</th>
-                  <th>Tolerance</th>
-                  <th>Finishing</th>
-                  <th>Print?</th>
+                  <th>Description</th>
+                  <th>Quantity</th>
+                  <th>Unit Price</th>
+                  <th>Total</th>
                 </tr>
               </thead>
               <tbody>
                 {lineItems.map((item, index) => {
-                  const part = parts.find((p) => p?.id === item.partId);
-                  const notesContent = item.description || item.notes || part?.notes || "";
+                  // Handle both OrderLineItem (partId) and QuoteLineItem (quotePartId)
+                  const itemPartId =
+                    "partId" in item
+                      ? item.partId
+                      : "quotePartId" in item
+                      ? item.quotePartId
+                      : null;
+                  const part = parts.find((p) => p?.id === itemPartId);
+                  const notesContent =
+                    item.description || item.notes || part?.notes || "";
+                  const unitPrice = parseFloat(
+                    item.unitPrice?.toString() || "0"
+                  );
+                  const quantity = item.quantity || 0;
+                  const itemTotal = unitPrice * quantity;
+
                   return (
                     <>
                       <tr key={`${index}-main`}>
@@ -737,7 +810,7 @@ export function PurchaseOrderPdfTemplate({
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {item.name || part?.partName || "Part"}
+                            {item.name || part?.partName || "Item"}
                           </span>
                         </td>
                         <td>
@@ -746,7 +819,7 @@ export function PurchaseOrderPdfTemplate({
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {item.quantity}
+                            {quantity}
                           </span>
                         </td>
                         <td>
@@ -755,7 +828,7 @@ export function PurchaseOrderPdfTemplate({
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {part?.material || "—"}
+                            {formatCurrency(unitPrice)}
                           </span>
                         </td>
                         <td>
@@ -764,67 +837,89 @@ export function PurchaseOrderPdfTemplate({
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {part?.tolerance || "—"}
-                          </span>
-                        </td>
-                        <td>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {part?.finishing || "—"}
-                          </span>
-                        </td>
-                        <td>
-                          <span
-                            className={editable ? "editable po-placeholder" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                            data-default-text="Yes"
-                          >
-                            Yes
+                            {formatCurrency(itemTotal)}
                           </span>
                         </td>
                       </tr>
-                      <tr key={`${index}-notes`} className="notes-row">
-                        <td colSpan={6}>
-                          <span className="notes-label">Notes:</span>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {notesContent}
-                          </span>
-                        </td>
-                      </tr>
+                      {notesContent && (
+                        <tr key={`${index}-notes`} className="notes-row">
+                          <td colSpan={4}>
+                            <span className="notes-label">Notes:</span>
+                            <span
+                              className={editable ? "editable" : ""}
+                              contentEditable={editable}
+                              suppressContentEditableWarning
+                            >
+                              {notesContent}
+                            </span>
+                          </td>
+                        </tr>
+                      )}
                     </>
                   );
                 })}
               </tbody>
             </table>
           </div>
-
         </div>
 
-        {/* Financial Section with Total */}
-        {order.vendorPay && (
-          <div className="financial-section">
-            <div className="total-box">
-              <div className="total-row">
-                <span className="total-label">Total Amount</span>
-                <span
-                  className={editable ? "total-value editable" : "total-value"}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  {formatCurrency(order.vendorPay)}
-                </span>
-              </div>
+        {/* Financial Section */}
+        <div className="financial-section">
+          <div className="total-box">
+            <div className="total-row">
+              <span className="total-label">Subtotal</span>
+              <span
+                className={editable ? "total-value editable" : "total-value"}
+                contentEditable={editable}
+                suppressContentEditableWarning
+              >
+                {formatCurrency(total)}
+              </span>
+            </div>
+            <div className="total-row">
+              <span className="total-label">Amount Paid</span>
+              <span
+                className={
+                  editable
+                    ? "total-value editable invoice-placeholder"
+                    : "total-value"
+                }
+                contentEditable={editable}
+                suppressContentEditableWarning
+                data-default-text="$0.00"
+              >
+                $0.00
+              </span>
+            </div>
+            <div className="total-row">
+              <span className="total-label primary">Amount Due</span>
+              <span
+                className={
+                  editable
+                    ? "total-value primary editable"
+                    : "total-value primary"
+                }
+                contentEditable={editable}
+                suppressContentEditableWarning
+              >
+                {formatCurrency(total)}
+              </span>
             </div>
           </div>
-        )}
+        </div>
+
+        {/* Notes Section */}
+        <div className="notes-section">
+          <h3>Notes</h3>
+          <div
+            className={editable ? "notes-content editable" : "notes-content"}
+            contentEditable={editable}
+            suppressContentEditableWarning
+          >
+            {(isOrder ? (entity as OrderWithRelations).notes : null) ||
+              (editable ? "Additional notes or payment instructions..." : "")}
+          </div>
+        </div>
 
         {/* Footer */}
         <div className="footer">
