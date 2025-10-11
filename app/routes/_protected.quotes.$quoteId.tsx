@@ -1219,7 +1219,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
-      case "generatePDF": {
+      case "generateQuote": {
         const htmlContent = formData.get("htmlContent") as string;
 
         if (!htmlContent) {

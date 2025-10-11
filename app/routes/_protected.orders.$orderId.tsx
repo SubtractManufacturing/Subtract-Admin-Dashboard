@@ -677,7 +677,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/orders/${orderNumber}`);
       }
 
-      case "generatePO": {
+      case "generatePurchaseOrder": {
         const htmlContent = formData.get("htmlContent") as string;
 
         if (!htmlContent) {

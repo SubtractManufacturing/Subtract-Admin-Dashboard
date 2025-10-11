@@ -170,7 +170,7 @@ export default function QuoteActionsDropdown({
                 />
               </svg>
             ),
-            label: "PDF",
+            label: "Quote",
             onClick: () => {
               onGeneratePdf();
               onClose();
@@ -212,7 +212,7 @@ export default function QuoteActionsDropdown({
       ref={dropdownRef}
       className="absolute right-0 mt-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-4 z-50 transition-colors duration-150"
     >
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3 w-[216px]">
         {actionButtons.map((action, index) => (
           <button
             key={index}
