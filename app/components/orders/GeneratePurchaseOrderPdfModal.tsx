@@ -25,9 +25,10 @@ export default function GeneratePurchaseOrderPdfModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Generate Purchase Order PDF"
-      apiEndpoint={`/api/orders/${order.id}/generate-po`}
+      apiEndpoint={`/orders/${order.orderNumber}`}
       filename={`PO-${order.orderNumber}.pdf`}
       autoDownload={autoDownload}
+      intent="generatePO"
     >
       <PurchaseOrderPdfTemplate order={order} lineItems={lineItems} parts={parts} editable={true} />
     </PdfGenerationModal>

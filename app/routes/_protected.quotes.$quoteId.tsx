@@ -39,6 +39,7 @@ import {
   deleteFile,
   getDownloadUrl,
 } from "~/lib/s3.server";
+import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import {
   getNotes,
   createNote,
@@ -1216,6 +1217,58 @@ export async function action({ request, params }: ActionFunctionArgs) {
         );
 
         return json({ success: true });
+      }
+
+      case "generatePDF": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "quote",
+          entityId: quote.id,
+          htmlContent,
+          filename: `Quote-${quote.quoteNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="Quote-${quote.quoteNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
+      }
+
+      case "generateInvoice": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "quote",
+          entityId: quote.id,
+          htmlContent,
+          filename: `Invoice-${quote.quoteNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="Invoice-${quote.quoteNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
       }
 
       default:

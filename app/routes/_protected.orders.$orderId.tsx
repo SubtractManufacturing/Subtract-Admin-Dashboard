@@ -33,6 +33,7 @@ import {
   deleteFile,
   getDownloadUrl,
 } from "~/lib/s3.server";
+import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -674,6 +675,58 @@ export async function action({ request, params }: ActionFunctionArgs) {
         );
 
         return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "generatePO": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "order",
+          entityId: order.id,
+          htmlContent,
+          filename: `PO-${order.orderNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="PO-${order.orderNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
+      }
+
+      case "generateInvoice": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "order",
+          entityId: order.id,
+          htmlContent,
+          filename: `Invoice-${order.orderNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="Invoice-${order.orderNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
       }
 
       default:

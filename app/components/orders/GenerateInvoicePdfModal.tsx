@@ -22,11 +22,10 @@ export default function GenerateInvoicePdfModal({
   autoDownload = true,
 }: GenerateInvoicePdfModalProps) {
   const isOrder = 'orderNumber' in entity;
-  const entityId = entity.id;
   const documentNumber = isOrder ? entity.orderNumber : (entity as QuoteWithRelations).quoteNumber;
   const apiEndpoint = isOrder
-    ? `/api/orders/${entityId}/generate-invoice`
-    : `/api/quotes/${entityId}/generate-invoice`;
+    ? `/orders/${entity.orderNumber}`
+    : `/quotes/${(entity as QuoteWithRelations).quoteNumber}`;
 
   return (
     <PdfGenerationModal
@@ -36,6 +35,7 @@ export default function GenerateInvoicePdfModal({
       apiEndpoint={apiEndpoint}
       filename={`Invoice-${documentNumber}.pdf`}
       autoDownload={autoDownload}
+      intent="generateInvoice"
     >
       <InvoicePdfTemplate entity={entity} lineItems={lineItems} parts={parts} editable={true} />
     </PdfGenerationModal>

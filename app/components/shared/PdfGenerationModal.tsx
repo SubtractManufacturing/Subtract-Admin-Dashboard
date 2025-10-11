@@ -48,6 +48,7 @@ interface PdfGenerationModalProps {
   filename: string;
   children: ReactNode;
   autoDownload?: boolean;
+  intent: string;
 }
 
 /**
@@ -62,6 +63,7 @@ export default function PdfGenerationModal({
   filename,
   children,
   autoDownload = true,
+  intent,
 }: PdfGenerationModalProps) {
   const templateRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -128,6 +130,7 @@ export default function PdfGenerationModal({
 
       const formData = new FormData();
       formData.append("htmlContent", htmlContent);
+      formData.append("intent", intent);
 
       const response = await fetch(apiEndpoint, {
         method: "POST",
