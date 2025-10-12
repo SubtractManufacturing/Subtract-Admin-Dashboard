@@ -891,7 +891,6 @@ export async function createQuoteWithParts(
         const timestamp = Date.now()
         const randomString = crypto.randomBytes(8).toString('hex')
         const sanitizedFileName = part.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '')
-        const extension = part.fileName.split('.').pop() || 'bin'
         const key = `quote-parts/${quotePart.id}/source/${timestamp}-${randomString}-${sanitizedFileName}`
 
         const uploadResult = await uploadFile({

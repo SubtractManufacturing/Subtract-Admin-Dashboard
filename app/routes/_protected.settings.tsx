@@ -789,7 +789,7 @@ export default function Settings() {
                         S3 Storage Migration Tools
                       </h4>
                       <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
-                        Consolidate S3 storage from old "quotes/" structure to organized "quote-parts/" structure.
+                        Consolidate S3 storage from old &quot;quotes/&quot; structure to organized &quot;quote-parts/&quot; structure.
                       </p>
 
                       {s3MigrationStatus && (

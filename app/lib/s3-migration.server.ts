@@ -4,7 +4,7 @@
  * Consolidates old "quotes/" folder structure into organized "quote-parts/" structure
  */
 
-import { S3Client, ListObjectsV2Command, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { ListObjectsV2Command, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { getS3Client } from './s3.server'
 import { db } from './db/index'
 import { quoteParts } from './db/schema'
@@ -117,7 +117,6 @@ export async function consolidateQuoteFiles(): Promise<MigrationResult> {
         // Extract original filename from the old key
         // Old format: quotes/{timestamp}-{random}.{ext}
         const oldFilename = oldKey.split('/').pop() || 'file'
-        const extension = oldFilename.split('.').pop() || 'bin'
 
         // Generate new key with proper structure
         // New format: quote-parts/{quotePartId}/source/{timestamp}-{random}-{originalName}

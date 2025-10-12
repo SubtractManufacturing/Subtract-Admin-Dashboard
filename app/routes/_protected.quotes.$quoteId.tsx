@@ -2744,13 +2744,18 @@ export default function QuoteDetail() {
                               {part && (
                                 <>
                                   {part.signedThumbnailUrl ? (
-                                    <img
-                                      src={part.signedThumbnailUrl}
-                                      alt={part.partName}
-                                      className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                                      onClick={() => handleView3DModel(part as any)}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleView3DModel(part as { id: string; partName: string; signedMeshUrl?: string; signedFileUrl?: string; signedThumbnailUrl?: string })}
+                                      className="p-0 border-0 bg-transparent cursor-pointer"
                                       title="Click to view 3D model"
-                                    />
+                                    >
+                                      <img
+                                        src={part.signedThumbnailUrl}
+                                        alt={part.partName}
+                                        className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0 hover:opacity-80 transition-opacity"
+                                      />
+                                    </button>
                                   ) : (
                                     <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
                                       {isProcessing ? (
