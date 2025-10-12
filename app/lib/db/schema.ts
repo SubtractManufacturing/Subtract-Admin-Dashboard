@@ -53,25 +53,83 @@ export const users = pgTable("users", {
 export const customers = pgTable("customers", {
   id: serial("id").primaryKey(),
   displayName: text("display_name").notNull(),
+
+  // Contact info
+  companyName: text("company_name"),
+  contactName: text("contact_name"),
+  title: text("title"),
   email: text("email"),
   phone: text("phone"),
+  isPrimaryContact: boolean("is_primary_contact").default(false),
+
+  // Billing address (structured for shipping integrations)
+  billingAddressLine1: text("billing_address_line1"),
+  billingAddressLine2: text("billing_address_line2"),
+  billingCity: text("billing_city"),
+  billingState: text("billing_state"),
+  billingPostalCode: text("billing_postal_code"),
+  billingCountry: text("billing_country").default("US"),
+
+  // Shipping address (structured for shipping integrations)
+  shippingAddressLine1: text("shipping_address_line1"),
+  shippingAddressLine2: text("shipping_address_line2"),
+  shippingCity: text("shipping_city"),
+  shippingState: text("shipping_state"),
+  shippingPostalCode: text("shipping_postal_code"),
+  shippingCountry: text("shipping_country").default("US"),
+
+  // Business terms
+  paymentTerms: text("payment_terms"),
+
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  companyNameIdx: index("customers_company_name_idx").on(table.companyName),
+}));
 
 export const vendors = pgTable("vendors", {
   id: serial("id").primaryKey(),
   displayName: text("display_name").notNull(),
+
+  // Contact info
   companyName: text("company_name"),
   contactName: text("contact_name"),
+  title: text("title"),
   email: text("email"),
   phone: text("phone"),
-  address: text("address"),
+  isPrimaryContact: boolean("is_primary_contact").default(false),
+
+  // Billing address (structured for shipping integrations)
+  billingAddressLine1: text("billing_address_line1"),
+  billingAddressLine2: text("billing_address_line2"),
+  billingCity: text("billing_city"),
+  billingState: text("billing_state"),
+  billingPostalCode: text("billing_postal_code"),
+  billingCountry: text("billing_country").default("US"),
+
+  // Shipping address (structured for shipping integrations)
+  shippingAddressLine1: text("shipping_address_line1"),
+  shippingAddressLine2: text("shipping_address_line2"),
+  shippingCity: text("shipping_city"),
+  shippingState: text("shipping_state"),
+  shippingPostalCode: text("shipping_postal_code"),
+  shippingCountry: text("shipping_country").default("US"),
+
+  // Business terms
+  paymentTerms: text("payment_terms"),
+
+  // Legacy fields
+  address: text("address"), // Keep for now, can migrate data later
   notes: text("notes"),
   discordId: text("discord_id"),
+
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  companyNameIdx: index("vendors_company_name_idx").on(table.companyName),
+}));
 
 export const quotes = pgTable("quotes", {
   id: serial("id").primaryKey(),
@@ -105,8 +163,8 @@ export const orders = pgTable("orders", {
   quoteId: integer("quote_id"),
   sourceQuoteId: integer("source_quote_id"),
   status: orderStatusEnum("status").default("Pending").notNull(),
-  totalPrice: numeric("total_price"),
-  vendorPay: numeric("vendor_pay"),
+  totalPrice: numeric("total_price", { precision: 10, scale: 2 }),
+  vendorPay: numeric("vendor_pay", { precision: 10, scale: 2 }),
   shipDate: timestamp("ship_date"),
   notes: text("notes"),
   leadTime: integer("lead_time"),
@@ -188,7 +246,7 @@ export const orderLineItems = pgTable("order_line_items", {
   name: text("name"),
   description: text("description"),
   quantity: integer("quantity").notNull(),
-  unitPrice: numeric("unit_price").notNull(),
+  unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
   notes: text("notes"),
 });
 

@@ -118,6 +118,8 @@ export default function QuotePriceCalculatorModal({
     "7-12 Days": 1.0,
   });
   const [notes, setNotes] = useState("");
+  const [showValidation, setShowValidation] = useState(false);
+  const [toolpathTouched, setToolpathTouched] = useState(false);
 
   // Reset form function
   const resetForm = useCallback(() => {
@@ -141,6 +143,8 @@ export default function QuotePriceCalculatorModal({
     setNotes("");
     setEditingThreadRates(false);
     setEditingLeadTimes(false);
+    setShowValidation(false);
+    setToolpathTouched(false);
   }, []);
 
   // Load existing calculation or set defaults when part changes
@@ -175,6 +179,9 @@ export default function QuotePriceCalculatorModal({
       setToolingCost(existingCalculation.toolingCost || "");
       setShowTooling(!!existingCalculation.toolingCost);
       setNotes(existingCalculation.notes || "");
+      // Reset validation states when loading existing calculation
+      setShowValidation(false);
+      setToolpathTouched(false);
     } else if (currentPart) {
       // Reset to defaults for new calculation
       resetForm();
@@ -243,27 +250,33 @@ export default function QuotePriceCalculatorModal({
   const prices = calculatePrices();
 
   const handleSave = () => {
+    // Validate toolpath grand total
+    if (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0) {
+      setShowValidation(true);
+      return;
+    }
+
     const calculation = {
       quoteId,
       quotePartId: currentPart?.id,
       quoteLineItemId: currentLineItem?.id,
-      toolpathGrandTotal: parseFloat(toolpathGrandTotal) || 0,
+      toolpathGrandTotal: parseFloat(parseFloat(toolpathGrandTotal).toFixed(2)) || 0,
       leadTimeOption,
-      leadTimeMultiplier: leadTimeMultipliers[leadTimeOption as keyof typeof leadTimeMultipliers] || 1.0,
+      leadTimeMultiplier: parseFloat((leadTimeMultipliers[leadTimeOption as keyof typeof leadTimeMultipliers] || 1.0).toFixed(2)),
       smallThreadCount: parseInt(threadCounts.small) || 0,
-      smallThreadRate: threadRates.small,
+      smallThreadRate: parseFloat(threadRates.small.toFixed(2)),
       mediumThreadCount: parseInt(threadCounts.medium) || 0,
-      mediumThreadRate: threadRates.medium,
+      mediumThreadRate: parseFloat(threadRates.medium.toFixed(2)),
       largeThreadCount: parseInt(threadCounts.large) || 0,
-      largeThreadRate: threadRates.large,
-      totalThreadCost: prices.threadCost,
-      complexityMultiplier,
-      toleranceMultiplier,
-      toolingCost: showTooling ? (parseFloat(toolingCost) || null) : null,
-      toolingMarkup: showTooling ? (prices.toolingMarkup || null) : null,
-      basePrice: prices.basePrice,
-      adjustedPrice: prices.adjustedPrice,
-      finalPrice: prices.finalPrice,
+      largeThreadRate: parseFloat(threadRates.large.toFixed(2)),
+      totalThreadCost: parseFloat(prices.threadCost.toFixed(2)),
+      complexityMultiplier: parseFloat(complexityMultiplier.toFixed(2)),
+      toleranceMultiplier: parseFloat(toleranceMultiplier.toFixed(2)),
+      toolingCost: showTooling ? (parseFloat(toolingCost) ? parseFloat(parseFloat(toolingCost).toFixed(2)) : null) : null,
+      toolingMarkup: showTooling && prices.toolingMarkup ? parseFloat(prices.toolingMarkup.toFixed(2)) : null,
+      basePrice: parseFloat(prices.basePrice.toFixed(2)),
+      adjustedPrice: parseFloat(prices.adjustedPrice.toFixed(2)),
+      finalPrice: parseFloat(prices.finalPrice.toFixed(2)),
       notes,
     };
 
@@ -271,6 +284,12 @@ export default function QuotePriceCalculatorModal({
   };
 
   const handleNextPart = () => {
+    // Validate before saving
+    if (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0) {
+      setShowValidation(true);
+      return;
+    }
+
     handleSave();
     if (partIndex < quoteParts.length - 1) {
       const newIndex = partIndex + 1;
@@ -361,7 +380,7 @@ export default function QuotePriceCalculatorModal({
           {/* Base Cost Input */}
           <div>
             <label htmlFor="toolpath-grand-total" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Toolpath Grand Total
+              Toolpath Grand Total <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
@@ -371,12 +390,30 @@ export default function QuotePriceCalculatorModal({
                 id="toolpath-grand-total"
                 type="number"
                 value={toolpathGrandTotal}
-                onChange={(e) => setToolpathGrandTotal(e.target.value)}
-                className="pl-8 w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                onChange={(e) => {
+                  setToolpathGrandTotal(e.target.value);
+                  // Clear validation error when user starts typing
+                  if (showValidation && e.target.value) {
+                    setShowValidation(false);
+                  }
+                }}
+                onBlur={() => setToolpathTouched(true)}
+                className={`pl-8 w-full rounded-md dark:bg-gray-700 dark:text-white ${
+                  (showValidation || toolpathTouched) && (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0)
+                    ? 'border-red-300 dark:border-red-600 focus:ring-red-500 focus:border-red-500'
+                    : 'border-gray-300 dark:border-gray-600'
+                }`}
                 placeholder="0.00"
                 step="0.01"
+                min="0.01"
+                required
               />
             </div>
+            {(showValidation || toolpathTouched) && (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0) && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                Please enter a valid toolpath grand total greater than $0.00
+              </p>
+            )}
           </div>
 
           {/* Lead Time Selection */}
@@ -681,16 +718,14 @@ export default function QuotePriceCalculatorModal({
               {partIndex < quoteParts.length - 1 ? (
                 <button
                   onClick={handleNextPart}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  disabled={!toolpathGrandTotal}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Next Part →
                 </button>
               ) : (
                 <button
                   onClick={handleSave}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  disabled={!toolpathGrandTotal}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Save & Close
                 </button>

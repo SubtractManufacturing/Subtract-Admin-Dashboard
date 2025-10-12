@@ -10,6 +10,7 @@ import {
 } from "./db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { createEvent } from "./events";
+import { calculateQuoteTotals } from "./quotes";
 
 export type PriceCalculationEventContext = {
   quoteId: number;
@@ -69,6 +70,12 @@ export async function createPriceCalculation(
     })
     .returning();
 
+  // Format final price to 2 decimal places
+  const finalPrice = typeof calculation.finalPrice === 'string'
+    ? parseFloat(calculation.finalPrice)
+    : calculation.finalPrice;
+  const formattedFinalPrice = finalPrice.toFixed(2);
+
   // Log event
   await createEvent({
     entityType: "quote",
@@ -76,12 +83,12 @@ export async function createPriceCalculation(
     eventType: "price_calculated",
     eventCategory: "financial",
     title: "Price Calculated",
-    description: `Price calculated: $${calculation.finalPrice}`,
+    description: `Price calculated: $${formattedFinalPrice}`,
     metadata: {
       calculationId: newCalculation.id,
       quotePartId: calculation.quotePartId,
       quoteLineItemId: calculation.quoteLineItemId,
-      finalPrice: calculation.finalPrice,
+      finalPrice: formattedFinalPrice,
       leadTimeOption: calculation.leadTimeOption,
     },
     userId,
@@ -133,6 +140,9 @@ export async function updateLineItemPrice(
     })
     .where(eq(quoteLineItems.id, lineItemId));
 
+  // Recalculate quote totals after updating line item
+  await calculateQuoteTotals(lineItem.quoteId);
+
   // Log event
   await createEvent({
     entityType: "quote",
@@ -140,7 +150,7 @@ export async function updateLineItemPrice(
     eventType: "line_item_price_updated",
     eventCategory: "financial",
     title: "Line Item Price Updated",
-    description: `Line item price updated: $${totalPrice} ÷ ${quantity} = $${unitPrice.toFixed(2)} per unit`,
+    description: `Line item price updated: $${totalPrice.toFixed(2)} ÷ ${quantity} = $${unitPrice.toFixed(2)} per unit`,
     metadata: {
       lineItemId,
       unitPrice: unitPrice.toFixed(2),
@@ -266,6 +276,14 @@ export async function batchCreatePriceCalculations(
     )
     .returning();
 
+  // Calculate total value with proper formatting
+  const totalValue = calculations.reduce((sum, c) => {
+    const price = typeof c.finalPrice === 'string'
+      ? parseFloat(c.finalPrice)
+      : c.finalPrice;
+    return sum + price;
+  }, 0);
+
   // Log batch event
   await createEvent({
     entityType: "quote",
@@ -277,12 +295,7 @@ export async function batchCreatePriceCalculations(
     metadata: {
       calculationIds: newCalculations.map((c) => c.id),
       itemCount: calculations.length,
-      totalValue: calculations.reduce((sum, c) => {
-        const price = typeof c.finalPrice === 'string'
-          ? parseFloat(c.finalPrice)
-          : c.finalPrice;
-        return sum + price;
-      }, 0),
+      totalValue: totalValue.toFixed(2),
     },
     userId,
     userEmail: undefined,

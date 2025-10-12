@@ -26,19 +26,23 @@ import {
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav } from "~/lib/featureFlags";
+import { shouldShowEventsInNav, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import {
   uploadFile,
   generateFileKey,
   deleteFile,
   getDownloadUrl,
 } from "~/lib/s3.server";
+import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import { Notes } from "~/components/shared/Notes";
+import OrderActionsDropdown from "~/components/orders/OrderActionsDropdown";
+import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
+import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import {
   getNotes,
   createNote,
@@ -54,13 +58,16 @@ import {
   type LineItemWithPart,
   type LineItemEventContext,
 } from "~/lib/lineItems";
-import { getPartsByCustomerId, hydratePartThumbnails } from "~/lib/parts";
+import { getPartsByCustomerId, hydratePartThumbnails, getPart } from "~/lib/parts";
+import { createEvent, getEventsForOrder } from "~/lib/events";
+import { db } from "~/lib/db";
+import { parts } from "~/lib/db/schema";
+import { eq } from "drizzle-orm";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem, Vendor } from "~/lib/db/schema";
-import { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { EventTimeline } from "~/components/EventTimeline";
-import { getEventsByEntity } from "~/lib/events";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -108,9 +115,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, events] = await Promise.all([
+  const [showEventsLink, pdfAutoDownload, events] = await Promise.all([
     shouldShowEventsInNav(),
-    getEventsByEntity("order", order.id.toString(), 10),
+    isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
+    getEventsForOrder(order.id, 10),
   ]);
 
   return withAuthHeaders(
@@ -126,6 +134,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       userDetails,
       appConfig,
       showEventsLink,
+      pdfAutoDownload,
       events,
     }),
     headers
@@ -530,6 +539,196 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/orders/${orderNumber}`);
       }
 
+      case "updatePartAttributes": {
+        const partId = formData.get("partId") as string;
+        const material = formData.get("material") as string;
+        const tolerance = formData.get("tolerance") as string;
+        const finishing = formData.get("finishing") as string;
+
+        if (!partId) {
+          return json({ error: "Part ID is required" }, { status: 400 });
+        }
+
+        // Get current part to compare values
+        const currentPart = await getPart(partId);
+        if (!currentPart) {
+          return json({ error: "Part not found" }, { status: 404 });
+        }
+
+        console.log("Part attribute update:", {
+          partId,
+          partName: currentPart.partName,
+          material: { old: currentPart.material, new: material },
+          tolerance: { old: currentPart.tolerance, new: tolerance },
+          finishing: { old: currentPart.finishing, new: finishing },
+        });
+
+        // Normalize values (treat empty string as null)
+        const normalizeMaterial = material?.trim() || null;
+        const normalizeTolerance = tolerance?.trim() || null;
+        const normalizeFinishing = finishing?.trim() || null;
+
+        // Update the part directly in the database (skip generic event from updatePart)
+        await db
+          .update(parts)
+          .set({
+            material: normalizeMaterial,
+            tolerance: normalizeTolerance,
+            finishing: normalizeFinishing,
+            updatedAt: new Date(),
+          })
+          .where(eq(parts.id, partId));
+
+        // Create specific events for each changed attribute
+        const eventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        // Material change event (compare normalized values)
+        if (normalizeMaterial !== currentPart.material) {
+          console.log("Creating material change event");
+          await createEvent({
+            entityType: "part",
+            entityId: partId,
+            eventType: "part_material_changed",
+            eventCategory: "manufacturing",
+            title: "Part Material Changed",
+            description: `${currentPart.partName || "Part"} changed to ${normalizeMaterial || "no material"}`,
+            metadata: {
+              partName: currentPart.partName,
+              orderId: order.id,
+              orderNumber: order.orderNumber,
+              oldValue: currentPart.material,
+              newValue: normalizeMaterial,
+              field: "material",
+            },
+            userId: eventContext.userId,
+            userEmail: eventContext.userEmail,
+          });
+        }
+
+        // Tolerance change event (compare normalized values)
+        if (normalizeTolerance !== currentPart.tolerance) {
+          console.log("Creating tolerance change event");
+          await createEvent({
+            entityType: "part",
+            entityId: partId,
+            eventType: "part_tolerance_changed",
+            eventCategory: "manufacturing",
+            title: "Part Tolerance Changed",
+            description: `${currentPart.partName || "Part"} changed to ${normalizeTolerance || "no tolerance"}`,
+            metadata: {
+              partName: currentPart.partName,
+              orderId: order.id,
+              orderNumber: order.orderNumber,
+              oldValue: currentPart.tolerance,
+              newValue: normalizeTolerance,
+              field: "tolerance",
+            },
+            userId: eventContext.userId,
+            userEmail: eventContext.userEmail,
+          });
+        }
+
+        // Finishing change event (compare normalized values)
+        if (normalizeFinishing !== currentPart.finishing) {
+          console.log("Creating finishing change event");
+          await createEvent({
+            entityType: "part",
+            entityId: partId,
+            eventType: "part_finishing_changed",
+            eventCategory: "manufacturing",
+            title: "Part Finishing Changed",
+            description: `${currentPart.partName || "Part"} changed to ${normalizeFinishing || "no finishing"}`,
+            metadata: {
+              partName: currentPart.partName,
+              orderId: order.id,
+              orderNumber: order.orderNumber,
+              oldValue: currentPart.finishing,
+              newValue: normalizeFinishing,
+              field: "finishing",
+            },
+            userId: eventContext.userId,
+            userEmail: eventContext.userEmail,
+          });
+        }
+
+        return json({ success: true });
+      }
+
+      case "updateVendor": {
+        const vendorId = formData.get("vendorId") as string | null;
+
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        // Update vendor (can be null to remove vendor)
+        await updateOrder(
+          order.id,
+          {
+            vendorId: vendorId ? parseInt(vendorId) : null,
+          },
+          orderEventContext
+        );
+
+        return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "generatePurchaseOrder": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "order",
+          entityId: order.id,
+          htmlContent,
+          filename: `PO-${order.orderNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="PO-${order.orderNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
+      }
+
+      case "generateInvoice": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "order",
+          entityId: order.id,
+          htmlContent,
+          filename: `Invoice-${order.orderNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="Invoice-${order.orderNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -552,6 +751,7 @@ export default function OrderDetails() {
     userDetails,
     appConfig,
     showEventsLink,
+    pdfAutoDownload,
     events,
   } = useLoaderData<typeof loader>();
   const [showNotice, setShowNotice] = useState(true);
@@ -578,6 +778,7 @@ export default function OrderDetails() {
     thumbnailUrl?: string;
   } | null>(null);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
+  const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
   const [editOrderModalOpen, setEditOrderModalOpen] = useState(false);
   const [editOrderForm, setEditOrderForm] = useState({
@@ -592,6 +793,16 @@ export default function OrderDetails() {
   const notesFetcher = useFetcher();
   const orderEditFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
+  const actionsButtonRef = useRef<HTMLButtonElement>(null);
+  const [isPOModalOpen, setIsPOModalOpen] = useState(false);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [editingAttributeField, setEditingAttributeField] = useState<{
+    partId: string;
+    field: 'material' | 'tolerance' | 'finishing';
+  } | null>(null);
+  const [editingAttributeValue, setEditingAttributeValue] = useState<string>("");
+  const [showPartAttributes, setShowPartAttributes] = useState(false);
 
   const handleFileUpload = () => {
     if (fileInputRef.current) {
@@ -738,6 +949,69 @@ export default function OrderDetails() {
     setEditingNoteValue("");
   };
 
+  const handleStartEditAttribute = (
+    partId: string,
+    field: 'material' | 'tolerance' | 'finishing',
+    currentValue: string | null
+  ) => {
+    setEditingAttributeField({ partId, field });
+    // For tolerance, add ± if empty
+    if (field === 'tolerance' && !currentValue) {
+      setEditingAttributeValue("±");
+    } else {
+      setEditingAttributeValue(currentValue || "");
+    }
+  };
+
+  const handleToleranceChange = (value: string) => {
+    // Remove ± symbol from the value for processing
+    const cleanValue = value.replace(/±/g, "");
+
+    // Check if the clean value contains any non-numeric characters (excluding decimal point, minus, and spaces)
+    const hasText = /[^0-9.\-\s]/.test(cleanValue);
+
+    if (hasText) {
+      // If it contains text, don't add the ± symbol
+      setEditingAttributeValue(cleanValue);
+    } else {
+      // If it's empty or only contains numbers/decimal/minus/spaces
+      if (cleanValue.trim() === "") {
+        // If empty, just show the ± symbol
+        setEditingAttributeValue("±");
+      } else {
+        // If it contains numbers, add ± at the beginning
+        setEditingAttributeValue("±" + cleanValue);
+      }
+    }
+  };
+
+  const handleSaveAttribute = (partId: string, field: 'material' | 'tolerance' | 'finishing') => {
+    const formData = new FormData();
+    formData.append("intent", "updatePartAttributes");
+    formData.append("partId", partId);
+    formData.append(field, editingAttributeValue);
+
+    // Preserve other fields
+    const part = lineItems.find((item: LineItemWithPart) => item.part?.id === partId)?.part;
+    if (part) {
+      if (field !== 'material') formData.append('material', part.material || '');
+      if (field !== 'tolerance') formData.append('tolerance', part.tolerance || '');
+      if (field !== 'finishing') formData.append('finishing', part.finishing || '');
+    }
+
+    notesFetcher.submit(formData, {
+      method: "post",
+    });
+
+    setEditingAttributeField(null);
+    setEditingAttributeValue("");
+  };
+
+  const handleCancelEditAttribute = () => {
+    setEditingAttributeField(null);
+    setEditingAttributeValue("");
+  };
+
   const handleView3DModel = (part: {
     id: string;
     partName: string | null;
@@ -800,6 +1074,30 @@ export default function OrderDetails() {
     formData.append("vendorId", selectedVendorId.toString());
     lineItemFetcher.submit(formData, { method: "post" });
     setAssignShopModalOpen(false);
+  };
+
+  const handleManageVendor = () => {
+    setSelectedVendorId(order.vendorId);
+    setManageVendorModalOpen(true);
+  };
+
+  const handleManageVendorSubmit = () => {
+    const formData = new FormData();
+    formData.append("intent", "updateVendor");
+    if (selectedVendorId) {
+      formData.append("vendorId", selectedVendorId.toString());
+    }
+    lineItemFetcher.submit(formData, { method: "post" });
+    setManageVendorModalOpen(false);
+  };
+
+  const handleRemoveVendor = () => {
+    if (confirm("Are you sure you want to remove the vendor from this order?")) {
+      const formData = new FormData();
+      formData.append("intent", "updateVendor");
+      lineItemFetcher.submit(formData, { method: "post" });
+      setManageVendorModalOpen(false);
+    }
   };
 
   const handleStartInspection = () => {
@@ -909,6 +1207,14 @@ export default function OrderDetails() {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [editOrderModalOpen, handleEditOrderSubmit]);
+
+  const handleGenerateInvoice = () => {
+    setIsInvoiceModalOpen(true);
+  };
+
+  const handleGeneratePO = () => {
+    setIsPOModalOpen(true);
+  };
 
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
@@ -1068,6 +1374,27 @@ export default function OrderDetails() {
             ]}
           />
           <div className="flex flex-wrap gap-3">
+            <div className="relative">
+              <Button
+                ref={actionsButtonRef}
+                onClick={() =>
+                  setIsActionsDropdownOpen(!isActionsDropdownOpen)
+                }
+                variant="secondary"
+              >
+                Actions
+              </Button>
+              <OrderActionsDropdown
+                isOpen={isActionsDropdownOpen}
+                onClose={() => setIsActionsDropdownOpen(false)}
+                excludeRef={actionsButtonRef}
+                onGenerateInvoice={handleGenerateInvoice}
+                onGeneratePO={handleGeneratePO}
+                onManageVendor={handleManageVendor}
+                hasVendor={!!order.vendorId}
+                hasCustomer={!!order.customerId}
+              />
+            </div>
             {order.status === "Pending" &&
               (order.vendorId ? (
                 <Button
@@ -1414,9 +1741,66 @@ export default function OrderDetails() {
               <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
                 Line Items
               </h3>
-              <Button size="sm" onClick={handleAddLineItem}>
-                Add Line Item
-              </Button>
+              <div className="flex items-center gap-3">
+                <style>{`
+                  .specs-icon path {
+                    transition: transform 0.3s ease-in-out;
+                  }
+
+                  .specs-icon.open .layer-top {
+                    transform: translateY(-2px);
+                  }
+
+                  .specs-icon.open .layer-middle {
+                    transform: translateY(0px);
+                  }
+
+                  .specs-icon.open .layer-bottom {
+                    transform: translateY(2px);
+                  }
+
+                  .specs-icon.closed .layer-top {
+                    transform: translateY(0);
+                  }
+
+                  .specs-icon.closed .layer-middle {
+                    transform: translateY(0);
+                  }
+
+                  .specs-icon.closed .layer-bottom {
+                    transform: translateY(0);
+                  }
+                `}</style>
+                <button
+                  onClick={() => setShowPartAttributes(!showPartAttributes)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    showPartAttributes
+                      ? "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+                      : "bg-white dark:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-500"
+                  }`}
+                  title={showPartAttributes ? "Hide part specifications" : "Show part specifications"}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    fill="currentColor"
+                    viewBox="0 0 16 16"
+                    className={`specs-icon ${showPartAttributes ? 'open' : 'closed'}`}
+                  >
+                    {/* Top layer */}
+                    <path className="layer-top" d="M8.235 1.559a.5.5 0 0 0-.47 0l-7.5 4a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882l-7.5-4zM8 9.433 1.562 6 8 2.567 14.438 6 8 9.433z" />
+                    {/* Middle layer */}
+                    <path className="layer-middle" d="M3.188 8 .264 9.559a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882L12.813 8l-4.578 2.441a.5.5 0 0 1-.47 0L3.188 8z" style={{ opacity: 0.7 }} />
+                    {/* Bottom layer */}
+                    <path className="layer-bottom" d="M11.75 8.567l3.688 1.966L8 13.433l-6.438-2.9L4.25 8.567l3.515 1.874a.5.5 0 0 0 .47 0l3.515-1.874z" style={{ opacity: 0.5 }} />
+                  </svg>
+                  Specs
+                </button>
+                <Button size="sm" onClick={handleAddLineItem}>
+                  Add Line Item
+                </Button>
+              </div>
             </div>
             <div className="p-6">
               {lineItems && lineItems.length > 0 ? (
@@ -1454,60 +1838,62 @@ export default function OrderDetails() {
                           parseFloat(lineItem?.unitPrice || "0");
                         const isEditingNote = editingNoteId === lineItem?.id;
                         return (
-                          <tr key={lineItem?.id}>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="flex items-center gap-3">
-                                {part ? (
-                                  part.thumbnailUrl ? (
-                                    <button
-                                      onClick={() => handleView3DModel(part)}
-                                      className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
-                                      title="Click to view 3D model"
-                                      type="button"
-                                    >
-                                      <img
-                                        src={part.thumbnailUrl}
-                                        alt={`${
-                                          part.partName || lineItem?.name || ""
-                                        } thumbnail`}
-                                        className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
-                                      />
-                                    </button>
-                                  ) : (
-                                    <button
-                                      onClick={() => handleView3DModel(part)}
-                                      className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0"
-                                      title="Click to view 3D model"
-                                      type="button"
-                                    >
-                                      <svg
-                                        className="h-5 w-5 text-gray-400 dark:text-gray-500"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        viewBox="0 0 24 24"
+                          <React.Fragment key={lineItem?.id}>
+                            {/* Main row */}
+                            <tr>
+                              <td className="px-6 py-4" rowSpan={showPartAttributes && part ? 2 : 1} style={showPartAttributes && part ? { height: '120px' } : undefined}>
+                                <div className="flex items-start gap-3 h-full">
+                                  {part ? (
+                                    part.thumbnailUrl ? (
+                                      <button
+                                        onClick={() => handleView3DModel(part)}
+                                        className={`${showPartAttributes ? 'h-20 w-20' : 'h-10 w-10'} p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all flex-shrink-0`}
+                                        title="Click to view 3D model"
+                                        type="button"
                                       >
-                                        <path
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                          strokeWidth={2}
-                                          d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                        <img
+                                          src={part.thumbnailUrl}
+                                          alt={`${
+                                            part.partName || lineItem?.name || ""
+                                          } thumbnail`}
+                                          className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                         />
-                                      </svg>
-                                    </button>
-                                  )
-                                ) : null}
-                                <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                    {lineItem?.name || "--"}
-                                  </span>
-                                  {part && (
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      Part: {part.partName}
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleView3DModel(part)}
+                                        className={`${showPartAttributes ? 'h-20 w-20' : 'h-10 w-10'} bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0`}
+                                        title="Click to view 3D model"
+                                        type="button"
+                                      >
+                                        <svg
+                                          className={`${showPartAttributes ? 'h-6 w-6' : 'h-5 w-5'} text-gray-400 dark:text-gray-500`}
+                                          fill="none"
+                                          stroke="currentColor"
+                                          viewBox="0 0 24 24"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                          />
+                                        </svg>
+                                      </button>
+                                    )
+                                  ) : null}
+                                  <div className="flex flex-col">
+                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                      {lineItem?.name || "--"}
                                     </span>
-                                  )}
+                                    {part && (
+                                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                                        Part: {part.partName}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            </td>
+                              </td>
                             <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                               {lineItem?.description || "--"}
                             </td>
@@ -1610,7 +1996,7 @@ export default function OrderDetails() {
                                 <button
                                   onClick={() => handleEditLineItem(item)}
                                   className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
-                                  title="Edit"
+                                  title="Edit Line Item"
                                 >
                                   <svg
                                     xmlns="http://www.w3.org/2000/svg"
@@ -1642,6 +2028,172 @@ export default function OrderDetails() {
                               </div>
                             </td>
                           </tr>
+
+                          {/* Attributes row - only shown when toggle is on */}
+                          {showPartAttributes && part && (
+                            <tr className="bg-white dark:bg-gray-800">
+                              <td colSpan={7} className="px-6 py-3 border-t border-gray-200 dark:border-gray-700">
+                                <div className="grid grid-cols-3 gap-6">
+                                  {/* Material */}
+                                  <div className="flex flex-col">
+                                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">Material</span>
+                                    {editingAttributeField?.partId === part.id && editingAttributeField?.field === 'material' ? (
+                                      <div className="flex items-center gap-2">
+                                        <input
+                                          type="text"
+                                          value={editingAttributeValue}
+                                          onChange={(e) => setEditingAttributeValue(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                              e.preventDefault();
+                                              handleSaveAttribute(part.id, 'material');
+                                            } else if (e.key === "Escape") {
+                                              handleCancelEditAttribute();
+                                            }
+                                          }}
+                                          className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                          placeholder="Material"
+                                        />
+                                        <button
+                                          onClick={() => handleSaveAttribute(part.id, 'material')}
+                                          className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                          title="Save"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                          </svg>
+                                        </button>
+                                        <button
+                                          onClick={handleCancelEditAttribute}
+                                          className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                          title="Cancel"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleStartEditAttribute(part.id, 'material', part.material)}
+                                        className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                        title="Click to edit"
+                                      >
+                                        <span className="text-sm text-gray-900 dark:text-gray-100">
+                                          {part.material || <span className="text-gray-400 dark:text-gray-500 italic">Click to add</span>}
+                                        </span>
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {/* Tolerance */}
+                                  <div className="flex flex-col">
+                                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">Tolerance</span>
+                                    {editingAttributeField?.partId === part.id && editingAttributeField?.field === 'tolerance' ? (
+                                      <div className="flex items-center gap-2">
+                                        <input
+                                          type="text"
+                                          value={editingAttributeValue}
+                                          onChange={(e) => handleToleranceChange(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                              e.preventDefault();
+                                              handleSaveAttribute(part.id, 'tolerance');
+                                            } else if (e.key === "Escape") {
+                                              handleCancelEditAttribute();
+                                            }
+                                          }}
+                                          className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                          placeholder="Tolerance"
+                                        />
+                                        <button
+                                          onClick={() => handleSaveAttribute(part.id, 'tolerance')}
+                                          className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                          title="Save"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                          </svg>
+                                        </button>
+                                        <button
+                                          onClick={handleCancelEditAttribute}
+                                          className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                          title="Cancel"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleStartEditAttribute(part.id, 'tolerance', part.tolerance)}
+                                        className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                        title="Click to edit"
+                                      >
+                                        <span className="text-sm text-gray-900 dark:text-gray-100">
+                                          {part.tolerance || <span className="text-gray-400 dark:text-gray-500 italic">Click to add</span>}
+                                        </span>
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {/* Finishing */}
+                                  <div className="flex flex-col">
+                                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">Finishing</span>
+                                    {editingAttributeField?.partId === part.id && editingAttributeField?.field === 'finishing' ? (
+                                      <div className="flex items-center gap-2">
+                                        <input
+                                          type="text"
+                                          value={editingAttributeValue}
+                                          onChange={(e) => setEditingAttributeValue(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                              e.preventDefault();
+                                              handleSaveAttribute(part.id, 'finishing');
+                                            } else if (e.key === "Escape") {
+                                              handleCancelEditAttribute();
+                                            }
+                                          }}
+                                          className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                          placeholder="Finishing"
+                                        />
+                                        <button
+                                          onClick={() => handleSaveAttribute(part.id, 'finishing')}
+                                          className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                          title="Save"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                          </svg>
+                                        </button>
+                                        <button
+                                          onClick={handleCancelEditAttribute}
+                                          className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                          title="Cancel"
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleStartEditAttribute(part.id, 'finishing', part.finishing)}
+                                        className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                        title="Click to edit"
+                                      >
+                                        <span className="text-sm text-gray-900 dark:text-gray-100">
+                                          {part.finishing || <span className="text-gray-400 dark:text-gray-500 italic">Click to add</span>}
+                                        </span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                         );
                       })}
                     </tbody>
@@ -1972,6 +2524,26 @@ export default function OrderDetails() {
         />
       )}
 
+      {/* Purchase Order PDF Modal */}
+      <GeneratePurchaseOrderPdfModal
+        isOpen={isPOModalOpen}
+        onClose={() => setIsPOModalOpen(false)}
+        order={order}
+        lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
+        parts={lineItems.map((item: LineItemWithPart) => item.part)}
+        autoDownload={pdfAutoDownload}
+      />
+
+      {/* Invoice PDF Modal */}
+      <GenerateInvoicePdfModal
+        isOpen={isInvoiceModalOpen}
+        onClose={() => setIsInvoiceModalOpen(false)}
+        entity={order}
+        lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
+        parts={lineItems.map((item: LineItemWithPart) => item.part)}
+        autoDownload={pdfAutoDownload}
+      />
+
       {/* Assign Shop Modal */}
       {assignShopModalOpen && (
         <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
@@ -2036,6 +2608,82 @@ export default function OrderDetails() {
                 >
                   Assign Shop
                 </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manage Vendor Modal */}
+      {manageVendorModalOpen && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Manage Vendor
+              </h2>
+              <button
+                onClick={() => setManageVendorModalOpen(false)}
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="vendor-manage-select"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  Select Vendor
+                </label>
+                <select
+                  id="vendor-manage-select"
+                  value={selectedVendorId || ""}
+                  onChange={(e) =>
+                    setSelectedVendorId(
+                      e.target.value ? parseInt(e.target.value) : null
+                    )
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                >
+                  <option value="">-- No vendor --</option>
+                  {vendors.map((v: Vendor) => (
+                    <option key={v.id} value={v.id}>
+                      {v.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-3 justify-between mt-6">
+                <div className="flex gap-3">
+                  {order.vendorId && (
+                    <Button
+                      variant="secondary"
+                      onClick={handleRemoveVendor}
+                      className="bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30"
+                    >
+                      Remove Vendor
+                    </Button>
+                  )}
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => setManageVendorModalOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={handleManageVendorSubmit}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Update Vendor
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

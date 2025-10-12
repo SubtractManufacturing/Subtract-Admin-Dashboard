@@ -11,6 +11,8 @@ export const FEATURE_FLAGS = {
   PRICE_CALCULATOR_DEV: "price_calculator_dev",
   PRICE_CALCULATOR_ALL: "price_calculator_all",
   PDF_AUTO_DOWNLOAD: "pdf_auto_download",
+  QUOTE_REJECTION_REASON_REQUIRED: "quote_rejection_reason_required",
+  S3_MIGRATION_ENABLED: "s3_migration_enabled",
 } as const;
 
 // Default feature flags with their metadata
@@ -56,6 +58,18 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     name: "Auto-Download Generated PDFs",
     description: "Automatically download PDFs to user's computer when generated (disable for development)",
     enabled: true,
+  },
+  {
+    key: FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED,
+    name: "Require Rejection Reason for Quotes",
+    description: "Make the rejection reason required when rejecting a quote (when disabled, reason is optional)",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.S3_MIGRATION_ENABLED,
+    name: "Enable S3 Storage Migration Tools",
+    description: "Allow developers to run S3 storage consolidation and cleanup operations (Dev only)",
+    enabled: false,
   },
 ];
 

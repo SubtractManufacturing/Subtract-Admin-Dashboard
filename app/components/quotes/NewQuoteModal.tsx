@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import { useFetcher } from "@remix-run/react";
 import Modal from "~/components/shared/Modal";
 import Button from "~/components/shared/Button";
-import { InputField, SelectField, TextareaField } from "~/components/shared/FormField";
+import { InputField, TextareaField } from "~/components/shared/FormField";
+import SearchableSelect from "~/components/shared/SearchableSelect";
 import type { Customer } from "~/lib/customers";
 
 interface PartConfig {
@@ -568,7 +569,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
 
   const renderCustomerStep = () => (
     <div className="flex flex-col h-full">
-      <div className="flex-1 space-y-4 overflow-y-auto px-6">
+      <div className="flex-1 space-y-4 overflow-y-auto px-6 min-h-[450px]">
       <div className="flex items-center space-x-4 mb-4">
         <label htmlFor="existing-customer" className="flex items-center">
           <input
@@ -593,22 +594,22 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       </div>
 
       {!createNewCustomer ? (
-        <SelectField
+        <SearchableSelect
           label="Customer"
           value={selectedCustomer?.id.toString() || ""}
-          onChange={(e) => {
-            const customer = customers.find(c => c.id.toString() === e.target.value);
+          onChange={(value) => {
+            const customer = customers.find(c => c.id.toString() === value);
             setSelectedCustomer(customer || null);
           }}
+          options={customers.map(customer => ({
+            value: customer.id.toString(),
+            label: customer.displayName,
+            secondaryLabel: customer.email || undefined
+          }))}
+          placeholder="Search for a customer..."
           required
-        >
-          <option value="">Select Customer</option>
-          {customers.map(customer => (
-            <option key={customer.id} value={customer.id}>
-              {customer.displayName} - {customer.email}
-            </option>
-          ))}
-        </SelectField>
+          emptyMessage="No customers found"
+        />
       ) : (
         <div className="space-y-4">
           <InputField

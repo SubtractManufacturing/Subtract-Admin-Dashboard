@@ -13,7 +13,7 @@ import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
-import { InputField, TextareaField } from "~/components/shared/FormField"
+import { InputField, TextareaField, PhoneInputField } from "~/components/shared/FormField"
 import { tableStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -52,18 +52,24 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     switch (intent) {
       case "create": {
+        const companyName = formData.get("companyName") as string || null
+        const contactName = formData.get("contactName") as string || null
+
+        // Auto-generate displayName: prefer companyName, fallback to contactName
+        const displayName = companyName || contactName || "Unnamed Vendor"
+
         const vendorData: VendorInput = {
-          displayName: formData.get("displayName") as string,
-          companyName: formData.get("companyName") as string || null,
-          contactName: formData.get("contactName") as string || null,
+          displayName,
+          companyName,
+          contactName,
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
           address: formData.get("address") as string || null,
           notes: formData.get("notes") as string || null,
           discordId: formData.get("discordId") as string || null,
         }
-        await createVendor(vendorData, eventContext)
-        break
+        const newVendor = await createVendor(vendorData, eventContext)
+        return redirect(`/vendors/${newVendor.id}`)
       }
       case "update": {
         const id = parseInt(formData.get("id") as string)
@@ -78,12 +84,12 @@ export async function action({ request }: ActionFunctionArgs) {
           discordId: formData.get("discordId") as string || null,
         }
         await updateVendor(id, vendorData, eventContext)
-        break
+        return redirect("/vendors")
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
         await archiveVendor(id, eventContext)
-        break
+        return redirect("/vendors")
       }
     }
     return redirect("/vendors")
@@ -98,6 +104,7 @@ export default function Vendors() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [vendorType, setVendorType] = useState<"business" | "individual">("business")
 
   const filteredVendors = vendors.filter((vendor: Vendor) =>
     vendor.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -113,6 +120,7 @@ export default function Vendors() {
 
   const handleAdd = () => {
     setEditingVendor(null)
+    setVendorType("business")
     setIsModalOpen(true)
   }
 
@@ -275,71 +283,151 @@ export default function Vendors() {
         title={editingVendor ? 'Quick Edit' : 'Add Vendor'}
       >
         <fetcher.Form method="post" onSubmit={handleCloseModal}>
-          <input 
-            type="hidden" 
-            name="intent" 
-            value={editingVendor ? "update" : "create"} 
+          <input
+            type="hidden"
+            name="intent"
+            value={editingVendor ? "update" : "create"}
           />
           {editingVendor && (
             <input type="hidden" name="id" value={editingVendor.id} />
           )}
-          
-          <div className="grid grid-cols-2 gap-4">
-            <InputField
-              label="Display Name"
-              name="displayName"
-              defaultValue={editingVendor?.displayName || ''}
-              required
-            />
-            
-            <InputField
-              label="Company Name"
-              name="companyName"
-              defaultValue={editingVendor?.companyName || ''}
-            />
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <InputField
-              label="Contact Name"
-              name="contactName"
-              defaultValue={editingVendor?.contactName || ''}
-            />
-            
-            <InputField
-              label="Email"
-              name="email"
-              type="email"
-              defaultValue={editingVendor?.email || ''}
-            />
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <InputField
-              label="Phone"
-              name="phone"
-              type="tel"
-              defaultValue={editingVendor?.phone || ''}
-            />
-            
-            <InputField
-              label="Discord ID"
-              name="discordId"
-              defaultValue={editingVendor?.discordId || ''}
-            />
-          </div>
-          
-          <TextareaField
-            label="Address"
-            name="address"
-            defaultValue={editingVendor?.address || ''}
-          />
-          
-          <TextareaField
-            label="Notes"
-            name="notes"
-            defaultValue={editingVendor?.notes || ''}
-          />
+
+          {/* Quick edit keeps the simple interface */}
+          {editingVendor ? (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <InputField
+                  label="Display Name"
+                  name="displayName"
+                  defaultValue={editingVendor.displayName}
+                  required
+                />
+
+                <InputField
+                  label="Company Name"
+                  name="companyName"
+                  defaultValue={editingVendor.companyName || ''}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <InputField
+                  label="Contact Name"
+                  name="contactName"
+                  defaultValue={editingVendor.contactName || ''}
+                />
+
+                <InputField
+                  label="Email"
+                  name="email"
+                  type="email"
+                  defaultValue={editingVendor.email || ''}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <PhoneInputField
+                  label="Phone"
+                  name="phone"
+                  defaultValue={editingVendor.phone || ''}
+                />
+
+                <InputField
+                  label="Discord ID"
+                  name="discordId"
+                  defaultValue={editingVendor.discordId || ''}
+                />
+              </div>
+
+              <TextareaField
+                label="Address"
+                name="address"
+                defaultValue={editingVendor.address || ''}
+              />
+
+              <TextareaField
+                label="Notes"
+                name="notes"
+                defaultValue={editingVendor.notes || ''}
+              />
+            </>
+          ) : (
+            <>
+              {/* Vendor type selector for new vendors */}
+              <div className="mb-4">
+                <div className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Vendor Type
+                </div>
+                <div className="flex gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="vendorType"
+                      value="business"
+                      checked={vendorType === "business"}
+                      onChange={() => setVendorType("business")}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Business</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="vendorType"
+                      value="individual"
+                      checked={vendorType === "individual"}
+                      onChange={() => setVendorType("individual")}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Individual</span>
+                  </label>
+                </div>
+              </div>
+
+              {vendorType === "business" ? (
+                <>
+                  <InputField
+                    label="Company Name"
+                    name="companyName"
+                    required
+                  />
+
+                  <InputField
+                    label="Contact Person (optional)"
+                    name="contactName"
+                  />
+                </>
+              ) : (
+                <>
+                  <InputField
+                    label="Vendor Name"
+                    name="contactName"
+                    required
+                  />
+                </>
+              )}
+
+              <InputField
+                label="Email"
+                name="email"
+                type="email"
+              />
+
+              <PhoneInputField
+                label="Phone"
+                name="phone"
+              />
+
+              <InputField
+                label="Discord ID"
+                name="discordId"
+              />
+
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                Additional details like addresses and payment terms can be added after creation.
+              </p>
+            </>
+          )}
 
           <div className="flex gap-3 justify-end mt-6">
             <Button type="button" variant="secondary" onClick={handleCloseModal}>

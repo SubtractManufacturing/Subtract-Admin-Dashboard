@@ -39,6 +39,7 @@ import {
   deleteFile,
   getDownloadUrl,
 } from "~/lib/s3.server";
+import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import {
   getNotes,
   createNote,
@@ -60,6 +61,7 @@ import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
+import Modal from "~/components/shared/Modal";
 import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
 import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
@@ -67,7 +69,9 @@ import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
+import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
+import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import {
@@ -239,10 +243,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, events] = await Promise.all([
+  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events] = await Promise.all([
     shouldShowEventsInNav(),
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
+    isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
   ]);
 
@@ -270,6 +275,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       showEventsLink,
       canAccessPriceCalculator,
       pdfAutoDownload,
+      rejectionReasonRequired,
       events,
       convertedOrder,
     }),
@@ -632,6 +638,59 @@ export async function action({ request, params }: ActionFunctionArgs) {
           | "Expired";
         const rejectionReason = formData.get("rejectionReason") as string;
 
+        // If status is Accepted, validate and convert to order BEFORE updating status
+        if (status === "Accepted") {
+          // Validate quote before conversion
+          const validationErrors = [];
+
+          // Check quote has valid pricing
+          const quoteTotal = parseFloat(quote.total || '0');
+          if (quoteTotal <= 0) {
+            validationErrors.push("Quote must have a valid total greater than $0. Please add pricing to line items.");
+          }
+
+          // Check quote has line items
+          if (!quote.lineItems || quote.lineItems.length === 0) {
+            validationErrors.push("Quote must have at least one line item.");
+          }
+
+          // Check for pending mesh conversions
+          if (quote.parts && quote.parts.length > 0) {
+            const pendingConversions = quote.parts.filter(
+              part => part.conversionStatus === 'in_progress' ||
+              part.conversionStatus === 'queued' ||
+              (part.conversionStatus === 'pending' && part.partFileUrl)
+            );
+            if (pendingConversions.length > 0) {
+              validationErrors.push(`Cannot accept quote while ${pendingConversions.length} part(s) have pending mesh conversions.`);
+            }
+          }
+
+          // If validation fails, return errors without changing status
+          if (validationErrors.length > 0) {
+            return json(
+              {
+                error: "Cannot accept quote",
+                validationErrors
+              },
+              { status: 400 }
+            );
+          }
+
+          // Attempt conversion
+          const result = await convertQuoteToOrder(quote.id, eventContext);
+          if (result.success && result.orderNumber) {
+            // Conversion succeeded, redirect to order
+            return redirect(`/orders/${result.orderNumber}`);
+          }
+          // Conversion failed, return error without changing status
+          return json(
+            { error: result.error || "Failed to convert quote to order" },
+            { status: 400 }
+          );
+        }
+
+        // For all other status changes, update normally
         await updateQuote(
           quote.id,
           {
@@ -640,18 +699,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
           },
           eventContext
         );
-
-        // If status is Accepted, automatically convert to order
-        if (status === "Accepted") {
-          const result = await convertQuoteToOrder(quote.id, eventContext);
-          if (result.success && result.orderNumber) {
-            return redirect(`/orders/${result.orderNumber}`);
-          }
-          return json(
-            { error: result.error || "Failed to convert quote to order" },
-            { status: 400 }
-          );
-        }
 
         return redirect(`/quotes/${quoteId}`);
       }
@@ -1173,6 +1220,58 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "generateQuote": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "quote",
+          entityId: quote.id,
+          htmlContent,
+          filename: `Quote-${quote.quoteNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="Quote-${quote.quoteNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
+      }
+
+      case "generateInvoice": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        const { pdfBuffer } = await generateDocumentPdf({
+          entityType: "quote",
+          entityId: quote.id,
+          htmlContent,
+          filename: `Invoice-${quote.quoteNumber}.pdf`,
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        });
+
+        return new Response(pdfBuffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="Invoice-${quote.quoteNumber}.pdf"`,
+            "Content-Length": pdfBuffer.length.toString(),
+          },
+        });
+      }
+
       default:
         return json({ error: "Invalid action" }, { status: 400 });
     }
@@ -1198,6 +1297,7 @@ export default function QuoteDetail() {
     showEventsLink,
     canAccessPriceCalculator,
     pdfAutoDownload,
+    rejectionReasonRequired,
     events,
     convertedOrder,
   } = useLoaderData<typeof loader>();
@@ -1216,6 +1316,8 @@ export default function QuoteDetail() {
   const [pollCount, setPollCount] = useState(0);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
   // Define the line item type
@@ -1260,6 +1362,15 @@ export default function QuoteDetail() {
   const calculatorFetcher = useFetcher();
   const [isDownloading, setIsDownloading] = useState(false);
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [part3DModalOpen, setPart3DModalOpen] = useState(false);
+  const [selectedPart3D, setSelectedPart3D] = useState<{
+    partId: string;
+    partName: string;
+    modelUrl?: string;
+    solidModelUrl?: string;
+    thumbnailUrl?: string;
+  } | null>(null);
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1372,6 +1483,25 @@ export default function QuoteDetail() {
     }
   };
 
+  const handleView3DModel = (part: {
+    id: string;
+    partName: string;
+    signedMeshUrl?: string;
+    signedFileUrl?: string;
+    signedThumbnailUrl?: string;
+  }) => {
+    if (part.signedMeshUrl) {
+      setSelectedPart3D({
+        partId: part.id,
+        partName: part.partName,
+        modelUrl: part.signedMeshUrl,
+        solidModelUrl: part.signedFileUrl,
+        thumbnailUrl: part.signedThumbnailUrl,
+      });
+      setPart3DModalOpen(true);
+    }
+  };
+
   const handleReviseQuote = () => {
     if (
       confirm(
@@ -1416,6 +1546,33 @@ export default function QuoteDetail() {
     }
   };
 
+  const handleRejectQuote = () => {
+    setIsRejectModalOpen(true);
+  };
+
+  const handleRejectQuoteConfirm = () => {
+    if (rejectionReasonRequired && !rejectionReason.trim()) {
+      alert("Rejection reason is required.");
+      return;
+    }
+
+    fetcher.submit(
+      {
+        intent: "updateStatus",
+        status: "Rejected",
+        rejectionReason: rejectionReason.trim(),
+      },
+      { method: "post" }
+    );
+    setIsRejectModalOpen(false);
+    setRejectionReason("");
+  };
+
+  const handleRejectModalClose = () => {
+    setIsRejectModalOpen(false);
+    setRejectionReason("");
+  };
+
   const handleAddLineItem = () => {
     setIsAddLineItemModalOpen(true);
   };
@@ -1436,6 +1593,10 @@ export default function QuoteDetail() {
 
   const handleGeneratePdf = () => {
     setIsGeneratePdfModalOpen(true);
+  };
+
+  const handleGenerateInvoice = () => {
+    setIsInvoiceModalOpen(true);
   };
 
   const handleOpenCalculatorForPart = (partId: string) => {
@@ -1753,7 +1914,9 @@ export default function QuoteDetail() {
                     onCalculatePricing={canAccessPriceCalculator ? handleOpenCalculator : undefined}
                     onDownloadFiles={handleDownloadFiles}
                     onGeneratePdf={handleGeneratePdf}
+                    onGenerateInvoice={handleGenerateInvoice}
                     isDownloading={isDownloading}
+                    hasCustomer={!!quote.customerId}
                   />
                 </div>
                 {(quote.status === "RFQ" || quote.status === "Draft") && (
@@ -1762,9 +1925,14 @@ export default function QuoteDetail() {
                   </Button>
                 )}
                 {quote.status === "Sent" && !quote.convertedToOrderId && (
-                  <Button onClick={handleMarkAsAccepted} variant="primary">
-                    Mark as Accepted
-                  </Button>
+                  <>
+                    <Button onClick={handleMarkAsAccepted} variant="primary">
+                      Mark as Accepted
+                    </Button>
+                    <Button onClick={handleRejectQuote} variant="danger">
+                      Reject Quote
+                    </Button>
+                  </>
                 )}
               </>
             )}
@@ -1773,6 +1941,39 @@ export default function QuoteDetail() {
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
+          {/* Error Banner */}
+          {fetcher.data && typeof fetcher.data === 'object' && 'error' in fetcher.data && fetcher.data.error && (
+            <div className="relative bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-700 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <svg
+                  className="w-6 h-6 flex-shrink-0 text-red-600 dark:text-red-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <div className="flex-1">
+                  <p className="font-semibold text-red-800 dark:text-red-200">
+                    {(fetcher.data as { error: string }).error}
+                  </p>
+                  {'validationErrors' in fetcher.data && Array.isArray(fetcher.data.validationErrors) && fetcher.data.validationErrors.length > 0 && (
+                    <ul className="mt-2 text-sm text-red-700 dark:text-red-300 list-disc list-inside space-y-1">
+                      {(fetcher.data.validationErrors as string[]).map((error: string, index: number) => (
+                        <li key={index}>{error}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Archived Quote Banner */}
           {quote.isArchived && (
             <div className="relative bg-gray-900 dark:bg-gray-950 border-2 border-gray-700 dark:border-gray-800 rounded-lg p-4">
@@ -2543,11 +2744,18 @@ export default function QuoteDetail() {
                               {part && (
                                 <>
                                   {part.signedThumbnailUrl ? (
-                                    <img
-                                      src={part.signedThumbnailUrl}
-                                      alt={part.partName}
-                                      className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0"
-                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleView3DModel(part as { id: string; partName: string; signedMeshUrl?: string; signedFileUrl?: string; signedThumbnailUrl?: string })}
+                                      className="p-0 border-0 bg-transparent cursor-pointer"
+                                      title="Click to view 3D model"
+                                    >
+                                      <img
+                                        src={part.signedThumbnailUrl}
+                                        alt={part.partName}
+                                        className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0 hover:opacity-80 transition-opacity"
+                                      />
+                                    </button>
                                   ) : (
                                     <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
                                       {isProcessing ? (
@@ -3080,6 +3288,26 @@ export default function QuoteDetail() {
         />
       )}
 
+      {/* 3D Viewer Modal */}
+      {selectedPart3D && (
+        <Part3DViewerModal
+          isOpen={part3DModalOpen}
+          onClose={() => {
+            setPart3DModalOpen(false);
+            setSelectedPart3D(null);
+          }}
+          partName={selectedPart3D.partName}
+          modelUrl={selectedPart3D.modelUrl}
+          solidModelUrl={selectedPart3D.solidModelUrl}
+          partId={selectedPart3D.partId}
+          onThumbnailUpdate={() => {
+            revalidator.revalidate();
+          }}
+          autoGenerateThumbnail={true}
+          existingThumbnailUrl={selectedPart3D.thumbnailUrl}
+        />
+      )}
+
       {/* Hidden Thumbnail Generators for parts without thumbnails */}
       {quote.parts?.map(
         (part: {
@@ -3136,6 +3364,63 @@ export default function QuoteDetail() {
         quote={quote}
         autoDownload={pdfAutoDownload}
       />
+
+      <GenerateInvoicePdfModal
+        isOpen={isInvoiceModalOpen}
+        onClose={() => setIsInvoiceModalOpen(false)}
+        entity={quote}
+        lineItems={quote.lineItems || []}
+        parts={quote.parts || []}
+        autoDownload={pdfAutoDownload}
+      />
+
+      <Modal
+        isOpen={isRejectModalOpen}
+        onClose={handleRejectModalClose}
+        title="Reject Quote"
+        size="md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            Are you sure you want to reject this quote?
+            {rejectionReasonRequired && (
+              <span className="font-medium"> A rejection reason is required.</span>
+            )}
+          </p>
+          <div>
+            <label
+              htmlFor="rejectionReason"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+            >
+              Rejection Reason {rejectionReasonRequired && <span className="text-red-500">*</span>}
+              {!rejectionReasonRequired && <span className="text-gray-500 font-normal">(Optional)</span>}
+            </label>
+            <textarea
+              id="rejectionReason"
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+              rows={4}
+              placeholder="Enter the reason for rejecting this quote..."
+              required={rejectionReasonRequired}
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-4">
+            <Button
+              onClick={handleRejectModalClose}
+              variant="secondary"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRejectQuoteConfirm}
+              variant="danger"
+            >
+              Reject Quote
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

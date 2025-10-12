@@ -13,7 +13,7 @@ import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
-import { InputField } from "~/components/shared/FormField"
+import { InputField, PhoneInputField } from "~/components/shared/FormField"
 import { tableStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -51,13 +51,21 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     switch (intent) {
       case "create": {
+        const companyName = formData.get("companyName") as string || null
+        const contactName = formData.get("contactName") as string || null
+
+        // Auto-generate displayName: prefer companyName, fallback to contactName
+        const displayName = companyName || contactName || "Unnamed Customer"
+
         const customerData: CustomerInput = {
-          displayName: formData.get("displayName") as string,
+          displayName,
+          companyName,
+          contactName,
           email: formData.get("email") as string || null,
           phone: formData.get("phone") as string || null,
         }
-        await createCustomer(customerData, eventContext)
-        break
+        const newCustomer = await createCustomer(customerData, eventContext)
+        return redirect(`/customers/${newCustomer.id}`)
       }
       case "update": {
         const id = parseInt(formData.get("id") as string)
@@ -67,12 +75,12 @@ export async function action({ request }: ActionFunctionArgs) {
           phone: formData.get("phone") as string || null,
         }
         await updateCustomer(id, customerData, eventContext)
-        break
+        return redirect("/customers")
       }
       case "delete": {
         const id = parseInt(formData.get("id") as string)
         await archiveCustomer(id, eventContext)
-        break
+        return redirect("/customers")
       }
     }
     return redirect("/customers")
@@ -87,6 +95,7 @@ export default function Customers() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [customerType, setCustomerType] = useState<"business" | "individual">("business")
 
   const filteredCustomers = customers.filter((customer: Customer) =>
     customer.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -101,6 +110,7 @@ export default function Customers() {
 
   const handleAdd = () => {
     setEditingCustomer(null)
+    setCustomerType("business")
     setIsModalOpen(true)
   }
 
@@ -249,35 +259,110 @@ export default function Customers() {
         title={editingCustomer ? 'Quick Edit' : 'Add Customer'}
       >
         <fetcher.Form method="post" onSubmit={handleCloseModal}>
-          <input 
-            type="hidden" 
-            name="intent" 
-            value={editingCustomer ? "update" : "create"} 
+          <input
+            type="hidden"
+            name="intent"
+            value={editingCustomer ? "update" : "create"}
           />
           {editingCustomer && (
             <input type="hidden" name="id" value={editingCustomer.id} />
           )}
-          
-          <InputField
-            label="Name"
-            name="displayName"
-            defaultValue={editingCustomer?.displayName || ''}
-            required
-          />
-          
-          <InputField
-            label="Email"
-            name="email"
-            type="email"
-            defaultValue={editingCustomer?.email || ''}
-          />
-          
-          <InputField
-            label="Phone"
-            name="phone"
-            type="tel"
-            defaultValue={editingCustomer?.phone || ''}
-          />
+
+          {/* Quick edit keeps the simple interface */}
+          {editingCustomer ? (
+            <>
+              <InputField
+                label="Name"
+                name="displayName"
+                defaultValue={editingCustomer.displayName}
+                required
+              />
+
+              <InputField
+                label="Email"
+                name="email"
+                type="email"
+                defaultValue={editingCustomer.email || ''}
+              />
+
+              <PhoneInputField
+                label="Phone"
+                name="phone"
+                defaultValue={editingCustomer.phone || ''}
+              />
+            </>
+          ) : (
+            <>
+              {/* Customer type selector for new customers */}
+              <div className="mb-4">
+                <div className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Customer Type
+                </div>
+                <div className="flex gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="customerType"
+                      value="business"
+                      checked={customerType === "business"}
+                      onChange={() => setCustomerType("business")}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Business</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="customerType"
+                      value="individual"
+                      checked={customerType === "individual"}
+                      onChange={() => setCustomerType("individual")}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Individual</span>
+                  </label>
+                </div>
+              </div>
+
+              {customerType === "business" ? (
+                <>
+                  <InputField
+                    label="Company Name"
+                    name="companyName"
+                    required
+                  />
+
+                  <InputField
+                    label="Contact Person (optional)"
+                    name="contactName"
+                  />
+                </>
+              ) : (
+                <>
+                  <InputField
+                    label="Customer Name"
+                    name="contactName"
+                    required
+                  />
+                </>
+              )}
+
+              <InputField
+                label="Email"
+                name="email"
+                type="email"
+              />
+
+              <PhoneInputField
+                label="Phone"
+                name="phone"
+              />
+
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                Additional details like addresses and payment terms can be added after creation.
+              </p>
+            </>
+          )}
 
           <div className="flex gap-3 justify-end mt-6">
             <Button type="button" variant="secondary" onClick={handleCloseModal}>

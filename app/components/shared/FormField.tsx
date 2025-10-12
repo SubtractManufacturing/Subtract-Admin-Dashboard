@@ -1,5 +1,7 @@
 import type { InputHTMLAttributes, TextareaHTMLAttributes, SelectHTMLAttributes, ReactNode } from "react"
+import { useState } from "react"
 import { formStyles } from "~/utils/tw-styles"
+import { formatPhoneNumber } from "~/lib/phone-utils"
 
 interface BaseFieldProps {
   label: string
@@ -62,6 +64,40 @@ export function SelectField({ label, error, required, className = '', children, 
       >
         {children}
       </select>
+      {error && <div className={formStyles.error}>{error}</div>}
+    </div>
+  )
+}
+
+interface PhoneInputFieldProps extends Omit<BaseFieldProps, 'type'>, Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {}
+
+export function PhoneInputField({ label, error, required, className = '', defaultValue, ...props }: PhoneInputFieldProps) {
+  const [displayValue, setDisplayValue] = useState(() => {
+    if (defaultValue && typeof defaultValue === 'string') {
+      return formatPhoneNumber(defaultValue);
+    }
+    return '';
+  });
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatPhoneNumber(e.target.value);
+    setDisplayValue(formatted);
+  };
+
+  return (
+    <div className="mb-4">
+      <label className={formStyles.label}>
+        {label}
+        {required && <span className="text-red-600 dark:text-red-400"> *</span>}
+      </label>
+      <input
+        type="tel"
+        className={`${formStyles.input} ${error ? 'border-red-500 dark:border-red-500 focus:ring-red-500 focus:border-red-500' : ''} ${className}`}
+        value={displayValue}
+        onChange={handleChange}
+        placeholder="+1 (555) 123-4567"
+        {...props}
+      />
       {error && <div className={formStyles.error}>{error}</div>}
     </div>
   )

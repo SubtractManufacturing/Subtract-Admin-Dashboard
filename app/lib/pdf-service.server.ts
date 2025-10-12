@@ -1,6 +1,7 @@
 import { generatePdf } from "./pdf-generator.server";
 import { uploadFile, generateFileKey } from "./s3.server";
 import { createAttachment, type AttachmentEventContext } from "./attachments";
+import { createEvent } from "./events";
 import { db } from "./db";
 import {
   quoteAttachments,
@@ -64,10 +65,11 @@ export async function generateDocumentPdf(
     fileName: filename,
   });
 
-  // Create attachment record
+  // Create attachment record (skip event logging since we'll log the PDF generation event instead)
   const eventContext: AttachmentEventContext = {
     userId,
     userEmail,
+    skipEventLogging: true,  // Skip attachment event for automated PDF generation
   };
 
   const attachment = await createAttachment(
@@ -83,6 +85,23 @@ export async function generateDocumentPdf(
 
   // Link attachment to entity
   await linkAttachmentToEntity(entityType, entityId, attachment.id);
+
+  // Log PDF generation event on the entity
+  await createEvent({
+    entityType,
+    entityId: entityId.toString(),
+    eventType: "pdf_generated",
+    eventCategory: "document",
+    title: "PDF Generated",
+    description: `Generated PDF document: ${filename}`,
+    metadata: {
+      fileName: filename,
+      attachmentId: attachment.id,
+      fileSize: pdfBuffer.length,
+    },
+    userId,
+    userEmail,
+  });
 
   return {
     pdfBuffer,

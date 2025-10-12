@@ -12,7 +12,14 @@ import {
   updateFeatureFlag,
   initializeFeatureFlags,
   shouldShowEventsInNav,
+  isFeatureEnabled,
+  FEATURE_FLAGS,
 } from "~/lib/featureFlags";
+import {
+  consolidateQuoteFiles,
+  cleanupDeprecatedQuotesFolder,
+  getMigrationStatus,
+} from "~/lib/s3-migration.server";
 import type { FeatureFlag } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -35,6 +42,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Get events nav visibility
   const showEventsLink = await shouldShowEventsInNav();
 
+  // Get S3 migration status for Dev users
+  const s3MigrationEnabled =
+    userDetails.role === "Dev"
+      ? await isFeatureEnabled(FEATURE_FLAGS.S3_MIGRATION_ENABLED)
+      : false;
+  const s3MigrationStatus =
+    s3MigrationEnabled && userDetails.role === "Dev"
+      ? await getMigrationStatus()
+      : null;
+
   return withAuthHeaders(
     json({
       user,
@@ -43,6 +60,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       appConfig,
       featureFlags,
       showEventsLink,
+      s3MigrationEnabled,
+      s3MigrationStatus,
     }),
     headers
   );
@@ -196,6 +215,91 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  // S3 Migration actions (Dev only)
+  if (intent === "s3ConsolidateMigration" && userDetails.role === "Dev") {
+    try {
+      const migrationEnabled = await isFeatureEnabled(
+        FEATURE_FLAGS.S3_MIGRATION_ENABLED
+      );
+      if (!migrationEnabled) {
+        return withAuthHeaders(
+          json(
+            { error: "S3 migration is not enabled. Enable the feature flag first." },
+            { status: 403 }
+          ),
+          headers
+        );
+      }
+
+      const result = await consolidateQuoteFiles();
+
+      return withAuthHeaders(
+        json({
+          success: result.success,
+          message: result.success
+            ? `Migration completed! Moved ${result.filesMoved} files, skipped ${result.filesSkipped}`
+            : "Migration failed. Check details for errors.",
+          result,
+        }),
+        headers
+      );
+    } catch (error) {
+      return withAuthHeaders(
+        json(
+          {
+            error: `Migration failed: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`,
+          },
+          { status: 500 }
+        ),
+        headers
+      );
+    }
+  }
+
+  if (intent === "s3CleanupMigration" && userDetails.role === "Dev") {
+    try {
+      const migrationEnabled = await isFeatureEnabled(
+        FEATURE_FLAGS.S3_MIGRATION_ENABLED
+      );
+      if (!migrationEnabled) {
+        return withAuthHeaders(
+          json(
+            { error: "S3 migration is not enabled. Enable the feature flag first." },
+            { status: 403 }
+          ),
+          headers
+        );
+      }
+
+      const result = await cleanupDeprecatedQuotesFolder();
+
+      return withAuthHeaders(
+        json({
+          success: result.success,
+          message: result.success
+            ? `Cleanup completed! Deleted ${result.filesMoved} files`
+            : "Cleanup failed. Check details for errors.",
+          result,
+        }),
+        headers
+      );
+    } catch (error) {
+      return withAuthHeaders(
+        json(
+          {
+            error: `Cleanup failed: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`,
+          },
+          { status: 500 }
+        ),
+        headers
+      );
+    }
+  }
+
   return withAuthHeaders(
     json({ error: "Invalid intent" }, { status: 400 }),
     headers
@@ -265,11 +369,15 @@ export default function Settings() {
     appConfig,
     featureFlags: initialFeatureFlags,
     showEventsLink,
+    s3MigrationEnabled,
+    s3MigrationStatus,
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
   const passwordResetFetcher = useFetcher<typeof action>();
   const featureFlagsFetcher = useFetcher<typeof action>();
+  const s3ConsolidateFetcher = useFetcher<typeof action>();
+  const s3CleanupFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
 
   // Local state for feature flags
@@ -599,6 +707,35 @@ export default function Settings() {
                         </Button>
                       </div>
                     </div>
+
+                    <div>
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
+                        Feature Flags
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Control application features and behavior for all users.
+                      </p>
+                      <div>
+                        {localFeatureFlags
+                          ?.filter((flag: FeatureFlag) =>
+                            flag.key === 'events_access_all' ||
+                            flag.key === 'events_nav_visible' ||
+                            flag.key === 'pdf_auto_download' ||
+                            flag.key === 'quote_rejection_reason_required'
+                          )
+                          .sort((a: FeatureFlag, b: FeatureFlag) =>
+                            a.key.localeCompare(b.key)
+                          )
+                          .map((flag: FeatureFlag) => (
+                            <FeatureFlagItem
+                              key={flag.id}
+                              flag={flag}
+                              onToggle={handleFeatureFlagToggle}
+                              disabled={isSaving}
+                            />
+                          ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -617,14 +754,21 @@ export default function Settings() {
                 <div className="space-y-6">
                   <div>
                     <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
-                      Feature Flags
+                      Developer Feature Flags
                     </h4>
                     <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                      Control feature availability and access for all users.
+                      Advanced features and experimental functionality for developers.
                     </p>
                     <div>
                       {localFeatureFlags
-                        ?.sort((a: FeatureFlag, b: FeatureFlag) =>
+                        ?.filter((flag: FeatureFlag) =>
+                          flag.key === 'mesh_uploads_dev' ||
+                          flag.key === 'mesh_uploads_all' ||
+                          flag.key === 'price_calculator_dev' ||
+                          flag.key === 'price_calculator_all' ||
+                          flag.key === 's3_migration_enabled'
+                        )
+                        .sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key)
                         )
                         .map((flag: FeatureFlag) => (
@@ -637,6 +781,202 @@ export default function Settings() {
                         ))}
                     </div>
                   </div>
+
+                  {s3MigrationEnabled && (
+                    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+                        <span>⚠️</span>
+                        S3 Storage Migration Tools
+                      </h4>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
+                        Consolidate S3 storage from old &quot;quotes/&quot; structure to organized &quot;quote-parts/&quot; structure.
+                      </p>
+
+                      {s3MigrationStatus && (
+                        <div className="bg-white dark:bg-gray-800 rounded p-3 mb-4 text-sm space-y-2">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600 dark:text-gray-400">
+                              Deprecated files in quotes/:
+                            </span>
+                            <span className="font-medium text-gray-900 dark:text-white">
+                              {s3MigrationStatus.deprecatedFilesCount} files
+                              ({(s3MigrationStatus.deprecatedFilesSize / 1024 / 1024).toFixed(2)} MB)
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600 dark:text-gray-400">
+                              Parts with old paths:
+                            </span>
+                            <span className="font-medium text-gray-900 dark:text-white">
+                              {s3MigrationStatus.quotesPartsWithOldPaths} parts
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-3">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">
+                              1. Consolidate Files
+                            </p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                              Move files from quotes/ to quote-parts/[id]/source/ and update database
+                            </p>
+                            <s3ConsolidateFetcher.Form method="post">
+                              <input type="hidden" name="intent" value="s3ConsolidateMigration" />
+                              <Button
+                                type="submit"
+                                variant="secondary"
+                                size="sm"
+                                disabled={s3ConsolidateFetcher.state === "submitting"}
+                              >
+                                {s3ConsolidateFetcher.state === "submitting"
+                                  ? "Migrating..."
+                                  : "Run Consolidation"}
+                              </Button>
+                            </s3ConsolidateFetcher.Form>
+                          </div>
+                        </div>
+
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">
+                              2. Clean Up Orphaned Files
+                            </p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                              Delete any remaining orphaned files in the quotes/ folder (consolidation already deletes referenced files)
+                            </p>
+                            <s3CleanupFetcher.Form method="post">
+                              <input type="hidden" name="intent" value="s3CleanupMigration" />
+                              <Button
+                                type="submit"
+                                variant="danger"
+                                size="sm"
+                                disabled={
+                                  s3CleanupFetcher.state === "submitting" ||
+                                  (s3MigrationStatus?.quotesPartsWithOldPaths ?? 0) > 0
+                                }
+                              >
+                                {s3CleanupFetcher.state === "submitting"
+                                  ? "Deleting..."
+                                  : "Delete Old Folder"}
+                              </Button>
+                            </s3CleanupFetcher.Form>
+                            {(s3MigrationStatus?.quotesPartsWithOldPaths ?? 0) > 0 && (
+                              <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                                Run consolidation first before deleting
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {s3ConsolidateFetcher.data && "success" in s3ConsolidateFetcher.data && (
+                        <div className={`mt-4 p-3 rounded ${
+                          s3ConsolidateFetcher.data.success
+                            ? "bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700"
+                            : "bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700"
+                        }`}>
+                          <p className={`text-sm font-medium ${
+                            s3ConsolidateFetcher.data.success
+                              ? "text-green-800 dark:text-green-200"
+                              : "text-red-800 dark:text-red-200"
+                          }`}>
+                            {s3ConsolidateFetcher.data.message}
+                          </p>
+                          {s3ConsolidateFetcher.data.result && s3ConsolidateFetcher.data.result.details && (
+                            <details className="mt-2">
+                              <summary className="text-xs cursor-pointer text-gray-600 dark:text-gray-400">
+                                View details
+                              </summary>
+                              <div className="mt-2 text-xs space-y-1 max-h-40 overflow-y-auto">
+                                {s3ConsolidateFetcher.data.result.details.map((detail: string, i: number) => (
+                                  <div key={i} className="font-mono text-gray-700 dark:text-gray-300">
+                                    {detail}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                          {s3ConsolidateFetcher.data.result && s3ConsolidateFetcher.data.result.errors.length > 0 && (
+                            <details className="mt-2">
+                              <summary className="text-xs cursor-pointer text-red-700 dark:text-red-300">
+                                View errors ({s3ConsolidateFetcher.data.result.errors.length})
+                              </summary>
+                              <div className="mt-2 text-xs space-y-1 max-h-40 overflow-y-auto">
+                                {s3ConsolidateFetcher.data.result.errors.map((error: string, i: number) => (
+                                  <div key={i} className="font-mono text-red-700 dark:text-red-300">
+                                    {error}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      )}
+
+                      {s3ConsolidateFetcher.data && "error" in s3ConsolidateFetcher.data && (
+                        <div className="mt-4 p-3 rounded bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700">
+                          <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                            {s3ConsolidateFetcher.data.error}
+                          </p>
+                        </div>
+                      )}
+
+                      {s3CleanupFetcher.data && "success" in s3CleanupFetcher.data && (
+                        <div className={`mt-4 p-3 rounded ${
+                          s3CleanupFetcher.data.success
+                            ? "bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700"
+                            : "bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700"
+                        }`}>
+                          <p className={`text-sm font-medium ${
+                            s3CleanupFetcher.data.success
+                              ? "text-green-800 dark:text-green-200"
+                              : "text-red-800 dark:text-red-200"
+                          }`}>
+                            {s3CleanupFetcher.data.message}
+                          </p>
+                          {s3CleanupFetcher.data.result && s3CleanupFetcher.data.result.details && (
+                            <details className="mt-2">
+                              <summary className="text-xs cursor-pointer text-gray-600 dark:text-gray-400">
+                                View details
+                              </summary>
+                              <div className="mt-2 text-xs space-y-1 max-h-40 overflow-y-auto">
+                                {s3CleanupFetcher.data.result.details.map((detail: string, i: number) => (
+                                  <div key={i} className="font-mono text-gray-700 dark:text-gray-300">
+                                    {detail}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                          {s3CleanupFetcher.data.result && s3CleanupFetcher.data.result.errors.length > 0 && (
+                            <details className="mt-2">
+                              <summary className="text-xs cursor-pointer text-red-700 dark:text-red-300">
+                                View errors ({s3CleanupFetcher.data.result.errors.length})
+                              </summary>
+                              <div className="mt-2 text-xs space-y-1 max-h-40 overflow-y-auto">
+                                {s3CleanupFetcher.data.result.errors.map((error: string, i: number) => (
+                                  <div key={i} className="font-mono text-red-700 dark:text-red-300">
+                                    {error}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      )}
+
+                      {s3CleanupFetcher.data && "error" in s3CleanupFetcher.data && (
+                        <div className="mt-4 p-3 rounded bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700">
+                          <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                            {s3CleanupFetcher.data.error}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

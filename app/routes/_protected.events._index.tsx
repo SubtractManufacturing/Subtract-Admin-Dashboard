@@ -495,8 +495,14 @@ export default function EventsPage() {
         const vendor = vendors.find((v: {id: number; displayName: string}) => v.id.toString() === event.entityId);
         return vendor ? vendor.displayName : `Vendor #${event.entityId}`;
       }
-      case "part":
-        return `Part #${event.entityId.substring(0, 8)}`;
+      case "part": {
+        const metadata = event.metadata as Record<string, unknown> | null;
+        const orderNumber = metadata?.orderNumber;
+        const partId = event.entityId.substring(0, 8);
+        return orderNumber
+          ? `Part #${partId} (${orderNumber})`
+          : `Part #${partId}`;
+      }
       case "quote":
         return `Quote #${event.entityId}`;
       default:
@@ -542,6 +548,11 @@ export default function EventsPage() {
                 placeholder="Search events..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    applyFilters();
+                  }
+                }}
                 className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
             </div>
