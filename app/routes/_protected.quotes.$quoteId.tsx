@@ -71,6 +71,7 @@ import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorM
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
+import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import {
@@ -1362,6 +1363,14 @@ export default function QuoteDetail() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [part3DModalOpen, setPart3DModalOpen] = useState(false);
+  const [selectedPart3D, setSelectedPart3D] = useState<{
+    partId: string;
+    partName: string;
+    modelUrl?: string;
+    solidModelUrl?: string;
+    thumbnailUrl?: string;
+  } | null>(null);
 
   // Check if quote is in a locked state (sent or beyond)
   const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
@@ -1471,6 +1480,25 @@ export default function QuoteDetail() {
         { intent: "deleteAttachment", attachmentId },
         { method: "post" }
       );
+    }
+  };
+
+  const handleView3DModel = (part: {
+    id: string;
+    partName: string;
+    signedMeshUrl?: string;
+    signedFileUrl?: string;
+    signedThumbnailUrl?: string;
+  }) => {
+    if (part.signedMeshUrl) {
+      setSelectedPart3D({
+        partId: part.id,
+        partName: part.partName,
+        modelUrl: part.signedMeshUrl,
+        solidModelUrl: part.signedFileUrl,
+        thumbnailUrl: part.signedThumbnailUrl,
+      });
+      setPart3DModalOpen(true);
     }
   };
 
@@ -2719,7 +2747,9 @@ export default function QuoteDetail() {
                                     <img
                                       src={part.signedThumbnailUrl}
                                       alt={part.partName}
-                                      className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0"
+                                      className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                                      onClick={() => handleView3DModel(part as any)}
+                                      title="Click to view 3D model"
                                     />
                                   ) : (
                                     <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
@@ -3250,6 +3280,26 @@ export default function QuoteDetail() {
           onClose={() => setIsPartsModalOpen(false)}
           parts={quote.parts}
           quoteId={quote.id}
+        />
+      )}
+
+      {/* 3D Viewer Modal */}
+      {selectedPart3D && (
+        <Part3DViewerModal
+          isOpen={part3DModalOpen}
+          onClose={() => {
+            setPart3DModalOpen(false);
+            setSelectedPart3D(null);
+          }}
+          partName={selectedPart3D.partName}
+          modelUrl={selectedPart3D.modelUrl}
+          solidModelUrl={selectedPart3D.solidModelUrl}
+          partId={selectedPart3D.partId}
+          onThumbnailUpdate={() => {
+            revalidator.revalidate();
+          }}
+          autoGenerateThumbnail={true}
+          existingThumbnailUrl={selectedPart3D.thumbnailUrl}
         />
       )}
 
