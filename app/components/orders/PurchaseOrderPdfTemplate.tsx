@@ -335,7 +335,7 @@ export function PurchaseOrderPdfTemplate({
             <div className="header-top">
               <div className="logo-section">
                 <img
-                  src="https://subtractmanufacturing.com/wp-content/uploads/2025/05/subtract_logo_01_social-small-red.png"
+                  src="/subtract-logo.png"
                   alt="Subtract Manufacturing"
                   className="logo-img"
                 />

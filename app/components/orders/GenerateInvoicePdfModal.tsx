@@ -24,8 +24,8 @@ export default function GenerateInvoicePdfModal({
   const isOrder = 'orderNumber' in entity;
   const documentNumber = isOrder ? entity.orderNumber : (entity as QuoteWithRelations).quoteNumber;
   const apiEndpoint = isOrder
-    ? `/orders/${entity.orderNumber}`
-    : `/quotes/${(entity as QuoteWithRelations).quoteNumber}`;
+    ? `/orders/${entity.id}`
+    : `/quotes/${entity.id}`;
 
   return (
     <PdfGenerationModal

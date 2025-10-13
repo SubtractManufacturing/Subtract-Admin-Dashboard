@@ -61,7 +61,7 @@ import {
 import { getPartsByCustomerId, hydratePartThumbnails, getPart } from "~/lib/parts";
 import { createEvent, getEventsForOrder } from "~/lib/events";
 import { db } from "~/lib/db";
-import { parts } from "~/lib/db/schema";
+import { parts, attachments } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem, Vendor } from "~/lib/db/schema";
@@ -156,73 +156,89 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Order not found" }, { status: 404 });
   }
 
-  // Handle file uploads separately
+  // Parse form data once
+  let formData: FormData;
+
+  // Handle file uploads and multipart form data
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
     const uploadHandler = unstable_createMemoryUploadHandler({
       maxPartSize: MAX_FILE_SIZE,
     });
 
-    const formData = await unstable_parseMultipartFormData(
+    formData = await unstable_parseMultipartFormData(
       request,
       uploadHandler
     );
+
+    const intent = formData.get("intent") as string;
     const file = formData.get("file") as File;
 
+    // If there's no file, check if this is a PDF generation intent
     if (!file) {
-      return json({ error: "No file provided" }, { status: 400 });
+      const pdfGenerationIntents = ["generatePurchaseOrder", "generateInvoice"];
+      if (pdfGenerationIntents.includes(intent)) {
+        // This is a PDF generation request, let it fall through to regular form handling
+        // (PDF generation uses FormData but doesn't include files)
+      } else {
+        // This is a file upload request but no file was provided
+        return json({ error: "No file provided" }, { status: 400 });
+      }
+    } else {
+      // We have a file, process the upload
+      if (file.size > MAX_FILE_SIZE) {
+        return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
+      }
+
+      try {
+        // Convert File to Buffer
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // Generate S3 key
+        const key = generateFileKey(order.id, file.name);
+
+        // Upload to S3
+        const uploadResult = await uploadFile({
+          key,
+          buffer,
+          contentType: file.type || "application/octet-stream",
+          fileName: file.name,
+        });
+
+        // Create event context for attachment operations
+        const eventContext: AttachmentEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        // Create attachment record
+        const attachment = await createAttachment(
+          {
+            s3Bucket: uploadResult.bucket,
+            s3Key: uploadResult.key,
+            fileName: uploadResult.fileName,
+            contentType: uploadResult.contentType,
+            fileSize: uploadResult.size,
+          },
+          eventContext
+        );
+
+        // Link to order
+        await linkAttachmentToOrder(order.id, attachment.id, eventContext);
+
+        // Return a redirect to refresh the page
+        return redirect(`/orders/${orderNumber}`);
+      } catch (error) {
+        console.error("Upload error:", error);
+        return json({ error: "Failed to upload file" }, { status: 500 });
+      }
     }
-
-    if (file.size > MAX_FILE_SIZE) {
-      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
-    }
-
-    try {
-      // Convert File to Buffer
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-
-      // Generate S3 key
-      const key = generateFileKey(order.id, file.name);
-
-      // Upload to S3
-      const uploadResult = await uploadFile({
-        key,
-        buffer,
-        contentType: file.type || "application/octet-stream",
-        fileName: file.name,
-      });
-
-      // Create event context for attachment operations
-      const eventContext: AttachmentEventContext = {
-        userId: user?.id,
-        userEmail: user?.email || userDetails?.name || undefined,
-      };
-
-      // Create attachment record
-      const attachment = await createAttachment(
-        {
-          s3Bucket: uploadResult.bucket,
-          s3Key: uploadResult.key,
-          fileName: uploadResult.fileName,
-          contentType: uploadResult.contentType,
-          fileSize: uploadResult.size,
-        },
-        eventContext
-      );
-
-      // Link to order
-      await linkAttachmentToOrder(order.id, attachment.id, eventContext);
-
-      // Return a redirect to refresh the page
-      return redirect(`/orders/${orderNumber}`);
-    } catch (error) {
-      console.error("Upload error:", error);
-      return json({ error: "Failed to upload file" }, { status: 500 });
-    }
+  } else {
+    // Not multipart, parse as regular FormData
+    formData = await request.formData();
   }
 
-  // Handle other form submissions
-  const formData = await request.formData();
+  // Handle form submissions
   const intent = formData.get("intent");
 
   try {
@@ -684,23 +700,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing HTML content" }, { status: 400 });
         }
 
-        const { pdfBuffer } = await generateDocumentPdf({
-          entityType: "order",
-          entityId: order.id,
-          htmlContent,
-          filename: `PO-${order.orderNumber}.pdf`,
-          userId: user?.id,
-          userEmail: user?.email || userDetails?.name || undefined,
-        });
+        try {
+          const { pdfBuffer, attachmentId } = await generateDocumentPdf({
+            entityType: "order",
+            entityId: order.id,
+            htmlContent,
+            filename: `PO-${order.orderNumber}.pdf`,
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
 
-        return new Response(pdfBuffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="PO-${order.orderNumber}.pdf"`,
-            "Content-Length": pdfBuffer.length.toString(),
-          },
-        });
+          // Get the attachment record to get the S3 key
+          const attachment = await db
+            .select()
+            .from(attachments)
+            .where(eq(attachments.id, attachmentId))
+            .limit(1);
+
+          if (!attachment[0]) {
+            throw new Error("Failed to create attachment");
+          }
+
+          // Generate a signed download URL
+          const downloadUrl = await getDownloadUrl(attachment[0].s3Key, 3600); // 1 hour expiry
+
+          return json({
+            success: true,
+            downloadUrl,
+            attachmentId,
+            filename: `PO-${order.orderNumber}.pdf`,
+          });
+        } catch (pdfError) {
+          console.error("PDF generation failed:", pdfError);
+          return json({
+            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
+          }, { status: 500 });
+        }
       }
 
       case "generateInvoice": {
@@ -710,23 +745,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing HTML content" }, { status: 400 });
         }
 
-        const { pdfBuffer } = await generateDocumentPdf({
-          entityType: "order",
-          entityId: order.id,
-          htmlContent,
-          filename: `Invoice-${order.orderNumber}.pdf`,
-          userId: user?.id,
-          userEmail: user?.email || userDetails?.name || undefined,
-        });
+        try {
+          const { pdfBuffer, attachmentId } = await generateDocumentPdf({
+            entityType: "order",
+            entityId: order.id,
+            htmlContent,
+            filename: `Invoice-${order.orderNumber}.pdf`,
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
 
-        return new Response(pdfBuffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="Invoice-${order.orderNumber}.pdf"`,
-            "Content-Length": pdfBuffer.length.toString(),
-          },
-        });
+          // Get the attachment record to get the S3 key
+          const attachment = await db
+            .select()
+            .from(attachments)
+            .where(eq(attachments.id, attachmentId))
+            .limit(1);
+
+          if (!attachment[0]) {
+            throw new Error("Failed to create attachment");
+          }
+
+          // Generate a signed download URL
+          const downloadUrl = await getDownloadUrl(attachment[0].s3Key, 3600); // 1 hour expiry
+
+          return json({
+            success: true,
+            downloadUrl,
+            attachmentId,
+            filename: `Invoice-${order.orderNumber}.pdf`,
+          });
+        } catch (pdfError) {
+          console.error("PDF generation failed:", pdfError);
+          return json({
+            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
+          }, { status: 500 });
+        }
       }
 
       default:

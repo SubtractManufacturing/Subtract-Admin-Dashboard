@@ -120,7 +120,9 @@ export default function PdfGenerationModal({
               img.setAttribute('src', base64);
             } catch (error) {
               console.error('Failed to convert image to base64:', src, error);
-              // Leave the original URL if conversion fails
+              // Remove the image if conversion fails (e.g., CORS error)
+              // The PDF generation service can't access external URLs
+              img.remove();
             }
           }
         })
@@ -128,44 +130,77 @@ export default function PdfGenerationModal({
 
       const htmlContent = clone.innerHTML;
 
+      if (!htmlContent || htmlContent.trim().length === 0) {
+        throw new Error("Template content is empty. Please ensure the template has rendered correctly.");
+      }
+
+      // Use FormData for the request
       const formData = new FormData();
       formData.append("htmlContent", htmlContent);
       formData.append("intent", intent);
 
-      const response = await fetch(apiEndpoint, {
+      // Determine the route name based on the endpoint
+      let routeName = "";
+      if (apiEndpoint.includes("/quotes/")) {
+        routeName = "routes/_protected.quotes.$quoteId";
+      } else if (apiEndpoint.includes("/orders/")) {
+        routeName = "routes/_protected.orders.$orderId";
+      }
+
+      // Add query parameter to indicate this is an API request
+      const apiUrl = routeName ? `${apiEndpoint}?_data=${routeName}` : apiEndpoint;
+
+      const response = await fetch(apiUrl, {
         method: "POST",
         body: formData,
+        headers: {
+          "Accept": "application/json",
+        },
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-        throw new Error(errorData.error || "Failed to generate PDF");
+        let errorMessage = "Failed to generate PDF";
+        try {
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+          } else {
+            const errorText = await response.text();
+            errorMessage = errorText || `Server returned ${response.status}: ${response.statusText}`;
+          }
+        } catch (e) {
+          errorMessage = `Server returned ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
 
-      // Check if we got a PDF response
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/pdf")) {
-        throw new Error("Did not receive PDF from server");
+      // Parse JSON response with download URL
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error);
       }
 
-      // Get the PDF blob
-      const blob = await response.blob();
+      if (!data.downloadUrl) {
+        throw new Error("No download URL in response");
+      }
 
       // Only auto-download if feature flag is enabled
       if (autoDownload) {
-        // Create download link
-        const url = window.URL.createObjectURL(blob);
+        // Open PDF in new tab
         const a = document.createElement("a");
         a.style.display = "none";
-        a.href = url;
-        a.download = filename;
+        a.href = data.downloadUrl;
+        a.target = "_blank"; // Open in new tab
+        a.rel = "noopener noreferrer"; // Security best practice
+        // Note: removed download attribute so browser opens PDF instead of downloading
         document.body.appendChild(a);
 
         a.click();
 
-        // Clean up download elements
+        // Clean up element
         setTimeout(() => {
-          window.URL.revokeObjectURL(url);
           document.body.removeChild(a);
         }, 100);
       }

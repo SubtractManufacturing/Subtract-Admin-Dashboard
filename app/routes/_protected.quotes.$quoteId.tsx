@@ -311,13 +311,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
   };
 
+  // Parse form data once
+  let formData: FormData;
+
   // Handle file uploads separately
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
     const uploadHandler = unstable_createMemoryUploadHandler({
       maxPartSize: MAX_FILE_SIZE,
     });
 
-    const formData = await unstable_parseMultipartFormData(
+    formData = await unstable_parseMultipartFormData(
       request,
       uploadHandler
     );
@@ -617,12 +620,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
     }
 
-    // If we get here with multipart data but unhandled intent, return error
-    return json({ error: "Invalid multipart request" }, { status: 400 });
+    // If we get here with multipart data but unhandled intent, check if it's a PDF generation
+    // PDF generation uses FormData but doesn't include files, so let it fall through
+    const pdfGenerationIntents = ["generateQuote", "generateInvoice"];
+    if (!pdfGenerationIntents.includes(intent as string)) {
+      return json({ error: "Invalid multipart request" }, { status: 400 });
+    }
+    // Fall through to regular form handling for PDF generation
+  } else {
+    // Not multipart, parse as regular FormData
+    formData = await request.formData();
   }
 
-  // Handle other form submissions
-  const formData = await request.formData();
+  // Handle form submissions
   const intent = formData.get("intent");
 
   try {
@@ -1227,23 +1237,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing HTML content" }, { status: 400 });
         }
 
-        const { pdfBuffer } = await generateDocumentPdf({
-          entityType: "quote",
-          entityId: quote.id,
-          htmlContent,
-          filename: `Quote-${quote.quoteNumber}.pdf`,
-          userId: user?.id,
-          userEmail: user?.email || userDetails?.name || undefined,
-        });
+        try {
+          const { pdfBuffer, attachmentId } = await generateDocumentPdf({
+            entityType: "quote",
+            entityId: quote.id,
+            htmlContent,
+            filename: `Quote-${quote.quoteNumber}.pdf`,
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
 
-        return new Response(pdfBuffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="Quote-${quote.quoteNumber}.pdf"`,
-            "Content-Length": pdfBuffer.length.toString(),
-          },
-        });
+          // Get the attachment record to get the S3 key
+          const attachment = await db
+            .select()
+            .from(attachments)
+            .where(eq(attachments.id, attachmentId))
+            .limit(1);
+
+          if (!attachment[0]) {
+            throw new Error("Failed to create attachment");
+          }
+
+          // Generate a signed download URL
+          const downloadUrl = await getDownloadUrl(attachment[0].s3Key, 3600); // 1 hour expiry
+
+          return json({
+            success: true,
+            downloadUrl,
+            attachmentId,
+            filename: `Quote-${quote.quoteNumber}.pdf`,
+          });
+        } catch (pdfError) {
+          console.error("PDF generation failed:", pdfError);
+          return json({
+            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
+          }, { status: 500 });
+        }
       }
 
       case "generateInvoice": {
@@ -1253,23 +1282,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing HTML content" }, { status: 400 });
         }
 
-        const { pdfBuffer } = await generateDocumentPdf({
-          entityType: "quote",
-          entityId: quote.id,
-          htmlContent,
-          filename: `Invoice-${quote.quoteNumber}.pdf`,
-          userId: user?.id,
-          userEmail: user?.email || userDetails?.name || undefined,
-        });
+        try {
+          const { pdfBuffer, attachmentId } = await generateDocumentPdf({
+            entityType: "quote",
+            entityId: quote.id,
+            htmlContent,
+            filename: `Invoice-${quote.quoteNumber}.pdf`,
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
 
-        return new Response(pdfBuffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="Invoice-${quote.quoteNumber}.pdf"`,
-            "Content-Length": pdfBuffer.length.toString(),
-          },
-        });
+          // Get the attachment record to get the S3 key
+          const attachment = await db
+            .select()
+            .from(attachments)
+            .where(eq(attachments.id, attachmentId))
+            .limit(1);
+
+          if (!attachment[0]) {
+            throw new Error("Failed to create attachment");
+          }
+
+          // Generate a signed download URL
+          const downloadUrl = await getDownloadUrl(attachment[0].s3Key, 3600); // 1 hour expiry
+
+          return json({
+            success: true,
+            downloadUrl,
+            attachmentId,
+            filename: `Invoice-${quote.quoteNumber}.pdf`,
+          });
+        } catch (pdfError) {
+          console.error("PDF generation failed:", pdfError);
+          return json({
+            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
+          }, { status: 500 });
+        }
       }
 
       default:
