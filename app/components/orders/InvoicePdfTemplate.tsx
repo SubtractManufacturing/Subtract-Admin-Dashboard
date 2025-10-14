@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import React, { useEffect } from "react";
 import type { OrderWithRelations } from "~/lib/orders";
 import type { QuoteWithRelations } from "~/lib/quotes";
 import type { Part, OrderLineItem, QuoteLineItem } from "~/lib/db/schema";
@@ -802,8 +802,8 @@ export function InvoicePdfTemplate({
                   const itemTotal = unitPrice * quantity;
 
                   return (
-                    <>
-                      <tr key={`${index}-main`}>
+                    <React.Fragment key={`line-item-${item.id || index}`}>
+                      <tr>
                         <td>
                           <span
                             className={editable ? "editable" : ""}
@@ -842,7 +842,7 @@ export function InvoicePdfTemplate({
                         </td>
                       </tr>
                       {notesContent && (
-                        <tr key={`${index}-notes`} className="notes-row">
+                        <tr className="notes-row">
                           <td colSpan={4}>
                             <span className="notes-label">Notes:</span>
                             <span
@@ -855,7 +855,7 @@ export function InvoicePdfTemplate({
                           </td>
                         </tr>
                       )}
-                    </>
+                    </React.Fragment>
                   );
                 })}
               </tbody>

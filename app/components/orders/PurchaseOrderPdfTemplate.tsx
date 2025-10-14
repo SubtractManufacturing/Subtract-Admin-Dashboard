@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import React, { useEffect } from "react";
 import type { OrderWithRelations } from "~/lib/orders";
 import type { Part, OrderLineItem } from "~/lib/db/schema";
 import { formatCurrency, formatDate, commonPdfStyles } from "~/lib/pdf-utils";
@@ -729,8 +729,8 @@ export function PurchaseOrderPdfTemplate({
                   const part = parts.find((p) => p?.id === item.partId);
                   const notesContent = item.description || item.notes || part?.notes || "";
                   return (
-                    <>
-                      <tr key={`${index}-main`}>
+                    <React.Fragment key={`line-item-${item.id || index}`}>
+                      <tr>
                         <td>
                           <span
                             className={editable ? "editable" : ""}
@@ -787,7 +787,7 @@ export function PurchaseOrderPdfTemplate({
                           </span>
                         </td>
                       </tr>
-                      <tr key={`${index}-notes`} className="notes-row">
+                      <tr className="notes-row">
                         <td colSpan={6}>
                           <span className="notes-label">Notes:</span>
                           <span
@@ -799,7 +799,7 @@ export function PurchaseOrderPdfTemplate({
                           </span>
                         </td>
                       </tr>
-                    </>
+                    </React.Fragment>
                   );
                 })}
               </tbody>
