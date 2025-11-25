@@ -21,7 +21,6 @@ export default function GenerateQuotePdfModal({
       onClose={onClose}
       title="Generate Quote PDF"
       apiEndpoint={`/quotes/${quote.id}`}
-      filename={`Quote-${quote.quoteNumber}.pdf`}
       autoDownload={autoDownload}
       intent="generateQuote"
     >

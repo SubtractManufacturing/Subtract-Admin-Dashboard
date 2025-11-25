@@ -1,0 +1,83 @@
+name: Production Deploy
+
+on:
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  promote-image:
+    name: Promote Image to Production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      version_tag: ${{ steps.version.outputs.tag }}
+      image_name: ${{ steps.image-name.outputs.name }}
+
+    steps:
+      - name: Set image name to lowercase
+        id: image-name
+        run: |
+          REPO="${{ github.repository }}"
+          echo "name=${REPO,,}" >> $GITHUB_OUTPUT
+
+      - name: Get version from release tag
+        id: version
+        run: |
+          # Release tag is like "v1.2.0"
+          echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest staging image and retag for production
+        run: |
+          # Pull the latest image (which was deployed to staging)
+          docker pull ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:latest
+
+          # Tag it with the release version
+          docker tag ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:latest \
+            ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:${{ steps.version.outputs.tag }}
+
+          # Push the version-tagged image
+          docker push ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:${{ steps.version.outputs.tag }}
+
+      - name: Generate summary
+        run: |
+          echo "## Production Image Promoted" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ env.REGISTRY }}/${{ steps.image-name.outputs.name }}:${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+
+  deploy-production:
+    name: Deploy to Production
+    needs: promote-image
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      # url: https://your-domain.com  # UPDATE: Your production URL
+
+    steps:
+      - name: Deploy notification
+        run: |
+          echo "## Production Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.promote-image.outputs.version_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ env.REGISTRY }}/${{ needs.promote-image.outputs.image_name }}:${{ needs.promote-image.outputs.version_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Ready for DOCO-CD to pick up the new image tag." >> $GITHUB_STEP_SUMMARY
+
+      # TODO: Add your deployment method here
+      - name: Placeholder - Update infra repo
+        run: |
+          echo "In production, this step would update prod/docker-compose.yml in the infra repo"
+          echo "with the new image tag: ${{ needs.promote-image.outputs.version_tag }}"

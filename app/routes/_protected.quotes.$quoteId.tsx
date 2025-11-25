@@ -1238,7 +1238,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         try {
-          const { pdfBuffer, attachmentId } = await generateDocumentPdf({
+          const { attachmentId } = await generateDocumentPdf({
             entityType: "quote",
             entityId: quote.id,
             htmlContent,
@@ -1283,7 +1283,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         try {
-          const { pdfBuffer, attachmentId } = await generateDocumentPdf({
+          const { attachmentId } = await generateDocumentPdf({
             entityType: "quote",
             entityId: quote.id,
             htmlContent,

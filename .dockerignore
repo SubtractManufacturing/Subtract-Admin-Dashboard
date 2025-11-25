@@ -51,8 +51,6 @@ temp
 
 # Planning and local development
 planning/
-drizzle/
-scripts/
 supabase/
 
 # Local databases
