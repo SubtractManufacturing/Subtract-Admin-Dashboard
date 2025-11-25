@@ -45,7 +45,6 @@ interface PdfGenerationModalProps {
   onClose: () => void;
   title: string;
   apiEndpoint: string;
-  filename: string;
   children: ReactNode;
   autoDownload?: boolean;
   intent: string;
@@ -60,7 +59,6 @@ export default function PdfGenerationModal({
   onClose,
   title,
   apiEndpoint,
-  filename,
   children,
   autoDownload = true,
   intent,

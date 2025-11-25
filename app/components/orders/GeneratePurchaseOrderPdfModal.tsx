@@ -26,7 +26,6 @@ export default function GeneratePurchaseOrderPdfModal({
       onClose={onClose}
       title="Generate Purchase Order PDF"
       apiEndpoint={`/orders/${order.orderNumber}`}
-      filename={`PO-${order.orderNumber}.pdf`}
       autoDownload={autoDownload}
       intent="generatePurchaseOrder"
     >
