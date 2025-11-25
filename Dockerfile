@@ -65,6 +65,9 @@ COPY --from=builder --chown=nodejs:nodejs /app/public ./public
 COPY --from=builder --chown=nodejs:nodejs /app/app/lib/db ./app/lib/db
 COPY --from=builder --chown=nodejs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
 
+# Copy migration files for runtime execution
+COPY --from=builder --chown=nodejs:nodejs /app/drizzle ./drizzle
+
 # Switch to non-root user
 USER nodejs
 
