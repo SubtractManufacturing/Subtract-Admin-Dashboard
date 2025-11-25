@@ -120,8 +120,6 @@ CLAUDE.md
 *.claude
 /.claude
 
-./drizzle
-/drizzle
 /planning
 /logs
 /scripts
