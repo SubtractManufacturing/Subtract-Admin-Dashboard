@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.0.0...v1.0.1) (2025-11-26)
+
+
+### Bug Fixes
+
+* add automated deployment pipeline ([4de6c91](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/4de6c91f0c8f83699285aff2aefd6c64a457ea5d))
+
 ## 1.0.0 (2025-11-25)
 
 
