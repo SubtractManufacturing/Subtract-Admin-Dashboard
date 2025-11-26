@@ -76,8 +76,50 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Ready for DOCO-CD to pick up the new image tag." >> $GITHUB_STEP_SUMMARY
 
-      # TODO: Add your deployment method here
-      - name: Placeholder - Update infra repo
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: SubtractManufacturing/infra
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: infra
+
+      - name: Update docker-compose with new version
+        working-directory: infra
         run: |
-          echo "In production, this step would update prod/docker-compose.yml in the infra repo"
-          echo "with the new image tag: ${{ needs.promote-image.outputs.version_tag }}"
+          COMPOSE_FILE="ansible-common/roles/webapp/files/docker-compose.yml"
+          VERSION="${{ needs.promote-image.outputs.version_tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ needs.promote-image.outputs.image_name }}"
+
+          # Update the image tag in docker-compose.yml
+          # Matches patterns like: image: ghcr.io/subtractmanufacturing/subtract-admin-dashboard:v1.0.0
+          sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE}:${VERSION}|g" "$COMPOSE_FILE"
+
+          echo "Updated $COMPOSE_FILE with image tag: $VERSION"
+          cat "$COMPOSE_FILE"
+
+      - name: Commit and push changes
+        working-directory: infra
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          VERSION="${{ needs.promote-image.outputs.version_tag }}"
+
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "deploy(subtract-admin): update to ${VERSION}"
+            git push
+            echo "Pushed update to infra repo"
+          fi
+
+      - name: Deployment summary
+        run: |
+          echo "## Infra Repo Updated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Updated \`ansible-common/roles/webapp/files/docker-compose.yml\` with:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ needs.promote-image.outputs.version_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ env.REGISTRY }}/${{ needs.promote-image.outputs.image_name }}:${{ needs.promote-image.outputs.version_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "DOCO-CD will pick up the changes automatically." >> $GITHUB_STEP_SUMMARY
