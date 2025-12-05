@@ -399,6 +399,45 @@ export const eventLogs = pgTable("event_logs", {
   categoryIdx: index("event_logs_category_idx").on(table.eventCategory),
 }));
 
+// CAD File Version tracking for quote parts and regular parts
+export const cadFileVersions = pgTable("cad_file_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  // Polymorphic reference (quote part or regular part)
+  entityType: text("entity_type").notNull(), // "quote_part" or "part"
+  entityId: uuid("entity_id").notNull(), // quotePartId or partId
+
+  // Version info
+  version: integer("version").notNull(),
+  isCurrentVersion: boolean("is_current_version").default(false).notNull(),
+
+  // File info (CAD file only - mesh is stored on parent entity)
+  s3Key: text("s3_key").notNull(),
+  fileName: text("file_name").notNull(),
+  fileSize: integer("file_size"),
+  contentType: text("content_type"),
+
+  // Audit trail
+  uploadedBy: text("uploaded_by").references(() => users.id),
+  uploadedByEmail: text("uploaded_by_email"), // Denormalized for audit
+  notes: text("notes"), // Optional revision notes
+
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  entityIdx: index("cad_versions_entity_idx").on(table.entityType, table.entityId),
+  currentIdx: index("cad_versions_current_idx").on(
+    table.entityType,
+    table.entityId,
+    table.isCurrentVersion
+  ),
+  versionIdx: index("cad_versions_version_idx").on(
+    table.entityType,
+    table.entityId,
+    table.version
+  ),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Customer = typeof customers.$inferSelect;
@@ -515,3 +554,5 @@ export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
 export type NewQuotePriceCalculation = typeof quotePriceCalculations.$inferInsert;
 export type QuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferSelect;
 export type NewQuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferInsert;
+export type CadFileVersion = typeof cadFileVersions.$inferSelect;
+export type NewCadFileVersion = typeof cadFileVersions.$inferInsert;

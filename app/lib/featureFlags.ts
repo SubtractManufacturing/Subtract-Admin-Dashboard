@@ -13,6 +13,9 @@ export const FEATURE_FLAGS = {
   PDF_AUTO_DOWNLOAD: "pdf_auto_download",
   QUOTE_REJECTION_REASON_REQUIRED: "quote_rejection_reason_required",
   S3_MIGRATION_ENABLED: "s3_migration_enabled",
+  CAD_REVISIONS_DEV: "cad_revisions_dev",
+  CAD_REVISIONS_ADMIN: "cad_revisions_admin",
+  CAD_REVISIONS_ALL: "cad_revisions_all",
 } as const;
 
 // Default feature flags with their metadata
@@ -69,6 +72,24 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     key: FEATURE_FLAGS.S3_MIGRATION_ENABLED,
     name: "Enable S3 Storage Migration Tools",
     description: "Allow developers to run S3 storage consolidation and cleanup operations (Dev only)",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.CAD_REVISIONS_DEV,
+    name: "Enable CAD Revisions for Developers",
+    description: "Allow users with Developer role to upload revised CAD files to quotes and orders",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.CAD_REVISIONS_ADMIN,
+    name: "Enable CAD Revisions for Admins",
+    description: "Allow users with Admin role (and Dev) to upload revised CAD files",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.CAD_REVISIONS_ALL,
+    name: "Enable CAD Revisions for All Users",
+    description: "Allow all authenticated users to upload revised CAD files",
     enabled: false,
   },
 ];
@@ -171,6 +192,30 @@ export async function canUserAccessPriceCalculator(userRole?: string | null) {
   // Check if price calculator is enabled for admins/devs and user has elevated role
   if (userRole === "Admin" || userRole === "Dev") {
     const devEnabled = await isFeatureEnabled(FEATURE_FLAGS.PRICE_CALCULATOR_DEV);
+    return devEnabled;
+  }
+
+  return false;
+}
+
+/**
+ * Check if user can upload CAD revisions
+ * Uses three-tiered fallthrough: ALL -> ADMIN -> DEV
+ */
+export async function canUserUploadCadRevision(userRole?: string | null) {
+  // Check if enabled for all users first
+  const allUsersEnabled = await isFeatureEnabled(FEATURE_FLAGS.CAD_REVISIONS_ALL);
+  if (allUsersEnabled) return true;
+
+  // Check Admin tier (includes Dev users)
+  if (userRole === "Admin" || userRole === "Dev") {
+    const adminEnabled = await isFeatureEnabled(FEATURE_FLAGS.CAD_REVISIONS_ADMIN);
+    if (adminEnabled) return true;
+  }
+
+  // Check Dev-only tier
+  if (userRole === "Dev") {
+    const devEnabled = await isFeatureEnabled(FEATURE_FLAGS.CAD_REVISIONS_DEV);
     return devEnabled;
   }
 

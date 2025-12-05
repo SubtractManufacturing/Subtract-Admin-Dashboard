@@ -30,6 +30,7 @@ import { getAppConfig } from "~/lib/config.server";
 import {
   shouldShowEventsInNav,
   canUserAccessPriceCalculator,
+  canUserUploadCadRevision,
   isFeatureEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
@@ -243,12 +244,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events] = await Promise.all([
+  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events, canRevise] = await Promise.all([
     shouldShowEventsInNav(),
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
+    canUserUploadCadRevision(userDetails?.role),
   ]);
 
   // Fetch converted order if exists
@@ -278,6 +280,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       rejectionReasonRequired,
       events,
       convertedOrder,
+      canRevise,
     }),
     headers
   );
@@ -1348,6 +1351,7 @@ export default function QuoteDetail() {
     rejectionReasonRequired,
     events,
     convertedOrder,
+    canRevise,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -1414,9 +1418,11 @@ export default function QuoteDetail() {
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
   const [selectedPart3D, setSelectedPart3D] = useState<{
     partId: string;
+    quotePartId: string;
     partName: string;
     modelUrl?: string;
     solidModelUrl?: string;
+    cadFileUrl?: string;
     thumbnailUrl?: string;
   } | null>(null);
 
@@ -1537,13 +1543,17 @@ export default function QuoteDetail() {
     signedMeshUrl?: string;
     signedFileUrl?: string;
     signedThumbnailUrl?: string;
+    partFileUrl?: string | null;
   }) => {
-    if (part.signedMeshUrl) {
+    // Open modal if mesh is available OR if CAD file is available (for download/revision)
+    if (part.signedMeshUrl || part.signedFileUrl || part.partFileUrl) {
       setSelectedPart3D({
         partId: part.id,
+        quotePartId: part.id,
         partName: part.partName,
         modelUrl: part.signedMeshUrl,
         solidModelUrl: part.signedFileUrl,
+        cadFileUrl: part.partFileUrl || part.signedFileUrl,
         thumbnailUrl: part.signedThumbnailUrl,
       });
       setPart3DModalOpen(true);
@@ -3348,11 +3358,22 @@ export default function QuoteDetail() {
           modelUrl={selectedPart3D.modelUrl}
           solidModelUrl={selectedPart3D.solidModelUrl}
           partId={selectedPart3D.partId}
+          quotePartId={selectedPart3D.quotePartId}
           onThumbnailUpdate={() => {
             revalidator.revalidate();
           }}
           autoGenerateThumbnail={true}
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
+          isQuotePart={true}
+          cadFileUrl={selectedPart3D.cadFileUrl}
+          canRevise={canRevise}
+          onRevisionComplete={() => {
+            // Close the modal after revision - the mesh is being converted
+            // and the old modelUrl is no longer valid
+            setPart3DModalOpen(false);
+            setSelectedPart3D(null);
+            revalidator.revalidate();
+          }}
         />
       )}
 

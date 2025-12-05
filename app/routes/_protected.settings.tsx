@@ -766,7 +766,10 @@ export default function Settings() {
                           flag.key === 'mesh_uploads_all' ||
                           flag.key === 'price_calculator_dev' ||
                           flag.key === 'price_calculator_all' ||
-                          flag.key === 's3_migration_enabled'
+                          flag.key === 's3_migration_enabled' ||
+                          flag.key === 'cad_revisions_dev' ||
+                          flag.key === 'cad_revisions_admin' ||
+                          flag.key === 'cad_revisions_all'
                         )
                         .sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key)
