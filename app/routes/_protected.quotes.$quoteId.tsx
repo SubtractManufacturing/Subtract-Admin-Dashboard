@@ -1364,7 +1364,7 @@ export default function QuoteDetail() {
   } | null>(null);
   const [isFileViewerOpen, setIsFileViewerOpen] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
-  const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [pollCount, setPollCount] = useState(0);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
@@ -1440,35 +1440,36 @@ export default function QuoteDetail() {
   );
 
   // Set up polling for parts conversion status
+  // Using a ref for the interval to avoid stale closure issues in cleanup
   useEffect(() => {
     const MAX_POLL_COUNT = 120; // Max 10 minutes (120 * 5 seconds)
 
-    if (hasConvertingParts && !pollInterval && pollCount < MAX_POLL_COUNT) {
-      const interval = setInterval(() => {
+    if (hasConvertingParts && !pollIntervalRef.current && pollCount < MAX_POLL_COUNT) {
+      pollIntervalRef.current = setInterval(() => {
         setPollCount((prev) => prev + 1);
         // Revalidate the page data to get updated conversion status
         revalidator.revalidate();
       }, 5000); // Poll every 5 seconds
-      setPollInterval(interval);
-    } else if (!hasConvertingParts && pollInterval) {
+    } else if (!hasConvertingParts && pollIntervalRef.current) {
       // Conversion completed - clear interval and reset count
-      clearInterval(pollInterval);
-      setPollInterval(null);
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
       setPollCount(0);
-    } else if (pollCount >= MAX_POLL_COUNT && pollInterval) {
+    } else if (pollCount >= MAX_POLL_COUNT && pollIntervalRef.current) {
       // Timeout reached - stop polling
       console.warn("Mesh conversion polling timeout reached (10 minutes)");
-      clearInterval(pollInterval);
-      setPollInterval(null);
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
       setPollCount(0);
     }
 
     return () => {
-      if (pollInterval) {
-        clearInterval(pollInterval);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
-  }, [hasConvertingParts, pollInterval, pollCount, revalidator]);
+  }, [hasConvertingParts, pollCount, revalidator]);
 
   // Update optimistic line items when the actual data changes
   useEffect(() => {

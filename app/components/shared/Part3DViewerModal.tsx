@@ -471,7 +471,18 @@ export function Part3DViewerModal({
 
         {/* 3D Viewer Area - Full Height */}
         <div className="w-full h-full">
-          {modelUrl ? (
+          {isUploading || isRestoring ? (
+            // Show processing state during upload/restore to prevent 404 on old mesh
+            <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
+              <p className="text-lg mb-1">
+                {isUploading ? 'Uploading revision...' : 'Restoring version...'}
+              </p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">
+                The 3D preview will update after processing completes
+              </p>
+            </div>
+          ) : modelUrl ? (
             <Part3DViewer
               partName={partName}
               modelUrl={modelUrl}
