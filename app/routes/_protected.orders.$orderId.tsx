@@ -6,7 +6,7 @@ import {
   unstable_parseMultipartFormData,
   unstable_createMemoryUploadHandler,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import {
   getOrderByNumberWithAttachments,
   updateOrder,
@@ -26,7 +26,7 @@ import {
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
+import { shouldShowEventsInNav, isFeatureEnabled, FEATURE_FLAGS, canUserUploadCadRevision } from "~/lib/featureFlags";
 import {
   uploadFile,
   generateFileKey,
@@ -115,10 +115,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, pdfAutoDownload, events] = await Promise.all([
+  const [showEventsLink, pdfAutoDownload, events, canRevise] = await Promise.all([
     shouldShowEventsInNav(),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsForOrder(order.id, 10),
+    canUserUploadCadRevision(userDetails?.role),
   ]);
 
   return withAuthHeaders(
@@ -136,6 +137,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       showEventsLink,
       pdfAutoDownload,
       events,
+      canRevise,
     }),
     headers
   );
@@ -807,7 +809,9 @@ export default function OrderDetails() {
     showEventsLink,
     pdfAutoDownload,
     events,
+    canRevise,
   } = useLoaderData<typeof loader>();
+  const revalidator = useRevalidator();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{
@@ -830,6 +834,7 @@ export default function OrderDetails() {
     modelUrl?: string;
     solidModelUrl?: string;
     thumbnailUrl?: string;
+    cadFileUrl?: string;
   } | null>(null);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
   const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
@@ -1080,6 +1085,8 @@ export default function OrderDetails() {
         modelUrl: part.partMeshUrl || undefined,
         solidModelUrl: part.partFileUrl || undefined,
         thumbnailUrl: part.thumbnailUrl || undefined,
+        // partFileUrl is the original CAD file used for revisions
+        cadFileUrl: part.partFileUrl || undefined,
       });
       setPart3DModalOpen(true);
     }
@@ -2569,9 +2576,14 @@ export default function OrderDetails() {
           modelUrl={selectedPart3D.modelUrl}
           solidModelUrl={selectedPart3D.solidModelUrl}
           partId={selectedPart3D.partId}
+          entityType="part"
+          cadFileUrl={selectedPart3D.cadFileUrl}
+          canRevise={canRevise}
           onThumbnailUpdate={() => {
-            // Refresh the page to show the updated thumbnail
-            window.location.reload();
+            revalidator.revalidate();
+          }}
+          onRevisionComplete={() => {
+            revalidator.revalidate();
           }}
           autoGenerateThumbnail={true}
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}

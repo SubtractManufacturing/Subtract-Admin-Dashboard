@@ -14,6 +14,8 @@ interface CadVersion {
   downloadUrl: string | null;
 }
 
+type EntityType = 'quote_part' | 'part';
+
 interface Part3DViewerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -30,6 +32,8 @@ interface Part3DViewerModalProps {
   canRevise?: boolean;
   currentVersion?: number;
   onRevisionComplete?: () => void;
+  /** Entity type for version control routes. Defaults to 'quote_part' for backwards compatibility. */
+  entityType?: EntityType;
 }
 
 export function Part3DViewerModal({
@@ -47,23 +51,35 @@ export function Part3DViewerModal({
   cadFileUrl,
   canRevise = false,
   currentVersion = 1,
-  onRevisionComplete
+  onRevisionComplete,
+  entityType: propEntityType
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Determine entity type and ID for version control routes
+  // For backwards compatibility: if entityType is not provided, infer from quotePartId/partId
+  const entityType: EntityType = propEntityType || (quotePartId ? 'quote_part' : 'part');
+  const entityId = entityType === 'quote_part' ? quotePartId : partId;
+  const routePrefix = entityType === 'quote_part' ? 'quote-parts' : 'parts';
   const [showVersionPanel, setShowVersionPanel] = useState(false);
   const [activeTab, setActiveTab] = useState<'history' | 'upload'>('history');
   const [revisionNotes, setRevisionNotes] = useState('');
   const [revisionFile, setRevisionFile] = useState<File | null>(null);
   const [versions, setVersions] = useState<CadVersion[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
+  // Track when an operation completed successfully but modal hasn't closed yet
+  const [operationCompleted, setOperationCompleted] = useState(false);
 
   const revisionFetcher = useFetcher();
   const restoreFetcher = useFetcher();
 
   const isUploading = revisionFetcher.state === 'submitting';
   const isRestoring = restoreFetcher.state === 'submitting';
+
+  // Show processing state when uploading, restoring, OR just completed (waiting for modal to close)
+  const isProcessing = isUploading || isRestoring || operationCompleted;
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -83,11 +99,11 @@ export function Part3DViewerModal({
 
   // Fetch version history when panel is opened
   const fetchVersionHistory = useCallback(async () => {
-    if (!quotePartId) return;
+    if (!entityId) return;
 
     setIsLoadingVersions(true);
     try {
-      const response = await fetch(`/quote-parts/${quotePartId}/versions`);
+      const response = await fetch(`/${routePrefix}/${entityId}/versions`);
       if (response.ok) {
         const data = await response.json();
         setVersions(data.versions || []);
@@ -97,19 +113,27 @@ export function Part3DViewerModal({
     } finally {
       setIsLoadingVersions(false);
     }
-  }, [quotePartId]);
+  }, [entityId, routePrefix]);
 
   useEffect(() => {
-    if (showVersionPanel && quotePartId) {
+    if (showVersionPanel && entityId) {
       fetchVersionHistory();
     }
-  }, [showVersionPanel, quotePartId, fetchVersionHistory]);
+  }, [showVersionPanel, entityId, fetchVersionHistory]);
+
+  // Reset operationCompleted when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setOperationCompleted(false);
+    }
+  }, [isOpen]);
 
   // Handle revision upload success
   useEffect(() => {
     if (revisionFetcher.state === 'idle' && revisionFetcher.data) {
       const data = revisionFetcher.data as { success?: boolean; error?: string };
       if (data.success) {
+        setOperationCompleted(true);
         setRevisionFile(null);
         setRevisionNotes('');
         setActiveTab('history');
@@ -124,6 +148,7 @@ export function Part3DViewerModal({
     if (restoreFetcher.state === 'idle' && restoreFetcher.data) {
       const data = restoreFetcher.data as { success?: boolean; error?: string };
       if (data.success) {
+        setOperationCompleted(true);
         fetchVersionHistory();
         onRevisionComplete?.();
       }
@@ -169,7 +194,7 @@ export function Part3DViewerModal({
   };
 
   const handleUploadRevision = () => {
-    if (!revisionFile || !quotePartId) return;
+    if (!revisionFile || !entityId) return;
 
     const formData = new FormData();
     formData.append('file', revisionFile);
@@ -179,20 +204,20 @@ export function Part3DViewerModal({
 
     revisionFetcher.submit(formData, {
       method: 'POST',
-      action: `/quote-parts/${quotePartId}/revise`,
+      action: `/${routePrefix}/${entityId}/revise`,
       encType: 'multipart/form-data',
     });
   };
 
   const handleRestoreVersion = (versionId: string) => {
-    if (!quotePartId) return;
+    if (!entityId) return;
 
     const formData = new FormData();
     formData.append('versionId', versionId);
 
     restoreFetcher.submit(formData, {
       method: 'POST',
-      action: `/quote-parts/${quotePartId}/restore`,
+      action: `/${routePrefix}/${entityId}/restore`,
     });
   };
 
@@ -271,7 +296,7 @@ export function Part3DViewerModal({
         </button>
 
         {/* Version Control Button - top right, next to close */}
-        {quotePartId && (
+        {entityId && (
           <div ref={dropdownRef} className="absolute top-2 right-14 z-20">
             <button
               onClick={() => setShowVersionPanel(!showVersionPanel)}
@@ -471,12 +496,12 @@ export function Part3DViewerModal({
 
         {/* 3D Viewer Area - Full Height */}
         <div className="w-full h-full">
-          {isUploading || isRestoring ? (
+          {isProcessing ? (
             // Show processing state during upload/restore to prevent 404 on old mesh
             <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
               <p className="text-lg mb-1">
-                {isUploading ? 'Uploading revision...' : 'Restoring version...'}
+                {isUploading ? 'Uploading revision...' : isRestoring ? 'Restoring version...' : 'Processing...'}
               </p>
               <p className="text-sm text-gray-400 dark:text-gray-500">
                 The 3D preview will update after processing completes

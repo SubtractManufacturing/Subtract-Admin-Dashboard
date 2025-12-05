@@ -12,12 +12,12 @@
  * All errors are logged to console. Critical errors are also logged as events for tracking.
  */
 import { db } from "./db/index.js"
-import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings, quoteAttachments, orderAttachments, notes, partDrawings } from "./db/schema.js"
+import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings, quoteAttachments, orderAttachments, notes, partDrawings, cadFileVersions } from "./db/schema.js"
 import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
 import type { Customer, Vendor, QuoteLineItem, QuotePart, Quote, NewQuote } from "./db/schema.js"
 import { getNextQuoteNumber, getNextOrderNumber } from "./number-generator.js"
 import { createEvent } from "./events.js"
-import { uploadFile } from "./s3.server.js"
+import { uploadFile, copyFile } from "./s3.server.js"
 import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js"
 import crypto from "crypto"
 
@@ -576,7 +576,7 @@ export async function convertQuoteToOrder(
         for (const quotePart of quote.parts) {
           try {
             // Create a customer part from the quote part
-            // Copy the S3 key directly - loaders will generate signed URLs on-demand
+            // First create with null URLs, then copy files and update
             const [customerPart] = await tx
               .insert(parts)
               .values({
@@ -585,9 +585,9 @@ export async function convertQuoteToOrder(
                 material: quotePart.material || null,
                 tolerance: quotePart.tolerance || null,
                 finishing: quotePart.finish || null,
-                thumbnailUrl: quotePart.thumbnailUrl || null,
-                partFileUrl: quotePart.partFileUrl || null,
-                partMeshUrl: quotePart.partMeshUrl || null,
+                thumbnailUrl: null, // Will be updated after copying
+                partFileUrl: null, // Will be updated after copying
+                partMeshUrl: null, // Will be updated after copying
                 meshConversionStatus: quotePart.conversionStatus || 'pending',
                 meshConversionError: quotePart.meshConversionError || null,
                 meshConversionJobId: quotePart.meshConversionJobId || null,
@@ -599,6 +599,135 @@ export async function convertQuoteToOrder(
 
             if (!customerPart) {
               throw new Error(`Failed to create customer part for quote part: ${quotePart.partName}`)
+            }
+
+            // Copy CAD files from quote-parts location to parts location
+            let newPartFileUrl: string | null = null
+            let newPartMeshUrl: string | null = null
+            let newThumbnailUrl: string | null = null
+
+            // Helper to extract S3 key from URL or path
+            const extractS3Key = (urlOrPath: string): string | null => {
+              if (!urlOrPath) return null
+              // Handle full URLs - extract everything starting from 'quote-parts/' or 'parts/'
+              if (urlOrPath.startsWith('http')) {
+                const quotePartsIdx = urlOrPath.indexOf('quote-parts/')
+                if (quotePartsIdx >= 0) {
+                  return urlOrPath.substring(quotePartsIdx)
+                }
+                const partsIdx = urlOrPath.indexOf('parts/')
+                if (partsIdx >= 0) {
+                  return urlOrPath.substring(partsIdx)
+                }
+                return null
+              }
+              // Handle relative paths
+              if (urlOrPath.startsWith('quote-parts/') || urlOrPath.startsWith('parts/')) {
+                return urlOrPath
+              }
+              return urlOrPath
+            }
+
+            // Copy CAD source file
+            if (quotePart.partFileUrl) {
+              try {
+                const sourceKey = extractS3Key(quotePart.partFileUrl)
+                if (sourceKey) {
+                  // Extract filename from source key
+                  const fileName = sourceKey.split('/').pop() || 'cad-file'
+                  const destKey = `parts/${customerPart.id}/source/v1/${fileName}`
+                  await copyFile(sourceKey, destKey)
+                  newPartFileUrl = destKey
+                }
+              } catch (copyError) {
+                console.warn(`Failed to copy CAD file for part ${quotePart.partName}, falling back to reference:`, copyError)
+                newPartFileUrl = quotePart.partFileUrl // Fall back to reference if copy fails
+              }
+            }
+
+            // Copy mesh file
+            if (quotePart.partMeshUrl) {
+              try {
+                const sourceKey = extractS3Key(quotePart.partMeshUrl)
+                if (sourceKey) {
+                  const fileName = sourceKey.split('/').pop() || 'mesh.glb'
+                  const destKey = `parts/${customerPart.id}/mesh/${fileName}`
+                  await copyFile(sourceKey, destKey)
+                  newPartMeshUrl = destKey
+                }
+              } catch (copyError) {
+                console.warn(`Failed to copy mesh file for part ${quotePart.partName}, falling back to reference:`, copyError)
+                newPartMeshUrl = quotePart.partMeshUrl // Fall back to reference if copy fails
+              }
+            }
+
+            // Copy thumbnail
+            if (quotePart.thumbnailUrl) {
+              try {
+                const sourceKey = extractS3Key(quotePart.thumbnailUrl)
+                if (sourceKey) {
+                  const fileName = sourceKey.split('/').pop() || 'thumbnail.png'
+                  const destKey = `parts/${customerPart.id}/thumbnails/${fileName}`
+                  await copyFile(sourceKey, destKey)
+                  newThumbnailUrl = destKey
+                }
+              } catch (copyError) {
+                console.warn(`Failed to copy thumbnail for part ${quotePart.partName}, falling back to reference:`, copyError)
+                newThumbnailUrl = quotePart.thumbnailUrl // Fall back to reference if copy fails
+              }
+            }
+
+            // Update part with new URLs
+            await tx
+              .update(parts)
+              .set({
+                partFileUrl: newPartFileUrl,
+                partMeshUrl: newPartMeshUrl,
+                thumbnailUrl: newThumbnailUrl,
+                updatedAt: new Date(),
+              })
+              .where(eq(parts.id, customerPart.id))
+
+            // Copy CAD version history from quote_part to part
+            const quotePartVersions = await tx
+              .select()
+              .from(cadFileVersions)
+              .where(and(
+                eq(cadFileVersions.entityType, 'quote_part'),
+                eq(cadFileVersions.entityId, quotePart.id)
+              ))
+
+            if (quotePartVersions.length > 0) {
+              for (const version of quotePartVersions) {
+                try {
+                  // Copy the versioned CAD file
+                  const sourceKey = version.s3Key
+                  const fileName = sourceKey.split('/').pop() || version.fileName
+                  const destKey = `parts/${customerPart.id}/source/v${version.version}/${fileName}`
+
+                  await copyFile(sourceKey, destKey)
+
+                  // Create new version record for the part
+                  await tx
+                    .insert(cadFileVersions)
+                    .values({
+                      entityType: 'part',
+                      entityId: customerPart.id,
+                      version: version.version,
+                      isCurrentVersion: version.isCurrentVersion,
+                      s3Key: destKey,
+                      fileName: version.fileName,
+                      fileSize: version.fileSize,
+                      contentType: version.contentType,
+                      uploadedBy: version.uploadedBy,
+                      uploadedByEmail: version.uploadedByEmail,
+                      notes: version.notes,
+                    })
+                } catch (versionCopyError) {
+                  console.warn(`Failed to copy version ${version.version} for part ${quotePart.partName}:`, versionCopyError)
+                  // Continue with other versions even if one fails
+                }
+              }
             }
 
           // Migrate quote part drawings to the new customer part

@@ -8,7 +8,7 @@ import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } 
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";
+import { canUserUploadMesh, shouldShowEventsInNav, canUserUploadCadRevision } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
 import Navbar from "~/components/Navbar";
@@ -53,7 +53,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, events] = await Promise.all([
+  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, events, canRevise] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
@@ -61,6 +61,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     canUserUploadMesh(userDetails.role),
     shouldShowEventsInNav(),
     getEventsByEntity("customer", customer.id.toString(), 10),
+    canUserUploadCadRevision(userDetails?.role),
   ]);
 
   // Hydrate thumbnails and mesh URLs for customer parts (convert S3 keys to signed URLs)
@@ -133,7 +134,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, events }),
+    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, events, canRevise }),
     headers
   );
 }
@@ -687,7 +688,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events, canRevise } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
@@ -1920,8 +1921,13 @@ export default function CustomerDetails() {
         modelUrl={selected3DPart?.partMeshUrl || undefined}
         solidModelUrl={selected3DPart?.partFileUrl || undefined}
         partId={selected3DPart?.id}
+        entityType="part"
+        cadFileUrl={selected3DPart?.partFileUrl || undefined}
+        canRevise={canRevise}
         onThumbnailUpdate={() => {
-          // Refresh the page to show the updated thumbnail
+          revalidator.revalidate();
+        }}
+        onRevisionComplete={() => {
           revalidator.revalidate();
         }}
         autoGenerateThumbnail={true}
