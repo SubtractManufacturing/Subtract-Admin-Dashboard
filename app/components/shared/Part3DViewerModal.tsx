@@ -250,12 +250,12 @@ export function Part3DViewerModal({
     >
       <div
         ref={modalRef}
-        className="relative w-[85vw] h-[85vh] bg-gray-900 rounded-lg overflow-hidden shadow-2xl"
+        className="relative w-[85vw] h-[85vh] bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-2xl transition-colors duration-150"
       >
         {/* Close button - top right */}
         <button
           onClick={onClose}
-          className="absolute top-2 right-2 z-20 p-2 bg-gray-800/80 hover:bg-gray-700 rounded-full transition-colors"
+          className="absolute top-2 right-2 z-20 p-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-800/80 dark:hover:bg-gray-700 rounded-full transition-colors"
           aria-label="Close"
         >
           <svg
@@ -264,7 +264,7 @@ export function Part3DViewerModal({
             height="20"
             fill="currentColor"
             viewBox="0 0 16 16"
-            className="text-gray-300"
+            className="text-gray-600 dark:text-gray-300"
           >
             <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"/>
           </svg>
@@ -278,7 +278,7 @@ export function Part3DViewerModal({
               className={`p-2 rounded-full transition-colors ${
                 showVersionPanel
                   ? 'bg-blue-600 text-white'
-                  : 'bg-gray-800/80 hover:bg-gray-700 text-gray-300'
+                  : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-800/80 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300'
               }`}
               title="Version Control"
             >
@@ -291,15 +291,15 @@ export function Part3DViewerModal({
 
             {/* Version Control Dropdown Panel */}
             {showVersionPanel && (
-              <div className="absolute top-full right-0 mt-2 w-80 bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden">
+              <div className="absolute top-full right-0 mt-2 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden transition-colors duration-150">
                 {/* Tab Headers */}
-                <div className="flex border-b border-gray-700">
+                <div className="flex border-b border-gray-200 dark:border-gray-700">
                   <button
                     onClick={() => setActiveTab('history')}
                     className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                       activeTab === 'history'
-                        ? 'bg-gray-700 text-white'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750'
+                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-750'
                     }`}
                   >
                     History
@@ -309,8 +309,8 @@ export function Part3DViewerModal({
                       onClick={() => setActiveTab('upload')}
                       className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
                         activeTab === 'upload'
-                          ? 'bg-gray-700 text-white'
-                          : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750'
+                          ? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
+                          : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-750'
                       }`}
                     >
                       Upload Revision
@@ -324,26 +324,26 @@ export function Part3DViewerModal({
                     <div className="p-3">
                       {isLoadingVersions ? (
                         <div className="flex items-center justify-center py-6">
-                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400"></div>
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400 dark:border-gray-400"></div>
                         </div>
                       ) : versions.length === 0 ? (
-                        <p className="text-gray-400 text-sm text-center py-6">No version history</p>
+                        <p className="text-gray-500 dark:text-gray-400 text-sm text-center py-6">No version history</p>
                       ) : (
                         <div className="space-y-2">
                           {versions.map((v) => (
                             <div
                               key={v.id}
-                              className={`p-2 rounded-lg ${
+                              className={`p-2 rounded-lg transition-colors ${
                                 v.isCurrentVersion
-                                  ? 'bg-green-900/30 border border-green-700'
-                                  : 'bg-gray-700/50 hover:bg-gray-700'
+                                  ? 'bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700'
+                                  : 'bg-gray-100 dark:bg-gray-700/50 hover:bg-gray-200 dark:hover:bg-gray-700'
                               }`}
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-mono text-sm text-gray-200">v{v.version}</span>
+                                  <span className="font-mono text-sm text-gray-800 dark:text-gray-200">v{v.version}</span>
                                   {v.isCurrentVersion && (
-                                    <span className="text-xs bg-green-700 text-green-100 px-1.5 py-0.5 rounded">
+                                    <span className="text-xs bg-green-600 dark:bg-green-700 text-white dark:text-green-100 px-1.5 py-0.5 rounded">
                                       Current
                                     </span>
                                   )}
@@ -352,7 +352,7 @@ export function Part3DViewerModal({
                                   <button
                                     onClick={() => handleDownloadVersion(v)}
                                     disabled={!v.downloadUrl}
-                                    className="p-1 text-gray-400 hover:text-gray-200 rounded transition-colors disabled:opacity-50"
+                                    className="p-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded transition-colors disabled:opacity-50"
                                     title="Download"
                                   >
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
@@ -364,7 +364,7 @@ export function Part3DViewerModal({
                                     <button
                                       onClick={() => handleRestoreVersion(v.id)}
                                       disabled={isRestoring}
-                                      className="p-1 text-gray-400 hover:text-blue-400 rounded transition-colors disabled:opacity-50"
+                                      className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-colors disabled:opacity-50"
                                       title="Restore"
                                     >
                                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
@@ -375,14 +375,14 @@ export function Part3DViewerModal({
                                   )}
                                 </div>
                               </div>
-                              <div className="text-xs text-gray-400 truncate mt-1">
+                              <div className="text-xs text-gray-600 dark:text-gray-400 truncate mt-1">
                                 {v.fileName}
                               </div>
-                              <div className="text-xs text-gray-500">
+                              <div className="text-xs text-gray-500 dark:text-gray-500">
                                 {formatFileSize(v.fileSize)} • {formatRelativeTime(v.uploadedAt)}
                               </div>
                               {v.notes && (
-                                <div className="text-xs text-gray-400 mt-1 italic truncate">
+                                <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 italic truncate">
                                   "{v.notes}"
                                 </div>
                               )}
@@ -391,7 +391,7 @@ export function Part3DViewerModal({
                         </div>
                       )}
                       {restoreError && (
-                        <div className="mt-2 p-2 bg-red-900/30 border border-red-700 rounded text-red-400 text-xs">
+                        <div className="mt-2 p-2 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded text-red-600 dark:text-red-400 text-xs">
                           {restoreError}
                         </div>
                       )}
@@ -400,7 +400,7 @@ export function Part3DViewerModal({
 
                   {activeTab === 'upload' && canRevise && (
                     <div className="p-3">
-                      <p className="text-xs text-gray-400 mb-3">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
                         Current: v{displayVersion} → Will create v{displayVersion + 1}
                       </p>
 
@@ -416,21 +416,21 @@ export function Part3DViewerModal({
                         onClick={() => fileInputRef.current?.click()}
                         className={`border border-dashed rounded-lg p-3 text-center cursor-pointer transition-colors mb-3 ${
                           revisionFile
-                            ? 'border-green-500 bg-green-900/20'
-                            : 'border-gray-600 hover:border-gray-500 bg-gray-700/30'
+                            ? 'border-green-500 bg-green-100 dark:bg-green-900/20'
+                            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-50 dark:bg-gray-700/30'
                         }`}
                       >
                         {revisionFile ? (
-                          <div className="flex items-center justify-center gap-2 text-green-400 text-sm">
+                          <div className="flex items-center justify-center gap-2 text-green-600 dark:text-green-400 text-sm">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
                               <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"/>
                             </svg>
                             <span className="truncate">{revisionFile.name}</span>
                           </div>
                         ) : (
-                          <div className="text-gray-400 text-sm">
+                          <div className="text-gray-500 dark:text-gray-400 text-sm">
                             <p>Click to select file</p>
-                            <p className="text-xs text-gray-500">.step, .stp, .iges, .igs, .brep</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">.step, .stp, .iges, .igs, .brep</p>
                           </div>
                         )}
                       </div>
@@ -441,11 +441,11 @@ export function Part3DViewerModal({
                         onChange={(e) => setRevisionNotes(e.target.value)}
                         placeholder="Revision notes (optional)"
                         rows={2}
-                        className="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-gray-200 placeholder-gray-500 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 mb-3"
+                        className="w-full px-2 py-1.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 mb-3 transition-colors"
                       />
 
                       {revisionError && (
-                        <div className="mb-3 p-2 bg-red-900/30 border border-red-700 rounded text-red-400 text-xs">
+                        <div className="mb-3 p-2 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded text-red-600 dark:text-red-400 text-xs">
                           {revisionError}
                         </div>
                       )}
@@ -455,8 +455,8 @@ export function Part3DViewerModal({
                         disabled={!revisionFile || isUploading}
                         className={`w-full px-3 py-2 rounded text-sm text-white transition-colors ${
                           !revisionFile || isUploading
-                            ? 'bg-blue-800 cursor-not-allowed opacity-50'
-                            : 'bg-blue-600 hover:bg-blue-500'
+                            ? 'bg-blue-400 dark:bg-blue-800 cursor-not-allowed opacity-50'
+                            : 'bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500'
                         }`}
                       >
                         {isUploading ? 'Uploading...' : 'Upload & Convert'}
@@ -484,21 +484,21 @@ export function Part3DViewerModal({
               isQuotePart={isQuotePart}
             />
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center bg-gray-900 text-gray-400">
+            <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="48"
                 height="48"
                 fill="currentColor"
                 viewBox="0 0 16 16"
-                className="mb-4 text-gray-600"
+                className="mb-4 text-gray-400 dark:text-gray-600"
               >
                 <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zM4.5 7.5a.5.5 0 0 0 0 1h7a.5.5 0 0 0 0-1h-7z"/>
               </svg>
               <p className="text-lg mb-1">No 3D preview available</p>
-              <p className="text-sm text-gray-500">Mesh conversion may be in progress or failed</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">Mesh conversion may be in progress or failed</p>
               {hasCadFile && (
-                <p className="text-xs text-gray-600 mt-2">CAD file is available for download</p>
+                <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">CAD file is available for download</p>
               )}
             </div>
           )}
