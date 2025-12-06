@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.0.1...v1.1.0) (2025-12-06)
+
+
+### Features
+
+* better in-app versioning ([505d815](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/505d81520af346b7627e67915ff46cd4692c01a2))
+
 ## [1.0.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.0.0...v1.0.1) (2025-11-26)
 
 
