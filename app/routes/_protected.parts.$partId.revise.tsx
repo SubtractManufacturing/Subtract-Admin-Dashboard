@@ -6,7 +6,7 @@ import {
 } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { canUserUploadCadRevision } from "~/lib/featureFlags";
-import { createCadVersion, getLatestVersionNumber } from "~/lib/cadVersions";
+import { createCadVersion, getLatestVersionNumber, backfillExistingCadFile } from "~/lib/cadVersions";
 import { handlePartCadRevision } from "~/lib/part-mesh-converter.server";
 import { uploadFile } from "~/lib/s3.server";
 import { createEvent } from "~/lib/events";
@@ -24,18 +24,23 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Part ID is required" }, { status: 400 });
   }
 
+  if (!user?.id) {
+    return json({ error: "User authentication failed" }, { status: 401 });
+  }
+
   // Feature flag check
   const canRevise = await canUserUploadCadRevision(userDetails?.role);
   if (!canRevise) {
     return json({ error: "CAD revisions are not enabled for your account" }, { status: 403 });
   }
 
-  // Verify part exists and get customer ID for event logging
+  // Verify part exists and get customer ID and existing file info for event logging
   const [part] = await db
     .select({
       id: parts.id,
       partName: parts.partName,
       customerId: parts.customerId,
+      partFileUrl: parts.partFileUrl,
     })
     .from(parts)
     .where(eq(parts.id, partId))
@@ -68,7 +73,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }, { status: 400 });
     }
 
-    // Determine next version number
+    // Backfill existing file as v1 if no version history exists
+    // This preserves files uploaded before version history was implemented
+    if (part.partFileUrl) {
+      const existingFileName = part.partFileUrl.split("/").pop() || "original-file";
+      await backfillExistingCadFile("part", partId, {
+        s3Key: part.partFileUrl,
+        fileName: existingFileName,
+      });
+    }
+
+    // Determine next version number (will be 2 if backfill created v1, or 1 if no existing file)
     const currentVersionNumber = await getLatestVersionNumber("part", partId);
     const nextVersion = currentVersionNumber + 1;
 
@@ -104,6 +119,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       user.email || userDetails?.name || "unknown",
       notes || undefined
     );
+
+    if (!version) {
+      return json({ error: "Failed to create version record" }, { status: 500 });
+    }
 
     // Handle revision workflow (delete old mesh, update CAD URL, trigger conversion)
     await handlePartCadRevision(

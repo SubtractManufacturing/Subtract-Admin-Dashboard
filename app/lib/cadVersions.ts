@@ -181,3 +181,58 @@ export async function getCadVersionCount(
   const versions = await getCadVersions(entityType, entityId);
   return versions.length;
 }
+
+/**
+ * Backfill existing CAD file as v1 if no version history exists
+ * This preserves files uploaded before version history was implemented
+ *
+ * @param entityType - "quote_part" or "part"
+ * @param entityId - The entity ID
+ * @param existingFile - Info about the existing file to backfill
+ * @param systemNote - Note to add explaining this is a backfilled version
+ * @returns The created version record, or null if no backfill was needed
+ */
+export async function backfillExistingCadFile(
+  entityType: CadEntityType,
+  entityId: string,
+  existingFile: {
+    s3Key: string;
+    fileName: string;
+    fileSize?: number;
+    contentType?: string;
+  } | null
+): Promise<CadFileVersion | null> {
+  // Check if version history already exists
+  const versionCount = await getCadVersionCount(entityType, entityId);
+  if (versionCount > 0) {
+    // Already has version history, no backfill needed
+    return null;
+  }
+
+  // Check if there's an existing file to backfill
+  if (!existingFile?.s3Key) {
+    // No existing file, no backfill needed
+    return null;
+  }
+
+  // Create v1 record for the existing file
+  const [backfilledVersion] = await db
+    .insert(cadFileVersions)
+    .values({
+      entityType,
+      entityId,
+      version: 1,
+      isCurrentVersion: true, // Will be unset when new version is created
+      s3Key: existingFile.s3Key,
+      fileName: existingFile.fileName,
+      fileSize: existingFile.fileSize || null,
+      contentType: existingFile.contentType || "application/octet-stream",
+      uploadedBy: null, // Unknown - uploaded before version tracking
+      uploadedByEmail: null,
+      notes: "Original file (uploaded before version history)",
+    })
+    .returning();
+
+  console.log(`Backfilled existing CAD file as v1 for ${entityType} ${entityId}`);
+  return backfilledVersion;
+}

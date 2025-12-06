@@ -6,7 +6,7 @@ import {
 } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { canUserUploadCadRevision } from "~/lib/featureFlags";
-import { createCadVersion, getLatestVersionNumber } from "~/lib/cadVersions";
+import { createCadVersion, getLatestVersionNumber, backfillExistingCadFile } from "~/lib/cadVersions";
 import { handleCadRevision } from "~/lib/quote-part-mesh-converter.server";
 import { uploadFile } from "~/lib/s3.server";
 import { createEvent } from "~/lib/events";
@@ -30,12 +30,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "CAD revisions are not enabled for your account" }, { status: 403 });
   }
 
-  // Verify quote part exists and get quote ID for event logging
+  // Verify quote part exists and get quote ID and existing file info for event logging
   const [quotePart] = await db
     .select({
       id: quoteParts.id,
       partName: quoteParts.partName,
       quoteId: quoteParts.quoteId,
+      partFileUrl: quoteParts.partFileUrl,
     })
     .from(quoteParts)
     .where(eq(quoteParts.id, quotePartId))
@@ -68,7 +69,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }, { status: 400 });
     }
 
-    // Determine next version number
+    // Backfill existing file as v1 if no version history exists
+    // This preserves files uploaded before version history was implemented
+    if (quotePart.partFileUrl) {
+      const existingFileName = quotePart.partFileUrl.split("/").pop() || "original-file";
+      await backfillExistingCadFile("quote_part", quotePartId, {
+        s3Key: quotePart.partFileUrl,
+        fileName: existingFileName,
+      });
+    }
+
+    // Determine next version number (will be 2 if backfill created v1, or 1 if no existing file)
     const currentVersionNumber = await getLatestVersionNumber("quote_part", quotePartId);
     const nextVersion = currentVersionNumber + 1;
 

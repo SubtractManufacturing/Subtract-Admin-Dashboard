@@ -1,5 +1,5 @@
 import { Part3DViewer } from '~/components/shared/Part3DViewer';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useFetcher } from '@remix-run/react';
 
 interface CadVersion {
@@ -69,17 +69,19 @@ export function Part3DViewerModal({
   const [revisionFile, setRevisionFile] = useState<File | null>(null);
   const [versions, setVersions] = useState<CadVersion[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
-  // Track when an operation completed successfully but modal hasn't closed yet
-  const [operationCompleted, setOperationCompleted] = useState(false);
 
   const revisionFetcher = useFetcher();
   const restoreFetcher = useFetcher();
 
+  // Track the last processed fetcher data to prevent infinite loops
+  const lastProcessedRevisionData = useRef<unknown>(null);
+  const lastProcessedRestoreData = useRef<unknown>(null);
+
   const isUploading = revisionFetcher.state === 'submitting';
   const isRestoring = restoreFetcher.state === 'submitting';
 
-  // Show processing state when uploading, restoring, OR just completed (waiting for modal to close)
-  const isProcessing = isUploading || isRestoring || operationCompleted;
+  // Show processing state when uploading or restoring
+  const isProcessing = isUploading || isRestoring;
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -121,39 +123,63 @@ export function Part3DViewerModal({
     }
   }, [showVersionPanel, entityId, fetchVersionHistory]);
 
-  // Reset operationCompleted when modal closes
+  // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setOperationCompleted(false);
+      // Reset processed data refs so future operations work correctly
+      lastProcessedRevisionData.current = null;
+      lastProcessedRestoreData.current = null;
     }
   }, [isOpen]);
 
   // Handle revision upload success
   useEffect(() => {
+    // Skip if we've already processed this data (prevents infinite loops)
+    if (revisionFetcher.data === lastProcessedRevisionData.current) {
+      return;
+    }
+
     if (revisionFetcher.state === 'idle' && revisionFetcher.data) {
       const data = revisionFetcher.data as { success?: boolean; error?: string };
       if (data.success) {
-        setOperationCompleted(true);
+        // Mark this data as processed
+        lastProcessedRevisionData.current = revisionFetcher.data;
+
         setRevisionFile(null);
         setRevisionNotes('');
-        setActiveTab('history');
-        fetchVersionHistory();
+
+        // Trigger revalidation and close modal after a brief delay
+        // The mesh will regenerate in the background - user can re-open modal when ready
         onRevisionComplete?.();
+        setTimeout(() => {
+          onClose();
+        }, 500);
       }
     }
-  }, [revisionFetcher.state, revisionFetcher.data, fetchVersionHistory, onRevisionComplete]);
+  }, [revisionFetcher.state, revisionFetcher.data, onRevisionComplete, onClose]);
 
   // Handle restore success
   useEffect(() => {
+    // Skip if we've already processed this data (prevents infinite loops)
+    if (restoreFetcher.data === lastProcessedRestoreData.current) {
+      return;
+    }
+
     if (restoreFetcher.state === 'idle' && restoreFetcher.data) {
       const data = restoreFetcher.data as { success?: boolean; error?: string };
       if (data.success) {
-        setOperationCompleted(true);
-        fetchVersionHistory();
+        // Mark this data as processed
+        lastProcessedRestoreData.current = restoreFetcher.data;
+
+        // Trigger revalidation and close modal after a brief delay
+        // The mesh will regenerate in the background - user can re-open modal when ready
         onRevisionComplete?.();
+        setTimeout(() => {
+          onClose();
+        }, 500);
       }
     }
-  }, [restoreFetcher.state, restoreFetcher.data, fetchVersionHistory, onRevisionComplete]);
+  }, [restoreFetcher.state, restoreFetcher.data, onRevisionComplete, onClose]);
 
   useEffect(() => {
     if (!isOpen) return;
