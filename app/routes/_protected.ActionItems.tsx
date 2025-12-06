@@ -2,7 +2,7 @@ import { json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav } from "~/lib/featureFlags";
+import { shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
 
 import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
@@ -12,23 +12,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const appConfig = getAppConfig();
 
   try {
-    const showEventsLink = await shouldShowEventsInNav();
+    const [showEventsLink, showVersionInHeader] = await Promise.all([
+      shouldShowEventsInNav(),
+      shouldShowVersionInHeader(),
+    ]);
     return withAuthHeaders(
-      json({ user, userDetails, appConfig, showEventsLink }),
+      json({ user, userDetails, appConfig, showEventsLink, showVersionInHeader }),
       headers
     );
   } catch (error) {
     console.error("ActionItems loader error:", error);
     return withAuthHeaders(
-      json({ user, userDetails, appConfig, showEventsLink: true }),
+      json({ user, userDetails, appConfig, showEventsLink: true, showVersionInHeader: false }),
       headers
     );
   }
 }
 
 export default function Quotes() {
-  const { user, userDetails, appConfig, showEventsLink } = useLoaderData<typeof loader>();
-  
+  const { user, userDetails, appConfig, showEventsLink, showVersionInHeader } = useLoaderData<typeof loader>();
+
   return (
     <div>
       <Navbar
@@ -36,7 +39,7 @@ export default function Quotes() {
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">

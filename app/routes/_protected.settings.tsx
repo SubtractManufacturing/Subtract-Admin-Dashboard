@@ -12,6 +12,7 @@ import {
   updateFeatureFlag,
   initializeFeatureFlags,
   shouldShowEventsInNav,
+  shouldShowVersionInHeader,
   isFeatureEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
@@ -42,6 +43,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Get events nav visibility
   const showEventsLink = await shouldShowEventsInNav();
 
+  // Get version header visibility
+  const showVersionInHeader = await shouldShowVersionInHeader();
+
   // Get S3 migration status for Dev users
   const s3MigrationEnabled =
     userDetails.role === "Dev"
@@ -60,6 +64,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       appConfig,
       featureFlags,
       showEventsLink,
+      showVersionInHeader,
       s3MigrationEnabled,
       s3MigrationStatus,
     }),
@@ -369,6 +374,7 @@ export default function Settings() {
     appConfig,
     featureFlags: initialFeatureFlags,
     showEventsLink,
+    showVersionInHeader,
     s3MigrationEnabled,
     s3MigrationStatus,
   } = useLoaderData<typeof loader>();
@@ -474,7 +480,7 @@ export default function Settings() {
         userEmail={user.email}
         userInitials={(userDetails?.name || user.email).charAt(0).toUpperCase()}
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
       <div className="p-4 md:p-6 max-w-6xl mx-auto">
@@ -674,7 +680,7 @@ export default function Settings() {
                             Environment:
                           </span>
                           <span className="text-gray-900 dark:text-white">
-                            {appConfig.isStaging ? "Staging" : "Production"}
+                            {appConfig.environment}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -762,6 +768,7 @@ export default function Settings() {
                     <div>
                       {localFeatureFlags
                         ?.filter((flag: FeatureFlag) =>
+                          flag.key === 'display_version_header' ||
                           flag.key === 'mesh_uploads_dev' ||
                           flag.key === 'mesh_uploads_all' ||
                           flag.key === 'price_calculator_dev' ||

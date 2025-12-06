@@ -7,7 +7,7 @@ import { getVendors, createVendor, updateVendor, archiveVendor } from "~/lib/ven
 import type { Vendor, VendorInput, VendorEventContext } from "~/lib/vendors"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 import { getAppConfig } from "~/lib/config.server"
-import { shouldShowEventsInNav } from "~/lib/featureFlags"
+import { shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags"
 
 import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
@@ -21,19 +21,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const appConfig = getAppConfig()
   
   try {
-    const [vendors, showEventsLink] = await Promise.all([
+    const [vendors, showEventsLink, showVersionInHeader] = await Promise.all([
       getVendors(),
       shouldShowEventsInNav(),
+      shouldShowVersionInHeader(),
     ])
 
     return withAuthHeaders(
-      json({ vendors, user, userDetails, appConfig, showEventsLink }),
+      json({ vendors, user, userDetails, appConfig, showEventsLink, showVersionInHeader }),
       headers
     )
   } catch (error) {
     console.error("Vendors loader error:", error)
     return withAuthHeaders(
-      json({ vendors: [], user, userDetails, appConfig, showEventsLink: true }),
+      json({ vendors: [], user, userDetails, appConfig, showEventsLink: true, showVersionInHeader: false }),
       headers
     )
   }
@@ -99,7 +100,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Vendors() {
-  const { vendors, user, userDetails, appConfig, showEventsLink } = useLoaderData<typeof loader>()
+  const { vendors, user, userDetails, appConfig, showEventsLink, showVersionInHeader } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
@@ -154,7 +155,7 @@ export default function Vendors() {
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">

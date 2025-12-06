@@ -26,7 +26,7 @@ import {
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
+import { shouldShowEventsInNav, shouldShowVersionInHeader, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import {
   uploadFile,
   generateFileKey,
@@ -115,8 +115,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, pdfAutoDownload, events] = await Promise.all([
+  const [showEventsLink, showVersionInHeader, pdfAutoDownload, events] = await Promise.all([
     shouldShowEventsInNav(),
+    shouldShowVersionInHeader(),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsForOrder(order.id, 10),
   ]);
@@ -134,6 +135,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       userDetails,
       appConfig,
       showEventsLink,
+      showVersionInHeader,
       pdfAutoDownload,
       events,
     }),
@@ -805,6 +807,7 @@ export default function OrderDetails() {
     userDetails,
     appConfig,
     showEventsLink,
+    showVersionInHeader,
     pdfAutoDownload,
     events,
   } = useLoaderData<typeof loader>();
@@ -1414,7 +1417,7 @@ export default function OrderDetails() {
           user.email.charAt(0).toUpperCase()
         }
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">

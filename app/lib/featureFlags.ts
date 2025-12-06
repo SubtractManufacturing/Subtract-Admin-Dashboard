@@ -13,6 +13,7 @@ export const FEATURE_FLAGS = {
   PDF_AUTO_DOWNLOAD: "pdf_auto_download",
   QUOTE_REJECTION_REASON_REQUIRED: "quote_rejection_reason_required",
   S3_MIGRATION_ENABLED: "s3_migration_enabled",
+  DISPLAY_VERSION_HEADER: "display_version_header",
 } as const;
 
 // Default feature flags with their metadata
@@ -69,6 +70,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     key: FEATURE_FLAGS.S3_MIGRATION_ENABLED,
     name: "Enable S3 Storage Migration Tools",
     description: "Allow developers to run S3 storage consolidation and cleanup operations (Dev only)",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.DISPLAY_VERSION_HEADER,
+    name: "Display Version in Header",
+    description: "Show the application version number in the navigation header",
     enabled: false,
   },
 ];
@@ -175,4 +182,8 @@ export async function canUserAccessPriceCalculator(userRole?: string | null) {
   }
 
   return false;
+}
+
+export async function shouldShowVersionInHeader() {
+  return isFeatureEnabled(FEATURE_FLAGS.DISPLAY_VERSION_HEADER);
 }
