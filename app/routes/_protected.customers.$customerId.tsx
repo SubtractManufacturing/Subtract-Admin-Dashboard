@@ -8,7 +8,7 @@ import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } 
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh, shouldShowEventsInNav } from "~/lib/featureFlags";
+import { canUserUploadMesh, shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
 import Navbar from "~/components/Navbar";
@@ -53,13 +53,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, events] = await Promise.all([
+  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, showVersionInHeader, events] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
     getPartsByCustomerId(customer.id),
     canUserUploadMesh(userDetails.role),
     shouldShowEventsInNav(),
+    shouldShowVersionInHeader(),
     getEventsByEntity("customer", customer.id.toString(), 10),
   ]);
 
@@ -133,7 +134,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, events }),
+    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events }),
     headers
   );
 }
@@ -687,7 +688,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
@@ -1088,7 +1089,7 @@ export default function CustomerDetails() {
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">

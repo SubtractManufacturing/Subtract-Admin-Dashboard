@@ -7,12 +7,12 @@ interface NavbarProps {
   userEmail?: string;
   userInitials?: string;
   version?: string;
-  isStaging?: boolean;
+  showVersion?: boolean;
   showEventsLink?: boolean;
   showQuotesLink?: boolean;
 }
 
-export default function Navbar({ userName, userEmail, userInitials, version, isStaging, showEventsLink = true, showQuotesLink = true }: NavbarProps) {
+export default function Navbar({ userName, userEmail, userInitials, version, showVersion, showEventsLink = true, showQuotesLink = true }: NavbarProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -22,9 +22,9 @@ export default function Navbar({ userName, userEmail, userInitials, version, isS
         <Link to="/" className="text-white no-underline hover:opacity-80">
           Subtract Admin Dashboard
         </Link>
-        {isStaging && version && (
+        {showVersion && version && (
           <span className="text-sm font-normal text-gray-300 bg-gray-700 px-2 py-0.5 rounded">
-            v{version}
+            {version}
           </span>
         )}
       </h1>

@@ -29,6 +29,7 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import {
   shouldShowEventsInNav,
+  shouldShowVersionInHeader,
   canUserAccessPriceCalculator,
   isFeatureEnabled,
   FEATURE_FLAGS,
@@ -243,8 +244,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events] = await Promise.all([
+  const [showEventsLink, showVersionInHeader, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events] = await Promise.all([
     shouldShowEventsInNav(),
+    shouldShowVersionInHeader(),
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
@@ -273,6 +275,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       priceCalculations,
       appConfig,
       showEventsLink,
+      showVersionInHeader,
       canAccessPriceCalculator,
       pdfAutoDownload,
       rejectionReasonRequired,
@@ -1343,6 +1346,7 @@ export default function QuoteDetail() {
     priceCalculations,
     appConfig,
     showEventsLink,
+    showVersionInHeader,
     canAccessPriceCalculator,
     pdfAutoDownload,
     rejectionReasonRequired,
@@ -1926,7 +1930,7 @@ export default function QuoteDetail() {
           user.email.charAt(0).toUpperCase()
         }
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
 
