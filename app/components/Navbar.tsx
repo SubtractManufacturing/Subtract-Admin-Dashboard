@@ -24,7 +24,7 @@ export default function Navbar({ userName, userEmail, userInitials, version, isS
         </Link>
         {isStaging && version && (
           <span className="text-sm font-normal text-gray-300 bg-gray-700 px-2 py-0.5 rounded">
-            v{version}
+            {version}
           </span>
         )}
       </h1>
