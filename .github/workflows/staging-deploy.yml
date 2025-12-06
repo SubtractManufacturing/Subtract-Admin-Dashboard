@@ -19,6 +19,8 @@ jobs:
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
+    # Skip if this is a release-please PR merge
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(master): release') && !startsWith(github.event.head_commit.message, 'chore(main): release') }}
     permissions:
       contents: read
       packages: write
@@ -80,6 +82,7 @@ jobs:
     name: Security Scan
     needs: build
     runs-on: ubuntu-latest
+    if: ${{ needs.build.result == 'success' }}
     permissions:
       contents: read
       packages: read
@@ -112,6 +115,7 @@ jobs:
     name: Deploy to Staging
     needs: [build, scan]
     runs-on: ubuntu-latest
+    if: ${{ needs.build.result == 'success' }}
     environment:
       name: staging
       # url: https://staging.your-domain.com  # UPDATE: Your staging URL
@@ -140,7 +144,7 @@ jobs:
     name: Summary
     needs: [build, scan, deploy]
     runs-on: ubuntu-latest
-    if: always()
+    if: ${{ always() && needs.build.result == 'success' }}
 
     steps:
       - name: Generate summary
