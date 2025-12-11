@@ -1,6 +1,6 @@
-import { Part3DViewer } from '~/components/shared/Part3DViewer';
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useFetcher } from '@remix-run/react';
+import { Part3DViewer } from "~/components/shared/Part3DViewer";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useFetcher } from "@remix-run/react";
 
 interface CadVersion {
   id: string;
@@ -14,7 +14,7 @@ interface CadVersion {
   downloadUrl: string | null;
 }
 
-type EntityType = 'quote_part' | 'part';
+type EntityType = "quote_part" | "part";
 
 interface Part3DViewerModalProps {
   isOpen: boolean;
@@ -57,7 +57,6 @@ export function Part3DViewerModal({
   currentVersion = 1,
   onRevisionComplete,
   entityType: propEntityType,
-  bananaEnabled = false,
   bananaModelUrl,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
@@ -66,12 +65,13 @@ export function Part3DViewerModal({
 
   // Determine entity type and ID for version control routes
   // For backwards compatibility: if entityType is not provided, infer from quotePartId/partId
-  const entityType: EntityType = propEntityType || (quotePartId ? 'quote_part' : 'part');
-  const entityId = entityType === 'quote_part' ? quotePartId : partId;
-  const routePrefix = entityType === 'quote_part' ? 'quote-parts' : 'parts';
+  const entityType: EntityType =
+    propEntityType || (quotePartId ? "quote_part" : "part");
+  const entityId = entityType === "quote_part" ? quotePartId : partId;
+  const routePrefix = entityType === "quote_part" ? "quote-parts" : "parts";
   const [showVersionPanel, setShowVersionPanel] = useState(false);
-  const [activeTab, setActiveTab] = useState<'history' | 'upload'>('history');
-  const [revisionNotes, setRevisionNotes] = useState('');
+  const [activeTab, setActiveTab] = useState<"history" | "upload">("history");
+  const [revisionNotes, setRevisionNotes] = useState("");
   const [revisionFile, setRevisionFile] = useState<File | null>(null);
   const [versions, setVersions] = useState<CadVersion[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
@@ -83,8 +83,8 @@ export function Part3DViewerModal({
   const lastProcessedRevisionData = useRef<unknown>(null);
   const lastProcessedRestoreData = useRef<unknown>(null);
 
-  const isUploading = revisionFetcher.state === 'submitting';
-  const isRestoring = restoreFetcher.state === 'submitting';
+  const isUploading = revisionFetcher.state === "submitting";
+  const isRestoring = restoreFetcher.state === "submitting";
 
   // Show processing state when uploading or restoring
   const isProcessing = isUploading || isRestoring;
@@ -92,16 +92,19 @@ export function Part3DViewerModal({
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setShowVersionPanel(false);
       }
     };
 
     if (showVersionPanel) {
-      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener("mousedown", handleClickOutside);
     }
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [showVersionPanel]);
 
@@ -117,7 +120,7 @@ export function Part3DViewerModal({
         setVersions(data.versions || []);
       }
     } catch (error) {
-      console.error('Failed to fetch version history:', error);
+      console.error("Failed to fetch version history:", error);
     } finally {
       setIsLoadingVersions(false);
     }
@@ -145,14 +148,17 @@ export function Part3DViewerModal({
       return;
     }
 
-    if (revisionFetcher.state === 'idle' && revisionFetcher.data) {
-      const data = revisionFetcher.data as { success?: boolean; error?: string };
+    if (revisionFetcher.state === "idle" && revisionFetcher.data) {
+      const data = revisionFetcher.data as {
+        success?: boolean;
+        error?: string;
+      };
       if (data.success) {
         // Mark this data as processed
         lastProcessedRevisionData.current = revisionFetcher.data;
 
         setRevisionFile(null);
-        setRevisionNotes('');
+        setRevisionNotes("");
 
         // Trigger revalidation and close modal after a brief delay
         // The mesh will regenerate in the background - user can re-open modal when ready
@@ -162,7 +168,12 @@ export function Part3DViewerModal({
         }, 500);
       }
     }
-  }, [revisionFetcher.state, revisionFetcher.data, onRevisionComplete, onClose]);
+  }, [
+    revisionFetcher.state,
+    revisionFetcher.data,
+    onRevisionComplete,
+    onClose,
+  ]);
 
   // Handle restore success
   useEffect(() => {
@@ -171,7 +182,7 @@ export function Part3DViewerModal({
       return;
     }
 
-    if (restoreFetcher.state === 'idle' && restoreFetcher.data) {
+    if (restoreFetcher.state === "idle" && restoreFetcher.data) {
       const data = restoreFetcher.data as { success?: boolean; error?: string };
       if (data.success) {
         // Mark this data as processed
@@ -190,15 +201,17 @@ export function Part3DViewerModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    const isNestedModal = document.body.style.overflow === 'hidden';
-    const originalOverflow = !isNestedModal ? document.body.style.overflow : null;
+    const isNestedModal = document.body.style.overflow === "hidden";
+    const originalOverflow = !isNestedModal
+      ? document.body.style.overflow
+      : null;
 
     if (!isNestedModal) {
-      document.body.style.overflow = 'hidden';
+      document.body.style.overflow = "hidden";
     }
 
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         e.stopPropagation();
         if (showVersionPanel) {
           setShowVersionPanel(false);
@@ -208,10 +221,10 @@ export function Part3DViewerModal({
       }
     };
 
-    document.addEventListener('keydown', handleEscape);
+    document.addEventListener("keydown", handleEscape);
 
     return () => {
-      document.removeEventListener('keydown', handleEscape);
+      document.removeEventListener("keydown", handleEscape);
       if (!isNestedModal && originalOverflow !== null) {
         document.body.style.overflow = originalOverflow;
       }
@@ -229,15 +242,15 @@ export function Part3DViewerModal({
     if (!revisionFile || !entityId) return;
 
     const formData = new FormData();
-    formData.append('file', revisionFile);
+    formData.append("file", revisionFile);
     if (revisionNotes) {
-      formData.append('notes', revisionNotes);
+      formData.append("notes", revisionNotes);
     }
 
     revisionFetcher.submit(formData, {
-      method: 'POST',
+      method: "POST",
       action: `/${routePrefix}/${entityId}/revise`,
-      encType: 'multipart/form-data',
+      encType: "multipart/form-data",
     });
   };
 
@@ -245,22 +258,22 @@ export function Part3DViewerModal({
     if (!entityId) return;
 
     const formData = new FormData();
-    formData.append('versionId', versionId);
+    formData.append("versionId", versionId);
 
     restoreFetcher.submit(formData, {
-      method: 'POST',
+      method: "POST",
       action: `/${routePrefix}/${entityId}/restore`,
     });
   };
 
   const handleDownloadVersion = (version: CadVersion) => {
     if (version.downloadUrl) {
-      window.open(version.downloadUrl, '_blank');
+      window.open(version.downloadUrl, "_blank");
     }
   };
 
   const formatFileSize = (bytes: number | null) => {
-    if (!bytes) return 'Unknown size';
+    if (!bytes) return "Unknown size";
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -274,7 +287,7 @@ export function Part3DViewerModal({
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'just now';
+    if (diffMins < 1) return "just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
@@ -284,7 +297,8 @@ export function Part3DViewerModal({
   if (!isOpen) return null;
 
   const hasCadFile = !!cadFileUrl || !!solidModelUrl;
-  const displayVersion = versions.find(v => v.isCurrentVersion)?.version || currentVersion;
+  const displayVersion =
+    versions.find((v) => v.isCurrentVersion)?.version || currentVersion;
 
   // Type-safe error extraction from fetcher data
   const revisionError = revisionFetcher.data
@@ -301,7 +315,7 @@ export function Part3DViewerModal({
         if (e.target === e.currentTarget) onClose();
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
+        if (e.key === "Escape") onClose();
       }}
       role="presentation"
     >
@@ -323,7 +337,7 @@ export function Part3DViewerModal({
             viewBox="0 0 16 16"
             className="text-gray-600 dark:text-gray-300"
           >
-            <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"/>
+            <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z" />
           </svg>
         </button>
 
@@ -334,15 +348,21 @@ export function Part3DViewerModal({
               onClick={() => setShowVersionPanel(!showVersionPanel)}
               className={`p-2 rounded-full transition-colors ${
                 showVersionPanel
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-800/80 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300'
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-200 hover:bg-gray-300 dark:bg-gray-800/80 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
               }`}
               title="Version Control"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
-                <path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022l-.074.997zm2.004.45a7.003 7.003 0 0 0-.985-.299l.219-.976c.383.086.76.2 1.126.342l-.36.933zm1.37.71a7.01 7.01 0 0 0-.439-.27l.493-.87a8.025 8.025 0 0 1 .979.654l-.615.789a6.996 6.996 0 0 0-.418-.302zm1.834 1.79a6.99 6.99 0 0 0-.653-.796l.724-.69c.27.285.52.59.747.91l-.818.576zm.744 1.352a7.08 7.08 0 0 0-.214-.468l.893-.45a7.976 7.976 0 0 1 .45 1.088l-.95.313a7.023 7.023 0 0 0-.179-.483zm.53 2.507a6.991 6.991 0 0 0-.1-1.025l.985-.17c.067.386.106.778.116 1.17l-1 .025zm-.131 1.538c.033-.17.06-.339.081-.51l.993.123a7.957 7.957 0 0 1-.23 1.155l-.964-.267c.046-.165.086-.332.12-.501zm-.952 2.379c.184-.29.346-.594.486-.908l.914.405c-.16.36-.345.706-.555 1.038l-.845-.535zm-.964 1.205c.122-.122.239-.248.35-.378l.758.653a8.073 8.073 0 0 1-.401.432l-.707-.707z"/>
-                <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0v1z"/>
-                <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5z"/>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                fill="currentColor"
+                viewBox="0 0 16 16"
+              >
+                <path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022l-.074.997zm2.004.45a7.003 7.003 0 0 0-.985-.299l.219-.976c.383.086.76.2 1.126.342l-.36.933zm1.37.71a7.01 7.01 0 0 0-.439-.27l.493-.87a8.025 8.025 0 0 1 .979.654l-.615.789a6.996 6.996 0 0 0-.418-.302zm1.834 1.79a6.99 6.99 0 0 0-.653-.796l.724-.69c.27.285.52.59.747.91l-.818.576zm.744 1.352a7.08 7.08 0 0 0-.214-.468l.893-.45a7.976 7.976 0 0 1 .45 1.088l-.95.313a7.023 7.023 0 0 0-.179-.483zm.53 2.507a6.991 6.991 0 0 0-.1-1.025l.985-.17c.067.386.106.778.116 1.17l-1 .025zm-.131 1.538c.033-.17.06-.339.081-.51l.993.123a7.957 7.957 0 0 1-.23 1.155l-.964-.267c.046-.165.086-.332.12-.501zm-.952 2.379c.184-.29.346-.594.486-.908l.914.405c-.16.36-.345.706-.555 1.038l-.845-.535zm-.964 1.205c.122-.122.239-.248.35-.378l.758.653a8.073 8.073 0 0 1-.401.432l-.707-.707z" />
+                <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0v1z" />
+                <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5z" />
               </svg>
             </button>
 
@@ -352,22 +372,22 @@ export function Part3DViewerModal({
                 {/* Tab Headers */}
                 <div className="flex border-b border-gray-200 dark:border-gray-700">
                   <button
-                    onClick={() => setActiveTab('history')}
+                    onClick={() => setActiveTab("history")}
                     className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-                      activeTab === 'history'
-                        ? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
-                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-750'
+                      activeTab === "history"
+                        ? "bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white"
+                        : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-750"
                     }`}
                   >
                     History
                   </button>
                   {canRevise && (
                     <button
-                      onClick={() => setActiveTab('upload')}
+                      onClick={() => setActiveTab("upload")}
                       className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-                        activeTab === 'upload'
-                          ? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
-                          : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-750'
+                        activeTab === "upload"
+                          ? "bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white"
+                          : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-750"
                       }`}
                     >
                       Upload Revision
@@ -377,14 +397,16 @@ export function Part3DViewerModal({
 
                 {/* Tab Content */}
                 <div className="max-h-72 overflow-y-auto">
-                  {activeTab === 'history' && (
+                  {activeTab === "history" && (
                     <div className="p-3">
                       {isLoadingVersions ? (
                         <div className="flex items-center justify-center py-6">
                           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400 dark:border-gray-400"></div>
                         </div>
                       ) : versions.length === 0 ? (
-                        <p className="text-gray-500 dark:text-gray-400 text-sm text-center py-6">No version history</p>
+                        <p className="text-gray-500 dark:text-gray-400 text-sm text-center py-6">
+                          No version history
+                        </p>
                       ) : (
                         <div className="space-y-2">
                           {versions.map((v) => (
@@ -392,13 +414,15 @@ export function Part3DViewerModal({
                               key={v.id}
                               className={`p-2 rounded-lg transition-colors ${
                                 v.isCurrentVersion
-                                  ? 'bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700'
-                                  : 'bg-gray-100 dark:bg-gray-700/50 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                  ? "bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700"
+                                  : "bg-gray-100 dark:bg-gray-700/50 hover:bg-gray-200 dark:hover:bg-gray-700"
                               }`}
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                  <span className="font-mono text-sm text-gray-800 dark:text-gray-200">v{v.version}</span>
+                                  <span className="font-mono text-sm text-gray-800 dark:text-gray-200">
+                                    v{v.version}
+                                  </span>
                                   {v.isCurrentVersion && (
                                     <span className="text-xs bg-green-600 dark:bg-green-700 text-white dark:text-green-100 px-1.5 py-0.5 rounded">
                                       Current
@@ -412,9 +436,15 @@ export function Part3DViewerModal({
                                     className="p-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded transition-colors disabled:opacity-50"
                                     title="Download"
                                   >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-                                      <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                                      <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="12"
+                                      height="12"
+                                      fill="currentColor"
+                                      viewBox="0 0 16 16"
+                                    >
+                                      <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
+                                      <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
                                     </svg>
                                   </button>
                                   {!v.isCurrentVersion && canRevise && (
@@ -424,9 +454,18 @@ export function Part3DViewerModal({
                                       className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-colors disabled:opacity-50"
                                       title="Restore"
                                     >
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-                                        <path fillRule="evenodd" d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2v1z"/>
-                                        <path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466z"/>
+                                      <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="12"
+                                        height="12"
+                                        fill="currentColor"
+                                        viewBox="0 0 16 16"
+                                      >
+                                        <path
+                                          fillRule="evenodd"
+                                          d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2v1z"
+                                        />
+                                        <path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466z" />
                                       </svg>
                                     </button>
                                   )}
@@ -436,11 +475,12 @@ export function Part3DViewerModal({
                                 {v.fileName}
                               </div>
                               <div className="text-xs text-gray-500 dark:text-gray-500">
-                                {formatFileSize(v.fileSize)} • {formatRelativeTime(v.uploadedAt)}
+                                {formatFileSize(v.fileSize)} •{" "}
+                                {formatRelativeTime(v.uploadedAt)}
                               </div>
                               {v.notes && (
                                 <div className="text-xs text-gray-600 dark:text-gray-400 mt-1 italic truncate">
-                                  "{v.notes}"
+                                  &quot;{v.notes}&quot;
                                 </div>
                               )}
                             </div>
@@ -455,10 +495,11 @@ export function Part3DViewerModal({
                     </div>
                   )}
 
-                  {activeTab === 'upload' && canRevise && (
+                  {activeTab === "upload" && canRevise && (
                     <div className="p-3">
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                        Current: v{displayVersion} → Will create v{displayVersion + 1}
+                        Current: v{displayVersion} → Will create v
+                        {displayVersion + 1}
                       </p>
 
                       {/* File Input */}
@@ -469,28 +510,39 @@ export function Part3DViewerModal({
                         onChange={handleFileSelect}
                         className="hidden"
                       />
-                      <div
+                      <button
+                        type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className={`border border-dashed rounded-lg p-3 text-center cursor-pointer transition-colors mb-3 ${
+                        className={`w-full border border-dashed rounded-lg p-3 text-center cursor-pointer transition-colors mb-3 ${
                           revisionFile
-                            ? 'border-green-500 bg-green-100 dark:bg-green-900/20'
-                            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-50 dark:bg-gray-700/30'
+                            ? "border-green-500 bg-green-100 dark:bg-green-900/20"
+                            : "border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-50 dark:bg-gray-700/30"
                         }`}
                       >
                         {revisionFile ? (
                           <div className="flex items-center justify-center gap-2 text-green-600 dark:text-green-400 text-sm">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                              <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"/>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="16"
+                              height="16"
+                              fill="currentColor"
+                              viewBox="0 0 16 16"
+                            >
+                              <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z" />
                             </svg>
-                            <span className="truncate">{revisionFile.name}</span>
+                            <span className="truncate">
+                              {revisionFile.name}
+                            </span>
                           </div>
                         ) : (
                           <div className="text-gray-500 dark:text-gray-400 text-sm">
                             <p>Click to select file</p>
-                            <p className="text-xs text-gray-400 dark:text-gray-500">.step, .stp, .iges, .igs, .brep</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">
+                              .step, .stp, .iges, .igs, .brep
+                            </p>
                           </div>
                         )}
-                      </div>
+                      </button>
 
                       {/* Notes */}
                       <textarea
@@ -512,11 +564,11 @@ export function Part3DViewerModal({
                         disabled={!revisionFile || isUploading}
                         className={`w-full px-3 py-2 rounded text-sm text-white transition-colors ${
                           !revisionFile || isUploading
-                            ? 'bg-blue-400 dark:bg-blue-800 cursor-not-allowed opacity-50'
-                            : 'bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500'
+                            ? "bg-blue-400 dark:bg-blue-800 cursor-not-allowed opacity-50"
+                            : "bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-500"
                         }`}
                       >
-                        {isUploading ? 'Uploading...' : 'Upload & Convert'}
+                        {isUploading ? "Uploading..." : "Upload & Convert"}
                       </button>
                     </div>
                   )}
@@ -533,7 +585,11 @@ export function Part3DViewerModal({
             <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
               <p className="text-lg mb-1">
-                {isUploading ? 'Uploading revision...' : isRestoring ? 'Restoring version...' : 'Processing...'}
+                {isUploading
+                  ? "Uploading revision..."
+                  : isRestoring
+                  ? "Restoring version..."
+                  : "Processing..."}
               </p>
               <p className="text-sm text-gray-400 dark:text-gray-500">
                 The 3D preview will update after processing completes
@@ -562,12 +618,16 @@ export function Part3DViewerModal({
                 viewBox="0 0 16 16"
                 className="mb-4 text-gray-400 dark:text-gray-600"
               >
-                <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zM4.5 7.5a.5.5 0 0 0 0 1h7a.5.5 0 0 0 0-1h-7z"/>
+                <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zM4.5 7.5a.5.5 0 0 0 0 1h7a.5.5 0 0 0 0-1h-7z" />
               </svg>
               <p className="text-lg mb-1">No 3D preview available</p>
-              <p className="text-sm text-gray-400 dark:text-gray-500">Mesh conversion may be in progress or failed</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">
+                Mesh conversion may be in progress or failed
+              </p>
               {hasCadFile && (
-                <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">CAD file is available for download</p>
+                <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">
+                  CAD file is available for download
+                </p>
               )}
             </div>
           )}

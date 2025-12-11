@@ -86,7 +86,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
         // Also delete the old attachment record from database
         await deleteAttachmentByS3Key(oldS3Key);
         
-        console.log(`Deleted old thumbnail from S3 and database: ${oldS3Key}`);
       } catch (error) {
         // Log but don't fail if cleanup fails
         console.error(`Failed to delete old thumbnail: ${oldS3Key}`, error);

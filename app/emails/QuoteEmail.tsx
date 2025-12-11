@@ -13,7 +13,6 @@ import {
   Row,
   Column,
 } from "@react-email/components";
-import * as React from "react";
 
 interface QuoteEmailProps {
   messageBody: string;

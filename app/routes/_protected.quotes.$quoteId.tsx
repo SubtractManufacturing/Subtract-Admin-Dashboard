@@ -1164,12 +1164,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           for (const fileKey of filesToDelete) {
             try {
               await deleteFile(fileKey);
-              console.log(`Deleted S3 file: ${fileKey}`);
             } catch (error: unknown) {
               // Log but don't fail - database is already consistent
               const err = error as { Code?: string; name?: string };
               if (err?.Code === "NoSuchKey" || err?.name === "NoSuchKey") {
-                console.log(`S3 file not found (already deleted?): ${fileKey}`);
+                // Ignore if file doesn't exist
               } else {
                 console.error(`Error deleting S3 file ${fileKey}:`, error);
                 // TODO: Add to cleanup queue for retry

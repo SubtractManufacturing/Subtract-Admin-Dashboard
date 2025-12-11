@@ -35,7 +35,6 @@ export async function convertPartToMesh(
 ): Promise<PartMeshConversionResult> {
   // Check if conversion is enabled
   if (!isConversionEnabled()) {
-    console.log("Mesh conversion service not configured - skipping conversion");
     await updatePartConversionStatus(partId, "skipped");
     return {
       success: false,
@@ -66,7 +65,6 @@ export async function convertPartToMesh(
     }
 
     // Download file from S3
-    console.log(`Downloading BREP file for part ${partId}`);
     const fileBuffer = await downloadFromS3(brepFileUrl);
 
     if (!fileBuffer) {
@@ -99,7 +97,6 @@ export async function convertPartToMesh(
       async_processing: true,
     };
 
-    console.log(`Submitting conversion for part ${partId}`);
     const conversionJob = await submitConversion(
       fileBuffer,
       filename,
@@ -127,7 +124,6 @@ export async function convertPartToMesh(
     );
 
     // Poll for completion
-    console.log(`Polling for conversion completion: job ${conversionJob.job_id}`);
     const completedJob = await pollForCompletion(conversionJob.job_id);
 
     if (!completedJob || completedJob.status === "failed") {
@@ -141,7 +137,6 @@ export async function convertPartToMesh(
     }
 
     // Download converted file
-    console.log(`Downloading converted mesh for job ${conversionJob.job_id}`);
     const result = await downloadConversionResult(conversionJob.job_id);
 
     if (!result) {
@@ -162,7 +157,6 @@ export async function convertPartToMesh(
       .replace(/\s+/g, '-')
       .replace(/[^a-zA-Z0-9._-]/g, '');
     const meshKey = `parts/${partId}/mesh/${sanitizedFilename}`;
-    console.log(`Uploading mesh to S3: ${meshKey}`);
 
     const meshUrl = await uploadToS3(
       result.buffer,
@@ -194,7 +188,6 @@ export async function convertPartToMesh(
       })
       .where(eq(parts.id, partId));
 
-    console.log(`Successfully converted part ${partId} to mesh`);
     return {
       success: true,
       meshUrl,
@@ -283,7 +276,6 @@ export async function triggerPartMeshConversion(
 ) {
   // Check if conversion is enabled
   if (!isConversionEnabled()) {
-    console.log("Mesh conversion service not configured - skipping");
     return;
   }
 
@@ -292,13 +284,11 @@ export async function triggerPartMeshConversion(
   const format = detectFileFormat(filename);
 
   if (format !== "brep") {
-    console.log(`File ${filename} is not a BREP format - skipping conversion`);
     await updatePartConversionStatus(partId, "skipped");
     return;
   }
 
   // Start conversion asynchronously
-  console.log(`Triggering mesh conversion for part ${partId}`);
   convertPartToMesh(partId, fileUrl).catch((error) => {
     console.error(`Failed to convert mesh for part ${partId}:`, error);
   });
@@ -376,7 +366,6 @@ export async function deletePartMesh(
     const meshKey = extractS3Key(part.partMeshUrl);
     try {
       await deleteFile(meshKey);
-      console.log(`Deleted mesh file: ${meshKey}`);
     } catch (error) {
       console.error(`Failed to delete mesh file ${meshKey}:`, error);
     }
@@ -387,7 +376,6 @@ export async function deletePartMesh(
     const thumbnailKey = extractS3Key(part.thumbnailUrl);
     try {
       await deleteFile(thumbnailKey);
-      console.log(`Deleted thumbnail file: ${thumbnailKey}`);
     } catch (error) {
       console.error(`Failed to delete thumbnail file ${thumbnailKey}:`, error);
     }

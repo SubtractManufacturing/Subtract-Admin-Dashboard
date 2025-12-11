@@ -260,11 +260,10 @@ function getAlignmentRotation(
 // Banana model component for scale reference - positions itself based on main part size
 function BananaModel({
   url,
-  isLightMode,
   partBoundingBox,
 }: {
   url: string;
-  isLightMode: boolean;
+  isLightMode?: boolean;
   partBoundingBox?: { size: Vector3; center: Vector3 } | null;
 }) {
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
@@ -621,7 +620,6 @@ export function Part3DViewer({
           if (onThumbnailUpdate) {
             onThumbnailUpdate(thumbnailUrl);
           }
-          console.log("Automatic thumbnail generated successfully");
         } else {
           console.error("Failed to upload automatic thumbnail");
         }
@@ -739,7 +737,6 @@ export function Part3DViewer({
           setIsCapturing(false);
 
           // Show success feedback (you might want to add a toast notification here)
-          console.log("Thumbnail captured and uploaded successfully");
         } else {
           console.error("Failed to upload thumbnail");
           setIsCapturing(false);

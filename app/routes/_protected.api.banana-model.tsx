@@ -1,11 +1,10 @@
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
-import { uploadFile, getDownloadUrl } from "~/lib/s3.server";
+import { uploadFile, getDownloadUrl, uploadToS3 } from "~/lib/s3.server";
 import { 
   getBananaModelUrls, 
-  setBananaModelUrls,
-  DEV_SETTINGS 
+  setBananaModelUrls
 } from "~/lib/developerSettings";
 import {
   isConversionEnabled,
@@ -16,7 +15,6 @@ import {
   getRecommendedOutputFormat,
   validateFileSize,
 } from "~/lib/conversion-service.server";
-import { uploadToS3 } from "~/lib/s3.server";
 
 /**
  * GET - Returns the signed URL for the banana mesh model
@@ -98,7 +96,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const sanitizedFileName = file.name.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "");
     const cadKey = `developer/banana/source/${timestamp}-${sanitizedFileName}`;
     
-    const uploadResult = await uploadFile({
+    await uploadFile({
       key: cadKey,
       buffer,
       contentType: "application/octet-stream",
@@ -129,7 +127,6 @@ export async function action({ request }: ActionFunctionArgs) {
       async_processing: true,
     };
 
-    console.log("Submitting banana model for conversion...");
     const conversionJob = await submitConversion(buffer, sanitizedFileName, conversionOptions);
 
     if (!conversionJob) {
@@ -141,7 +138,6 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // Poll for completion
-    console.log(`Polling for banana conversion completion: job ${conversionJob.job_id}`);
     const completedJob = await pollForCompletion(conversionJob.job_id);
 
     if (!completedJob || completedJob.status === "failed") {
@@ -154,7 +150,6 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // Download converted mesh
-    console.log(`Downloading converted banana mesh for job ${conversionJob.job_id}`);
     const result = await downloadConversionResult(conversionJob.job_id);
 
     if (!result) {
@@ -194,8 +189,6 @@ export async function action({ request }: ActionFunctionArgs) {
       conversionStatus: "completed" 
     }, user.email);
 
-    console.log("Banana model uploaded and converted successfully");
-    
     return json({ 
       success: true, 
       cadUrl: cadKey,

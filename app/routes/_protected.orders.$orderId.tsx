@@ -602,14 +602,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Part not found" }, { status: 404 });
         }
 
-        console.log("Part attribute update:", {
-          partId,
-          partName: currentPart.partName,
-          material: { old: currentPart.material, new: material },
-          tolerance: { old: currentPart.tolerance, new: tolerance },
-          finishing: { old: currentPart.finishing, new: finishing },
-        });
-
         // Normalize values (treat empty string as null)
         const normalizeMaterial = material?.trim() || null;
         const normalizeTolerance = tolerance?.trim() || null;
@@ -634,7 +626,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Material change event (compare normalized values)
         if (normalizeMaterial !== currentPart.material) {
-          console.log("Creating material change event");
           await createEvent({
             entityType: "part",
             entityId: partId,
@@ -659,7 +650,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Tolerance change event (compare normalized values)
         if (normalizeTolerance !== currentPart.tolerance) {
-          console.log("Creating tolerance change event");
           await createEvent({
             entityType: "part",
             entityId: partId,
@@ -684,7 +674,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Finishing change event (compare normalized values)
         if (normalizeFinishing !== currentPart.finishing) {
-          console.log("Creating finishing change event");
           await createEvent({
             entityType: "part",
             entityId: partId,

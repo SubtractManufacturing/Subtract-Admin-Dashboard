@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import { render } from "@react-email/render";
-import QuoteEmail from "~/emails/QuoteEmail";
+import { QuoteEmail } from "~/emails/QuoteEmail";
 import fs from "fs";
 import path from "path";
 

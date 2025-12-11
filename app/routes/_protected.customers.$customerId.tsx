@@ -10,8 +10,7 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserUploadMesh, shouldShowEventsInNav, shouldShowVersionInHeader, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
-import { getDownloadUrl as getS3DownloadUrl } from "~/lib/s3.server";
-import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
+import { uploadFile, generateFileKey, deleteFile, getDownloadUrl, getDownloadUrl as getS3DownloadUrl } from "~/lib/s3.server";
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -319,7 +318,6 @@ async function handlePartsAction(
                 userEmail: user?.email || userDetails?.name || undefined,
               };
               await deleteAttachmentByS3Key(s3Key, attachmentEventContext);
-              console.log(`Deleted thumbnail from S3: ${s3Key}`);
             }
           } catch (error) {
             console.error('Failed to delete old thumbnail:', error);
@@ -977,8 +975,6 @@ export default function CustomerDetails() {
   };
 
   const handleView3DPart = (part: Part) => {
-    console.log('Part selected for 3D view:', part);
-    console.log('Part mesh URL:', part.partMeshUrl);
     setSelected3DPart(part);
     setPart3DViewerOpen(true);
   };

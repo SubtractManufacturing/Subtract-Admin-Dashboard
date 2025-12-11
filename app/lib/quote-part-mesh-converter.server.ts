@@ -66,7 +66,6 @@ export async function convertQuotePartToMesh(
     }
 
     // Download file from S3
-    console.log(`Downloading BREP file for quote part ${quotePartId}`);
     const fileBuffer = await downloadFromS3(brepFileUrl);
 
     if (!fileBuffer) {
@@ -99,7 +98,6 @@ export async function convertQuotePartToMesh(
       async_processing: true,
     };
 
-    console.log(`Submitting conversion for quote part ${quotePartId}`);
     const conversionJob = await submitConversion(
       fileBuffer,
       filename,
@@ -127,7 +125,6 @@ export async function convertQuotePartToMesh(
     );
 
     // Poll for completion
-    console.log(`Polling for conversion completion: job ${conversionJob.job_id}`);
     const completedJob = await pollForCompletion(conversionJob.job_id);
 
     if (!completedJob || completedJob.status === "failed") {
@@ -141,7 +138,6 @@ export async function convertQuotePartToMesh(
     }
 
     // Download converted file
-    console.log(`Downloading converted mesh for job ${conversionJob.job_id}`);
     const result = await downloadConversionResult(conversionJob.job_id);
 
     if (!result) {
@@ -162,7 +158,6 @@ export async function convertQuotePartToMesh(
       .replace(/\s+/g, '-')  // Replace spaces with hyphens
       .replace(/[^a-zA-Z0-9._-]/g, '');  // Remove any other special characters
     const meshKey = `quote-parts/${quotePartId}/mesh/${sanitizedFilename}`;
-    console.log(`Uploading mesh to S3: ${meshKey}`);
 
     const meshUrl = await uploadToS3(
       result.buffer,
@@ -457,11 +452,10 @@ export async function deleteQuotePartMesh(
   if (!quotePart?.partMeshUrl && !quotePart?.thumbnailUrl) return;
 
   // Delete mesh from S3
-  if (quotePart.partMeshUrl) {
+    if (quotePart.partMeshUrl) {
     const meshKey = extractS3Key(quotePart.partMeshUrl);
     try {
       await deleteFile(meshKey);
-      console.log(`Deleted mesh file: ${meshKey}`);
     } catch (error) {
       console.error(`Failed to delete mesh file ${meshKey}:`, error);
       // Continue even if delete fails - file might not exist
@@ -473,7 +467,6 @@ export async function deleteQuotePartMesh(
     const thumbnailKey = extractS3Key(quotePart.thumbnailUrl);
     try {
       await deleteFile(thumbnailKey);
-      console.log(`Deleted thumbnail file: ${thumbnailKey}`);
     } catch (error) {
       console.error(`Failed to delete thumbnail file ${thumbnailKey}:`, error);
       // Continue even if delete fails - file might not exist

@@ -233,6 +233,5 @@ export async function backfillExistingCadFile(
     })
     .returning();
 
-  console.log(`Backfilled existing CAD file as v1 for ${entityType} ${entityId}`);
   return backfilledVersion;
 }
