@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.1.0...v1.1.1) (2025-12-11)
+
+
+### Bug Fixes
+
+* email integration and fix duplicate order# bug ([00a861a](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/00a861af4772a7cba202b614ced745d7c4cd088b))
+
 ## [1.1.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.0.1...v1.1.0) (2025-12-06)
 
 
