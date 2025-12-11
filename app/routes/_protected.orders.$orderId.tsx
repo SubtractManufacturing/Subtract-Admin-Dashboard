@@ -28,6 +28,7 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import {
   shouldShowEventsInNav,
+  shouldShowVersionInHeader,
   isFeatureEnabled,
   FEATURE_FLAGS,
   canUserUploadCadRevision,
@@ -125,9 +126,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, pdfAutoDownload, events, canRevise, bananaEnabled] =
+  const [showEventsLink, showVersionInHeader, pdfAutoDownload, events, canRevise, bananaEnabled] =
     await Promise.all([
       shouldShowEventsInNav(),
+      shouldShowVersionInHeader(),
       isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
       getEventsForOrder(order.id, 10),
       canUserUploadCadRevision(userDetails?.role),
@@ -156,6 +158,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       userDetails,
       appConfig,
       showEventsLink,
+      showVersionInHeader,
       pdfAutoDownload,
       events,
       canRevise,
@@ -845,6 +848,7 @@ export default function OrderDetails() {
     userDetails,
     appConfig,
     showEventsLink,
+    showVersionInHeader,
     pdfAutoDownload,
     events,
     canRevise,
@@ -1472,7 +1476,7 @@ export default function OrderDetails() {
           user.email.charAt(0).toUpperCase()
         }
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">

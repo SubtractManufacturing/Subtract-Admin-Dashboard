@@ -17,6 +17,8 @@ export const FEATURE_FLAGS = {
   CAD_REVISIONS_ADMIN: "cad_revisions_admin",
   CAD_REVISIONS_ALL: "cad_revisions_all",
   BANANA_FOR_SCALE: "banana_for_scale",
+  DISPLAY_VERSION_HEADER: "display_version_header",
+  EMAIL_SEND_DEV: "email_send_dev",
 } as const;
 
 // Default feature flags with their metadata
@@ -99,6 +101,18 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     description: "Show a banana model next to parts in 3D viewer for size reference (Dev only)",
     enabled: false,
   },
+  {
+    key: FEATURE_FLAGS.DISPLAY_VERSION_HEADER,
+    name: "Display Version in Header",
+    description: "Show the application version number in the navigation header",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.EMAIL_SEND_DEV,
+    name: "Enable Email Integration",
+    description: "Enable Gmail integration for sending emails from quotes (Admin and Dev users)",
+    enabled: false,
+  },
 ];
 
 export async function getAllFeatureFlags() {
@@ -132,10 +146,21 @@ export async function updateFeatureFlag(key: string, enabled: boolean, updatedBy
 
 export async function initializeFeatureFlags() {
   // Check if feature flags exist, if not create them
+  // Also update name/description if they've changed
   for (const flag of DEFAULT_FLAGS) {
     const existing = await getFeatureFlag(flag.key);
     if (!existing) {
       await db.insert(featureFlags).values(flag);
+    } else if (existing.name !== flag.name || existing.description !== flag.description) {
+      // Update name and description if they've changed (preserves enabled state)
+      await db
+        .update(featureFlags)
+        .set({
+          name: flag.name,
+          description: flag.description,
+          updatedAt: new Date(),
+        })
+        .where(eq(featureFlags.key, flag.key));
     }
   }
 }
@@ -224,6 +249,20 @@ export async function canUserUploadCadRevision(userRole?: string | null) {
   if (userRole === "Dev") {
     const devEnabled = await isFeatureEnabled(FEATURE_FLAGS.CAD_REVISIONS_DEV);
     return devEnabled;
+  }
+
+  return false;
+}
+
+export async function shouldShowVersionInHeader() {
+  return isFeatureEnabled(FEATURE_FLAGS.DISPLAY_VERSION_HEADER);
+}
+
+export async function canUserSendEmail(userRole?: string | null) {
+  // Admin and Dev users can send emails when the feature flag is enabled
+  if (userRole === "Admin" || userRole === "Dev") {
+    const emailEnabled = await isFeatureEnabled(FEATURE_FLAGS.EMAIL_SEND_DEV);
+    return emailEnabled;
   }
 
   return false;

@@ -6,7 +6,7 @@ import type { Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav } from "~/lib/featureFlags";
+import { shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
@@ -53,16 +53,17 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Vendor not found", { status: 404 });
   }
 
-  const [orders, stats, notes, showEventsLink, events] = await Promise.all([
+  const [orders, stats, notes, showEventsLink, showVersionInHeader, events] = await Promise.all([
     getVendorOrders(vendor.id),
     getVendorStats(vendor.id),
     getNotes("vendor", vendor.id.toString()),
     shouldShowEventsInNav(),
+    shouldShowVersionInHeader(),
     getEventsByEntity("vendor", vendor.id.toString(), 10),
   ]);
 
   return withAuthHeaders(
-    json({ vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, events }),
+    json({ vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, showVersionInHeader, events }),
     headers
   );
 }
@@ -341,7 +342,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function VendorDetails() {
-  const { vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, events } = useLoaderData<typeof loader>();
+  const { vendor, orders, stats, notes, user, userDetails, appConfig, showEventsLink, showVersionInHeader, events } = useLoaderData<typeof loader>();
   const [isEditingCompanyInfo, setIsEditingCompanyInfo] = useState(false);
   const [isEditingContactInfo, setIsEditingContactInfo] = useState(false);
   const [isEditingBillingAddress, setIsEditingBillingAddress] = useState(false);
@@ -610,7 +611,7 @@ export default function VendorDetails() {
         userEmail={user.email}
         userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
       <div className="max-w-[1920px] mx-auto">

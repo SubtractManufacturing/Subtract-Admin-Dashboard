@@ -18,7 +18,7 @@ import { getOrdersWithRelations, restoreOrder } from "~/lib/orders";
 import { restoreQuote } from "~/lib/quotes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserAccessEvents, shouldShowEventsInNav } from "~/lib/featureFlags";
+import { canUserAccessEvents, shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
 
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
@@ -57,11 +57,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   try {
     const { events, totalCount } = await getRecentEvents(filters);
-    const [customers, vendors, orders, showEventsLink] = await Promise.all([
+    const [customers, vendors, orders, showEventsLink, showVersionInHeader] = await Promise.all([
       getCustomers(),
       getVendors(),
       getOrdersWithRelations(),
       shouldShowEventsInNav(),
+      shouldShowVersionInHeader(),
     ]);
 
     return withAuthHeaders(
@@ -76,6 +77,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         userDetails,
         appConfig,
         showEventsLink,
+        showVersionInHeader,
       }),
       headers
     );
@@ -93,6 +95,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         userDetails,
         appConfig,
         showEventsLink: true,
+        showVersionInHeader: false,
       }),
       headers
     );
@@ -228,6 +231,7 @@ export default function EventsPage() {
     userDetails,
     appConfig,
     showEventsLink,
+    showVersionInHeader,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
 
@@ -523,7 +527,7 @@ export default function EventsPage() {
             .toUpperCase() || "U"
         }
         version={appConfig?.version}
-        isStaging={appConfig?.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
       />
 

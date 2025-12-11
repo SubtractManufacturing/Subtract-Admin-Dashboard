@@ -30,6 +30,7 @@ import { getAppConfig } from "~/lib/config.server";
 import { getNextQuoteNumber } from "~/lib/number-generator";
 import {
   shouldShowEventsInNav,
+  shouldShowVersionInHeader,
 } from "~/lib/featureFlags";
 
 import Navbar from "~/components/Navbar";
@@ -61,11 +62,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Now load the rest
   let quotes: QuoteWithRelations[] = [];
   let showEventsLink = true;
+  let showVersionInHeader = false;
 
   try {
-    [quotes, showEventsLink] = await Promise.all([
+    [quotes, showEventsLink, showVersionInHeader] = await Promise.all([
       getQuotes(),
       shouldShowEventsInNav(),
+      shouldShowVersionInHeader(),
     ]);
   } catch (error) {
     console.error("Failed to load quotes:", error);
@@ -81,6 +84,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       userDetails,
       appConfig,
       showEventsLink,
+      showVersionInHeader,
     }),
     headers
   );
@@ -152,6 +156,7 @@ export default function QuotesIndex() {
     userDetails,
     appConfig,
     showEventsLink,
+    showVersionInHeader,
     showQuotesLink,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
@@ -257,7 +262,7 @@ export default function QuotesIndex() {
           user.email.charAt(0).toUpperCase()
         }
         version={appConfig.version}
-        isStaging={appConfig.isStaging}
+        showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
         showQuotesLink={showQuotesLink}
       />

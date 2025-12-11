@@ -1,7 +1,12 @@
 name: Staging Deploy
 
 on:
-  push:
+  # Trigger after Release Please workflow completes on main/master
+  # This prevents "No jobs were run" notifications on feature branches
+  # because workflow_run uses the workflow file from the default branch only
+  workflow_run:
+    workflows: ["Release Please"]
+    types: [completed]
     branches:
       - main
       - master
@@ -19,18 +24,32 @@ jobs:
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
+    # Only run if:
+    # 1. Triggered manually (workflow_dispatch), OR
+    # 2. Triggered by workflow_run AND the triggering workflow succeeded AND it's not a release-please PR merge
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        !startsWith(github.event.workflow_run.head_commit.message, 'chore(master): release') &&
+        !startsWith(github.event.workflow_run.head_commit.message, 'chore(main): release')
+      )
     permissions:
       contents: read
       packages: write
 
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}
-      sha_tag: sha-${{ github.sha }}
+      # Use the SHA from the triggering workflow for workflow_run, otherwise use github.sha
+      sha_tag: sha-${{ github.event.workflow_run.head_sha || github.sha }}
       image_name: ${{ steps.image-name.outputs.name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # For workflow_run, checkout the commit from the triggering workflow
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set image name to lowercase
         id: image-name
@@ -80,6 +99,7 @@ jobs:
     name: Security Scan
     needs: build
     runs-on: ubuntu-latest
+    if: ${{ needs.build.result == 'success' }}
     permissions:
       contents: read
       packages: read
@@ -96,22 +116,23 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}:latest'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '0'
+          image-ref: "${{ env.REGISTRY }}/${{ needs.build.outputs.image_name }}:latest"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always() && hashFiles('trivy-results.sarif') != ''
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: "trivy-results.sarif"
 
   deploy:
     name: Deploy to Staging
     needs: [build, scan]
     runs-on: ubuntu-latest
+    if: ${{ needs.build.result == 'success' }}
     environment:
       name: staging
       # url: https://staging.your-domain.com  # UPDATE: Your staging URL
@@ -140,7 +161,7 @@ jobs:
     name: Summary
     needs: [build, scan, deploy]
     runs-on: ubuntu-latest
-    if: always()
+    if: ${{ always() && needs.build.result == 'success' }}
 
     steps:
       - name: Generate summary

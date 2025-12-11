@@ -353,6 +353,21 @@ export const featureFlags = pgTable("feature_flags", {
   updatedBy: text("updated_by"),
 });
 
+// Email "Send As" addresses configuration
+export const emailSendAsAddresses = pgTable("email_send_as_addresses", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  label: text("label").notNull(),
+  isDefault: boolean("is_default").default(false).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdBy: text("created_by"),
+});
+
+export type EmailSendAsAddress = typeof emailSendAsAddresses.$inferSelect;
+export type NewEmailSendAsAddress = typeof emailSendAsAddresses.$inferInsert;
+
 export const eventCategoryEnum = pgEnum("event_category", [
   "status",
   "document",
