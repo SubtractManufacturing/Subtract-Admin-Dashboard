@@ -471,6 +471,59 @@ export async function restoreOrder(id: number, eventContext?: OrderEventContext)
   }
 }
 
+export async function reassignOrderNumber(id: number, newOrderNumber: string, eventContext?: OrderEventContext): Promise<{ success: boolean; orderNumber?: string; error?: string }> {
+  try {
+    // Get the current order
+    const currentOrder = await getOrder(id)
+    if (!currentOrder) {
+      return { success: false, error: 'Order not found' }
+    }
+
+    const previousOrderNumber = currentOrder.orderNumber
+
+    // Check if the new order number already exists (on a different order)
+    const existing = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(eq(orders.orderNumber, newOrderNumber))
+      .limit(1)
+
+    if (existing.length > 0 && existing[0].id !== id) {
+      return { success: false, error: 'Order number already exists' }
+    }
+
+    // Update the order number
+    await db
+      .update(orders)
+      .set({ 
+        orderNumber: newOrderNumber,
+        updatedAt: new Date()
+      })
+      .where(eq(orders.id, id))
+
+    // Log event for order number change
+    await createEvent({
+      entityType: "order",
+      entityId: id.toString(),
+      eventType: "order_number_changed",
+      eventCategory: "system",
+      title: `Order number changed from ${previousOrderNumber} to ${newOrderNumber}`,
+      description: `Order number was reassigned`,
+      metadata: {
+        previousOrderNumber,
+        newOrderNumber,
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    })
+
+    return { success: true, orderNumber: newOrderNumber }
+  } catch (error) {
+    console.error(`Failed to reassign order number: ${error}`)
+    return { success: false, error: 'Failed to reassign order number' }
+  }
+}
+
 export async function getOrderWithAttachments(id: number) {
   const order = await getOrder(id)
   if (!order) return null

@@ -10,6 +10,7 @@ import {
   updateOrder,
   archiveOrder,
   checkOrderNumberExists,
+  reassignOrderNumber,
 } from "~/lib/orders";
 import { getCustomers } from "~/lib/customers";
 import type { Customer } from "~/lib/customers";
@@ -155,6 +156,21 @@ export async function action({ request }: ActionFunctionArgs) {
         await archiveOrder(orderId, eventContext);
         return json({ success: true });
       }
+      case "reassignOrderNumber": {
+        const orderId = parseInt(formData.get("orderId") as string);
+        const newOrderNumber = formData.get("newOrderNumber") as string;
+        
+        if (!newOrderNumber) {
+          return json({ error: "Order number is required" }, { status: 400 });
+        }
+        
+        const result = await reassignOrderNumber(orderId, newOrderNumber, eventContext);
+        if (result.success) {
+          return json({ success: true, orderNumber: result.orderNumber });
+        } else {
+          return json({ error: result.error }, { status: 400 });
+        }
+      }
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -179,11 +195,15 @@ export default function Orders() {
   const [orderNumberError, setOrderNumberError] = useState("");
   const [isCheckingOrderNumber, setIsCheckingOrderNumber] = useState(false);
   const [vendorPayPercentage, setVendorPayPercentage] = useState(70);
+  const [newOrderNumber, setNewOrderNumber] = useState("");
+  const [isReassigningOrderNumber, setIsReassigningOrderNumber] = useState(false);
+  const [reassignError, setReassignError] = useState("");
 
   // Handle fetcher response
   useEffect(() => {
     if (fetcher.data && typeof fetcher.data === "object") {
-      if ("orderNumber" in fetcher.data) {
+      if ("orderNumber" in fetcher.data && !("success" in fetcher.data)) {
+        // This is a response from generateOrderNumber, not reassign
         setOrderNumber(fetcher.data.orderNumber as string);
         setOrderNumberError("");
       }
@@ -191,9 +211,14 @@ export default function Orders() {
         setOrderNumberError("This order number already exists");
       }
       if ("error" in fetcher.data) {
-        setOrderNumberError(fetcher.data.error as string);
+        // Set error in appropriate field based on context
+        if (isReassigningOrderNumber) {
+          setReassignError(fetcher.data.error as string);
+        } else {
+          setOrderNumberError(fetcher.data.error as string);
+        }
       }
-      // Close modal on successful create/update
+      // Close modal on successful create/update/reassign
       if ("success" in fetcher.data && fetcher.data.success === true) {
         setModalOpen(false);
         // Reset form state
@@ -201,11 +226,14 @@ export default function Orders() {
         setOrderNumber("");
         setOrderNumberError("");
         setVendorPayPercentage(70);
+        setNewOrderNumber("");
+        setIsReassigningOrderNumber(false);
+        setReassignError("");
         // Reload the page data
         revalidator.revalidate();
       }
     }
-  }, [fetcher.data, revalidator]);
+  }, [fetcher.data, revalidator, isReassigningOrderNumber]);
 
   const filteredOrders = orders.filter((order: OrderWithRelations) => {
     const query = searchQuery.toLowerCase();
@@ -234,6 +262,9 @@ export default function Orders() {
     const orderTotal = parseFloat(order.totalPrice || "0");
     const percentage = orderTotal > 0 ? (vendorPayAmount / orderTotal) * 100 : 70;
     setVendorPayPercentage(percentage);
+    setNewOrderNumber("");
+    setIsReassigningOrderNumber(false);
+    setReassignError("");
     setModalOpen(true);
   };
 
@@ -264,6 +295,40 @@ export default function Orders() {
     if (confirm("Are you sure you want to archive this order?")) {
       fetcher.submit(
         { intent: "delete", orderId: orderId.toString() },
+        { method: "POST" }
+      );
+    }
+  };
+
+  const handleGenerateNewOrderNumber = () => {
+    setIsReassigningOrderNumber(true);
+    setReassignError("");
+    fetcher.submit({ intent: "generateOrderNumber" }, { method: "POST" });
+  };
+
+  // Effect to capture generated order number for reassignment
+  useEffect(() => {
+    if (
+      isReassigningOrderNumber &&
+      fetcher.data &&
+      typeof fetcher.data === "object" &&
+      "orderNumber" in fetcher.data &&
+      !("success" in fetcher.data)
+    ) {
+      setNewOrderNumber(fetcher.data.orderNumber as string);
+    }
+  }, [fetcher.data, isReassigningOrderNumber]);
+
+  const handleReassignOrderNumber = () => {
+    if (!editingOrder || !newOrderNumber) return;
+    
+    if (confirm(`Are you sure you want to change the order number from ${editingOrder.orderNumber} to ${newOrderNumber}?`)) {
+      fetcher.submit(
+        {
+          intent: "reassignOrderNumber",
+          orderId: editingOrder.id.toString(),
+          newOrderNumber,
+        },
         { method: "POST" }
       );
     }
@@ -501,6 +566,83 @@ export default function Orders() {
           />
           {editingOrder && (
             <input type="hidden" name="orderId" value={editingOrder.id} />
+          )}
+
+          {/* Show order number reassignment section when editing */}
+          {editingOrder && (
+            <div className="border border-gray-200 dark:border-gray-600 rounded-lg p-4 bg-gray-50 dark:bg-gray-800">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Current Order Number
+                </span>
+                <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {editingOrder.orderNumber}
+                </span>
+              </div>
+              
+              {!isReassigningOrderNumber ? (
+                <button
+                  type="button"
+                  onClick={handleGenerateNewOrderNumber}
+                  disabled={fetcher.state === "submitting"}
+                  className="w-full mt-2 px-3 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    fill="currentColor"
+                    viewBox="0 0 16 16"
+                  >
+                    <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z" />
+                    <path
+                      fillRule="evenodd"
+                      d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"
+                    />
+                  </svg>
+                  Assign New Order Number
+                </button>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600 dark:text-gray-400">New:</span>
+                    <input
+                      type="text"
+                      value={newOrderNumber}
+                      onChange={(e) => setNewOrderNumber(e.target.value)}
+                      className="flex-1 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                      placeholder="Generating..."
+                    />
+                  </div>
+                  {reassignError && (
+                    <p className="text-sm text-red-600 dark:text-red-400">
+                      {reassignError}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsReassigningOrderNumber(false);
+                        setNewOrderNumber("");
+                        setReassignError("");
+                      }}
+                      className="flex-1 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors duration-150"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleReassignOrderNumber}
+                      disabled={!newOrderNumber || fetcher.state === "submitting"}
+                      className="flex-1 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Confirm Change
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {!editingOrder && (
