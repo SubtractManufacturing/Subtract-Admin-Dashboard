@@ -147,6 +147,16 @@ function Model3D({
 
   // Track if we've already framed the camera for this geometry
   const hasFramedCamera = useRef(false);
+  const previousGeometryRef = useRef<THREE.BufferGeometry | null>(null);
+
+  // Reset framing state when the loaded geometry actually changes (new model)
+  useEffect(() => {
+    if (!geometry) return;
+    if (previousGeometryRef.current !== geometry) {
+      hasFramedCamera.current = false;
+      previousGeometryRef.current = geometry;
+    }
+  }, [geometry]);
 
   // Report bounding box whenever geometry changes (for banana positioning)
   useEffect(() => {

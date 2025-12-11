@@ -3508,8 +3508,6 @@ export default function QuoteDetail() {
           onClose={() => setIsPartsModalOpen(false)}
           parts={quote.parts}
           quoteId={quote.id}
-          bananaEnabled={bananaEnabled}
-          bananaModelUrl={bananaModelUrl || undefined}
         />
       )}
 
