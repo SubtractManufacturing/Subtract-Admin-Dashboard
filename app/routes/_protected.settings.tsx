@@ -20,6 +20,7 @@ import {
   cleanupDeprecatedQuotesFolder,
   getMigrationStatus,
 } from "~/lib/s3-migration.server";
+import { getBananaModelUrls } from "~/lib/developerSettings";
 import type { FeatureFlag } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -52,6 +53,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? await getMigrationStatus()
       : null;
 
+  // Get banana model status for Dev users
+  const bananaForScaleEnabled =
+    userDetails.role === "Dev"
+      ? await isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE)
+      : false;
+  const bananaModelStatus =
+    bananaForScaleEnabled && userDetails.role === "Dev"
+      ? await getBananaModelUrls()
+      : null;
+
   return withAuthHeaders(
     json({
       user,
@@ -62,6 +73,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       showEventsLink,
       s3MigrationEnabled,
       s3MigrationStatus,
+      bananaForScaleEnabled,
+      bananaModelStatus,
     }),
     headers
   );
@@ -361,6 +374,188 @@ function FeatureFlagItem({
   );
 }
 
+function BananaModelUploadSection({
+  bananaModelStatus,
+}: {
+  bananaModelStatus: { cadUrl: string | null; meshUrl: string | null; conversionStatus: string | null } | null;
+}) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{ success?: boolean; error?: string; message?: string } | null>(null);
+  const revalidator = useRevalidator();
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setUploadResult(null);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) return;
+
+    setIsUploading(true);
+    setUploadResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const response = await fetch("/api/banana-model", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setUploadResult({ success: true, message: result.message || "Banana model uploaded successfully!" });
+        setSelectedFile(null);
+        // Clear file input
+        const fileInput = document.getElementById("banana-file-input") as HTMLInputElement;
+        if (fileInput) fileInput.value = "";
+        // Revalidate to update status
+        revalidator.revalidate();
+      } else {
+        setUploadResult({ success: false, error: result.error || "Upload failed" });
+      }
+    } catch (error) {
+      setUploadResult({ success: false, error: error instanceof Error ? error.message : "Upload failed" });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const getStatusDisplay = () => {
+    if (!bananaModelStatus) return null;
+    
+    const { conversionStatus, meshUrl } = bananaModelStatus;
+    
+    if (meshUrl && conversionStatus === "completed") {
+      return (
+        <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+          </svg>
+          <span className="text-sm">Banana model ready</span>
+        </div>
+      );
+    }
+    
+    if (conversionStatus === "converting" || conversionStatus === "uploading") {
+      return (
+        <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
+          <span className="text-sm">
+            {conversionStatus === "converting" ? "Converting..." : "Uploading..."}
+          </span>
+        </div>
+      );
+    }
+    
+    if (conversionStatus === "conversion_failed" || conversionStatus === "error") {
+      return (
+        <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+          </svg>
+          <span className="text-sm">Conversion failed - try again</span>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+        <span className="text-sm">No banana model uploaded</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
+      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+        <span>🍌</span>
+        Banana for Scale Settings
+      </h4>
+      <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
+        Upload a banana CAD model (STEP file) to use as a scale reference in 3D part viewers.
+      </p>
+
+      {/* Current Status */}
+      <div className="bg-white dark:bg-gray-800 rounded p-3 mb-4">
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-600 dark:text-gray-400">Current Status:</span>
+          {getStatusDisplay()}
+        </div>
+      </div>
+
+      {/* Upload Section */}
+      <div className="space-y-3">
+        <div className="flex items-start gap-3">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">
+              Upload Banana Model
+            </p>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+              Select a STEP file (.step, .stp) of a banana to use for scale reference
+            </p>
+            
+            <div className="flex items-center gap-2">
+              <input
+                id="banana-file-input"
+                type="file"
+                accept=".step,.stp,.iges,.igs"
+                onChange={handleFileSelect}
+                className="block w-full text-sm text-gray-500 dark:text-gray-400
+                  file:mr-4 file:py-1.5 file:px-3
+                  file:rounded file:border-0
+                  file:text-sm file:font-medium
+                  file:bg-blue-50 dark:file:bg-blue-900/30 file:text-blue-700 dark:file:text-blue-300
+                  hover:file:bg-blue-100 dark:hover:file:bg-blue-900/50
+                  file:cursor-pointer"
+              />
+            </div>
+            
+            {selectedFile && (
+              <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+              </p>
+            )}
+          </div>
+        </div>
+
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          onClick={handleUpload}
+          disabled={!selectedFile || isUploading}
+        >
+          {isUploading ? "Uploading & Converting..." : "Upload & Convert"}
+        </Button>
+
+        {/* Result Messages */}
+        {uploadResult && (
+          <div className={`mt-3 p-3 rounded ${
+            uploadResult.success
+              ? "bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700"
+              : "bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700"
+          }`}>
+            <p className={`text-sm font-medium ${
+              uploadResult.success
+                ? "text-green-800 dark:text-green-200"
+                : "text-red-800 dark:text-red-200"
+            }`}>
+              {uploadResult.success ? uploadResult.message : uploadResult.error}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const {
     user,
@@ -371,6 +566,8 @@ export default function Settings() {
     showEventsLink,
     s3MigrationEnabled,
     s3MigrationStatus,
+    bananaForScaleEnabled,
+    bananaModelStatus,
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
@@ -769,7 +966,8 @@ export default function Settings() {
                           flag.key === 's3_migration_enabled' ||
                           flag.key === 'cad_revisions_dev' ||
                           flag.key === 'cad_revisions_admin' ||
-                          flag.key === 'cad_revisions_all'
+                          flag.key === 'cad_revisions_all' ||
+                          flag.key === 'banana_for_scale'
                         )
                         .sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key)
@@ -979,6 +1177,13 @@ export default function Settings() {
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {/* Banana for Scale Settings */}
+                  {bananaForScaleEnabled && (
+                    <BananaModelUploadSection 
+                      bananaModelStatus={bananaModelStatus} 
+                    />
                   )}
                 </div>
               </div>

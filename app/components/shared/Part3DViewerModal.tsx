@@ -34,6 +34,10 @@ interface Part3DViewerModalProps {
   onRevisionComplete?: () => void;
   /** Entity type for version control routes. Defaults to 'quote_part' for backwards compatibility. */
   entityType?: EntityType;
+  /** Whether the banana for scale feature is enabled */
+  bananaEnabled?: boolean;
+  /** URL to the banana mesh model */
+  bananaModelUrl?: string;
 }
 
 export function Part3DViewerModal({
@@ -52,7 +56,9 @@ export function Part3DViewerModal({
   canRevise = false,
   currentVersion = 1,
   onRevisionComplete,
-  entityType: propEntityType
+  entityType: propEntityType,
+  bananaEnabled = false,
+  bananaModelUrl,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -544,6 +550,7 @@ export function Part3DViewerModal({
               autoGenerateThumbnail={autoGenerateThumbnail}
               existingThumbnailUrl={existingThumbnailUrl}
               isQuotePart={isQuotePart}
+              bananaModelUrl={bananaModelUrl}
             />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">

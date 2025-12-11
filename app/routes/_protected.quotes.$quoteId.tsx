@@ -40,6 +40,7 @@ import {
   deleteFile,
   getDownloadUrl,
 } from "~/lib/s3.server";
+import { getBananaModelUrls } from "~/lib/developerSettings";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import {
   getNotes,
@@ -244,14 +245,24 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events, canRevise] = await Promise.all([
+  const [showEventsLink, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events, canRevise, bananaEnabled] = await Promise.all([
     shouldShowEventsInNav(),
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
     canUserUploadCadRevision(userDetails?.role),
+    isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
+
+  // Get banana model URL if feature is enabled
+  let bananaModelUrl: string | null = null;
+  if (bananaEnabled) {
+    const bananaUrls = await getBananaModelUrls();
+    if (bananaUrls.meshUrl && bananaUrls.conversionStatus === "completed") {
+      bananaModelUrl = await getDownloadUrl(bananaUrls.meshUrl);
+    }
+  }
 
   // Fetch converted order if exists
   const convertedOrder = quote.convertedToOrderId
@@ -281,6 +292,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       events,
       convertedOrder,
       canRevise,
+      bananaEnabled,
+      bananaModelUrl,
     }),
     headers
   );
@@ -1352,6 +1365,8 @@ export default function QuoteDetail() {
     events,
     convertedOrder,
     canRevise,
+    bananaEnabled,
+    bananaModelUrl,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -3344,6 +3359,8 @@ export default function QuoteDetail() {
           onClose={() => setIsPartsModalOpen(false)}
           parts={quote.parts}
           quoteId={quote.id}
+          bananaEnabled={bananaEnabled}
+          bananaModelUrl={bananaModelUrl || undefined}
         />
       )}
 
@@ -3375,6 +3392,8 @@ export default function QuoteDetail() {
             setSelectedPart3D(null);
             revalidator.revalidate();
           }}
+          bananaEnabled={bananaEnabled}
+          bananaModelUrl={bananaModelUrl || undefined}
         />
       )}
 

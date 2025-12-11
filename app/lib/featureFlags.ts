@@ -16,6 +16,7 @@ export const FEATURE_FLAGS = {
   CAD_REVISIONS_DEV: "cad_revisions_dev",
   CAD_REVISIONS_ADMIN: "cad_revisions_admin",
   CAD_REVISIONS_ALL: "cad_revisions_all",
+  BANANA_FOR_SCALE: "banana_for_scale",
 } as const;
 
 // Default feature flags with their metadata
@@ -90,6 +91,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     key: FEATURE_FLAGS.CAD_REVISIONS_ALL,
     name: "Enable CAD Revisions for All Users",
     description: "Allow all authenticated users to upload revised CAD files",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.BANANA_FOR_SCALE,
+    name: "Banana for Scale",
+    description: "Show a banana model next to parts in 3D viewer for size reference (Dev only)",
     enabled: false,
   },
 ];

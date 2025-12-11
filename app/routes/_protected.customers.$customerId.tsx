@@ -8,7 +8,9 @@ import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } 
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh, shouldShowEventsInNav, canUserUploadCadRevision } from "~/lib/featureFlags";
+import { canUserUploadMesh, shouldShowEventsInNav, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
+import { getBananaModelUrls } from "~/lib/developerSettings";
+import { getDownloadUrl as getS3DownloadUrl } from "~/lib/s3.server";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
 import Navbar from "~/components/Navbar";
@@ -53,7 +55,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, events, canRevise] = await Promise.all([
+  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, events, canRevise, bananaEnabled] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
@@ -62,7 +64,17 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     shouldShowEventsInNav(),
     getEventsByEntity("customer", customer.id.toString(), 10),
     canUserUploadCadRevision(userDetails?.role),
+    isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
+
+  // Get banana model URL if feature is enabled
+  let bananaModelUrl: string | null = null;
+  if (bananaEnabled) {
+    const bananaUrls = await getBananaModelUrls();
+    if (bananaUrls.meshUrl && bananaUrls.conversionStatus === "completed") {
+      bananaModelUrl = await getS3DownloadUrl(bananaUrls.meshUrl);
+    }
+  }
 
   // Hydrate thumbnails and mesh URLs for customer parts (convert S3 keys to signed URLs)
   const partsWithSignedUrls = await Promise.all(
@@ -134,7 +146,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, events, canRevise }),
+    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, events, canRevise, bananaEnabled, bananaModelUrl }),
     headers
   );
 }
@@ -688,7 +700,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events, canRevise } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
@@ -1932,6 +1944,8 @@ export default function CustomerDetails() {
         }}
         autoGenerateThumbnail={true}
         existingThumbnailUrl={selected3DPart?.thumbnailUrl || undefined}
+        bananaEnabled={bananaEnabled}
+        bananaModelUrl={bananaModelUrl || undefined}
       />
 
       {/* Hidden Thumbnail Generators for parts without thumbnails */}

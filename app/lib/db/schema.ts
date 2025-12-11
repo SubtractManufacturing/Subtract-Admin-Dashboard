@@ -550,9 +550,20 @@ export const quotePriceCalculationTemplates = pgTable("quote_price_calculation_t
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Developer Settings for storing key-value configuration (e.g., banana model URLs)
+export const developerSettings = pgTable("developer_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by"),
+});
+
 export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
 export type NewQuotePriceCalculation = typeof quotePriceCalculations.$inferInsert;
 export type QuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferSelect;
 export type NewQuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferInsert;
 export type CadFileVersion = typeof cadFileVersions.$inferSelect;
 export type NewCadFileVersion = typeof cadFileVersions.$inferInsert;
+export type DeveloperSetting = typeof developerSettings.$inferSelect;
+export type NewDeveloperSetting = typeof developerSettings.$inferInsert;

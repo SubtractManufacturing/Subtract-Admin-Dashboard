@@ -27,6 +27,8 @@ interface Part3DViewerProps {
   disableInteraction?: boolean; // Disable orbit controls for thumbnail previews
   hideControls?: boolean; // Hide grid toggle and thumbnail capture buttons
   isQuotePart?: boolean; // Is this a quote part (disables manual thumbnail capture)
+  bananaModelUrl?: string; // URL to banana model for scale reference
+  showBanana?: boolean; // Whether to show the banana model
 }
 
 function Model3D({
@@ -34,11 +36,16 @@ function Model3D({
   onLoad,
   onError,
   isLightMode,
+  onBoundingBoxComputed,
 }: {
   url: string;
   onLoad?: () => void;
   onError?: (error: string) => void;
   isLightMode: boolean;
+  onBoundingBoxComputed?: (boundingBox: {
+    size: Vector3;
+    center: Vector3;
+  }) => void;
 }) {
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +58,7 @@ function Model3D({
         setError(null);
         // Extract the actual file extension, ignoring query parameters
         let extension = url.split("?")[0].split(".").pop()?.toLowerCase();
-        
+
         // If no extension found, try to extract from the path before query params
         if (!extension) {
           const pathMatch = url.match(/\.([a-z0-9]+)(?:\?|$)/i);
@@ -71,12 +78,16 @@ function Model3D({
             loader = new GLTFLoader();
             break;
           default:
-            throw new Error(`Unsupported file format: ${extension || 'unknown'}`);
+            throw new Error(
+              `Unsupported file format: ${extension || "unknown"}`
+            );
         }
 
         loader.load(
           url,
-          (result: THREE.BufferGeometry | THREE.Group | { scene: THREE.Group }) => {
+          (
+            result: THREE.BufferGeometry | THREE.Group | { scene: THREE.Group }
+          ) => {
             if (extension === "stl") {
               setGeometry(result as THREE.BufferGeometry);
             } else if (extension === "obj") {
@@ -91,13 +102,20 @@ function Model3D({
               // Instead of extracting geometry, we'll render the entire scene
               // For now, find the first mesh in the scene hierarchy
               let foundGeometry: THREE.BufferGeometry | null = null;
-              (result as { scene: THREE.Group }).scene.traverse((child: THREE.Object3D) => {
-                if (!foundGeometry && 'isMesh' in child && child.isMesh && 'geometry' in child) {
-                  const mesh = child as THREE.Mesh;
-                  foundGeometry = mesh.geometry;
+              (result as { scene: THREE.Group }).scene.traverse(
+                (child: THREE.Object3D) => {
+                  if (
+                    !foundGeometry &&
+                    "isMesh" in child &&
+                    child.isMesh &&
+                    "geometry" in child
+                  ) {
+                    const mesh = child as THREE.Mesh;
+                    foundGeometry = mesh.geometry;
+                  }
                 }
-              });
-              
+              );
+
               if (foundGeometry) {
                 setGeometry(foundGeometry);
               } else {
@@ -127,9 +145,23 @@ function Model3D({
     loadModel();
   }, [url, onLoad, onError]);
 
-  // Auto-frame the camera when geometry is loaded
+  // Track if we've already framed the camera for this geometry
+  const hasFramedCamera = useRef(false);
+
+  // Report bounding box whenever geometry changes (for banana positioning)
   useEffect(() => {
     if (!geometry || !meshRef.current) return;
+
+    const box = new Box3().setFromObject(meshRef.current);
+    const size = box.getSize(new Vector3());
+    const center = box.getCenter(new Vector3());
+
+    onBoundingBoxComputed?.({ size: size.clone(), center: center.clone() });
+  }, [geometry, onBoundingBoxComputed]);
+
+  // Auto-frame the camera ONLY ONCE when geometry first loads
+  useEffect(() => {
+    if (!geometry || !meshRef.current || hasFramedCamera.current) return;
 
     // Compute bounding box
     const box = new Box3().setFromObject(meshRef.current);
@@ -140,7 +172,7 @@ function Model3D({
     const maxDim = Math.max(size.x, size.y, size.z);
 
     // Check if camera is perspective camera
-    const fov = 'fov' in camera ? (camera as THREE.PerspectiveCamera).fov : 50;
+    const fov = "fov" in camera ? (camera as THREE.PerspectiveCamera).fov : 50;
     const fovRadians = fov * (Math.PI / 180);
     let cameraZ = Math.abs(maxDim / 2 / Math.tan(fovRadians / 2));
 
@@ -153,12 +185,15 @@ function Model3D({
     camera.lookAt(center);
 
     // Update controls target to center of model (if controls exist)
-    if (controls && 'target' in controls && 'update' in controls) {
+    if (controls && "target" in controls && "update" in controls) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (controls as any).target.copy(center);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (controls as any).update();
     }
+
+    // Mark that we've framed the camera
+    hasFramedCamera.current = true;
   }, [geometry, camera, controls]);
 
   if (error) {
@@ -181,6 +216,215 @@ function Model3D({
   );
 }
 
+// Helper to find the dominant axis (longest dimension) of a bounding box
+function getDominantAxis(size: Vector3): "x" | "y" | "z" {
+  if (size.x >= size.y && size.x >= size.z) return "x";
+  if (size.y >= size.x && size.y >= size.z) return "y";
+  return "z";
+}
+
+// Calculate rotation to align banana's long axis with part's long axis
+function getAlignmentRotation(
+  bananaAxis: "x" | "y" | "z",
+  partAxis: "x" | "y" | "z"
+): [number, number, number] {
+  // If axes already match, no rotation needed
+  if (bananaAxis === partAxis) return [0, 0, 0];
+
+  // Rotation mappings to align banana axis to part axis
+  const rotations: Record<string, [number, number, number]> = {
+    // From X to...
+    "x-y": [0, 0, Math.PI / 2], // Rotate 90° around Z
+    "x-z": [0, Math.PI / 2, 0], // Rotate 90° around Y
+    // From Y to...
+    "y-x": [0, 0, -Math.PI / 2], // Rotate -90° around Z
+    "y-z": [Math.PI / 2, 0, 0], // Rotate 90° around X
+    // From Z to...
+    "z-x": [0, -Math.PI / 2, 0], // Rotate -90° around Y
+    "z-y": [-Math.PI / 2, 0, 0], // Rotate -90° around X
+  };
+
+  return rotations[`${bananaAxis}-${partAxis}`] || [0, 0, 0];
+}
+
+// Banana model component for scale reference - positions itself based on main part size
+function BananaModel({
+  url,
+  isLightMode,
+  partBoundingBox,
+}: {
+  url: string;
+  isLightMode: boolean;
+  partBoundingBox?: { size: Vector3; center: Vector3 } | null;
+}) {
+  const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
+  const [bananaSize, setBananaSize] = useState<Vector3 | null>(null);
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useEffect(() => {
+    const loadModel = async () => {
+      try {
+        let extension = url.split("?")[0].split(".").pop()?.toLowerCase();
+
+        if (!extension) {
+          const pathMatch = url.match(/\.([a-z0-9]+)(?:\?|$)/i);
+          extension = pathMatch ? pathMatch[1].toLowerCase() : undefined;
+        }
+
+        let loader;
+        switch (extension) {
+          case "stl":
+            loader = new STLLoader();
+            break;
+          case "obj":
+            loader = new OBJLoader();
+            break;
+          case "gltf":
+          case "glb":
+            loader = new GLTFLoader();
+            break;
+          default:
+            console.error(`Unsupported banana model format: ${extension}`);
+            return;
+        }
+
+        loader.load(
+          url,
+          (
+            result: THREE.BufferGeometry | THREE.Group | { scene: THREE.Group }
+          ) => {
+            let loadedGeometry: THREE.BufferGeometry | null = null;
+
+            if (extension === "stl") {
+              loadedGeometry = result as THREE.BufferGeometry;
+            } else if (extension === "obj") {
+              const resultGroup = result as THREE.Group;
+              const mesh = resultGroup.children[0] as THREE.Mesh;
+              if (mesh && mesh.geometry) {
+                loadedGeometry = mesh.geometry;
+              }
+            } else if (extension === "gltf" || extension === "glb") {
+              (result as { scene: THREE.Group }).scene.traverse(
+                (child: THREE.Object3D) => {
+                  if (
+                    !loadedGeometry &&
+                    "isMesh" in child &&
+                    child.isMesh &&
+                    "geometry" in child
+                  ) {
+                    const mesh = child as THREE.Mesh;
+                    loadedGeometry = mesh.geometry;
+                  }
+                }
+              );
+            }
+
+            if (loadedGeometry) {
+              // Center the geometry at origin so it aligns properly with the part
+              loadedGeometry.center();
+
+              // Compute banana's bounding box for positioning (after centering)
+              loadedGeometry.computeBoundingBox();
+              if (loadedGeometry.boundingBox) {
+                const size = new Vector3();
+                loadedGeometry.boundingBox.getSize(size);
+                setBananaSize(size);
+              }
+
+              setGeometry(loadedGeometry);
+            }
+          },
+          undefined,
+          (error) => {
+            console.error("Error loading banana model:", error);
+          }
+        );
+      } catch (err) {
+        console.error("Error loading banana model:", err);
+      }
+    };
+
+    loadModel();
+  }, [url]);
+
+  if (!geometry) {
+    return null;
+  }
+
+  // Calculate rotation to align banana's long axis with part's long axis
+  let rotation: [number, number, number] = [0, 0, 0];
+  if (partBoundingBox && bananaSize) {
+    const partAxis = getDominantAxis(partBoundingBox.size);
+    const bananaAxis = getDominantAxis(bananaSize);
+    rotation = getAlignmentRotation(bananaAxis, partAxis);
+  }
+
+  // Calculate position to place banana next to the part without intersection
+  // After rotation, we need to reconsider which axis to offset along
+  let position: [number, number, number] = [3, 0, 0]; // Default fallback
+
+  if (partBoundingBox && bananaSize) {
+    const partAxis = getDominantAxis(partBoundingBox.size);
+
+    // Calculate the effective banana size after rotation
+    // After rotation, the banana's long axis aligns with part's long axis
+    // We want to place banana perpendicular to the long axis
+    const bananaMaxDim = Math.max(bananaSize.x, bananaSize.y, bananaSize.z);
+    const bananaMinDim = Math.min(bananaSize.x, bananaSize.y, bananaSize.z);
+
+    // Position banana along the axis perpendicular to the part's longest dimension
+    // Use the part's second-longest dimension for offset distance
+    const partDims = [
+      { axis: "x" as const, val: partBoundingBox.size.x },
+      { axis: "y" as const, val: partBoundingBox.size.y },
+      { axis: "z" as const, val: partBoundingBox.size.z },
+    ].sort((a, b) => b.val - a.val);
+
+    // Offset axis is perpendicular to the long axis
+    // For a long X part, offset along Z; for long Y, offset along X; for long Z, offset along X
+    const offsetAxis = partAxis === "x" ? "z" : "x";
+    const partOffsetDim =
+      offsetAxis === "x"
+        ? partBoundingBox.size.x
+        : offsetAxis === "z"
+        ? partBoundingBox.size.z
+        : partBoundingBox.size.y;
+
+    // Calculate gap based on overall part size
+    // Small parts (~0.5"): gap ~1", Large parts (~20"): gap ~2.5-3"
+    const maxPartDim = Math.max(
+      partBoundingBox.size.x,
+      partBoundingBox.size.y,
+      partBoundingBox.size.z
+    );
+    const gap = 1 + Math.sqrt(maxPartDim) * 0.4;
+    const offsetDistance = partOffsetDim / 2 + bananaMinDim / 2 + gap;
+
+    if (offsetAxis === "x") {
+      position = [offsetDistance, 0, 0];
+    } else if (offsetAxis === "z") {
+      position = [0, 0, offsetDistance];
+    } else {
+      position = [0, offsetDistance, 0];
+    }
+  }
+
+  return (
+    <mesh
+      ref={meshRef}
+      geometry={geometry}
+      position={position}
+      rotation={rotation}
+    >
+      <meshStandardMaterial
+        color="#FFE135" // Banana yellow color
+        metalness={0.1}
+        roughness={0.6}
+      />
+    </mesh>
+  );
+}
+
 function Scene({
   modelUrl,
   onLoad,
@@ -188,6 +432,8 @@ function Scene({
   showGrid,
   isLightMode,
   disableInteraction,
+  bananaModelUrl,
+  showBanana,
 }: {
   modelUrl?: string;
   onLoad?: () => void;
@@ -195,7 +441,14 @@ function Scene({
   showGrid: boolean;
   isLightMode: boolean;
   disableInteraction?: boolean;
+  bananaModelUrl?: string;
+  showBanana?: boolean;
 }) {
+  const [partBoundingBox, setPartBoundingBox] = useState<{
+    size: Vector3;
+    center: Vector3;
+  } | null>(null);
+
   return (
     <>
       <PerspectiveCamera makeDefault position={[10, 10, 10]} fov={50} />
@@ -206,7 +459,6 @@ function Scene({
           enableRotate={true}
           minDistance={1}
           maxDistance={500}
-          target={[0, 0, 0]}
           makeDefault
           dampingFactor={0.05}
           enableDamping={true}
@@ -216,8 +468,15 @@ function Scene({
       )}
 
       <ambientLight intensity={isLightMode ? 0.8 : 0.5} />
-      <directionalLight position={[10, 10, 5]} intensity={isLightMode ? 0.6 : 1} castShadow />
-      <directionalLight position={[-10, -10, -5]} intensity={isLightMode ? 0.5 : 0.3} />
+      <directionalLight
+        position={[10, 10, 5]}
+        intensity={isLightMode ? 0.6 : 1}
+        castShadow
+      />
+      <directionalLight
+        position={[-10, -10, -5]}
+        intensity={isLightMode ? 0.5 : 0.3}
+      />
 
       {showGrid && (
         <Grid
@@ -237,8 +496,23 @@ function Scene({
 
       {modelUrl && (
         <Center>
-          <Model3D url={modelUrl} onLoad={onLoad} onError={onError} isLightMode={isLightMode} />
+          <Model3D
+            url={modelUrl}
+            onLoad={onLoad}
+            onError={onError}
+            isLightMode={isLightMode}
+            onBoundingBoxComputed={setPartBoundingBox}
+          />
         </Center>
+      )}
+
+      {/* Banana for scale - positioned to the right of the main model */}
+      {showBanana && bananaModelUrl && (
+        <BananaModel
+          url={bananaModelUrl}
+          isLightMode={isLightMode}
+          partBoundingBox={partBoundingBox}
+        />
       )}
 
       <Environment preset={isLightMode ? "city" : "studio"} />
@@ -257,7 +531,9 @@ export function Part3DViewer({
   existingThumbnailUrl,
   disableInteraction = false,
   hideControls = false,
-  isQuotePart = false
+  isQuotePart = false,
+  bananaModelUrl,
+  showBanana: initialShowBanana = false,
 }: Part3DViewerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -266,6 +542,7 @@ export function Part3DViewer({
   const [isCapturing, setIsCapturing] = useState(false);
   const [hasGeneratedThumbnail, setHasGeneratedThumbnail] = useState(false);
   const [signedModelUrl, setSignedModelUrl] = useState<string | undefined>();
+  const [showBanana, setShowBanana] = useState(initialShowBanana);
   const { theme } = useTheme();
   const isLightMode = theme === "light";
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -279,24 +556,32 @@ export function Part3DViewer({
       }
 
       // If URL already has AWS signature parameters, it's already signed - use it directly
-      if (modelUrl.includes('X-Amz-Algorithm') || modelUrl.includes('X-Amz-Signature')) {
+      if (
+        modelUrl.includes("X-Amz-Algorithm") ||
+        modelUrl.includes("X-Amz-Signature")
+      ) {
         setSignedModelUrl(modelUrl);
         return;
       }
 
       // Check if this is a mesh URL that needs signing
-      if (partId && (modelUrl.includes('partMeshUrl') || modelUrl.includes('/mesh/') || modelUrl.includes('supabase'))) {
+      if (
+        partId &&
+        (modelUrl.includes("partMeshUrl") ||
+          modelUrl.includes("/mesh/") ||
+          modelUrl.includes("supabase"))
+      ) {
         try {
           const response = await fetch(`/parts/${partId}/mesh`);
           if (response.ok) {
             const data = await response.json();
             setSignedModelUrl(data.url);
           } else {
-            console.error('Failed to get signed mesh URL');
+            console.error("Failed to get signed mesh URL");
             setSignedModelUrl(modelUrl); // Fallback to original URL
           }
         } catch (error) {
-          console.error('Error fetching signed URL:', error);
+          console.error("Error fetching signed URL:", error);
           setSignedModelUrl(modelUrl); // Fallback to original URL
         }
       } else {
@@ -309,9 +594,9 @@ export function Part3DViewer({
 
   const generateThumbnailSilently = useCallback(async () => {
     if (!canvasRef.current || !partId) return;
-    
+
     setHasGeneratedThumbnail(true);
-    
+
     try {
       const canvas = canvasRef.current;
       canvas.toBlob(async (blob) => {
@@ -322,10 +607,10 @@ export function Part3DViewer({
 
         const formData = new FormData();
         const filename = `thumbnail-${partId}-auto-${Date.now()}.png`;
-        formData.append('file', blob, filename);
+        formData.append("file", blob, filename);
 
         const response = await fetch(`/parts/${partId}/thumbnail`, {
-          method: 'POST',
+          method: "POST",
           body: formData,
         });
 
@@ -334,32 +619,41 @@ export function Part3DViewer({
           if (onThumbnailUpdate) {
             onThumbnailUpdate(thumbnailUrl);
           }
-          console.log('Automatic thumbnail generated successfully');
+          console.log("Automatic thumbnail generated successfully");
         } else {
-          console.error('Failed to upload automatic thumbnail');
+          console.error("Failed to upload automatic thumbnail");
         }
-      }, 'image/png');
+      }, "image/png");
     } catch (error) {
-      console.error('Error generating automatic thumbnail:', error);
+      console.error("Error generating automatic thumbnail:", error);
     }
   }, [partId, onThumbnailUpdate]);
 
   // Auto-generate thumbnail after model loads if needed
   useEffect(() => {
-    if (!isLoading && 
-        !hasGeneratedThumbnail && 
-        autoGenerateThumbnail && 
-        !existingThumbnailUrl && 
-        partId && 
-        canvasRef.current) {
+    if (
+      !isLoading &&
+      !hasGeneratedThumbnail &&
+      autoGenerateThumbnail &&
+      !existingThumbnailUrl &&
+      partId &&
+      canvasRef.current
+    ) {
       // Wait a bit for the model to render properly
       const timer = setTimeout(() => {
         generateThumbnailSilently();
       }, 1000);
-      
+
       return () => clearTimeout(timer);
     }
-  }, [isLoading, hasGeneratedThumbnail, autoGenerateThumbnail, existingThumbnailUrl, partId, generateThumbnailSilently]);
+  }, [
+    isLoading,
+    hasGeneratedThumbnail,
+    autoGenerateThumbnail,
+    existingThumbnailUrl,
+    partId,
+    generateThumbnailSilently,
+  ]);
 
   // If no mesh URL, show empty state (moved after hooks)
   if (!modelUrl) {
@@ -378,10 +672,24 @@ export function Part3DViewer({
   // Wait for signed URL to be fetched
   if (!signedModelUrl) {
     return (
-      <div className={`relative w-full h-full ${isLightMode ? 'bg-gray-50' : 'bg-gray-900'} flex items-center justify-center`}>
+      <div
+        className={`relative w-full h-full ${
+          isLightMode ? "bg-gray-50" : "bg-gray-900"
+        } flex items-center justify-center`}
+      >
         <div className="text-center">
-          <div className={`inline-block animate-spin rounded-full h-8 w-8 border-b-2 ${isLightMode ? 'border-gray-600' : 'border-gray-300'}`}></div>
-          <p className={`${isLightMode ? 'text-gray-600' : 'text-gray-400'} text-sm mt-2`}>Loading model...</p>
+          <div
+            className={`inline-block animate-spin rounded-full h-8 w-8 border-b-2 ${
+              isLightMode ? "border-gray-600" : "border-gray-300"
+            }`}
+          ></div>
+          <p
+            className={`${
+              isLightMode ? "text-gray-600" : "text-gray-400"
+            } text-sm mt-2`}
+          >
+            Loading model...
+          </p>
         </div>
       </div>
     );
@@ -407,36 +715,36 @@ export function Part3DViewer({
 
         // Create FormData for upload
         const formData = new FormData();
-        const filename = `thumbnail-${partId || 'part'}-${Date.now()}.png`;
-        formData.append('file', blob, filename);
+        const filename = `thumbnail-${partId || "part"}-${Date.now()}.png`;
+        formData.append("file", blob, filename);
 
         // Upload the thumbnail using Remix resource route
         const response = await fetch(`/parts/${partId}/thumbnail`, {
-          method: 'POST',
+          method: "POST",
           body: formData,
         });
 
         if (response.ok) {
           const { thumbnailUrl } = await response.json();
-          
+
           // Call the callback to update the part's thumbnail
           if (onThumbnailUpdate) {
             onThumbnailUpdate(thumbnailUrl);
           }
-          
+
           // Exit camera mode after successful capture
           setIsCameraMode(false);
           setIsCapturing(false);
-          
+
           // Show success feedback (you might want to add a toast notification here)
-          console.log('Thumbnail captured and uploaded successfully');
+          console.log("Thumbnail captured and uploaded successfully");
         } else {
-          console.error('Failed to upload thumbnail');
+          console.error("Failed to upload thumbnail");
           setIsCapturing(false);
         }
-      }, 'image/png');
+      }, "image/png");
     } catch (error) {
-      console.error('Error capturing thumbnail:', error);
+      console.error("Error capturing thumbnail:", error);
       setIsCapturing(false);
     }
   };
@@ -444,24 +752,34 @@ export function Part3DViewer({
   const handleDownload = () => {
     // Use appropriate route based on whether it's a quote part or regular part
     if (quotePartId && solidModelUrl) {
-      window.open(`/quote-parts/${quotePartId}/file`, '_blank');
+      window.open(`/quote-parts/${quotePartId}/file`, "_blank");
       return;
     } else if (partId && solidModelUrl) {
-      window.open(`/parts/${partId}/file`, '_blank');
+      window.open(`/parts/${partId}/file`, "_blank");
       return;
     }
 
     // Otherwise, fall back to the mesh URL
     const downloadUrl = signedModelUrl || modelUrl;
     if (downloadUrl) {
-      window.open(downloadUrl, '_blank');
+      window.open(downloadUrl, "_blank");
     }
   };
 
   return (
-    <div className={`relative w-full h-full ${isLightMode ? 'bg-gray-50' : 'bg-gray-900'}`}>
+    <div
+      className={`relative w-full h-full ${
+        isLightMode ? "bg-gray-50" : "bg-gray-900"
+      }`}
+    >
       <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
-        <div className={`${isLightMode ? 'bg-white/70' : 'bg-gray-800/70'} backdrop-blur-sm px-2 py-1 rounded text-xs ${isLightMode ? 'text-gray-700' : 'text-gray-300'}`}>
+        <div
+          className={`${
+            isLightMode ? "bg-white/70" : "bg-gray-800/70"
+          } backdrop-blur-sm px-2 py-1 rounded text-xs ${
+            isLightMode ? "text-gray-700" : "text-gray-300"
+          }`}
+        >
           {partName || "Part"}
         </div>
         {!hideControls && (
@@ -471,7 +789,11 @@ export function Part3DViewer({
                 e.stopPropagation();
                 setShowGrid(!showGrid);
               }}
-              className={`p-1.5 ${isLightMode ? 'bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900' : 'bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white'} backdrop-blur-sm rounded transition-colors`}
+              className={`p-1.5 ${
+                isLightMode
+                  ? "bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900"
+                  : "bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white"
+              } backdrop-blur-sm rounded transition-colors`}
               title={showGrid ? "Hide grid" : "Show grid"}
             >
               <svg
@@ -481,7 +803,7 @@ export function Part3DViewer({
                 fill="currentColor"
                 viewBox="0 0 16 16"
               >
-                <path d="M0 0h5v5H0V0zm6 0h5v5H6V0zm6 0h4v5h-4V0zM0 6h5v5H0V6zm6 0h5v5H6V6zm6 0h4v5h-4V6zM0 12h5v4H0v-4zm6 0h5v4H6v-4zm6 0h4v4h-4v-4z"/>
+                <path d="M0 0h5v5H0V0zm6 0h5v5H6V0zm6 0h4v5h-4V0zM0 6h5v5H0V6zm6 0h5v5H6V6zm6 0h4v5h-4V6zM0 12h5v4H0v-4zm6 0h5v4H6v-4zm6 0h4v4h-4v-4z" />
               </svg>
             </button>
             {partId && !isQuotePart && (
@@ -491,7 +813,15 @@ export function Part3DViewer({
                   setIsCameraMode(!isCameraMode);
                 }}
                 disabled={isCapturing}
-                className={`p-1.5 ${isCameraMode ? 'bg-red-600 text-white' : isLightMode ? 'bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900' : 'bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white'} backdrop-blur-sm rounded transition-colors ${isCapturing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`p-1.5 ${
+                  isCameraMode
+                    ? "bg-red-600 text-white"
+                    : isLightMode
+                    ? "bg-white/70 hover:bg-gray-100/70 text-gray-700 hover:text-gray-900"
+                    : "bg-gray-800/70 hover:bg-gray-700/70 text-gray-300 hover:text-white"
+                } backdrop-blur-sm rounded transition-colors ${
+                  isCapturing ? "opacity-50 cursor-not-allowed" : ""
+                }`}
                 title={isCameraMode ? "Exit camera mode" : "Capture thumbnail"}
               >
                 <svg
@@ -501,8 +831,8 @@ export function Part3DViewer({
                   fill="currentColor"
                   viewBox="0 0 16 16"
                 >
-                  <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
-                  <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/>
+                  <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z" />
+                  <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z" />
                 </svg>
               </button>
             )}
@@ -513,7 +843,11 @@ export function Part3DViewer({
             e.stopPropagation();
             handleDownload();
           }}
-          className={`p-1.5 ${isLightMode ? 'text-blue-600 hover:bg-blue-50' : 'text-blue-400 hover:bg-blue-900/50'} rounded transition-colors`}
+          className={`p-1.5 ${
+            isLightMode
+              ? "text-blue-600 hover:bg-blue-50"
+              : "text-blue-400 hover:bg-blue-900/50"
+          } rounded transition-colors`}
           title="Download 3D model"
         >
           <svg
@@ -527,6 +861,23 @@ export function Part3DViewer({
             <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
           </svg>
         </button>
+        {/* Banana for Scale button */}
+        {bananaModelUrl && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowBanana(!showBanana);
+            }}
+            className={`w-[26px] h-[26px] flex items-center justify-center ${
+              showBanana ? "bg-yellow-500 backdrop-blur-sm rounded" : ""
+            } transition-colors`}
+            title={
+              showBanana ? "Hide banana for scale" : "Show banana for scale"
+            }
+          >
+            <span className="text-[14px] leading-none">🍌</span>
+          </button>
+        )}
       </div>
 
       {/* Camera Mode Capture Button */}
@@ -535,7 +886,13 @@ export function Part3DViewer({
           <button
             onClick={handleCaptureThumbnail}
             disabled={isCapturing}
-            className={`px-6 py-3 ${isCapturing ? 'bg-gray-600 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'} text-white font-semibold rounded-full shadow-lg transition-all transform ${!isCapturing && 'hover:scale-105'} flex items-center gap-2`}
+            className={`px-6 py-3 ${
+              isCapturing
+                ? "bg-gray-600 cursor-not-allowed"
+                : "bg-red-600 hover:bg-red-700"
+            } text-white font-semibold rounded-full shadow-lg transition-all transform ${
+              !isCapturing && "hover:scale-105"
+            } flex items-center gap-2`}
           >
             {isCapturing ? (
               <>
@@ -551,53 +908,85 @@ export function Part3DViewer({
                   fill="currentColor"
                   viewBox="0 0 16 16"
                 >
-                  <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/>
-                  <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z"/>
+                  <path d="M10.5 8.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z" />
+                  <path d="M2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2zm.5 2a.5.5 0 1 1 0-1 .5.5 0 0 1 0 1zm9 2.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z" />
                 </svg>
                 Capture Thumbnail
               </>
             )}
           </button>
           <div className="text-center mt-2 text-sm text-gray-400">
-            {isCapturing ? 'Processing thumbnail...' : 'Position the model and click to capture'}
+            {isCapturing
+              ? "Processing thumbnail..."
+              : "Position the model and click to capture"}
           </div>
         </div>
       )}
 
       {/* Loading overlay */}
       {isLoading && (
-        <div className={`absolute inset-0 flex items-center justify-center z-20 ${isLightMode ? 'bg-gray-100/50' : 'bg-gray-900/50'}`}>
+        <div
+          className={`absolute inset-0 flex items-center justify-center z-20 ${
+            isLightMode ? "bg-gray-100/50" : "bg-gray-900/50"
+          }`}
+        >
           <div className="text-center">
-            <div className={`inline-block animate-spin rounded-full h-8 w-8 border-b-2 ${isLightMode ? 'border-gray-600' : 'border-gray-300'}`}></div>
-            <p className={`${isLightMode ? 'text-gray-600' : 'text-gray-400'} text-sm mt-2`}>Loading 3D model...</p>
+            <div
+              className={`inline-block animate-spin rounded-full h-8 w-8 border-b-2 ${
+                isLightMode ? "border-gray-600" : "border-gray-300"
+              }`}
+            ></div>
+            <p
+              className={`${
+                isLightMode ? "text-gray-600" : "text-gray-400"
+              } text-sm mt-2`}
+            >
+              Loading 3D model...
+            </p>
           </div>
         </div>
       )}
 
       {/* Error overlay */}
       {loadError && (
-        <div className={`absolute inset-0 flex items-center justify-center z-20 ${isLightMode ? 'bg-gray-100/50' : 'bg-gray-900/50'}`}>
+        <div
+          className={`absolute inset-0 flex items-center justify-center z-20 ${
+            isLightMode ? "bg-gray-100/50" : "bg-gray-900/50"
+          }`}
+        >
           <div className="text-center">
-            <p className={`${isLightMode ? 'text-red-600' : 'text-red-400'} text-sm mb-2`}>Failed to load 3D model</p>
-            <p className={`${isLightMode ? 'text-gray-600' : 'text-gray-500'} text-xs`}>{loadError}</p>
+            <p
+              className={`${
+                isLightMode ? "text-red-600" : "text-red-400"
+              } text-sm mb-2`}
+            >
+              Failed to load 3D model
+            </p>
+            <p
+              className={`${
+                isLightMode ? "text-gray-600" : "text-gray-500"
+              } text-xs`}
+            >
+              {loadError}
+            </p>
           </div>
         </div>
       )}
 
-      <Canvas 
+      <Canvas
         ref={canvasRef}
-        shadows 
-        dpr={[1, 2]} 
+        shadows
+        dpr={[1, 2]}
         className="touch-none"
-        gl={{ 
+        gl={{
           alpha: true,
           antialias: true,
-          preserveDrawingBuffer: true
+          preserveDrawingBuffer: true,
         }}
-        style={{ 
-          background: isLightMode 
-            ? 'linear-gradient(to bottom, #f9fafb, #f3f4f6)' 
-            : '#111827'
+        style={{
+          background: isLightMode
+            ? "linear-gradient(to bottom, #f9fafb, #f3f4f6)"
+            : "#111827",
         }}
         onCreated={({ gl }) => {
           // Store the renderer for screenshot capture
@@ -614,6 +1003,8 @@ export function Part3DViewer({
             showGrid={showGrid}
             isLightMode={isLightMode}
             disableInteraction={disableInteraction}
+            bananaModelUrl={bananaModelUrl}
+            showBanana={showBanana}
           />
         </Suspense>
       </Canvas>

@@ -27,6 +27,7 @@ import {
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { shouldShowEventsInNav, isFeatureEnabled, FEATURE_FLAGS, canUserUploadCadRevision } from "~/lib/featureFlags";
+import { getBananaModelUrls } from "~/lib/developerSettings";
 import {
   uploadFile,
   generateFileKey,
@@ -115,12 +116,22 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, pdfAutoDownload, events, canRevise] = await Promise.all([
+  const [showEventsLink, pdfAutoDownload, events, canRevise, bananaEnabled] = await Promise.all([
     shouldShowEventsInNav(),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsForOrder(order.id, 10),
     canUserUploadCadRevision(userDetails?.role),
+    isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
+
+  // Get banana model URL if feature is enabled
+  let bananaModelUrl: string | null = null;
+  if (bananaEnabled) {
+    const bananaUrls = await getBananaModelUrls();
+    if (bananaUrls.meshUrl && bananaUrls.conversionStatus === "completed") {
+      bananaModelUrl = await getDownloadUrl(bananaUrls.meshUrl);
+    }
+  }
 
   return withAuthHeaders(
     json({
@@ -138,6 +149,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       pdfAutoDownload,
       events,
       canRevise,
+      bananaEnabled,
+      bananaModelUrl,
     }),
     headers
   );
@@ -810,6 +823,8 @@ export default function OrderDetails() {
     pdfAutoDownload,
     events,
     canRevise,
+    bananaEnabled,
+    bananaModelUrl,
   } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const [showNotice, setShowNotice] = useState(true);
@@ -2587,6 +2602,8 @@ export default function OrderDetails() {
           }}
           autoGenerateThumbnail={true}
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
+          bananaEnabled={bananaEnabled}
+          bananaModelUrl={bananaModelUrl || undefined}
         />
       )}
 
