@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, CopyObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 import https from 'https'
@@ -130,6 +130,23 @@ export async function deleteFile(key: string): Promise<void> {
   const command = new DeleteObjectCommand({
     Bucket: S3_BUCKET,
     Key: key,
+  })
+
+  await getS3Client().send(command)
+}
+
+/**
+ * Copy a file within S3 from source key to destination key
+ */
+export async function copyFile(sourceKey: string, destinationKey: string): Promise<void> {
+  if (!S3_BUCKET) {
+    throw new Error('S3_Bucket environment variable is not configured')
+  }
+
+  const command = new CopyObjectCommand({
+    Bucket: S3_BUCKET,
+    CopySource: `${S3_BUCKET}/${sourceKey}`,
+    Key: destinationKey,
   })
 
   await getS3Client().send(command)

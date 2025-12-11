@@ -1,4 +1,8 @@
 import { google } from "googleapis";
+import { render } from "@react-email/render";
+import { QuoteEmail } from "~/emails/QuoteEmail";
+import fs from "fs";
+import path from "path";
 
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
@@ -51,17 +55,51 @@ function getGmailClient(scopes: string[] = ["https://www.googleapis.com/auth/gma
 
 /**
  * Builds a raw RFC 2822 email message for the Gmail API.
+ * Supports both plain text and HTML content.
+ * Includes embedded logo image.
  */
-function buildRawEmail(to: string, from: string, subject: string, body: string): string {
+function buildRawEmail(to: string, from: string, subject: string, textBody: string, htmlBody: string, logoBase64?: string, logoContentId?: string): string {
+  const boundaryRelated = "boundary_related_" + Date.now().toString(16);
+  const boundaryAlternative = "boundary_alternative_" + Date.now().toString(16);
+
   const emailLines = [
     `To: ${to}`,
     `From: ${from}`,
     `Subject: ${subject}`,
     `MIME-Version: 1.0`,
+    `Content-Type: multipart/related; boundary="${boundaryRelated}"`,
+    "",
+    `--${boundaryRelated}`,
+    `Content-Type: multipart/alternative; boundary="${boundaryAlternative}"`,
+    "",
+    `--${boundaryAlternative}`,
     `Content-Type: text/plain; charset="UTF-8"`,
     "",
-    body,
+    textBody,
+    "",
+    `--${boundaryAlternative}`,
+    `Content-Type: text/html; charset="UTF-8"`,
+    "",
+    htmlBody,
+    "",
+    `--${boundaryAlternative}--`,
   ];
+
+  if (logoBase64 && logoContentId) {
+    emailLines.push(
+      "",
+      `--${boundaryRelated}`,
+      `Content-Type: image/png; name="logo.png"`,
+      `Content-Transfer-Encoding: base64`,
+      `Content-ID: <${logoContentId}>`,
+      `Content-Disposition: inline; filename="logo.png"`,
+      "",
+      logoBase64,
+      ""
+    );
+  }
+
+  emailLines.push(`--${boundaryRelated}--`);
 
   const email = emailLines.join("\r\n");
 
@@ -77,7 +115,8 @@ function buildRawEmail(to: string, from: string, subject: string, body: string):
 
 /**
  * Sends an email using the Gmail API.
- * Emails are sent from the GOOGLE_DELEGATED_USER_EMAIL address.
+ * Emails are sent from the GOOGLE_DELEGATED_USER_EMAIL address (or override).
+ * Wraps the body content in a React Email template.
  */
 export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
   const { to, subject, body, from: fromOverride } = options;
@@ -90,11 +129,34 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
   }
 
   try {
+    // Generate a unique Content-ID for the logo
+    const logoContentId = `logo-${Date.now()}@subtract`;
+
+    // Render the React Email template
+    const htmlBody = await render(QuoteEmail({
+      messageBody: body,
+      subject: subject,
+      logoContentId
+    }));
+
+    // Read and encode the logo image
+    let logoBase64: string | undefined;
+    try {
+      const logoPath = path.join(process.cwd(), "app/assets/images/logo.png");
+      if (fs.existsSync(logoPath)) {
+        logoBase64 = fs.readFileSync(logoPath).toString("base64");
+      } else {
+        console.warn("Logo file not found at:", logoPath);
+      }
+    } catch (err) {
+      console.warn("Failed to read logo file:", err);
+    }
+
     const gmail = getGmailClient();
     // Use the override from address if provided, otherwise use the default delegated user
     const from = fromOverride || GOOGLE_DELEGATED_USER_EMAIL!;
 
-    const rawEmail = buildRawEmail(to, from, subject, body);
+    const rawEmail = buildRawEmail(to, from, subject, body, htmlBody, logoBase64, logoContentId);
 
     const response = await gmail.users.messages.send({
       userId: "me",

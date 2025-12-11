@@ -37,6 +37,7 @@ import {
   shouldShowEventsInNav,
   shouldShowVersionInHeader,
   canUserAccessPriceCalculator,
+  canUserUploadCadRevision,
   canUserSendEmail,
   isFeatureEnabled,
   FEATURE_FLAGS,
@@ -47,6 +48,7 @@ import {
   deleteFile,
   getDownloadUrl,
 } from "~/lib/s3.server";
+import { getBananaModelUrls } from "~/lib/developerSettings";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import {
   getNotes,
@@ -260,6 +262,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     pdfAutoDownload,
     rejectionReasonRequired,
     events,
+    canRevise,
+    bananaEnabled,
   ] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
@@ -268,7 +272,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
+    canUserUploadCadRevision(userDetails?.role),
+    isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
+
+  // Get banana model URL if feature is enabled
+  let bananaModelUrl: string | null = null;
+  if (bananaEnabled) {
+    const bananaUrls = await getBananaModelUrls();
+    if (bananaUrls.meshUrl && bananaUrls.conversionStatus === "completed") {
+      bananaModelUrl = await getDownloadUrl(bananaUrls.meshUrl);
+    }
+  }
 
   // Fetch converted order if exists
   const convertedOrder = quote.convertedToOrderId
@@ -307,6 +322,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       rejectionReasonRequired,
       events,
       convertedOrder,
+      canRevise,
+      bananaEnabled,
+      bananaModelUrl,
     }),
     headers
   );
@@ -1146,12 +1164,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           for (const fileKey of filesToDelete) {
             try {
               await deleteFile(fileKey);
-              console.log(`Deleted S3 file: ${fileKey}`);
             } catch (error: unknown) {
               // Log but don't fail - database is already consistent
               const err = error as { Code?: string; name?: string };
               if (err?.Code === "NoSuchKey" || err?.name === "NoSuchKey") {
-                console.log(`S3 file not found (already deleted?): ${fileKey}`);
+                // Ignore if file doesn't exist
               } else {
                 console.error(`Error deleting S3 file ${fileKey}:`, error);
                 // TODO: Add to cleanup queue for retry
@@ -1466,6 +1483,9 @@ export default function QuoteDetail() {
     rejectionReasonRequired,
     events,
     convertedOrder,
+    canRevise,
+    bananaEnabled,
+    bananaModelUrl,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -1478,7 +1498,7 @@ export default function QuoteDetail() {
   } | null>(null);
   const [isFileViewerOpen, setIsFileViewerOpen] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
-  const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [pollCount, setPollCount] = useState(0);
   const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
@@ -1534,9 +1554,11 @@ export default function QuoteDetail() {
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
   const [selectedPart3D, setSelectedPart3D] = useState<{
     partId: string;
+    quotePartId: string;
     partName: string;
     modelUrl?: string;
     solidModelUrl?: string;
+    cadFileUrl?: string;
     thumbnailUrl?: string;
   } | null>(null);
 
@@ -1554,35 +1576,36 @@ export default function QuoteDetail() {
   );
 
   // Set up polling for parts conversion status
+  // Using a ref for the interval to avoid stale closure issues in cleanup
   useEffect(() => {
     const MAX_POLL_COUNT = 120; // Max 10 minutes (120 * 5 seconds)
 
-    if (hasConvertingParts && !pollInterval && pollCount < MAX_POLL_COUNT) {
-      const interval = setInterval(() => {
+    if (hasConvertingParts && !pollIntervalRef.current && pollCount < MAX_POLL_COUNT) {
+      pollIntervalRef.current = setInterval(() => {
         setPollCount((prev) => prev + 1);
         // Revalidate the page data to get updated conversion status
         revalidator.revalidate();
       }, 5000); // Poll every 5 seconds
-      setPollInterval(interval);
-    } else if (!hasConvertingParts && pollInterval) {
+    } else if (!hasConvertingParts && pollIntervalRef.current) {
       // Conversion completed - clear interval and reset count
-      clearInterval(pollInterval);
-      setPollInterval(null);
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
       setPollCount(0);
-    } else if (pollCount >= MAX_POLL_COUNT && pollInterval) {
+    } else if (pollCount >= MAX_POLL_COUNT && pollIntervalRef.current) {
       // Timeout reached - stop polling
       console.warn("Mesh conversion polling timeout reached (10 minutes)");
-      clearInterval(pollInterval);
-      setPollInterval(null);
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
       setPollCount(0);
     }
 
     return () => {
-      if (pollInterval) {
-        clearInterval(pollInterval);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
-  }, [hasConvertingParts, pollInterval, pollCount, revalidator]);
+  }, [hasConvertingParts, pollCount, revalidator]);
 
   // Update optimistic line items when the actual data changes
   useEffect(() => {
@@ -1657,13 +1680,17 @@ export default function QuoteDetail() {
     signedMeshUrl?: string;
     signedFileUrl?: string;
     signedThumbnailUrl?: string;
+    partFileUrl?: string | null;
   }) => {
-    if (part.signedMeshUrl) {
+    // Open modal if mesh is available OR if CAD file is available (for download/revision)
+    if (part.signedMeshUrl || part.signedFileUrl || part.partFileUrl) {
       setSelectedPart3D({
         partId: part.id,
+        quotePartId: part.id,
         partName: part.partName,
         modelUrl: part.signedMeshUrl,
         solidModelUrl: part.signedFileUrl,
+        cadFileUrl: part.partFileUrl || part.signedFileUrl,
         thumbnailUrl: part.signedThumbnailUrl,
       });
       setPart3DModalOpen(true);
@@ -3495,11 +3522,24 @@ export default function QuoteDetail() {
           modelUrl={selectedPart3D.modelUrl}
           solidModelUrl={selectedPart3D.solidModelUrl}
           partId={selectedPart3D.partId}
+          quotePartId={selectedPart3D.quotePartId}
           onThumbnailUpdate={() => {
             revalidator.revalidate();
           }}
           autoGenerateThumbnail={true}
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
+          isQuotePart={true}
+          cadFileUrl={selectedPart3D.cadFileUrl}
+          canRevise={canRevise}
+          onRevisionComplete={() => {
+            // Close the modal after revision - the mesh is being converted
+            // and the old modelUrl is no longer valid
+            setPart3DModalOpen(false);
+            setSelectedPart3D(null);
+            revalidator.revalidate();
+          }}
+          bananaEnabled={bananaEnabled}
+          bananaModelUrl={bananaModelUrl || undefined}
         />
       )}
 

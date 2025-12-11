@@ -37,7 +37,7 @@ export type Quote = {
   created_at: Date | string
 }
 
-export async function getDashboardStats(): Promise<DashboardStats> {
+export async function getDashboardStats(rfqDays: number = 30): Promise<DashboardStats> {
   try {
     // Get action items (orders pending review)
     const actionItemsResult = await db
@@ -54,16 +54,16 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       .from(orders)
       .where(inArray(orders.status, ['Pending', 'Waiting_For_Shop_Selection', 'In_Production', 'In_Inspection', 'Shipped']))
 
-    // Get RFQs (quotes sent in last 30 days)
-    const thirtyDaysAgo = new Date()
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    // Get RFQs (quotes created in last N days)
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - rfqDays)
     
     const rfqResult = await db
       .select({ count: count() })
       .from(quotes)
       .where(and(
-        eq(quotes.status, 'Sent'),
-        gte(quotes.createdAt, thirtyDaysAgo)
+        eq(quotes.isArchived, false),
+        gte(quotes.createdAt, startDate)
       ))
 
     return {

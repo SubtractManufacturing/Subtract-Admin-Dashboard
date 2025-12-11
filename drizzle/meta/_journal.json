@@ -15,6 +15,13 @@
       "when": 1765416669731,
       "tag": "0001_woozy_senator_kelly",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1765492103311,
+      "tag": "0002_mute_living_tribunal",
+      "breakpoints": true
     }
   ]
 }

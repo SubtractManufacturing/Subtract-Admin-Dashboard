@@ -16,7 +16,8 @@ import {
   isConversionEnabled,
   type ConversionOptions,
 } from "./conversion-service.server";
-import { uploadToS3, downloadFromS3 } from "./s3.server";
+import { uploadToS3, downloadFromS3, deleteFile, getDownloadUrl } from "./s3.server";
+import { createEvent } from "./events";
 
 export interface QuotePartMeshConversionResult {
   success: boolean;
@@ -65,7 +66,6 @@ export async function convertQuotePartToMesh(
     }
 
     // Download file from S3
-    console.log(`Downloading BREP file for quote part ${quotePartId}`);
     const fileBuffer = await downloadFromS3(brepFileUrl);
 
     if (!fileBuffer) {
@@ -98,7 +98,6 @@ export async function convertQuotePartToMesh(
       async_processing: true,
     };
 
-    console.log(`Submitting conversion for quote part ${quotePartId}`);
     const conversionJob = await submitConversion(
       fileBuffer,
       filename,
@@ -126,7 +125,6 @@ export async function convertQuotePartToMesh(
     );
 
     // Poll for completion
-    console.log(`Polling for conversion completion: job ${conversionJob.job_id}`);
     const completedJob = await pollForCompletion(conversionJob.job_id);
 
     if (!completedJob || completedJob.status === "failed") {
@@ -140,7 +138,6 @@ export async function convertQuotePartToMesh(
     }
 
     // Download converted file
-    console.log(`Downloading converted mesh for job ${conversionJob.job_id}`);
     const result = await downloadConversionResult(conversionJob.job_id);
 
     if (!result) {
@@ -161,7 +158,6 @@ export async function convertQuotePartToMesh(
       .replace(/\s+/g, '-')  // Replace spaces with hyphens
       .replace(/[^a-zA-Z0-9._-]/g, '');  // Remove any other special characters
     const meshKey = `quote-parts/${quotePartId}/mesh/${sanitizedFilename}`;
-    console.log(`Uploading mesh to S3: ${meshKey}`);
 
     const meshUrl = await uploadToS3(
       result.buffer,
@@ -411,5 +407,182 @@ export async function getQuotePartMeshUrl(quotePartId: string): Promise<{ url: s
   } catch (error) {
     console.error("Error getting quote part mesh URL:", error);
     return { error: "Failed to generate mesh URL" };
+  }
+}
+
+/**
+ * Extract S3 key from a URL or key string
+ */
+function extractS3Key(urlOrKey: string): string {
+  // If it's already a key (starts with quote-parts/ or parts/)
+  if (urlOrKey.startsWith("quote-parts/") || urlOrKey.startsWith("parts/")) {
+    return urlOrKey;
+  }
+
+  // Try to extract key from URL
+  const urlParts = urlOrKey.split("/");
+  const quotePartsIndex = urlParts.findIndex(p => p === "quote-parts" || p === "parts");
+  if (quotePartsIndex >= 0) {
+    return urlParts.slice(quotePartsIndex).join("/");
+  }
+
+  // If we can't parse it, return as-is
+  return urlOrKey;
+}
+
+/**
+ * Delete existing mesh and thumbnail for a quote part before generating new one
+ * Called when uploading revision or restoring version
+ */
+export async function deleteQuotePartMesh(
+  quotePartId: string,
+  userId: string,
+  userEmail: string,
+  reason: "revision" | "restore"
+): Promise<void> {
+  // Get current mesh and thumbnail URLs
+  const [quotePart] = await db
+    .select({
+      partMeshUrl: quoteParts.partMeshUrl,
+      thumbnailUrl: quoteParts.thumbnailUrl,
+    })
+    .from(quoteParts)
+    .where(eq(quoteParts.id, quotePartId));
+
+  if (!quotePart?.partMeshUrl && !quotePart?.thumbnailUrl) return;
+
+  // Delete mesh from S3
+    if (quotePart.partMeshUrl) {
+    const meshKey = extractS3Key(quotePart.partMeshUrl);
+    try {
+      await deleteFile(meshKey);
+    } catch (error) {
+      console.error(`Failed to delete mesh file ${meshKey}:`, error);
+      // Continue even if delete fails - file might not exist
+    }
+  }
+
+  // Delete thumbnail from S3
+  if (quotePart.thumbnailUrl) {
+    const thumbnailKey = extractS3Key(quotePart.thumbnailUrl);
+    try {
+      await deleteFile(thumbnailKey);
+    } catch (error) {
+      console.error(`Failed to delete thumbnail file ${thumbnailKey}:`, error);
+      // Continue even if delete fails - file might not exist
+    }
+  }
+
+  // Clear mesh and thumbnail URLs in database
+  await db
+    .update(quoteParts)
+    .set({
+      partMeshUrl: null,
+      thumbnailUrl: null,
+      conversionStatus: "pending",
+      meshConversionError: null,
+      meshConversionJobId: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(quoteParts.id, quotePartId));
+
+  // Log event
+  await createEvent({
+    entityType: "quote_part",
+    entityId: quotePartId,
+    eventType: "cad_mesh_deleted",
+    eventCategory: "document",
+    title: "Mesh and thumbnail deleted",
+    description: `Previous mesh and thumbnail deleted due to ${reason}`,
+    metadata: {
+      previousMeshUrl: quotePart.partMeshUrl,
+      previousThumbnailUrl: quotePart.thumbnailUrl,
+      reason
+    },
+    userId,
+    userEmail,
+  });
+}
+
+/**
+ * Full revision workflow: delete old mesh, update CAD file URL, trigger conversion
+ */
+export async function handleCadRevision(
+  quotePartId: string,
+  newCadS3Key: string,
+  userId: string,
+  userEmail: string
+): Promise<void> {
+  // 1. Delete existing mesh
+  await deleteQuotePartMesh(quotePartId, userId, userEmail, "revision");
+
+  // 2. Update quotePart with new CAD file URL
+  await db
+    .update(quoteParts)
+    .set({
+      partFileUrl: newCadS3Key,
+      conversionStatus: "pending",
+      updatedAt: new Date(),
+    })
+    .where(eq(quoteParts.id, quotePartId));
+
+  // 3. Trigger mesh conversion for new CAD
+  await triggerQuotePartMeshConversion(quotePartId, newCadS3Key);
+}
+
+/**
+ * Restore version workflow: delete current mesh, set version as current, trigger conversion
+ */
+export async function handleVersionRestore(
+  quotePartId: string,
+  restoredVersionS3Key: string,
+  userId: string,
+  userEmail: string
+): Promise<void> {
+  // 1. Delete existing mesh
+  await deleteQuotePartMesh(quotePartId, userId, userEmail, "restore");
+
+  // 2. Update quotePart with restored CAD file URL
+  await db
+    .update(quoteParts)
+    .set({
+      partFileUrl: restoredVersionS3Key,
+      conversionStatus: "pending",
+      updatedAt: new Date(),
+    })
+    .where(eq(quoteParts.id, quotePartId));
+
+  // 3. Trigger mesh conversion for restored CAD
+  await triggerQuotePartMeshConversion(quotePartId, restoredVersionS3Key);
+}
+
+/**
+ * Get signed download URL for CAD file
+ */
+export async function getQuotePartCadUrl(quotePartId: string): Promise<{ url: string } | { error: string }> {
+  try {
+    const [quotePart] = await db
+      .select({
+        id: quoteParts.id,
+        partFileUrl: quoteParts.partFileUrl,
+      })
+      .from(quoteParts)
+      .where(eq(quoteParts.id, quotePartId));
+
+    if (!quotePart) {
+      return { error: "Quote part not found" };
+    }
+
+    if (!quotePart.partFileUrl) {
+      return { error: "Quote part has no CAD file" };
+    }
+
+    const key = extractS3Key(quotePart.partFileUrl);
+    const signedUrl = await getDownloadUrl(key, 3600); // 1 hour expiry
+
+    return { url: signedUrl };
+  } catch (error) {
+    console.error("Error getting quote part CAD URL:", error);
+    return { error: "Failed to generate CAD URL" };
   }
 }

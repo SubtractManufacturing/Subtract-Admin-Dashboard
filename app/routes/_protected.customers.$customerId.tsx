@@ -8,8 +8,9 @@ import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } 
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh, shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
-import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
+import { canUserUploadMesh, shouldShowEventsInNav, shouldShowVersionInHeader, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
+import { getBananaModelUrls } from "~/lib/developerSettings";
+import { uploadFile, generateFileKey, deleteFile, getDownloadUrl, getDownloadUrl as getS3DownloadUrl } from "~/lib/s3.server";
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
 import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -53,7 +54,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, showVersionInHeader, events] = await Promise.all([
+  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
@@ -62,7 +63,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
     getEventsByEntity("customer", customer.id.toString(), 10),
+    canUserUploadCadRevision(userDetails?.role),
+    isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
+
+  // Get banana model URL if feature is enabled
+  let bananaModelUrl: string | null = null;
+  if (bananaEnabled) {
+    const bananaUrls = await getBananaModelUrls();
+    if (bananaUrls.meshUrl && bananaUrls.conversionStatus === "completed") {
+      bananaModelUrl = await getS3DownloadUrl(bananaUrls.meshUrl);
+    }
+  }
 
   // Hydrate thumbnails and mesh URLs for customer parts (convert S3 keys to signed URLs)
   const partsWithSignedUrls = await Promise.all(
@@ -134,7 +146,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events }),
+    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled, bananaModelUrl }),
     headers
   );
 }
@@ -306,7 +318,6 @@ async function handlePartsAction(
                 userEmail: user?.email || userDetails?.name || undefined,
               };
               await deleteAttachmentByS3Key(s3Key, attachmentEventContext);
-              console.log(`Deleted thumbnail from S3: ${s3Key}`);
             }
           } catch (error) {
             console.error('Failed to delete old thumbnail:', error);
@@ -688,7 +699,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
@@ -964,8 +975,6 @@ export default function CustomerDetails() {
   };
 
   const handleView3DPart = (part: Part) => {
-    console.log('Part selected for 3D view:', part);
-    console.log('Part mesh URL:', part.partMeshUrl);
     setSelected3DPart(part);
     setPart3DViewerOpen(true);
   };
@@ -1921,12 +1930,19 @@ export default function CustomerDetails() {
         modelUrl={selected3DPart?.partMeshUrl || undefined}
         solidModelUrl={selected3DPart?.partFileUrl || undefined}
         partId={selected3DPart?.id}
+        entityType="part"
+        cadFileUrl={selected3DPart?.partFileUrl || undefined}
+        canRevise={canRevise}
         onThumbnailUpdate={() => {
-          // Refresh the page to show the updated thumbnail
+          revalidator.revalidate();
+        }}
+        onRevisionComplete={() => {
           revalidator.revalidate();
         }}
         autoGenerateThumbnail={true}
         existingThumbnailUrl={selected3DPart?.thumbnailUrl || undefined}
+        bananaEnabled={bananaEnabled}
+        bananaModelUrl={bananaModelUrl || undefined}
       />
 
       {/* Hidden Thumbnail Generators for parts without thumbnails */}
