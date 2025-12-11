@@ -1,6 +1,6 @@
 import { json, LoaderFunctionArgs } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
-import { getCadVersions } from "~/lib/cadVersions";
+import { getCadVersions, backfillExistingCadFile } from "~/lib/cadVersions";
 import { getDownloadUrl } from "~/lib/s3.server";
 import { db } from "~/lib/db";
 import { quoteParts } from "~/lib/db/schema";
@@ -16,7 +16,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   // Verify quote part exists
   const [quotePart] = await db
-    .select({ id: quoteParts.id })
+    .select({
+      id: quoteParts.id,
+      partFileUrl: quoteParts.partFileUrl,
+    })
     .from(quoteParts)
     .where(eq(quoteParts.id, quotePartId))
     .limit(1);
@@ -26,6 +29,22 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   try {
+    // Backfill existing file as v1 if no version history exists
+    if (quotePart.partFileUrl) {
+      let s3Key = quotePart.partFileUrl;
+      // Handle proxy URLs if present
+      if (s3Key.startsWith('/attachments/s3/')) {
+        s3Key = s3Key.substring('/attachments/s3/'.length);
+      }
+
+      const fileName = s3Key.split('/').pop() || 'original-file';
+      
+      await backfillExistingCadFile("quote_part", quotePartId, {
+        s3Key,
+        fileName,
+      });
+    }
+
     // Get all versions for this quote part
     const versions = await getCadVersions("quote_part", quotePartId);
 

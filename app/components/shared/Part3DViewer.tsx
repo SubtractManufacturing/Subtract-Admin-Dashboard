@@ -353,52 +353,44 @@ function BananaModel({
 
   // Calculate rotation to align banana's long axis with part's long axis
   let rotation: [number, number, number] = [0, 0, 0];
+  
   if (partBoundingBox && bananaSize) {
     const partAxis = getDominantAxis(partBoundingBox.size);
     const bananaAxis = getDominantAxis(bananaSize);
     rotation = getAlignmentRotation(bananaAxis, partAxis);
   }
 
-  // Calculate position to place banana next to the part without intersection
-  // After rotation, we need to reconsider which axis to offset along
-  let position: [number, number, number] = [3, 0, 0]; // Default fallback
+  // Calculate position to place banana next to the part - GUARANTEED NO OVERLAP
+  // Use maximum dimensions to ensure bounding spheres don't intersect
+  // This is rotation-invariant and bulletproof
+  let position: [number, number, number] = [10, 0, 0]; // Very safe default
 
   if (partBoundingBox && bananaSize) {
     const partAxis = getDominantAxis(partBoundingBox.size);
-
-    // Calculate the effective banana size after rotation
-    // After rotation, the banana's long axis aligns with part's long axis
-    // We want to place banana perpendicular to the long axis
-    const bananaMaxDim = Math.max(bananaSize.x, bananaSize.y, bananaSize.z);
-    const bananaMinDim = Math.min(bananaSize.x, bananaSize.y, bananaSize.z);
-
-    // Position banana along the axis perpendicular to the part's longest dimension
-    // Use the part's second-longest dimension for offset distance
-    const partDims = [
-      { axis: "x" as const, val: partBoundingBox.size.x },
-      { axis: "y" as const, val: partBoundingBox.size.y },
-      { axis: "z" as const, val: partBoundingBox.size.z },
-    ].sort((a, b) => b.val - a.val);
-
-    // Offset axis is perpendicular to the long axis
-    // For a long X part, offset along Z; for long Y, offset along X; for long Z, offset along X
-    const offsetAxis = partAxis === "x" ? "z" : "x";
-    const partOffsetDim =
-      offsetAxis === "x"
-        ? partBoundingBox.size.x
-        : offsetAxis === "z"
-        ? partBoundingBox.size.z
-        : partBoundingBox.size.y;
-
-    // Calculate gap based on overall part size
-    // Small parts (~0.5"): gap ~1", Large parts (~20"): gap ~2.5-3"
-    const maxPartDim = Math.max(
+    
+    // Use the MAXIMUM dimension of each object as "radius" for guaranteed separation
+    // This treats each object as a sphere containing it - no rotation can cause overlap
+    const partMaxDim = Math.max(
       partBoundingBox.size.x,
       partBoundingBox.size.y,
       partBoundingBox.size.z
     );
-    const gap = 1 + Math.sqrt(maxPartDim) * 0.4;
-    const offsetDistance = partOffsetDim / 2 + bananaMinDim / 2 + gap;
+    const bananaMaxDim = Math.max(bananaSize.x, bananaSize.y, bananaSize.z);
+    
+    // Half of each max dimension = "radius" of bounding sphere
+    const partRadius = partMaxDim / 2;
+    const bananaRadius = bananaMaxDim / 2;
+    
+    // Dynamic gap: scales with part size
+    // Small parts (~1"): gap ~1", Large parts (~20"): gap ~2.5"
+    const gap = Math.max(1, 0.5 + Math.sqrt(partMaxDim) * 0.3);
+    
+    // Total offset = sum of both radii + gap
+    // This GUARANTEES no overlap regardless of rotation
+    const offsetDistance = partRadius + bananaRadius + gap;
+    
+    // Choose offset axis perpendicular to the long axis
+    const offsetAxis = partAxis === "x" ? "z" : partAxis === "y" ? "x" : "x";
 
     if (offsetAxis === "x") {
       position = [offsetDistance, 0, 0];

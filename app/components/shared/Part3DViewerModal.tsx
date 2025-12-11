@@ -124,10 +124,10 @@ export function Part3DViewerModal({
   }, [entityId, routePrefix]);
 
   useEffect(() => {
-    if (showVersionPanel && entityId) {
+    if (isOpen && entityId) {
       fetchVersionHistory();
     }
-  }, [showVersionPanel, entityId, fetchVersionHistory]);
+  }, [isOpen, entityId, fetchVersionHistory]);
 
   // Reset state when modal closes
   useEffect(() => {
