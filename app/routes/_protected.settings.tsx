@@ -21,7 +21,14 @@ import {
   cleanupDeprecatedQuotesFolder,
   getMigrationStatus,
 } from "~/lib/s3-migration.server";
-import type { FeatureFlag } from "~/lib/db/schema";
+import {
+  getAllSendAsAddresses,
+  addSendAsAddress,
+  deleteSendAsAddress,
+  setDefaultSendAsAddress,
+  sendAsAddressExists,
+} from "~/lib/emailSendAsAddresses";
+import type { FeatureFlag, EmailSendAsAddress } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -56,6 +63,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? await getMigrationStatus()
       : null;
 
+  // Get email integration status and addresses for Admin/Dev users
+  const emailIntegrationEnabled =
+    (userDetails.role === "Admin" || userDetails.role === "Dev")
+      ? await isFeatureEnabled(FEATURE_FLAGS.EMAIL_SEND_DEV)
+      : false;
+  const emailSendAsAddresses =
+    emailIntegrationEnabled ? await getAllSendAsAddresses() : [];
+
   return withAuthHeaders(
     json({
       user,
@@ -67,6 +82,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       showVersionInHeader,
       s3MigrationEnabled,
       s3MigrationStatus,
+      emailIntegrationEnabled,
+      emailSendAsAddresses,
     }),
     headers
   );
@@ -305,6 +322,115 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  // Email "Send As" address management (Dev only)
+  if (intent === "addEmailSendAs" && userDetails.role === "Dev") {
+    const email = formData.get("email") as string;
+    const label = formData.get("label") as string;
+
+    if (!email || !label) {
+      return withAuthHeaders(
+        json({ error: "Email and label are required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    // Validate email format
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return withAuthHeaders(
+        json({ error: "Invalid email format" }, { status: 400 }),
+        headers
+      );
+    }
+
+    // Check if address already exists in our database
+    const exists = await sendAsAddressExists(email);
+    if (exists) {
+      return withAuthHeaders(
+        json({ error: "This email address already exists" }, { status: 400 }),
+        headers
+      );
+    }
+
+    // Validate that the address is configured as "Send As" in Gmail
+    try {
+      const { validateSendAsAddress } = await import(
+        "~/lib/gmail/gmail-client.server"
+      );
+      const validation = await validateSendAsAddress(email);
+
+      if (!validation.valid) {
+        return withAuthHeaders(
+          json({
+            error: validation.error || "This address is not configured as a 'Send As' address in Gmail",
+          }, { status: 400 }),
+          headers
+        );
+      }
+    } catch (validationError) {
+      // If Gmail API validation fails, still allow adding but warn
+      console.error("Gmail validation failed:", validationError);
+      // Continue without blocking - the address might still work
+    }
+
+    try {
+      await addSendAsAddress(email, label, user.id);
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to add email address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  if (intent === "deleteEmailSendAs" && userDetails.role === "Dev") {
+    const id = formData.get("id") as string;
+
+    if (!id) {
+      return withAuthHeaders(
+        json({ error: "Address ID is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const result = await deleteSendAsAddress(parseInt(id));
+      if (!result.success) {
+        return withAuthHeaders(
+          json({ error: result.error }, { status: 400 }),
+          headers
+        );
+      }
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to delete email address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  if (intent === "setDefaultEmailSendAs" && userDetails.role === "Dev") {
+    const id = formData.get("id") as string;
+
+    if (!id) {
+      return withAuthHeaders(
+        json({ error: "Address ID is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      await setDefaultSendAsAddress(parseInt(id));
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to set default address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
   return withAuthHeaders(
     json({ error: "Invalid intent" }, { status: 400 }),
     headers
@@ -316,6 +442,7 @@ type Tab =
   | "security"
   | "notifications"
   | "preferences"
+  | "email"
   | "admin"
   | "developer";
 
@@ -377,6 +504,8 @@ export default function Settings() {
     showVersionInHeader,
     s3MigrationEnabled,
     s3MigrationStatus,
+    emailIntegrationEnabled,
+    emailSendAsAddresses,
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
@@ -384,7 +513,11 @@ export default function Settings() {
   const featureFlagsFetcher = useFetcher<typeof action>();
   const s3ConsolidateFetcher = useFetcher<typeof action>();
   const s3CleanupFetcher = useFetcher<typeof action>();
+  const emailAddressFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
+
+  // State for adding new email address
+  const [newEmailAddress, setNewEmailAddress] = useState({ email: "", label: "" });
 
   // Local state for feature flags
   const [localFeatureFlags, setLocalFeatureFlags] = useState(
@@ -406,6 +539,19 @@ export default function Settings() {
       revalidator.revalidate();
     }
   }, [fetcher.data, revalidator]);
+
+  // Revalidate after email address changes - only when transitioning from submitting to idle with success
+  useEffect(() => {
+    if (
+      emailAddressFetcher.state === "idle" &&
+      emailAddressFetcher.data &&
+      "success" in emailAddressFetcher.data
+    ) {
+      setNewEmailAddress({ email: "", label: "" });
+      // Only revalidate once by clearing the fetcher data reference check
+      revalidator.revalidate();
+    }
+  }, [emailAddressFetcher.state]); // Only depend on state, not data
 
   // Handle successful feature flags save
   useEffect(() => {
@@ -453,7 +599,7 @@ export default function Settings() {
     );
   }, [localFeatureFlags, featureFlagsFetcher]);
 
-  // Build tabs based on user role
+  // Build tabs based on user role and feature flags
   const baseTabs: { id: Tab; label: string }[] = [
     { id: "profile", label: "Your Profile" },
     { id: "security", label: "Security" },
@@ -462,6 +608,11 @@ export default function Settings() {
   ];
 
   const tabs = [...baseTabs];
+
+  // Add Email tab for Admin/Dev users when email integration is enabled
+  if (emailIntegrationEnabled && (userDetails?.role === "Admin" || userDetails?.role === "Dev")) {
+    tabs.push({ id: "email", label: "Email" });
+  }
 
   // Add Admin tab for Admin and Dev users
   if (userDetails?.role === "Admin" || userDetails?.role === "Dev") {
@@ -654,6 +805,138 @@ export default function Settings() {
               </div>
             )}
 
+            {activeTab === "email" &&
+              emailIntegrationEnabled &&
+              (userDetails?.role === "Admin" || userDetails?.role === "Dev") && (
+                <div className="max-w-2xl">
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
+                    Email Settings
+                  </h3>
+
+                  <div className="space-y-6">
+                    {/* Send As Addresses */}
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        &quot;Send As&quot; Addresses
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Configure email addresses that can be used to send emails from quotes.
+                        Addresses are validated against Gmail&apos;s &quot;Send mail as&quot; settings before being added.
+                      </p>
+
+                      {/* Existing addresses list */}
+                      {emailSendAsAddresses && emailSendAsAddresses.length > 0 ? (
+                        <div className="space-y-2 mb-4">
+                          {emailSendAsAddresses.map((addr: EmailSendAsAddress) => (
+                            <div
+                              key={addr.id}
+                              className="flex items-center justify-between bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
+                            >
+                              <div className="flex items-center gap-3">
+                                {addr.isDefault && (
+                                  <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
+                                    Default
+                                  </span>
+                                )}
+                                <div>
+                                  <span className="font-medium text-gray-900 dark:text-white">
+                                    {addr.label}
+                                  </span>
+                                  <span className="text-gray-500 dark:text-gray-400 ml-2 text-sm">
+                                    &lt;{addr.email}&gt;
+                                  </span>
+                                </div>
+                                {!addr.isActive && (
+                                  <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded">
+                                    Inactive
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {!addr.isDefault && (
+                                  <emailAddressFetcher.Form method="post" className="inline">
+                                    <input type="hidden" name="intent" value="setDefaultEmailSendAs" />
+                                    <input type="hidden" name="id" value={addr.id} />
+                                    <button
+                                      type="submit"
+                                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                      disabled={emailAddressFetcher.state === "submitting"}
+                                    >
+                                      Set Default
+                                    </button>
+                                  </emailAddressFetcher.Form>
+                                )}
+                                <emailAddressFetcher.Form method="post" className="inline">
+                                  <input type="hidden" name="intent" value="deleteEmailSendAs" />
+                                  <input type="hidden" name="id" value={addr.id} />
+                                  <button
+                                    type="submit"
+                                    className="text-xs text-red-600 dark:text-red-400 hover:underline"
+                                    disabled={emailAddressFetcher.state === "submitting"}
+                                  >
+                                    Remove
+                                  </button>
+                                </emailAddressFetcher.Form>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 italic">
+                          No email addresses configured. Add one below.
+                        </div>
+                      )}
+
+                      {/* Add new address form */}
+                      <div className="space-y-2">
+                        <emailAddressFetcher.Form method="post" className="flex flex-col sm:flex-row gap-2">
+                          <input type="hidden" name="intent" value="addEmailSendAs" />
+                          <div className="flex-1">
+                            <input
+                              type="text"
+                              name="label"
+                              placeholder="Display name (e.g., RFQ)"
+                              value={newEmailAddress.label}
+                              onChange={(e) => setNewEmailAddress((prev) => ({ ...prev, label: e.target.value }))}
+                              className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                              required
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <input
+                              type="email"
+                              name="email"
+                              placeholder="email@domain.com"
+                              value={newEmailAddress.email}
+                              onChange={(e) => setNewEmailAddress((prev) => ({ ...prev, email: e.target.value }))}
+                              className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                              required
+                            />
+                          </div>
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={emailAddressFetcher.state === "submitting" || !newEmailAddress.email || !newEmailAddress.label}
+                          >
+                            {emailAddressFetcher.state === "submitting" ? "Validating..." : "Add Address"}
+                          </Button>
+                        </emailAddressFetcher.Form>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          The display name is shown in the dropdown when composing emails (e.g., &quot;RFQ&quot; or &quot;Sales&quot;).
+                        </p>
+                      </div>
+
+                      {emailAddressFetcher.data && "error" in emailAddressFetcher.data && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                          {emailAddressFetcher.data.error}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
             {activeTab === "admin" &&
               (userDetails?.role === "Admin" ||
                 userDetails?.role === "Dev") && (
@@ -769,6 +1052,7 @@ export default function Settings() {
                       {localFeatureFlags
                         ?.filter((flag: FeatureFlag) =>
                           flag.key === 'display_version_header' ||
+                          flag.key === 'email_send_dev' ||
                           flag.key === 'mesh_uploads_dev' ||
                           flag.key === 'mesh_uploads_all' ||
                           flag.key === 'price_calculator_dev' ||
