@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { emailSendAsAddresses, type NewEmailSendAsAddress } from "./db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 /**
  * Get all active "Send As" email addresses

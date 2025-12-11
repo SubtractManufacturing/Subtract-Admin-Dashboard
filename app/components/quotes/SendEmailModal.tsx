@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useFetcher } from "@remix-run/react";
 import Modal from "../shared/Modal";
 import Button from "../shared/Button";
@@ -54,6 +54,12 @@ export default function SendEmailModal({
     }
   }, [isOpen, quoteNumber, customerEmail, sendAsAddresses]);
 
+  const handleClose = useCallback(() => {
+    setFormData({ from: "", to: "", subject: "", body: "" });
+    setErrors({ to: "", subject: "", body: "" });
+    onClose();
+  }, [onClose]);
+
   // Close modal on successful submission
   useEffect(() => {
     if (isSuccess) {
@@ -62,13 +68,7 @@ export default function SendEmailModal({
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [isSuccess]);
-
-  const handleClose = () => {
-    setFormData({ from: "", to: "", subject: "", body: "" });
-    setErrors({ to: "", subject: "", body: "" });
-    onClose();
-  };
+  }, [isSuccess, handleClose]);
 
   const handleChange = (field: string, value: string) => {
     setFormData((prev) => ({
@@ -201,9 +201,9 @@ export default function SendEmailModal({
           </SelectField>
         ) : sendAsAddresses.length === 1 ? (
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               From
-            </label>
+            </span>
             <div className="text-sm text-gray-900 dark:text-gray-100 py-2">
               {sendAsAddresses[0].label} &lt;{sendAsAddresses[0].email}&gt;
             </div>

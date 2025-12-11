@@ -551,7 +551,8 @@ export default function Settings() {
       // Only revalidate once by clearing the fetcher data reference check
       revalidator.revalidate();
     }
-  }, [emailAddressFetcher.state]); // Only depend on state, not data
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailAddressFetcher.state]); // Intentionally only depend on state to prevent multiple revalidations
 
   // Handle successful feature flags save
   useEffect(() => {

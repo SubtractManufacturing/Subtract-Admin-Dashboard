@@ -15,7 +15,7 @@ import { db } from "./db/index.js"
 import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings, quoteAttachments, orderAttachments, notes, partDrawings } from "./db/schema.js"
 import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
 import type { Customer, Vendor, QuoteLineItem, QuotePart, Quote, NewQuote } from "./db/schema.js"
-import { getNextQuoteNumber, getNextOrderNumber, generateUniqueOrderNumber } from "./number-generator.js"
+import { getNextQuoteNumber, generateUniqueOrderNumber } from "./number-generator.js"
 import { createEvent } from "./events.js"
 import { uploadFile } from "./s3.server.js"
 import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js"
