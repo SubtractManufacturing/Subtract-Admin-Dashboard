@@ -26,7 +26,12 @@ import {
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav, isFeatureEnabled, FEATURE_FLAGS, canUserUploadCadRevision } from "~/lib/featureFlags";
+import {
+  shouldShowEventsInNav,
+  isFeatureEnabled,
+  FEATURE_FLAGS,
+  canUserUploadCadRevision,
+} from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import {
   uploadFile,
@@ -59,7 +64,11 @@ import {
   type LineItemWithPart,
   type LineItemEventContext,
 } from "~/lib/lineItems";
-import { getPartsByCustomerId, hydratePartThumbnails, getPart } from "~/lib/parts";
+import {
+  getPartsByCustomerId,
+  hydratePartThumbnails,
+  getPart,
+} from "~/lib/parts";
 import { createEvent, getEventsForOrder } from "~/lib/events";
 import { db } from "~/lib/db";
 import { parts, attachments } from "~/lib/db/schema";
@@ -116,13 +125,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, pdfAutoDownload, events, canRevise, bananaEnabled] = await Promise.all([
-    shouldShowEventsInNav(),
-    isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
-    getEventsForOrder(order.id, 10),
-    canUserUploadCadRevision(userDetails?.role),
-    isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
-  ]);
+  const [showEventsLink, pdfAutoDownload, events, canRevise, bananaEnabled] =
+    await Promise.all([
+      shouldShowEventsInNav(),
+      isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
+      getEventsForOrder(order.id, 10),
+      canUserUploadCadRevision(userDetails?.role),
+      isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
+    ]);
 
   // Get banana model URL if feature is enabled
   let bananaModelUrl: string | null = null;
@@ -180,10 +190,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       maxPartSize: MAX_FILE_SIZE,
     });
 
-    formData = await unstable_parseMultipartFormData(
-      request,
-      uploadHandler
-    );
+    formData = await unstable_parseMultipartFormData(request, uploadHandler);
 
     const intent = formData.get("intent") as string;
     const file = formData.get("file") as File;
@@ -625,7 +632,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
             eventType: "part_material_changed",
             eventCategory: "manufacturing",
             title: "Part Material Changed",
-            description: `${currentPart.partName || "Part"} changed to ${normalizeMaterial || "no material"}`,
+            description: `${currentPart.partName || "Part"} changed to ${
+              normalizeMaterial || "no material"
+            }`,
             metadata: {
               partName: currentPart.partName,
               orderId: order.id,
@@ -648,7 +657,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
             eventType: "part_tolerance_changed",
             eventCategory: "manufacturing",
             title: "Part Tolerance Changed",
-            description: `${currentPart.partName || "Part"} changed to ${normalizeTolerance || "no tolerance"}`,
+            description: `${currentPart.partName || "Part"} changed to ${
+              normalizeTolerance || "no tolerance"
+            }`,
             metadata: {
               partName: currentPart.partName,
               orderId: order.id,
@@ -671,7 +682,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
             eventType: "part_finishing_changed",
             eventCategory: "manufacturing",
             title: "Part Finishing Changed",
-            description: `${currentPart.partName || "Part"} changed to ${normalizeFinishing || "no finishing"}`,
+            description: `${currentPart.partName || "Part"} changed to ${
+              normalizeFinishing || "no finishing"
+            }`,
             metadata: {
               partName: currentPart.partName,
               orderId: order.id,
@@ -747,9 +760,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
           });
         } catch (pdfError) {
           console.error("PDF generation failed:", pdfError);
-          return json({
-            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
-          }, { status: 500 });
+          return json(
+            {
+              error:
+                pdfError instanceof Error
+                  ? pdfError.message
+                  : "Failed to generate PDF",
+            },
+            { status: 500 }
+          );
         }
       }
 
@@ -792,9 +811,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
           });
         } catch (pdfError) {
           console.error("PDF generation failed:", pdfError);
-          return json({
-            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
-          }, { status: 500 });
+          return json(
+            {
+              error:
+                pdfError instanceof Error
+                  ? pdfError.message
+                  : "Failed to generate PDF",
+            },
+            { status: 500 }
+          );
         }
       }
 
@@ -873,9 +898,10 @@ export default function OrderDetails() {
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [editingAttributeField, setEditingAttributeField] = useState<{
     partId: string;
-    field: 'material' | 'tolerance' | 'finishing';
+    field: "material" | "tolerance" | "finishing";
   } | null>(null);
-  const [editingAttributeValue, setEditingAttributeValue] = useState<string>("");
+  const [editingAttributeValue, setEditingAttributeValue] =
+    useState<string>("");
   const [showPartAttributes, setShowPartAttributes] = useState(false);
 
   const handleFileUpload = () => {
@@ -1025,12 +1051,12 @@ export default function OrderDetails() {
 
   const handleStartEditAttribute = (
     partId: string,
-    field: 'material' | 'tolerance' | 'finishing',
+    field: "material" | "tolerance" | "finishing",
     currentValue: string | null
   ) => {
     setEditingAttributeField({ partId, field });
     // For tolerance, add ± if empty
-    if (field === 'tolerance' && !currentValue) {
+    if (field === "tolerance" && !currentValue) {
       setEditingAttributeValue("±");
     } else {
       setEditingAttributeValue(currentValue || "");
@@ -1059,18 +1085,26 @@ export default function OrderDetails() {
     }
   };
 
-  const handleSaveAttribute = (partId: string, field: 'material' | 'tolerance' | 'finishing') => {
+  const handleSaveAttribute = (
+    partId: string,
+    field: "material" | "tolerance" | "finishing"
+  ) => {
     const formData = new FormData();
     formData.append("intent", "updatePartAttributes");
     formData.append("partId", partId);
     formData.append(field, editingAttributeValue);
 
     // Preserve other fields
-    const part = lineItems.find((item: LineItemWithPart) => item.part?.id === partId)?.part;
+    const part = lineItems.find(
+      (item: LineItemWithPart) => item.part?.id === partId
+    )?.part;
     if (part) {
-      if (field !== 'material') formData.append('material', part.material || '');
-      if (field !== 'tolerance') formData.append('tolerance', part.tolerance || '');
-      if (field !== 'finishing') formData.append('finishing', part.finishing || '');
+      if (field !== "material")
+        formData.append("material", part.material || "");
+      if (field !== "tolerance")
+        formData.append("tolerance", part.tolerance || "");
+      if (field !== "finishing")
+        formData.append("finishing", part.finishing || "");
     }
 
     notesFetcher.submit(formData, {
@@ -1168,7 +1202,9 @@ export default function OrderDetails() {
   };
 
   const handleRemoveVendor = () => {
-    if (confirm("Are you sure you want to remove the vendor from this order?")) {
+    if (
+      confirm("Are you sure you want to remove the vendor from this order?")
+    ) {
       const formData = new FormData();
       formData.append("intent", "updateVendor");
       lineItemFetcher.submit(formData, { method: "post" });
@@ -1411,15 +1447,15 @@ export default function OrderDetails() {
   // Calculate progress based on order status
   const getOrderProgress = (status: string): number => {
     const statusProgress: Record<string, number> = {
-      "Pending": 10,
-      "Waiting_For_Shop_Selection": 20,
-      "In_Production": 50,
-      "In_Inspection": 75,
-      "Shipped": 90,
-      "Delivered": 95,
-      "Completed": 100,
-      "Cancelled": 0,
-      "Archived": 100,
+      Pending: 10,
+      Waiting_For_Shop_Selection: 20,
+      In_Production: 50,
+      In_Inspection: 75,
+      Shipped: 90,
+      Delivered: 95,
+      Completed: 100,
+      Cancelled: 0,
+      Archived: 100,
     };
     return statusProgress[status] ?? 0;
   };
@@ -1453,9 +1489,7 @@ export default function OrderDetails() {
             <div className="relative">
               <Button
                 ref={actionsButtonRef}
-                onClick={() =>
-                  setIsActionsDropdownOpen(!isActionsDropdownOpen)
-                }
+                onClick={() => setIsActionsDropdownOpen(!isActionsDropdownOpen)}
                 variant="secondary"
               >
                 Actions
@@ -1854,7 +1888,11 @@ export default function OrderDetails() {
                       ? "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
                       : "bg-white dark:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-500"
                   }`}
-                  title={showPartAttributes ? "Hide part specifications" : "Show part specifications"}
+                  title={
+                    showPartAttributes
+                      ? "Hide part specifications"
+                      : "Show part specifications"
+                  }
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -1862,14 +1900,27 @@ export default function OrderDetails() {
                     height="16"
                     fill="currentColor"
                     viewBox="0 0 16 16"
-                    className={`specs-icon ${showPartAttributes ? 'open' : 'closed'}`}
+                    className={`specs-icon ${
+                      showPartAttributes ? "open" : "closed"
+                    }`}
                   >
                     {/* Top layer */}
-                    <path className="layer-top" d="M8.235 1.559a.5.5 0 0 0-.47 0l-7.5 4a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882l-7.5-4zM8 9.433 1.562 6 8 2.567 14.438 6 8 9.433z" />
+                    <path
+                      className="layer-top"
+                      d="M8.235 1.559a.5.5 0 0 0-.47 0l-7.5 4a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882l-7.5-4zM8 9.433 1.562 6 8 2.567 14.438 6 8 9.433z"
+                    />
                     {/* Middle layer */}
-                    <path className="layer-middle" d="M3.188 8 .264 9.559a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882L12.813 8l-4.578 2.441a.5.5 0 0 1-.47 0L3.188 8z" style={{ opacity: 0.7 }} />
+                    <path
+                      className="layer-middle"
+                      d="M3.188 8 .264 9.559a.5.5 0 0 0 0 .882l7.5 4a.5.5 0 0 0 .47 0l7.5-4a.5.5 0 0 0 0-.882L12.813 8l-4.578 2.441a.5.5 0 0 1-.47 0L3.188 8z"
+                      style={{ opacity: 0.7 }}
+                    />
                     {/* Bottom layer */}
-                    <path className="layer-bottom" d="M11.75 8.567l3.688 1.966L8 13.433l-6.438-2.9L4.25 8.567l3.515 1.874a.5.5 0 0 0 .47 0l3.515-1.874z" style={{ opacity: 0.5 }} />
+                    <path
+                      className="layer-bottom"
+                      d="M11.75 8.567l3.688 1.966L8 13.433l-6.438-2.9L4.25 8.567l3.515 1.874a.5.5 0 0 0 .47 0l3.515-1.874z"
+                      style={{ opacity: 0.5 }}
+                    />
                   </svg>
                   Specs
                 </button>
@@ -1917,20 +1968,34 @@ export default function OrderDetails() {
                           <React.Fragment key={lineItem?.id}>
                             {/* Main row */}
                             <tr>
-                              <td className="px-6 py-4" rowSpan={showPartAttributes && part ? 2 : 1} style={showPartAttributes && part ? { height: '120px' } : undefined}>
+                              <td
+                                className="px-6 py-4"
+                                rowSpan={showPartAttributes && part ? 2 : 1}
+                                style={
+                                  showPartAttributes && part
+                                    ? { height: "120px" }
+                                    : undefined
+                                }
+                              >
                                 <div className="flex items-start gap-3 h-full">
                                   {part ? (
                                     part.thumbnailUrl ? (
                                       <button
                                         onClick={() => handleView3DModel(part)}
-                                        className={`${showPartAttributes ? 'h-20 w-20' : 'h-10 w-10'} p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all flex-shrink-0`}
+                                        className={`${
+                                          showPartAttributes
+                                            ? "h-20 w-20"
+                                            : "h-10 w-10"
+                                        } p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all flex-shrink-0`}
                                         title="Click to view 3D model"
                                         type="button"
                                       >
                                         <img
                                           src={part.thumbnailUrl}
                                           alt={`${
-                                            part.partName || lineItem?.name || ""
+                                            part.partName ||
+                                            lineItem?.name ||
+                                            ""
                                           } thumbnail`}
                                           className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                                         />
@@ -1938,12 +2003,20 @@ export default function OrderDetails() {
                                     ) : (
                                       <button
                                         onClick={() => handleView3DModel(part)}
-                                        className={`${showPartAttributes ? 'h-20 w-20' : 'h-10 w-10'} bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0`}
+                                        className={`${
+                                          showPartAttributes
+                                            ? "h-20 w-20"
+                                            : "h-10 w-10"
+                                        } bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0`}
                                         title="Click to view 3D model"
                                         type="button"
                                       >
                                         <svg
-                                          className={`${showPartAttributes ? 'h-6 w-6' : 'h-5 w-5'} text-gray-400 dark:text-gray-500`}
+                                          className={`${
+                                            showPartAttributes
+                                              ? "h-6 w-6"
+                                              : "h-5 w-5"
+                                          } text-gray-400 dark:text-gray-500`}
                                           fill="none"
                                           stroke="currentColor"
                                           viewBox="0 0 24 24"
@@ -1970,306 +2043,426 @@ export default function OrderDetails() {
                                   </div>
                                 </div>
                               </td>
-                            <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                              {lineItem?.description || "--"}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 w-[25%] max-w-[25%]">
-                              {isEditingNote ? (
-                                <div className="flex items-center space-x-2">
-                                  <textarea
-                                    value={editingNoteValue}
-                                    onChange={(e) =>
-                                      setEditingNoteValue(e.target.value)
-                                    }
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter" && !e.shiftKey) {
-                                        e.preventDefault();
-                                        handleSaveNote(lineItem?.id || 0);
-                                      } else if (e.key === "Escape") {
-                                        handleCancelEditNote();
+                              <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                                {lineItem?.description || "--"}
+                              </td>
+                              <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 w-[25%] max-w-[25%]">
+                                {isEditingNote ? (
+                                  <div className="flex items-center space-x-2">
+                                    <textarea
+                                      value={editingNoteValue}
+                                      onChange={(e) =>
+                                        setEditingNoteValue(e.target.value)
                                       }
-                                    }}
-                                    className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                                    placeholder="Add note... (Shift+Enter for new line)"
-                                    rows={2}
-                                  />
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter" && !e.shiftKey) {
+                                          e.preventDefault();
+                                          handleSaveNote(lineItem?.id || 0);
+                                        } else if (e.key === "Escape") {
+                                          handleCancelEditNote();
+                                        }
+                                      }}
+                                      className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                                      placeholder="Add note... (Shift+Enter for new line)"
+                                      rows={2}
+                                    />
+                                    <button
+                                      onClick={() =>
+                                        handleSaveNote(lineItem?.id || 0)
+                                      }
+                                      className="p-1 text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                      title="Save (Enter)"
+                                    >
+                                      <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="16"
+                                        height="16"
+                                        fill="currentColor"
+                                        viewBox="0 0 16 16"
+                                      >
+                                        <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      onClick={handleCancelEditNote}
+                                      className="p-1 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                                      title="Cancel (Esc)"
+                                    >
+                                      <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="16"
+                                        height="16"
+                                        fill="currentColor"
+                                        viewBox="0 0 16 16"
+                                      >
+                                        <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                ) : (
                                   <button
                                     onClick={() =>
-                                      handleSaveNote(lineItem?.id || 0)
-                                    }
-                                    className="p-1 text-green-600 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
-                                    title="Save (Enter)"
-                                  >
-                                    <svg
-                                      xmlns="http://www.w3.org/2000/svg"
-                                      width="16"
-                                      height="16"
-                                      fill="currentColor"
-                                      viewBox="0 0 16 16"
-                                    >
-                                      <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
-                                    </svg>
-                                  </button>
-                                  <button
-                                    onClick={handleCancelEditNote}
-                                    className="p-1 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                                    title="Cancel (Esc)"
-                                  >
-                                    <svg
-                                      xmlns="http://www.w3.org/2000/svg"
-                                      width="16"
-                                      height="16"
-                                      fill="currentColor"
-                                      viewBox="0 0 16 16"
-                                    >
-                                      <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                                    </svg>
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() =>
-                                    handleStartEditNote(
-                                      lineItem?.id || 0,
-                                      lineItem?.notes || ""
-                                    )
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") {
-                                      e.preventDefault();
                                       handleStartEditNote(
                                         lineItem?.id || 0,
                                         lineItem?.notes || ""
-                                      );
+                                      )
                                     }
-                                  }}
-                                  className="cursor-pointer min-h-[28px] px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left w-full"
-                                  title="Click to edit note"
-                                >
-                                  {lineItem?.notes ? (
-                                    <span className="text-sm break-words whitespace-pre-wrap">
-                                      {lineItem?.notes}
-                                    </span>
-                                  ) : (
-                                    <span className="text-sm text-gray-400 dark:text-gray-500 italic">
-                                      Click to add note
-                                    </span>
-                                  )}
-                                </button>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                              {lineItem?.quantity || 0}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                              {formatCurrency(lineItem?.unitPrice || "0")}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
-                              {formatCurrency(total.toString())}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-right">
-                              <div className="flex items-center justify-end space-x-2">
-                                <button
-                                  onClick={() => handleEditLineItem(item)}
-                                  className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
-                                  title="Edit Line Item"
-                                >
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    fill="currentColor"
-                                    viewBox="0 0 16 16"
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        handleStartEditNote(
+                                          lineItem?.id || 0,
+                                          lineItem?.notes || ""
+                                        );
+                                      }
+                                    }}
+                                    className="cursor-pointer min-h-[28px] px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left w-full"
+                                    title="Click to edit note"
                                   >
-                                    <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
-                                  </svg>
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    handleDeleteLineItem(lineItem?.id || 0)
-                                  }
-                                  className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
-                                  title="Delete"
-                                >
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    fill="currentColor"
-                                    viewBox="0 0 16 16"
+                                    {lineItem?.notes ? (
+                                      <span className="text-sm break-words whitespace-pre-wrap">
+                                        {lineItem?.notes}
+                                      </span>
+                                    ) : (
+                                      <span className="text-sm text-gray-400 dark:text-gray-500 italic">
+                                        Click to add note
+                                      </span>
+                                    )}
+                                  </button>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                                {lineItem?.quantity || 0}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                                {formatCurrency(lineItem?.unitPrice || "0")}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                                {formatCurrency(total.toString())}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-right">
+                                <div className="flex items-center justify-end space-x-2">
+                                  <button
+                                    onClick={() => handleEditLineItem(item)}
+                                    className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                                    title="Edit Line Item"
                                   >
-                                    <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-
-                          {/* Attributes row - only shown when toggle is on */}
-                          {showPartAttributes && part && (
-                            <tr className="bg-white dark:bg-gray-800">
-                              <td colSpan={7} className="px-6 py-3 border-t border-gray-200 dark:border-gray-700">
-                                <div className="grid grid-cols-3 gap-6">
-                                  {/* Material */}
-                                  <div className="flex flex-col">
-                                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">Material</span>
-                                    {editingAttributeField?.partId === part.id && editingAttributeField?.field === 'material' ? (
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type="text"
-                                          value={editingAttributeValue}
-                                          onChange={(e) => setEditingAttributeValue(e.target.value)}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") {
-                                              e.preventDefault();
-                                              handleSaveAttribute(part.id, 'material');
-                                            } else if (e.key === "Escape") {
-                                              handleCancelEditAttribute();
-                                            }
-                                          }}
-                                          className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                          placeholder="Material"
-                                        />
-                                        <button
-                                          onClick={() => handleSaveAttribute(part.id, 'material')}
-                                          className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
-                                          title="Save"
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                                            <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
-                                          </svg>
-                                        </button>
-                                        <button
-                                          onClick={handleCancelEditAttribute}
-                                          className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
-                                          title="Cancel"
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        onClick={() => handleStartEditAttribute(part.id, 'material', part.material)}
-                                        className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                        title="Click to edit"
-                                      >
-                                        <span className="text-sm text-gray-900 dark:text-gray-100">
-                                          {part.material || <span className="text-gray-400 dark:text-gray-500 italic">Click to add</span>}
-                                        </span>
-                                      </button>
-                                    )}
-                                  </div>
-
-                                  {/* Tolerance */}
-                                  <div className="flex flex-col">
-                                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">Tolerance</span>
-                                    {editingAttributeField?.partId === part.id && editingAttributeField?.field === 'tolerance' ? (
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type="text"
-                                          value={editingAttributeValue}
-                                          onChange={(e) => handleToleranceChange(e.target.value)}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") {
-                                              e.preventDefault();
-                                              handleSaveAttribute(part.id, 'tolerance');
-                                            } else if (e.key === "Escape") {
-                                              handleCancelEditAttribute();
-                                            }
-                                          }}
-                                          className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                          placeholder="Tolerance"
-                                        />
-                                        <button
-                                          onClick={() => handleSaveAttribute(part.id, 'tolerance')}
-                                          className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
-                                          title="Save"
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                                            <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
-                                          </svg>
-                                        </button>
-                                        <button
-                                          onClick={handleCancelEditAttribute}
-                                          className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
-                                          title="Cancel"
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        onClick={() => handleStartEditAttribute(part.id, 'tolerance', part.tolerance)}
-                                        className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                        title="Click to edit"
-                                      >
-                                        <span className="text-sm text-gray-900 dark:text-gray-100">
-                                          {part.tolerance || <span className="text-gray-400 dark:text-gray-500 italic">Click to add</span>}
-                                        </span>
-                                      </button>
-                                    )}
-                                  </div>
-
-                                  {/* Finishing */}
-                                  <div className="flex flex-col">
-                                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">Finishing</span>
-                                    {editingAttributeField?.partId === part.id && editingAttributeField?.field === 'finishing' ? (
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type="text"
-                                          value={editingAttributeValue}
-                                          onChange={(e) => setEditingAttributeValue(e.target.value)}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") {
-                                              e.preventDefault();
-                                              handleSaveAttribute(part.id, 'finishing');
-                                            } else if (e.key === "Escape") {
-                                              handleCancelEditAttribute();
-                                            }
-                                          }}
-                                          className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                          placeholder="Finishing"
-                                        />
-                                        <button
-                                          onClick={() => handleSaveAttribute(part.id, 'finishing')}
-                                          className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
-                                          title="Save"
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                                            <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
-                                          </svg>
-                                        </button>
-                                        <button
-                                          onClick={handleCancelEditAttribute}
-                                          className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
-                                          title="Cancel"
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
-                                            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        onClick={() => handleStartEditAttribute(part.id, 'finishing', part.finishing)}
-                                        className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                        title="Click to edit"
-                                      >
-                                        <span className="text-sm text-gray-900 dark:text-gray-100">
-                                          {part.finishing || <span className="text-gray-400 dark:text-gray-500 italic">Click to add</span>}
-                                        </span>
-                                      </button>
-                                    )}
-                                  </div>
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="16"
+                                      height="16"
+                                      fill="currentColor"
+                                      viewBox="0 0 16 16"
+                                    >
+                                      <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      handleDeleteLineItem(lineItem?.id || 0)
+                                    }
+                                    className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                                    title="Delete"
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      width="16"
+                                      height="16"
+                                      fill="currentColor"
+                                      viewBox="0 0 16 16"
+                                    >
+                                      <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z" />
+                                    </svg>
+                                  </button>
                                 </div>
                               </td>
                             </tr>
-                          )}
-                        </React.Fragment>
+
+                            {/* Attributes row - only shown when toggle is on */}
+                            {showPartAttributes && part && (
+                              <tr className="bg-white dark:bg-gray-800">
+                                <td
+                                  colSpan={7}
+                                  className="px-6 py-3 border-t border-gray-200 dark:border-gray-700"
+                                >
+                                  <div className="grid grid-cols-3 gap-6">
+                                    {/* Material */}
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
+                                        Material
+                                      </span>
+                                      {editingAttributeField?.partId ===
+                                        part.id &&
+                                      editingAttributeField?.field ===
+                                        "material" ? (
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="text"
+                                            value={editingAttributeValue}
+                                            onChange={(e) =>
+                                              setEditingAttributeValue(
+                                                e.target.value
+                                              )
+                                            }
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                handleSaveAttribute(
+                                                  part.id,
+                                                  "material"
+                                                );
+                                              } else if (e.key === "Escape") {
+                                                handleCancelEditAttribute();
+                                              }
+                                            }}
+                                            className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="Material"
+                                          />
+                                          <button
+                                            onClick={() =>
+                                              handleSaveAttribute(
+                                                part.id,
+                                                "material"
+                                              )
+                                            }
+                                            className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                            title="Save"
+                                          >
+                                            <svg
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="14"
+                                              height="14"
+                                              fill="currentColor"
+                                              viewBox="0 0 16 16"
+                                            >
+                                              <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            onClick={handleCancelEditAttribute}
+                                            className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                            title="Cancel"
+                                          >
+                                            <svg
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="14"
+                                              height="14"
+                                              fill="currentColor"
+                                              viewBox="0 0 16 16"
+                                            >
+                                              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          onClick={() =>
+                                            handleStartEditAttribute(
+                                              part.id,
+                                              "material",
+                                              part.material
+                                            )
+                                          }
+                                          className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                          title="Click to edit"
+                                        >
+                                          <span className="text-sm text-gray-900 dark:text-gray-100">
+                                            {part.material || (
+                                              <span className="text-gray-400 dark:text-gray-500 italic">
+                                                Click to add
+                                              </span>
+                                            )}
+                                          </span>
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Tolerance */}
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
+                                        Tolerance
+                                      </span>
+                                      {editingAttributeField?.partId ===
+                                        part.id &&
+                                      editingAttributeField?.field ===
+                                        "tolerance" ? (
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="text"
+                                            value={editingAttributeValue}
+                                            onChange={(e) =>
+                                              handleToleranceChange(
+                                                e.target.value
+                                              )
+                                            }
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                handleSaveAttribute(
+                                                  part.id,
+                                                  "tolerance"
+                                                );
+                                              } else if (e.key === "Escape") {
+                                                handleCancelEditAttribute();
+                                              }
+                                            }}
+                                            className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="Tolerance"
+                                          />
+                                          <button
+                                            onClick={() =>
+                                              handleSaveAttribute(
+                                                part.id,
+                                                "tolerance"
+                                              )
+                                            }
+                                            className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                            title="Save"
+                                          >
+                                            <svg
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="14"
+                                              height="14"
+                                              fill="currentColor"
+                                              viewBox="0 0 16 16"
+                                            >
+                                              <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            onClick={handleCancelEditAttribute}
+                                            className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                            title="Cancel"
+                                          >
+                                            <svg
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="14"
+                                              height="14"
+                                              fill="currentColor"
+                                              viewBox="0 0 16 16"
+                                            >
+                                              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          onClick={() =>
+                                            handleStartEditAttribute(
+                                              part.id,
+                                              "tolerance",
+                                              part.tolerance
+                                            )
+                                          }
+                                          className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                          title="Click to edit"
+                                        >
+                                          <span className="text-sm text-gray-900 dark:text-gray-100">
+                                            {part.tolerance || (
+                                              <span className="text-gray-400 dark:text-gray-500 italic">
+                                                Click to add
+                                              </span>
+                                            )}
+                                          </span>
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Finishing */}
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
+                                        Finishing
+                                      </span>
+                                      {editingAttributeField?.partId ===
+                                        part.id &&
+                                      editingAttributeField?.field ===
+                                        "finishing" ? (
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="text"
+                                            value={editingAttributeValue}
+                                            onChange={(e) =>
+                                              setEditingAttributeValue(
+                                                e.target.value
+                                              )
+                                            }
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                handleSaveAttribute(
+                                                  part.id,
+                                                  "finishing"
+                                                );
+                                              } else if (e.key === "Escape") {
+                                                handleCancelEditAttribute();
+                                              }
+                                            }}
+                                            className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="Finishing"
+                                          />
+                                          <button
+                                            onClick={() =>
+                                              handleSaveAttribute(
+                                                part.id,
+                                                "finishing"
+                                              )
+                                            }
+                                            className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                            title="Save"
+                                          >
+                                            <svg
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="14"
+                                              height="14"
+                                              fill="currentColor"
+                                              viewBox="0 0 16 16"
+                                            >
+                                              <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            onClick={handleCancelEditAttribute}
+                                            className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                            title="Cancel"
+                                          >
+                                            <svg
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              width="14"
+                                              height="14"
+                                              fill="currentColor"
+                                              viewBox="0 0 16 16"
+                                            >
+                                              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          onClick={() =>
+                                            handleStartEditAttribute(
+                                              part.id,
+                                              "finishing",
+                                              part.finishing
+                                            )
+                                          }
+                                          className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                          title="Click to edit"
+                                        >
+                                          <span className="text-sm text-gray-900 dark:text-gray-100">
+                                            {part.finishing || (
+                                              <span className="text-gray-400 dark:text-gray-500 italic">
+                                                Click to add
+                                              </span>
+                                            )}
+                                          </span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
