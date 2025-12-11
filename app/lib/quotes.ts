@@ -15,7 +15,7 @@ import { db } from "./db/index.js"
 import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings, quoteAttachments, orderAttachments, notes, partDrawings } from "./db/schema.js"
 import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
 import type { Customer, Vendor, QuoteLineItem, QuotePart, Quote, NewQuote } from "./db/schema.js"
-import { getNextQuoteNumber, getNextOrderNumber } from "./number-generator.js"
+import { getNextQuoteNumber, getNextOrderNumber, generateUniqueOrderNumber } from "./number-generator.js"
 import { createEvent } from "./events.js"
 import { uploadFile } from "./s3.server.js"
 import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js"
@@ -524,6 +524,10 @@ export async function convertQuoteToOrder(
       }
     }
 
+    // Generate a unique order number BEFORE the transaction
+    // This uses retry logic to handle race conditions
+    const orderNumber = await generateUniqueOrderNumber()
+
     // Start a transaction
     const result = await db.transaction(async (tx) => {
       // Create the order
@@ -538,7 +542,7 @@ export async function convertQuoteToOrder(
       const [order] = await tx
         .insert(orders)
         .values({
-          orderNumber: await getNextOrderNumber(),
+          orderNumber,
           customerId: quote.customerId,
           vendorId: quote.vendorId,
           sourceQuoteId: quoteId,
