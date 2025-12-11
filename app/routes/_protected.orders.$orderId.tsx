@@ -126,15 +126,21 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   parts = await hydratePartThumbnails(parts);
 
   // Get feature flags and events
-  const [showEventsLink, showVersionInHeader, pdfAutoDownload, events, canRevise, bananaEnabled] =
-    await Promise.all([
-      shouldShowEventsInNav(),
-      shouldShowVersionInHeader(),
-      isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
-      getEventsForOrder(order.id, 10),
-      canUserUploadCadRevision(userDetails?.role),
-      isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
-    ]);
+  const [
+    showEventsLink,
+    showVersionInHeader,
+    pdfAutoDownload,
+    events,
+    canRevise,
+    bananaEnabled,
+  ] = await Promise.all([
+    shouldShowEventsInNav(),
+    shouldShowVersionInHeader(),
+    isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
+    getEventsForOrder(order.id, 10),
+    canUserUploadCadRevision(userDetails?.role),
+    isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
+  ]);
 
   // Get banana model URL if feature is enabled
   let bananaModelUrl: string | null = null;
