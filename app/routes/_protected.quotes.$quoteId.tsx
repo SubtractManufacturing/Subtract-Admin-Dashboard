@@ -6,7 +6,13 @@ import {
   unstable_parseMultipartFormData,
   unstable_createMemoryUploadHandler,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useRouteError, isRouteErrorResponse } from "@remix-run/react";
+import {
+  useLoaderData,
+  useFetcher,
+  useRevalidator,
+  useRouteError,
+  isRouteErrorResponse,
+} from "@remix-run/react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   getQuote,
@@ -31,6 +37,7 @@ import {
   shouldShowEventsInNav,
   shouldShowVersionInHeader,
   canUserAccessPriceCalculator,
+  canUserSendEmail,
   isFeatureEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
@@ -71,13 +78,14 @@ import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
+import SendEmailModal from "~/components/quotes/SendEmailModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import {
   createPriceCalculation,
-  getLatestCalculationsForQuote
+  getLatestCalculationsForQuote,
 } from "~/lib/quotePriceCalculations";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
@@ -244,10 +252,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   // Get feature flags and events
-  const [showEventsLink, showVersionInHeader, canAccessPriceCalculator, pdfAutoDownload, rejectionReasonRequired, events] = await Promise.all([
+  const [
+    showEventsLink,
+    showVersionInHeader,
+    canAccessPriceCalculator,
+    canSendEmail,
+    pdfAutoDownload,
+    rejectionReasonRequired,
+    events,
+  ] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
     canUserAccessPriceCalculator(userDetails?.role),
+    canUserSendEmail(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
@@ -260,6 +277,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   // Fetch existing price calculations for the quote
   const priceCalculations = await getLatestCalculationsForQuote(quote.id);
+
+  // Get available "Send As" addresses for email (only if user can send emails)
+  let sendAsAddresses: { email: string; label: string }[] = [];
+  if (canSendEmail) {
+    const { getSendAsAddresses } = await import("~/lib/gmail/config");
+    sendAsAddresses = await getSendAsAddresses();
+  }
 
   return withAuthHeaders(
     json({
@@ -277,6 +301,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       showEventsLink,
       showVersionInHeader,
       canAccessPriceCalculator,
+      canSendEmail,
+      sendAsAddresses,
       pdfAutoDownload,
       rejectionReasonRequired,
       events,
@@ -323,10 +349,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       maxPartSize: MAX_FILE_SIZE,
     });
 
-    formData = await unstable_parseMultipartFormData(
-      request,
-      uploadHandler
-    );
+    formData = await unstable_parseMultipartFormData(request, uploadHandler);
     const intent = formData.get("intent");
 
     // Handle add line item with file upload
@@ -657,9 +680,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const validationErrors = [];
 
           // Check quote has valid pricing
-          const quoteTotal = parseFloat(quote.total || '0');
+          const quoteTotal = parseFloat(quote.total || "0");
           if (quoteTotal <= 0) {
-            validationErrors.push("Quote must have a valid total greater than $0. Please add pricing to line items.");
+            validationErrors.push(
+              "Quote must have a valid total greater than $0. Please add pricing to line items."
+            );
           }
 
           // Check quote has line items
@@ -670,12 +695,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
           // Check for pending mesh conversions
           if (quote.parts && quote.parts.length > 0) {
             const pendingConversions = quote.parts.filter(
-              part => part.conversionStatus === 'in_progress' ||
-              part.conversionStatus === 'queued' ||
-              (part.conversionStatus === 'pending' && part.partFileUrl)
+              (part) =>
+                part.conversionStatus === "in_progress" ||
+                part.conversionStatus === "queued" ||
+                (part.conversionStatus === "pending" && part.partFileUrl)
             );
             if (pendingConversions.length > 0) {
-              validationErrors.push(`Cannot accept quote while ${pendingConversions.length} part(s) have pending mesh conversions.`);
+              validationErrors.push(
+                `Cannot accept quote while ${pendingConversions.length} part(s) have pending mesh conversions.`
+              );
             }
           }
 
@@ -684,7 +712,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             return json(
               {
                 error: "Cannot accept quote",
-                validationErrors
+                validationErrors,
               },
               { status: 400 }
             );
@@ -1272,9 +1300,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
           });
         } catch (pdfError) {
           console.error("PDF generation failed:", pdfError);
-          return json({
-            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
-          }, { status: 500 });
+          return json(
+            {
+              error:
+                pdfError instanceof Error
+                  ? pdfError.message
+                  : "Failed to generate PDF",
+            },
+            { status: 500 }
+          );
         }
       }
 
@@ -1317,9 +1351,87 @@ export async function action({ request, params }: ActionFunctionArgs) {
           });
         } catch (pdfError) {
           console.error("PDF generation failed:", pdfError);
-          return json({
-            error: pdfError instanceof Error ? pdfError.message : "Failed to generate PDF"
-          }, { status: 500 });
+          return json(
+            {
+              error:
+                pdfError instanceof Error
+                  ? pdfError.message
+                  : "Failed to generate PDF",
+            },
+            { status: 500 }
+          );
+        }
+      }
+
+      case "sendEmail": {
+        // Check if user has permission to send emails
+        const canSendEmailFlag = await canUserSendEmail(userDetails?.role);
+        if (!canSendEmailFlag) {
+          return json(
+            { error: "You do not have permission to send emails" },
+            { status: 403 }
+          );
+        }
+
+        const from = formData.get("from") as string | null;
+        const to = formData.get("to") as string;
+        const subject = formData.get("subject") as string;
+        const body = formData.get("body") as string;
+
+        if (!to || !subject || !body) {
+          return json(
+            { error: "Missing required fields: to, subject, and body" },
+            { status: 400 }
+          );
+        }
+
+        try {
+          const { sendEmail } = await import("~/lib/gmail/gmail-client.server");
+          const result = await sendEmail({
+            to,
+            subject,
+            body,
+            from: from || undefined,
+          });
+
+          if (result.success) {
+            // Log the email send event
+            await createEvent({
+              entityType: "quote",
+              entityId: quote.id.toString(),
+              eventType: "email_sent",
+              eventCategory: "communication",
+              title: "Email Sent",
+              description: `Email sent to ${to}${from ? ` from ${from}` : ""}`,
+              metadata: {
+                from: from || undefined,
+                to,
+                subject,
+                messageId: result.messageId,
+                quoteNumber: quote.quoteNumber,
+              },
+              userId: eventContext.userId,
+              userEmail: eventContext.userEmail,
+            });
+
+            return json({ success: true, messageId: result.messageId });
+          } else {
+            return json(
+              { error: result.error || "Failed to send email" },
+              { status: 500 }
+            );
+          }
+        } catch (emailError) {
+          console.error("Email sending failed:", emailError);
+          return json(
+            {
+              error:
+                emailError instanceof Error
+                  ? emailError.message
+                  : "Failed to send email",
+            },
+            { status: 500 }
+          );
         }
       }
 
@@ -1348,6 +1460,8 @@ export default function QuoteDetail() {
     showEventsLink,
     showVersionInHeader,
     canAccessPriceCalculator,
+    canSendEmail,
+    sendAsAddresses,
     pdfAutoDownload,
     rejectionReasonRequired,
     events,
@@ -1372,6 +1486,7 @@ export default function QuoteDetail() {
   const [rejectionReason, setRejectionReason] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
+  const [isSendEmailModalOpen, setIsSendEmailModalOpen] = useState(false);
   // Define the line item type
   type LineItem = {
     id: number;
@@ -1410,7 +1525,8 @@ export default function QuoteDetail() {
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
-  const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] = useState(0);
+  const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] =
+    useState(0);
   const calculatorFetcher = useFetcher();
   const [isDownloading, setIsDownloading] = useState(false);
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
@@ -1654,7 +1770,8 @@ export default function QuoteDetail() {
   const handleOpenCalculatorForPart = (partId: string) => {
     if (!canAccessPriceCalculator) return;
     // Find the index of the part in the quote.parts array
-    const partIndex = quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
+    const partIndex =
+      quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
     setCurrentCalculatorPartIndex(partIndex);
     setIsCalculatorOpen(true);
   };
@@ -1963,10 +2080,19 @@ export default function QuoteDetail() {
                     excludeRef={actionsButtonRef}
                     quoteStatus={quote.status}
                     onReviseQuote={handleReviseQuote}
-                    onCalculatePricing={canAccessPriceCalculator ? handleOpenCalculator : undefined}
+                    onCalculatePricing={
+                      canAccessPriceCalculator
+                        ? handleOpenCalculator
+                        : undefined
+                    }
                     onDownloadFiles={handleDownloadFiles}
                     onGeneratePdf={handleGeneratePdf}
                     onGenerateInvoice={handleGenerateInvoice}
+                    onSendEmail={
+                      canSendEmail
+                        ? () => setIsSendEmailModalOpen(true)
+                        : undefined
+                    }
                     isDownloading={isDownloading}
                     hasCustomer={!!quote.customerId}
                   />
@@ -1994,37 +2120,44 @@ export default function QuoteDetail() {
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
           {/* Error Banner */}
-          {fetcher.data && typeof fetcher.data === 'object' && 'error' in fetcher.data && fetcher.data.error && (
-            <div className="relative bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-700 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <svg
-                  className="w-6 h-6 flex-shrink-0 text-red-600 dark:text-red-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
-                <div className="flex-1">
-                  <p className="font-semibold text-red-800 dark:text-red-200">
-                    {(fetcher.data as { error: string }).error}
-                  </p>
-                  {'validationErrors' in fetcher.data && Array.isArray(fetcher.data.validationErrors) && fetcher.data.validationErrors.length > 0 && (
-                    <ul className="mt-2 text-sm text-red-700 dark:text-red-300 list-disc list-inside space-y-1">
-                      {(fetcher.data.validationErrors as string[]).map((error: string, index: number) => (
-                        <li key={index}>{error}</li>
-                      ))}
-                    </ul>
-                  )}
+          {fetcher.data &&
+            typeof fetcher.data === "object" &&
+            "error" in fetcher.data &&
+            fetcher.data.error && (
+              <div className="relative bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-700 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <svg
+                    className="w-6 h-6 flex-shrink-0 text-red-600 dark:text-red-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  <div className="flex-1">
+                    <p className="font-semibold text-red-800 dark:text-red-200">
+                      {(fetcher.data as { error: string }).error}
+                    </p>
+                    {"validationErrors" in fetcher.data &&
+                      Array.isArray(fetcher.data.validationErrors) &&
+                      fetcher.data.validationErrors.length > 0 && (
+                        <ul className="mt-2 text-sm text-red-700 dark:text-red-300 list-disc list-inside space-y-1">
+                          {(fetcher.data.validationErrors as string[]).map(
+                            (error: string, index: number) => (
+                              <li key={index}>{error}</li>
+                            )
+                          )}
+                        </ul>
+                      )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
           {/* Archived Quote Banner */}
           {quote.isArchived && (
@@ -2798,7 +2931,17 @@ export default function QuoteDetail() {
                                   {part.signedThumbnailUrl ? (
                                     <button
                                       type="button"
-                                      onClick={() => handleView3DModel(part as { id: string; partName: string; signedMeshUrl?: string; signedFileUrl?: string; signedThumbnailUrl?: string })}
+                                      onClick={() =>
+                                        handleView3DModel(
+                                          part as {
+                                            id: string;
+                                            partName: string;
+                                            signedMeshUrl?: string;
+                                            signedFileUrl?: string;
+                                            signedThumbnailUrl?: string;
+                                          }
+                                        )
+                                      }
                                       className="p-0 border-0 bg-transparent cursor-pointer"
                                       title="Click to view 3D model"
                                     >
@@ -3426,6 +3569,16 @@ export default function QuoteDetail() {
         autoDownload={pdfAutoDownload}
       />
 
+      {canSendEmail && (
+        <SendEmailModal
+          isOpen={isSendEmailModalOpen}
+          onClose={() => setIsSendEmailModalOpen(false)}
+          quoteNumber={quote.quoteNumber}
+          customerEmail={customer?.email || undefined}
+          sendAsAddresses={sendAsAddresses}
+        />
+      )}
+
       <Modal
         isOpen={isRejectModalOpen}
         onClose={handleRejectModalClose}
@@ -3436,7 +3589,10 @@ export default function QuoteDetail() {
           <p className="text-sm text-gray-700 dark:text-gray-300">
             Are you sure you want to reject this quote?
             {rejectionReasonRequired && (
-              <span className="font-medium"> A rejection reason is required.</span>
+              <span className="font-medium">
+                {" "}
+                A rejection reason is required.
+              </span>
             )}
           </p>
           <div>
@@ -3444,8 +3600,13 @@ export default function QuoteDetail() {
               htmlFor="rejectionReason"
               className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
             >
-              Rejection Reason {rejectionReasonRequired && <span className="text-red-500">*</span>}
-              {!rejectionReasonRequired && <span className="text-gray-500 font-normal">(Optional)</span>}
+              Rejection Reason{" "}
+              {rejectionReasonRequired && (
+                <span className="text-red-500">*</span>
+              )}
+              {!rejectionReasonRequired && (
+                <span className="text-gray-500 font-normal">(Optional)</span>
+              )}
             </label>
             <textarea
               id="rejectionReason"
@@ -3458,16 +3619,10 @@ export default function QuoteDetail() {
             />
           </div>
           <div className="flex justify-end gap-3 pt-4">
-            <Button
-              onClick={handleRejectModalClose}
-              variant="secondary"
-            >
+            <Button onClick={handleRejectModalClose} variant="secondary">
               Cancel
             </Button>
-            <Button
-              onClick={handleRejectQuoteConfirm}
-              variant="danger"
-            >
+            <Button onClick={handleRejectQuoteConfirm} variant="danger">
               Reject Quote
             </Button>
           </div>
@@ -3516,7 +3671,9 @@ export function ErrorBoundary() {
           Unexpected Error
         </h1>
         <p className="text-gray-600 dark:text-gray-400 mb-4">
-          {error instanceof Error ? error.message : "An unexpected error occurred while loading the quote."}
+          {error instanceof Error
+            ? error.message
+            : "An unexpected error occurred while loading the quote."}
         </p>
         <div className="flex gap-4">
           <a

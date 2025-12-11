@@ -14,6 +14,7 @@ export const FEATURE_FLAGS = {
   QUOTE_REJECTION_REASON_REQUIRED: "quote_rejection_reason_required",
   S3_MIGRATION_ENABLED: "s3_migration_enabled",
   DISPLAY_VERSION_HEADER: "display_version_header",
+  EMAIL_SEND_DEV: "email_send_dev",
 } as const;
 
 // Default feature flags with their metadata
@@ -78,6 +79,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     description: "Show the application version number in the navigation header",
     enabled: false,
   },
+  {
+    key: FEATURE_FLAGS.EMAIL_SEND_DEV,
+    name: "Enable Email Integration",
+    description: "Enable Gmail integration for sending emails from quotes (Admin and Dev users)",
+    enabled: false,
+  },
 ];
 
 export async function getAllFeatureFlags() {
@@ -111,10 +118,21 @@ export async function updateFeatureFlag(key: string, enabled: boolean, updatedBy
 
 export async function initializeFeatureFlags() {
   // Check if feature flags exist, if not create them
+  // Also update name/description if they've changed
   for (const flag of DEFAULT_FLAGS) {
     const existing = await getFeatureFlag(flag.key);
     if (!existing) {
       await db.insert(featureFlags).values(flag);
+    } else if (existing.name !== flag.name || existing.description !== flag.description) {
+      // Update name and description if they've changed (preserves enabled state)
+      await db
+        .update(featureFlags)
+        .set({
+          name: flag.name,
+          description: flag.description,
+          updatedAt: new Date(),
+        })
+        .where(eq(featureFlags.key, flag.key));
     }
   }
 }
@@ -186,4 +204,14 @@ export async function canUserAccessPriceCalculator(userRole?: string | null) {
 
 export async function shouldShowVersionInHeader() {
   return isFeatureEnabled(FEATURE_FLAGS.DISPLAY_VERSION_HEADER);
+}
+
+export async function canUserSendEmail(userRole?: string | null) {
+  // Admin and Dev users can send emails when the feature flag is enabled
+  if (userRole === "Admin" || userRole === "Dev") {
+    const emailEnabled = await isFeatureEnabled(FEATURE_FLAGS.EMAIL_SEND_DEV);
+    return emailEnabled;
+  }
+
+  return false;
 }
