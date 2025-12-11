@@ -14,10 +14,12 @@ import QuotesTable from "~/components/QuotesTable";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
+  const url = new URL(request.url);
+  const rfqDays = Number(url.searchParams.get("rfqPeriod")) || 30;
 
   try {
     const [stats, orders, quotes, showEventsLink, showVersionInHeader] = await Promise.all([
-      getDashboardStats(),
+      getDashboardStats(rfqDays),
       getOrders(),
       getQuotes(),
       shouldShowEventsInNav(),
