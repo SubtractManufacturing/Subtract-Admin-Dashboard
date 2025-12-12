@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.1.1...v1.2.0) (2025-12-11)
+
+
+### Features
+
+* implement CAD version control and React Email templates ([a6f498c](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/a6f498c9fe1cb1b7f2bc0463e3196c9d08ad7c7e))
+
 ## [1.1.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.1.0...v1.1.1) (2025-12-11)
 
 
