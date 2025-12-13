@@ -1580,7 +1580,11 @@ export default function QuoteDetail() {
   useEffect(() => {
     const MAX_POLL_COUNT = 120; // Max 10 minutes (120 * 5 seconds)
 
-    if (hasConvertingParts && !pollIntervalRef.current && pollCount < MAX_POLL_COUNT) {
+    if (
+      hasConvertingParts &&
+      !pollIntervalRef.current &&
+      pollCount < MAX_POLL_COUNT
+    ) {
       pollIntervalRef.current = setInterval(() => {
         setPollCount((prev) => prev + 1);
         // Revalidate the page data to get updated conversion status
@@ -1626,6 +1630,44 @@ export default function QuoteDetail() {
       setOptimisticTotal(total.toFixed(2));
     }
   }, [optimisticLineItems]);
+
+  // Track if we've handled the last fetcher response to prevent re-triggering
+  const [lastHandledFetcherData, setLastHandledFetcherData] =
+    useState<unknown>(null);
+
+  // Monitor calculator fetcher state to handle success/error and close modal appropriately
+  useEffect(() => {
+    // Skip if we've already handled this response
+    if (calculatorFetcher.data === lastHandledFetcherData) {
+      return;
+    }
+
+    // When fetcher completes successfully, close modal if it was the last part
+    if (
+      calculatorFetcher.state === "idle" &&
+      calculatorFetcher.data?.success &&
+      isCalculatorOpen &&
+      currentCalculatorPartIndex >= (quote.parts?.length || 1) - 1
+    ) {
+      setLastHandledFetcherData(calculatorFetcher.data);
+      setIsCalculatorOpen(false);
+      revalidator.revalidate();
+    }
+
+    // Handle errors
+    if (calculatorFetcher.state === "idle" && calculatorFetcher.data?.error) {
+      setLastHandledFetcherData(calculatorFetcher.data);
+      alert(`Failed to save calculation: ${calculatorFetcher.data.error}`);
+    }
+  }, [
+    calculatorFetcher.state,
+    calculatorFetcher.data,
+    isCalculatorOpen,
+    currentCalculatorPartIndex,
+    quote.parts?.length,
+    revalidator,
+    lastHandledFetcherData,
+  ]);
 
   const handleFileUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1845,6 +1887,11 @@ export default function QuoteDetail() {
   };
 
   const handleSaveCalculation = (calculationData: Record<string, unknown>) => {
+    // Don't submit if already submitting
+    if (calculatorFetcher.state !== "idle") {
+      return;
+    }
+
     const formData = new FormData();
     formData.append("intent", "savePriceCalculation");
     formData.append("calculationData", JSON.stringify(calculationData));
@@ -1853,12 +1900,7 @@ export default function QuoteDetail() {
       method: "post",
     });
 
-    // If this is the last part, close the modal
-    if (currentCalculatorPartIndex >= (quote.parts?.length || 1) - 1) {
-      setIsCalculatorOpen(false);
-      // Revalidate to get the updated prices
-      revalidator.revalidate();
-    }
+    // Modal closing is handled by the useEffect that monitors calculatorFetcher.state
   };
 
   const handleDeleteLineItem = (lineItemId: number, quotePartId?: string) => {
@@ -3590,6 +3632,7 @@ export default function QuoteDetail() {
           currentPartIndex={currentCalculatorPartIndex}
           onPartChange={setCurrentCalculatorPartIndex}
           existingCalculations={priceCalculations || []}
+          isSaving={calculatorFetcher.state !== "idle"}
         />
       )}
 

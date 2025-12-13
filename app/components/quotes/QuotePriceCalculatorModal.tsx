@@ -15,6 +15,7 @@ interface QuotePriceCalculatorModalProps {
   currentPartIndex?: number;
   onPartChange?: (index: number) => void;
   existingCalculations?: QuotePriceCalculation[];
+  isSaving?: boolean;
 }
 
 const LEAD_TIME_OPTIONS = [
@@ -39,6 +40,7 @@ export default function QuotePriceCalculatorModal({
   currentPartIndex = 0,
   onPartChange,
   existingCalculations = [],
+  isSaving = false,
 }: QuotePriceCalculatorModalProps) {
   const [partIndex, setPartIndex] = useState(currentPartIndex);
   const modalContentRef = useRef<HTMLDivElement>(null);
@@ -154,10 +156,14 @@ export default function QuotePriceCalculatorModal({
       setToolpathGrandTotal(existingCalculation.toolpathGrandTotal || "");
       setLeadTimeOption(existingCalculation.leadTimeOption || "7-12 Days");
       // If there's a saved leadTimeMultiplier, update the state for that option
-      if (existingCalculation.leadTimeMultiplier && existingCalculation.leadTimeOption) {
-        setLeadTimeMultipliers(prev => ({
+      if (
+        existingCalculation.leadTimeMultiplier &&
+        existingCalculation.leadTimeOption
+      ) {
+        setLeadTimeMultipliers((prev) => ({
           ...prev,
-          [existingCalculation.leadTimeOption]: existingCalculation.leadTimeMultiplier
+          [existingCalculation.leadTimeOption]:
+            parseFloat(String(existingCalculation.leadTimeMultiplier)) || 1.0,
         }));
       }
       setThreadCounts({
@@ -209,7 +215,9 @@ export default function QuotePriceCalculatorModal({
   // Calculate prices
   const calculatePrices = useCallback(() => {
     const toolpath = parseFloat(toolpathGrandTotal) || 0;
-    const leadMultiplier = leadTimeMultipliers[leadTimeOption as keyof typeof leadTimeMultipliers] || 1.0;
+    const leadMultiplier =
+      leadTimeMultipliers[leadTimeOption as keyof typeof leadTimeMultipliers] ||
+      1.0;
 
     // Calculate thread costs
     const threadCost =
@@ -218,7 +226,7 @@ export default function QuotePriceCalculatorModal({
       (parseInt(threadCounts.large) || 0) * threadRates.large;
 
     // Calculate tooling markup
-    const tooling = showTooling ? (parseFloat(toolingCost) || 0) : 0;
+    const tooling = showTooling ? parseFloat(toolingCost) || 0 : 0;
     const toolingMarkup = tooling * 1.5;
 
     // Calculate prices
@@ -260,9 +268,16 @@ export default function QuotePriceCalculatorModal({
       quoteId,
       quotePartId: currentPart?.id,
       quoteLineItemId: currentLineItem?.id,
-      toolpathGrandTotal: parseFloat(parseFloat(toolpathGrandTotal).toFixed(2)) || 0,
+      toolpathGrandTotal:
+        parseFloat(parseFloat(toolpathGrandTotal).toFixed(2)) || 0,
       leadTimeOption,
-      leadTimeMultiplier: parseFloat((leadTimeMultipliers[leadTimeOption as keyof typeof leadTimeMultipliers] || 1.0).toFixed(2)),
+      leadTimeMultiplier: parseFloat(
+        Number(
+          leadTimeMultipliers[
+            leadTimeOption as keyof typeof leadTimeMultipliers
+          ] || 1.0
+        ).toFixed(2)
+      ),
       smallThreadCount: parseInt(threadCounts.small) || 0,
       smallThreadRate: parseFloat(threadRates.small.toFixed(2)),
       mediumThreadCount: parseInt(threadCounts.medium) || 0,
@@ -272,8 +287,15 @@ export default function QuotePriceCalculatorModal({
       totalThreadCost: parseFloat(prices.threadCost.toFixed(2)),
       complexityMultiplier: parseFloat(complexityMultiplier.toFixed(2)),
       toleranceMultiplier: parseFloat(toleranceMultiplier.toFixed(2)),
-      toolingCost: showTooling ? (parseFloat(toolingCost) ? parseFloat(parseFloat(toolingCost).toFixed(2)) : null) : null,
-      toolingMarkup: showTooling && prices.toolingMarkup ? parseFloat(prices.toolingMarkup.toFixed(2)) : null,
+      toolingCost: showTooling
+        ? parseFloat(toolingCost)
+          ? parseFloat(parseFloat(toolingCost).toFixed(2))
+          : null
+        : null,
+      toolingMarkup:
+        showTooling && prices.toolingMarkup
+          ? parseFloat(prices.toolingMarkup.toFixed(2))
+          : null,
       basePrice: parseFloat(prices.basePrice.toFixed(2)),
       adjustedPrice: parseFloat(prices.adjustedPrice.toFixed(2)),
       finalPrice: parseFloat(prices.finalPrice.toFixed(2)),
@@ -379,7 +401,10 @@ export default function QuotePriceCalculatorModal({
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {/* Base Cost Input */}
           <div>
-            <label htmlFor="toolpath-grand-total" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label
+              htmlFor="toolpath-grand-total"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            >
               Toolpath Grand Total <span className="text-red-500">*</span>
             </label>
             <div className="relative">
@@ -399,9 +424,10 @@ export default function QuotePriceCalculatorModal({
                 }}
                 onBlur={() => setToolpathTouched(true)}
                 className={`pl-8 w-full rounded-md dark:bg-gray-700 dark:text-white ${
-                  (showValidation || toolpathTouched) && (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0)
-                    ? 'border-red-300 dark:border-red-600 focus:ring-red-500 focus:border-red-500'
-                    : 'border-gray-300 dark:border-gray-600'
+                  (showValidation || toolpathTouched) &&
+                  (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0)
+                    ? "border-red-300 dark:border-red-600 focus:ring-red-500 focus:border-red-500"
+                    : "border-gray-300 dark:border-gray-600"
                 }`}
                 placeholder="0.00"
                 step="0.01"
@@ -409,11 +435,12 @@ export default function QuotePriceCalculatorModal({
                 required
               />
             </div>
-            {(showValidation || toolpathTouched) && (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0) && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                Please enter a valid toolpath grand total greater than $0.00
-              </p>
-            )}
+            {(showValidation || toolpathTouched) &&
+              (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0) && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                  Please enter a valid toolpath grand total greater than $0.00
+                </p>
+              )}
           </div>
 
           {/* Lead Time Selection */}
@@ -432,7 +459,10 @@ export default function QuotePriceCalculatorModal({
             </div>
             <div className="space-y-2">
               {LEAD_TIME_OPTIONS.map((option) => (
-                <label key={option.value} className="flex items-center justify-between">
+                <label
+                  key={option.value}
+                  className="flex items-center justify-between"
+                >
                   <div className="flex items-center">
                     <input
                       type="radio"
@@ -450,20 +480,34 @@ export default function QuotePriceCalculatorModal({
                       <>
                         <input
                           type="number"
-                          value={leadTimeMultipliers[option.value as keyof typeof leadTimeMultipliers]}
-                          onChange={(e) => setLeadTimeMultipliers({
-                            ...leadTimeMultipliers,
-                            [option.value]: parseFloat(e.target.value) || 0
-                          })}
+                          value={
+                            leadTimeMultipliers[
+                              option.value as keyof typeof leadTimeMultipliers
+                            ]
+                          }
+                          onChange={(e) =>
+                            setLeadTimeMultipliers({
+                              ...leadTimeMultipliers,
+                              [option.value]: parseFloat(e.target.value) || 0,
+                            })
+                          }
                           className="w-16 rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-center"
                           step="0.1"
                           min="0"
                         />
-                        <span className="text-sm text-gray-600 dark:text-gray-400">x</span>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                          x
+                        </span>
                       </>
                     ) : (
                       <span className="text-sm text-gray-600 dark:text-gray-400">
-                        ({leadTimeMultipliers[option.value as keyof typeof leadTimeMultipliers]}x)
+                        (
+                        {
+                          leadTimeMultipliers[
+                            option.value as keyof typeof leadTimeMultipliers
+                          ]
+                        }
+                        x)
                       </span>
                     )}
                   </div>
@@ -508,7 +552,9 @@ export default function QuotePriceCalculatorModal({
                       placeholder="0"
                       min="0"
                     />
-                    <span className="text-sm text-gray-500 dark:text-gray-400">×</span>
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
+                      ×
+                    </span>
                     {editingThreadRates ? (
                       <div className="flex items-center">
                         <span className="text-gray-500 text-sm">$</span>
@@ -527,14 +573,21 @@ export default function QuotePriceCalculatorModal({
                       </div>
                     ) : (
                       <span className="text-sm text-gray-600 dark:text-gray-400">
-                        ${threadRates[size as keyof typeof threadRates].toFixed(2)}
+                        $
+                        {threadRates[size as keyof typeof threadRates].toFixed(
+                          2
+                        )}
                       </span>
                     )}
-                    <span className="text-sm text-gray-500 dark:text-gray-400 mx-1">=</span>
+                    <span className="text-sm text-gray-500 dark:text-gray-400 mx-1">
+                      =
+                    </span>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-14 text-right">
-                      ${(
-                        (parseInt(threadCounts[size as keyof typeof threadCounts]) || 0) *
-                        threadRates[size as keyof typeof threadRates]
+                      $
+                      {(
+                        (parseInt(
+                          threadCounts[size as keyof typeof threadCounts]
+                        ) || 0) * threadRates[size as keyof typeof threadRates]
                       ).toFixed(2)}
                     </span>
                   </div>
@@ -652,7 +705,10 @@ export default function QuotePriceCalculatorModal({
 
           {/* Notes */}
           <div>
-            <label htmlFor="calculation-notes" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label
+              htmlFor="calculation-notes"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            >
               Notes (Optional)
             </label>
             <textarea
@@ -672,24 +728,47 @@ export default function QuotePriceCalculatorModal({
           <div className="px-6 py-3 grid grid-cols-2 gap-x-6 gap-y-1 text-xs border-b border-gray-200 dark:border-gray-700">
             <div className="flex justify-between">
               <span className="text-gray-500 dark:text-gray-400">Base:</span>
-              <span className="font-medium text-gray-700 dark:text-gray-300">${prices.basePrice.toFixed(2)}</span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">
+                ${prices.basePrice.toFixed(2)}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500 dark:text-gray-400">Lead ({prices.leadMultiplier}x):</span>
-              <span className="font-medium text-gray-700 dark:text-gray-300">${(prices.basePrice * prices.leadMultiplier).toFixed(2)}</span>
+              <span className="text-gray-500 dark:text-gray-400">
+                Lead ({prices.leadMultiplier}x):
+              </span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">
+                ${(prices.basePrice * prices.leadMultiplier).toFixed(2)}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500 dark:text-gray-400">Complex ({complexityMultiplier.toFixed(2)}x):</span>
-              <span className="font-medium text-gray-700 dark:text-gray-300">${(prices.basePrice * prices.leadMultiplier * complexityMultiplier).toFixed(2)}</span>
+              <span className="text-gray-500 dark:text-gray-400">
+                Complex ({complexityMultiplier.toFixed(2)}x):
+              </span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">
+                $
+                {(
+                  prices.basePrice *
+                  prices.leadMultiplier *
+                  complexityMultiplier
+                ).toFixed(2)}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500 dark:text-gray-400">Tolerance ({toleranceMultiplier.toFixed(2)}x):</span>
-              <span className="font-medium text-gray-700 dark:text-gray-300">${prices.adjustedPrice.toFixed(2)}</span>
+              <span className="text-gray-500 dark:text-gray-400">
+                Tolerance ({toleranceMultiplier.toFixed(2)}x):
+              </span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">
+                ${prices.adjustedPrice.toFixed(2)}
+              </span>
             </div>
             {showTooling && prices.toolingMarkup > 0 && (
               <div className="flex justify-between col-span-2">
-                <span className="text-gray-500 dark:text-gray-400">+ Tooling:</span>
-                <span className="font-medium text-gray-700 dark:text-gray-300">${prices.toolingMarkup.toFixed(2)}</span>
+                <span className="text-gray-500 dark:text-gray-400">
+                  + Tooling:
+                </span>
+                <span className="font-medium text-gray-700 dark:text-gray-300">
+                  ${prices.toolingMarkup.toFixed(2)}
+                </span>
               </div>
             )}
           </div>
@@ -704,8 +783,12 @@ export default function QuotePriceCalculatorModal({
                 Clear
               </button>
               <div className="text-left">
-                <div className="text-xs text-gray-500 dark:text-gray-400">Final Price</div>
-                <div className="text-2xl font-bold text-gray-900 dark:text-white">${prices.finalPrice.toFixed(2)}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  Final Price
+                </div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                  ${prices.finalPrice.toFixed(2)}
+                </div>
               </div>
             </div>
             <div className="space-x-3">
@@ -718,16 +801,18 @@ export default function QuotePriceCalculatorModal({
               {partIndex < quoteParts.length - 1 ? (
                 <button
                   onClick={handleNextPart}
+                  disabled={isSaving}
                   className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Next Part →
+                  {isSaving ? "Saving..." : "Next Part →"}
                 </button>
               ) : (
                 <button
                   onClick={handleSave}
+                  disabled={isSaving}
                   className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Save & Close
+                  {isSaving ? "Saving..." : "Save & Close"}
                 </button>
               )}
             </div>
