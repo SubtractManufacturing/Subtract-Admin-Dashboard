@@ -409,7 +409,7 @@ export function InvoicePdfTemplate({
               </div>
               <div className="info-item">
                 <span className="label">Invoice Date</span>
-                <span className="value">{formatDate(entity.createdAt)}</span>
+                <span className="value">{formatDate(new Date())}</span>
               </div>
               <div className="info-item">
                 <span className="label">Due Date</span>

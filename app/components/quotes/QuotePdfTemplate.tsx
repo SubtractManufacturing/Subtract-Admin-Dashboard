@@ -7,10 +7,16 @@ interface QuotePdfTemplateProps {
   editable?: boolean;
 }
 
-export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplateProps) {
-
-  const partsLineItems = (quote.lineItems || []).filter((item) => item.quotePartId !== null);
-  const serviceLineItems = (quote.lineItems || []).filter((item) => item.quotePartId === null);
+export function QuotePdfTemplate({
+  quote,
+  editable = false,
+}: QuotePdfTemplateProps) {
+  const partsLineItems = (quote.lineItems || []).filter(
+    (item) => item.quotePartId !== null
+  );
+  const serviceLineItems = (quote.lineItems || []).filter(
+    (item) => item.quotePartId === null
+  );
 
   // Handle placeholder behavior for address fields
   useEffect(() => {
@@ -18,43 +24,43 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
 
     const handlePlaceholderFocus = (e: Event) => {
       const target = e.target as HTMLElement;
-      const defaultText = target.getAttribute('data-default-text');
+      const defaultText = target.getAttribute("data-default-text");
 
       if (defaultText && target.textContent?.trim() === defaultText) {
-        target.textContent = '';
+        target.textContent = "";
       }
     };
 
     const handlePlaceholderBlur = (e: Event) => {
       const target = e.target as HTMLElement;
-      const defaultText = target.getAttribute('data-default-text');
-      const currentText = target.textContent?.trim() || '';
+      const defaultText = target.getAttribute("data-default-text");
+      const currentText = target.textContent?.trim() || "";
 
       if (defaultText) {
-        if (currentText === '') {
+        if (currentText === "") {
           // Restore placeholder if empty
           target.textContent = defaultText;
-          target.classList.add('placeholder-text');
+          target.classList.add("placeholder-text");
         } else if (currentText !== defaultText) {
           // Remove grey styling if text was customized
-          target.classList.remove('placeholder-text');
+          target.classList.remove("placeholder-text");
         } else {
           // Keep grey styling if still default
-          target.classList.add('placeholder-text');
+          target.classList.add("placeholder-text");
         }
       }
     };
 
-    const placeholders = document.querySelectorAll('.address-placeholder');
+    const placeholders = document.querySelectorAll(".address-placeholder");
     placeholders.forEach((element) => {
-      element.addEventListener('focus', handlePlaceholderFocus);
-      element.addEventListener('blur', handlePlaceholderBlur);
+      element.addEventListener("focus", handlePlaceholderFocus);
+      element.addEventListener("blur", handlePlaceholderBlur);
     });
 
     return () => {
       placeholders.forEach((element) => {
-        element.removeEventListener('focus', handlePlaceholderFocus);
-        element.removeEventListener('blur', handlePlaceholderBlur);
+        element.removeEventListener("focus", handlePlaceholderFocus);
+        element.removeEventListener("blur", handlePlaceholderBlur);
       });
     };
   }, [editable]);
@@ -62,13 +68,17 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
   // Sync widths of subtotal and total boxes
   useEffect(() => {
     const syncBoxWidths = () => {
-      const subtotalBox = document.querySelector('.parts-subtotal-box') as HTMLElement;
-      const totalBox = document.querySelector('.financial-summary') as HTMLElement;
+      const subtotalBox = document.querySelector(
+        ".parts-subtotal-box"
+      ) as HTMLElement;
+      const totalBox = document.querySelector(
+        ".financial-summary"
+      ) as HTMLElement;
 
       if (subtotalBox && totalBox) {
         // Reset widths to measure natural size
-        subtotalBox.style.width = 'max-content';
-        totalBox.style.width = 'max-content';
+        subtotalBox.style.width = "max-content";
+        totalBox.style.width = "max-content";
 
         // Get the natural widths
         const subtotalWidth = subtotalBox.offsetWidth;
@@ -92,14 +102,22 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
         syncBoxWidths();
       });
 
-      const subtotalValue = document.querySelector('.parts-subtotal-value');
-      const totalValue = document.querySelector('.summary-value');
+      const subtotalValue = document.querySelector(".parts-subtotal-value");
+      const totalValue = document.querySelector(".summary-value");
 
       if (subtotalValue) {
-        observer.observe(subtotalValue, { characterData: true, childList: true, subtree: true });
+        observer.observe(subtotalValue, {
+          characterData: true,
+          childList: true,
+          subtree: true,
+        });
       }
       if (totalValue) {
-        observer.observe(totalValue, { characterData: true, childList: true, subtree: true });
+        observer.observe(totalValue, {
+          characterData: true,
+          childList: true,
+          subtree: true,
+        });
       }
     }
 
@@ -477,7 +495,7 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
               </div>
               <div className="info-item">
                 <span className="label">Issue Date</span>
-                <span className="value">{formatDate(quote.createdAt)}</span>
+                <span className="value">{formatDate(new Date())}</span>
               </div>
               <div className="info-item">
                 <span className="label">Valid Until</span>
@@ -591,7 +609,9 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                 </thead>
                 <tbody>
                   {partsLineItems.map((item, index) => {
-                    const quotePart = (quote.parts || []).find((p) => p.id === item.quotePartId);
+                    const quotePart = (quote.parts || []).find(
+                      (p) => p.id === item.quotePartId
+                    );
                     return (
                       <tr key={index}>
                         <td>
@@ -651,7 +671,9 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
                       <span className="parts-subtotal-label">Subtotal</span>
                       <span
                         className={
-                          editable ? "parts-subtotal-value editable" : "parts-subtotal-value"
+                          editable
+                            ? "parts-subtotal-value editable"
+                            : "parts-subtotal-value"
                         }
                         contentEditable={editable}
                         suppressContentEditableWarning
@@ -715,7 +737,9 @@ export function QuotePdfTemplate({ quote, editable = false }: QuotePdfTemplatePr
             <div className="summary-row">
               <span className="summary-label">TOTAL</span>
               <span
-                className={editable ? "summary-value editable" : "summary-value"}
+                className={
+                  editable ? "summary-value editable" : "summary-value"
+                }
                 contentEditable={editable}
                 suppressContentEditableWarning
               >
