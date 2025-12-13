@@ -1547,6 +1547,9 @@ export default function QuoteDetail() {
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] =
     useState(0);
+  const [calculatorMode, setCalculatorMode] = useState<
+    "allParts" | "singlePart"
+  >("allParts");
   const calculatorFetcher = useFetcher();
   const [isDownloading, setIsDownloading] = useState(false);
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
@@ -1635,22 +1638,19 @@ export default function QuoteDetail() {
   const [lastHandledFetcherData, setLastHandledFetcherData] =
     useState<unknown>(null);
 
-  // Monitor calculator fetcher state to handle success/error and close modal appropriately
+  // Monitor calculator fetcher state to handle success/error
   useEffect(() => {
     // Skip if we've already handled this response
     if (calculatorFetcher.data === lastHandledFetcherData) {
       return;
     }
 
-    // When fetcher completes successfully, close modal if it was the last part
-    if (
-      calculatorFetcher.state === "idle" &&
-      calculatorFetcher.data?.success &&
-      isCalculatorOpen &&
-      currentCalculatorPartIndex >= (quote.parts?.length || 1) - 1
-    ) {
+    // When fetcher completes successfully, revalidate data
+    // Note: Modal closing is handled by the modal component itself:
+    // - In singlePart mode: closes immediately after save
+    // - In allParts mode: closes when user clicks "Save & Close" on last part
+    if (calculatorFetcher.state === "idle" && calculatorFetcher.data?.success) {
       setLastHandledFetcherData(calculatorFetcher.data);
-      setIsCalculatorOpen(false);
       revalidator.revalidate();
     }
 
@@ -1662,9 +1662,6 @@ export default function QuoteDetail() {
   }, [
     calculatorFetcher.state,
     calculatorFetcher.data,
-    isCalculatorOpen,
-    currentCalculatorPartIndex,
-    quote.parts?.length,
     revalidator,
     lastHandledFetcherData,
   ]);
@@ -1824,6 +1821,7 @@ export default function QuoteDetail() {
 
   const handleOpenCalculator = () => {
     if (!canAccessPriceCalculator) return;
+    setCalculatorMode("allParts");
     setIsCalculatorOpen(true);
     setCurrentCalculatorPartIndex(0);
   };
@@ -1841,6 +1839,7 @@ export default function QuoteDetail() {
     // Find the index of the part in the quote.parts array
     const partIndex =
       quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
+    setCalculatorMode("singlePart");
     setCurrentCalculatorPartIndex(partIndex);
     setIsCalculatorOpen(true);
   };
@@ -3633,6 +3632,7 @@ export default function QuoteDetail() {
           onPartChange={setCurrentCalculatorPartIndex}
           existingCalculations={priceCalculations || []}
           isSaving={calculatorFetcher.state !== "idle"}
+          mode={calculatorMode}
         />
       )}
 

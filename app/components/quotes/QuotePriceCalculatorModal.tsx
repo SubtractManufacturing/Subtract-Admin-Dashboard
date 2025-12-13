@@ -16,6 +16,7 @@ interface QuotePriceCalculatorModalProps {
   onPartChange?: (index: number) => void;
   existingCalculations?: QuotePriceCalculation[];
   isSaving?: boolean;
+  mode?: "allParts" | "singlePart";
 }
 
 const LEAD_TIME_OPTIONS = [
@@ -41,6 +42,7 @@ export default function QuotePriceCalculatorModal({
   onPartChange,
   existingCalculations = [],
   isSaving = false,
+  mode = "allParts",
 }: QuotePriceCalculatorModalProps) {
   const [partIndex, setPartIndex] = useState(currentPartIndex);
   const modalContentRef = useRef<HTMLDivElement>(null);
@@ -303,6 +305,11 @@ export default function QuotePriceCalculatorModal({
     };
 
     onSave(calculation);
+
+    // Close modal in single part mode, or when on the last part in allParts mode
+    if (mode === "singlePart" || partIndex >= quoteParts.length - 1) {
+      onClose();
+    }
   };
 
   const handleNextPart = () => {
@@ -369,7 +376,9 @@ export default function QuotePriceCalculatorModal({
               {currentPart && (
                 <div className="mt-2">
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Part {partIndex + 1} of {quoteParts.length}
+                    {mode === "singlePart"
+                      ? "Single Part Pricing"
+                      : `Part ${partIndex + 1} of ${quoteParts.length}`}
                   </p>
                   <p className="text-lg font-semibold text-gray-900 dark:text-white">
                     {currentPart.partName}
@@ -803,7 +812,15 @@ export default function QuotePriceCalculatorModal({
               >
                 Cancel
               </button>
-              {partIndex < quoteParts.length - 1 ? (
+              {mode === "singlePart" ? (
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? "Saving..." : "Save & Close"}
+                </button>
+              ) : partIndex < quoteParts.length - 1 ? (
                 <button
                   onClick={handleNextPart}
                   disabled={isSaving}
