@@ -423,6 +423,7 @@ export default function QuotePriceCalculatorModal({
                   }
                 }}
                 onBlur={() => setToolpathTouched(true)}
+                onWheel={(e) => e.currentTarget.blur()}
                 className={`pl-8 w-full rounded-md dark:bg-gray-700 dark:text-white ${
                   (showValidation || toolpathTouched) &&
                   (!toolpathGrandTotal || parseFloat(toolpathGrandTotal) <= 0)
@@ -491,6 +492,7 @@ export default function QuotePriceCalculatorModal({
                               [option.value]: parseFloat(e.target.value) || 0,
                             })
                           }
+                          onWheel={(e) => e.currentTarget.blur()}
                           className="w-16 rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-center"
                           step="0.1"
                           min="0"
@@ -548,6 +550,7 @@ export default function QuotePriceCalculatorModal({
                           [size]: e.target.value,
                         })
                       }
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="w-14 rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-center"
                       placeholder="0"
                       min="0"
@@ -567,6 +570,7 @@ export default function QuotePriceCalculatorModal({
                               [size]: parseFloat(e.target.value) || 0,
                             })
                           }
+                          onWheel={(e) => e.currentTarget.blur()}
                           className="w-14 rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-center"
                           step="0.01"
                         />
@@ -691,6 +695,7 @@ export default function QuotePriceCalculatorModal({
                     type="number"
                     value={toolingCost}
                     onChange={(e) => setToolingCost(e.target.value)}
+                    onWheel={(e) => e.currentTarget.blur()}
                     className="pl-8 w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                     placeholder="0.00"
                     step="0.01"
