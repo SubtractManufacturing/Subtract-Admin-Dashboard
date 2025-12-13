@@ -884,8 +884,8 @@ export function Part3DViewer({
         )}
       </div>
 
-      {/* Bounding box dimensions (quote part only) */}
-      {isQuotePart && partBoundingBox?.size && (
+      {/* Bounding box dimensions (all parts) */}
+      {partBoundingBox?.size && (
         <div className="absolute bottom-3 left-3 z-10">
           <div
             className={`${
