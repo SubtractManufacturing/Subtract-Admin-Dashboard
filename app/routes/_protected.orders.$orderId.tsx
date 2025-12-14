@@ -167,7 +167,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       );
 
       // Attach drawings to part
-      (item.part as any).drawings = drawings.filter((d) => d !== null);
+      (
+        item.part as typeof item.part & {
+          drawings: Array<{
+            id: number;
+            fileName: string;
+            contentType: string;
+            fileSize: number;
+            signedUrl: string;
+            thumbnailSignedUrl: string | null;
+          }>;
+        }
+      ).drawings = drawings.filter((d) => d !== null);
     }
   }
 
