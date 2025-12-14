@@ -21,10 +21,6 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ["mupdf"],
   },
-  ssr: {
-    // Don't externalize mupdf in SSR - let it be bundled
-    noExternal: ["mupdf"],
-  },
   build: {
     target: "es2022",
   },
