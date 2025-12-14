@@ -41,6 +41,7 @@ import {
   getDownloadUrl,
 } from "~/lib/s3.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
+import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -72,7 +73,7 @@ import {
 } from "~/lib/parts";
 import { createEvent, getEventsForOrder } from "~/lib/events";
 import { db } from "~/lib/db";
-import { parts, attachments } from "~/lib/db/schema";
+import { parts, attachments, partDrawings } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 import LineItemModal from "~/components/LineItemModal";
 import type { OrderLineItem, Vendor } from "~/lib/db/schema";
@@ -109,11 +110,75 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch line items for this order
   const lineItems = await getLineItemsByOrderId(order.id);
 
-  // Hydrate thumbnails for line item parts (convert S3 keys to signed URLs)
+  // Hydrate thumbnails AND fetch drawings for line item parts
   for (const item of lineItems) {
-    if (item.part && item.part.thumbnailUrl) {
-      const [hydratedPart] = await hydratePartThumbnails([item.part]);
-      item.part = hydratedPart;
+    if (item.part) {
+      // Hydrate thumbnail (convert S3 keys to signed URLs)
+      if (item.part.thumbnailUrl) {
+        const [hydratedPart] = await hydratePartThumbnails([item.part]);
+        item.part = hydratedPart;
+      }
+
+      // Fetch part drawings with signed URLs
+      const drawingRecords = await db
+        .select({
+          drawing: partDrawings,
+          attachment: attachments,
+        })
+        .from(partDrawings)
+        .leftJoin(attachments, eq(partDrawings.attachmentId, attachments.id))
+        .where(eq(partDrawings.partId, item.part.id));
+
+      // Generate signed URLs for drawings
+      const drawings = await Promise.all(
+        drawingRecords
+          .filter((record) => record.attachment !== null)
+          .map(async (record) => {
+            const attachment = record.attachment!;
+            try {
+              const signedUrl = await getDownloadUrl(attachment.s3Key, 3600);
+
+              // Generate thumbnail signed URL if available
+              let thumbnailSignedUrl: string | null = null;
+              if (attachment.thumbnailS3Key) {
+                try {
+                  thumbnailSignedUrl = await getDownloadUrl(
+                    attachment.thumbnailS3Key,
+                    3600
+                  );
+                } catch {
+                  // Thumbnail URL generation failed, will fall back to icon
+                }
+              }
+
+              return {
+                id: attachment.id,
+                fileName: attachment.fileName,
+                contentType: attachment.contentType,
+                fileSize: attachment.fileSize,
+                signedUrl,
+                thumbnailSignedUrl,
+              };
+            } catch (error) {
+              console.error("Error generating signed URL for drawing:", error);
+              return null;
+            }
+          })
+      );
+
+      // Attach drawings to part
+      (
+        item.part as typeof item.part & {
+          drawings: Array<{
+            id: string;
+            fileName: string;
+            contentType: string;
+            fileSize: number | null;
+            signedUrl: string;
+            thumbnailSignedUrl: string | null;
+          }>;
+        }
+      ).drawings = drawings.filter((d) => d !== null);
     }
   }
 
@@ -204,12 +269,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const intent = formData.get("intent") as string;
     const file = formData.get("file") as File;
 
-    // If there's no file, check if this is a PDF generation intent
+    // If there's no file, check if this is an intent that handles files differently
     if (!file) {
-      const pdfGenerationIntents = ["generatePurchaseOrder", "generateInvoice"];
-      if (pdfGenerationIntents.includes(intent)) {
-        // This is a PDF generation request, let it fall through to regular form handling
-        // (PDF generation uses FormData but doesn't include files)
+      const specialIntents = [
+        "generatePurchaseOrder",
+        "generateInvoice",
+        "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
+      ];
+      if (specialIntents.includes(intent)) {
+        // These intents handle form data differently, let them fall through
       } else {
         // This is a file upload request but no file was provided
         return json({ error: "No file provided" }, { status: 400 });
@@ -821,6 +889,197 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
 
+      case "addDrawingToPart": {
+        const partId = formData.get("partId") as string;
+        const drawingCount =
+          parseInt(formData.get("drawingCount") as string) || 0;
+
+        if (!partId || drawingCount === 0) {
+          return json(
+            { error: "Missing part ID or drawings" },
+            { status: 400 }
+          );
+        }
+
+        try {
+          for (let i = 0; i < drawingCount; i++) {
+            const drawing = formData.get(`drawing_${i}`) as File | null;
+            if (drawing && drawing.size > 0) {
+              // Validate file size (10MB limit)
+              if (drawing.size > MAX_FILE_SIZE) {
+                return json(
+                  {
+                    error: `File "${drawing.name}" exceeds 10MB limit (${(
+                      drawing.size /
+                      1024 /
+                      1024
+                    ).toFixed(2)}MB)`,
+                  },
+                  { status: 400 }
+                );
+              }
+
+              // Convert File to Buffer
+              const drawingArrayBuffer = await drawing.arrayBuffer();
+              const drawingBuffer = Buffer.from(drawingArrayBuffer);
+
+              // Sanitize filename
+              const sanitizedFileName = drawing.name
+                .replace(/\s+/g, "-")
+                .replace(/[^a-zA-Z0-9._-]/g, "");
+
+              // Upload to S3
+              const timestamp = Date.now();
+              const drawingKey = `parts/${partId}/drawings/${timestamp}-${i}-${sanitizedFileName}`;
+              const uploadResult = await uploadFile({
+                key: drawingKey,
+                buffer: drawingBuffer,
+                contentType: drawing.type || "application/pdf",
+                fileName: sanitizedFileName,
+              });
+
+              // Generate thumbnail for PDFs
+              let thumbnailS3Key: string | null = null;
+              if (isPdfFile(drawing.type, drawing.name)) {
+                try {
+                  const thumbnail = await generatePdfThumbnail(
+                    drawingBuffer,
+                    200,
+                    200
+                  );
+                  const thumbnailKey = `parts/${partId}/drawings/${timestamp}-${i}-${sanitizedFileName}.thumb.png`;
+                  await uploadFile({
+                    key: thumbnailKey,
+                    buffer: thumbnail.buffer,
+                    contentType: "image/png",
+                    fileName: `${sanitizedFileName}.thumb.png`,
+                  });
+                  thumbnailS3Key = thumbnailKey;
+                } catch (thumbnailError) {
+                  // Log but don't fail the upload if thumbnail generation fails
+                  console.error(
+                    "Failed to generate PDF thumbnail:",
+                    thumbnailError
+                  );
+                }
+              }
+
+              // Create attachment record
+              const [attachment] = await db
+                .insert(attachments)
+                .values({
+                  s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                  s3Key: uploadResult.key,
+                  fileName: drawing.name,
+                  contentType: drawing.type || "application/pdf",
+                  fileSize: drawing.size,
+                  thumbnailS3Key,
+                })
+                .returning();
+
+              // Link attachment to part
+              await db.insert(partDrawings).values({
+                partId,
+                attachmentId: attachment.id,
+                version: 1,
+              });
+            }
+          }
+
+          // Create event for audit trail
+          await createEvent({
+            entityType: "order",
+            entityId: order.id.toString(),
+            eventType: "part_drawing_added",
+            eventCategory: "system",
+            title: "Technical Drawing Added",
+            description: `Added ${drawingCount} technical drawing(s) to part`,
+            metadata: {
+              partId,
+              drawingCount,
+            },
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
+
+          return withAuthHeaders(
+            json({ success: true, message: "Drawings uploaded successfully" }),
+            headers
+          );
+        } catch (uploadError) {
+          console.error("Error uploading drawings:", uploadError);
+          return json({ error: "Failed to upload drawings" }, { status: 500 });
+        }
+      }
+
+      case "deleteDrawingFromPart": {
+        const drawingId = formData.get("drawingId") as string;
+        const partId = formData.get("partId") as string;
+
+        if (!drawingId || !partId) {
+          return json(
+            { error: "Missing drawing ID or part ID" },
+            { status: 400 }
+          );
+        }
+
+        try {
+          // First, fetch the attachment to get S3 keys before deleting
+          const [attachment] = await db
+            .select()
+            .from(attachments)
+            .where(eq(attachments.id, drawingId));
+
+          if (!attachment) {
+            return json({ error: "Drawing not found" }, { status: 404 });
+          }
+
+          // Delete the part_drawings link
+          await db
+            .delete(partDrawings)
+            .where(eq(partDrawings.attachmentId, drawingId));
+
+          // Delete the attachment record
+          await db.delete(attachments).where(eq(attachments.id, drawingId));
+
+          // Delete S3 files (original and thumbnail)
+          try {
+            await deleteFile(attachment.s3Key);
+            if (attachment.thumbnailS3Key) {
+              await deleteFile(attachment.thumbnailS3Key);
+            }
+          } catch (s3Error) {
+            // Log but don't fail - DB records are already deleted
+            console.error("Error deleting S3 files:", s3Error);
+          }
+
+          // Create event for audit trail
+          await createEvent({
+            entityType: "order",
+            entityId: order.id.toString(),
+            eventType: "part_drawing_deleted",
+            eventCategory: "system",
+            title: "Technical Drawing Deleted",
+            description: `Deleted technical drawing from part`,
+            metadata: {
+              partId,
+              drawingId,
+              fileName: attachment.fileName,
+            },
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
+
+          return withAuthHeaders(
+            json({ success: true, message: "Drawing deleted successfully" }),
+            headers
+          );
+        } catch (deleteError) {
+          console.error("Error deleting drawing:", deleteError);
+          return json({ error: "Failed to delete drawing" }, { status: 500 });
+        }
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -858,6 +1117,8 @@ export default function OrderDetails() {
     fileName: string;
     contentType?: string;
     fileSize?: number;
+    drawingId?: string;
+    partId?: string;
   } | null>(null);
   const [lineItemModalOpen, setLineItemModalOpen] = useState(false);
   const [selectedLineItem, setSelectedLineItem] =
@@ -890,6 +1151,10 @@ export default function OrderDetails() {
   const lineItemFetcher = useFetcher();
   const notesFetcher = useFetcher();
   const orderEditFetcher = useFetcher();
+  const drawingFetcher = useFetcher();
+  const drawingDeleteFetcher = useFetcher();
+  const lastDrawingFetcherData = useRef<unknown>(null);
+  const lastDrawingDeleteFetcherData = useRef<unknown>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
@@ -977,6 +1242,99 @@ export default function OrderDetails() {
       });
     }
   };
+
+  const handleDrawingUpload = useCallback(
+    (partId: string, files: FileList | null) => {
+      if (!files || files.length === 0) return;
+
+      // Validate file sizes (10MB limit per file)
+      const MAX_DRAWING_SIZE = 10 * 1024 * 1024; // 10MB
+      const invalidFiles = Array.from(files).filter(
+        (file) => file.size > MAX_DRAWING_SIZE
+      );
+
+      if (invalidFiles.length > 0) {
+        alert(
+          `The following files exceed the 10MB limit:\n${invalidFiles
+            .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)}MB)`)
+            .join("\n")}`
+        );
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("intent", "addDrawingToPart");
+      formData.append("partId", partId);
+
+      Array.from(files).forEach((file, index) => {
+        formData.append(`drawing_${index}`, file);
+      });
+      formData.append("drawingCount", files.length.toString());
+
+      drawingFetcher.submit(formData, {
+        method: "post",
+        encType: "multipart/form-data",
+      });
+    },
+    [drawingFetcher]
+  );
+
+  // Watch drawing upload completion and revalidate
+  useEffect(() => {
+    if (
+      drawingFetcher.state === "idle" &&
+      drawingFetcher.data &&
+      drawingFetcher.data !== lastDrawingFetcherData.current
+    ) {
+      lastDrawingFetcherData.current = drawingFetcher.data;
+      const data = drawingFetcher.data as { success?: boolean; error?: string };
+      if (data.success) {
+        // Success - revalidate to show new drawings
+        revalidator.revalidate();
+      } else if (data.error) {
+        // Error - show error message
+        alert(`Upload failed: ${data.error}`);
+      }
+    }
+  }, [drawingFetcher.state, drawingFetcher.data, revalidator]);
+
+  const handleDeleteDrawing = useCallback(
+    (drawingId: string, partId: string) => {
+      const formData = new FormData();
+      formData.append("intent", "deleteDrawingFromPart");
+      formData.append("drawingId", drawingId);
+      formData.append("partId", partId);
+
+      drawingDeleteFetcher.submit(formData, {
+        method: "post",
+      });
+    },
+    [drawingDeleteFetcher]
+  );
+
+  // Watch drawing delete completion and revalidate
+  useEffect(() => {
+    if (
+      drawingDeleteFetcher.state === "idle" &&
+      drawingDeleteFetcher.data &&
+      drawingDeleteFetcher.data !== lastDrawingDeleteFetcherData.current
+    ) {
+      lastDrawingDeleteFetcherData.current = drawingDeleteFetcher.data;
+      const data = drawingDeleteFetcher.data as {
+        success?: boolean;
+        error?: string;
+      };
+      if (data.success) {
+        // Success - close modal and revalidate
+        setFileModalOpen(false);
+        setSelectedFile(null);
+        revalidator.revalidate();
+      } else if (data.error) {
+        // Error - show error message
+        alert(`Delete failed: ${data.error}`);
+      }
+    }
+  }, [drawingDeleteFetcher.state, drawingDeleteFetcher.data, revalidator]);
 
   const handleCloseLineItemModal = useCallback(() => {
     setLineItemModalOpen(false);
@@ -1977,6 +2335,7 @@ export default function OrderDetails() {
                                 }
                               >
                                 <div className="flex items-start gap-3 h-full">
+                                  {/* 3D Model Thumbnail */}
                                   {part ? (
                                     part.thumbnailUrl ? (
                                       <button
@@ -2030,6 +2389,155 @@ export default function OrderDetails() {
                                       </button>
                                     )
                                   ) : null}
+
+                                  {/* Technical Drawing Thumbnail */}
+                                  {part &&
+                                  part.drawings &&
+                                  part.drawings.length > 0 ? (
+                                    <button
+                                      onClick={() => {
+                                        const drawing = part.drawings![0];
+                                        setSelectedFile({
+                                          url: drawing.signedUrl,
+                                          fileName: drawing.fileName,
+                                          contentType:
+                                            drawing.contentType || undefined,
+                                          fileSize:
+                                            drawing.fileSize || undefined,
+                                          drawingId: drawing.id,
+                                          partId: part.id,
+                                        });
+                                        setFileModalOpen(true);
+                                      }}
+                                      className={`relative ${
+                                        showPartAttributes
+                                          ? "h-20 w-20"
+                                          : "h-10 w-10"
+                                      } border-2 border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden hover:border-blue-500 transition-colors bg-white dark:bg-gray-700 flex items-center justify-center flex-shrink-0`}
+                                      title="Click to view technical drawing"
+                                      type="button"
+                                    >
+                                      {/* Show thumbnail: image files use signedUrl, PDFs use thumbnailSignedUrl if available */}
+                                      {part.drawings[0].contentType?.startsWith(
+                                        "image/"
+                                      ) ? (
+                                        <img
+                                          src={part.drawings[0].signedUrl}
+                                          alt="Technical drawing"
+                                          className="w-full h-full object-cover"
+                                        />
+                                      ) : part.drawings[0]
+                                          .thumbnailSignedUrl ? (
+                                        <img
+                                          src={
+                                            part.drawings[0].thumbnailSignedUrl
+                                          }
+                                          alt="Technical drawing thumbnail"
+                                          className="w-full h-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="flex flex-col items-center justify-center text-red-500">
+                                          <svg
+                                            className={`${
+                                              showPartAttributes
+                                                ? "w-6 h-6"
+                                                : "w-4 h-4"
+                                            }`}
+                                            fill="currentColor"
+                                            viewBox="0 0 24 24"
+                                          >
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
+                                            <path
+                                              d="M14 2v6h6"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              strokeWidth="1"
+                                            />
+                                          </svg>
+                                          {showPartAttributes && (
+                                            <span className="text-xs font-bold mt-0.5">
+                                              PDF
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                      {/* Count badge */}
+                                      {part.drawings.length > 1 && (
+                                        <div className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold shadow-sm">
+                                          {part.drawings.length}
+                                        </div>
+                                      )}
+                                    </button>
+                                  ) : part ? (
+                                    /* Upload button or loading spinner when no drawings */
+                                    drawingFetcher.state === "submitting" ? (
+                                      <div
+                                        className={`${
+                                          showPartAttributes
+                                            ? "h-20 w-20"
+                                            : "h-10 w-10"
+                                        } border-2 border-gray-300 dark:border-gray-600 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0`}
+                                      >
+                                        <div
+                                          className={`animate-spin rounded-full ${
+                                            showPartAttributes
+                                              ? "h-6 w-6"
+                                              : "h-4 w-4"
+                                          } border-b-2 border-blue-600`}
+                                        ></div>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          const input =
+                                            document.createElement("input");
+                                          input.type = "file";
+                                          input.accept =
+                                            ".pdf,.png,.jpg,.jpeg,.dwg,.dxf";
+                                          input.multiple = true;
+                                          input.onchange = (e) =>
+                                            handleDrawingUpload(
+                                              part.id,
+                                              (e.target as HTMLInputElement)
+                                                .files
+                                            );
+                                          input.click();
+                                        }}
+                                        className={`${
+                                          showPartAttributes
+                                            ? "h-20 w-20"
+                                            : "h-10 w-10"
+                                        } border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-800 flex flex-col items-center justify-center group flex-shrink-0`}
+                                        title="Upload technical drawing"
+                                        type="button"
+                                      >
+                                        <svg
+                                          className={`${
+                                            showPartAttributes
+                                              ? "w-5 h-5"
+                                              : "w-4 h-4"
+                                          } text-gray-400 group-hover:text-blue-500`}
+                                          fill="none"
+                                          viewBox="0 0 24 24"
+                                          stroke="currentColor"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                                          />
+                                        </svg>
+                                        {showPartAttributes && (
+                                          <span className="text-xs text-gray-500 dark:text-gray-400 group-hover:text-blue-500 mt-0.5">
+                                            Drawing
+                                          </span>
+                                        )}
+                                      </button>
+                                    )
+                                  ) : null}
+
+                                  {/* Part name and info */}
                                   <div className="flex flex-col">
                                     <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
                                       {lineItem?.name || "--"}
@@ -2039,6 +2547,14 @@ export default function OrderDetails() {
                                         Part: {part.partName}
                                       </span>
                                     )}
+                                    {/* Show drawing count if multiple when NOT in specs mode */}
+                                    {!showPartAttributes &&
+                                      part?.drawings &&
+                                      part.drawings.length > 1 && (
+                                        <span className="text-xs text-blue-600 dark:text-blue-400">
+                                          {part.drawings.length} drawings
+                                        </span>
+                                      )}
                                   </div>
                                 </div>
                               </td>
@@ -2184,278 +2700,287 @@ export default function OrderDetails() {
                                   colSpan={7}
                                   className="px-6 py-3 border-t border-gray-200 dark:border-gray-700"
                                 >
-                                  <div className="grid grid-cols-3 gap-6">
-                                    {/* Material */}
-                                    <div className="flex flex-col">
-                                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
-                                        Material
-                                      </span>
-                                      {editingAttributeField?.partId ===
-                                        part.id &&
-                                      editingAttributeField?.field ===
-                                        "material" ? (
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            type="text"
-                                            value={editingAttributeValue}
-                                            onChange={(e) =>
-                                              setEditingAttributeValue(
-                                                e.target.value
-                                              )
-                                            }
-                                            onKeyDown={(e) => {
-                                              if (e.key === "Enter") {
-                                                e.preventDefault();
+                                  <div className="space-y-4">
+                                    {/* Material/Tolerance/Finishing Grid */}
+                                    <div className="grid grid-cols-3 gap-6">
+                                      {/* Material */}
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
+                                          Material
+                                        </span>
+                                        {editingAttributeField?.partId ===
+                                          part.id &&
+                                        editingAttributeField?.field ===
+                                          "material" ? (
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="text"
+                                              value={editingAttributeValue}
+                                              onChange={(e) =>
+                                                setEditingAttributeValue(
+                                                  e.target.value
+                                                )
+                                              }
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                  e.preventDefault();
+                                                  handleSaveAttribute(
+                                                    part.id,
+                                                    "material"
+                                                  );
+                                                } else if (e.key === "Escape") {
+                                                  handleCancelEditAttribute();
+                                                }
+                                              }}
+                                              className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                              placeholder="Material"
+                                            />
+                                            <button
+                                              onClick={() =>
                                                 handleSaveAttribute(
                                                   part.id,
                                                   "material"
-                                                );
-                                              } else if (e.key === "Escape") {
-                                                handleCancelEditAttribute();
+                                                )
                                               }
-                                            }}
-                                            className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            placeholder="Material"
-                                          />
+                                              className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                              title="Save"
+                                            >
+                                              <svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="14"
+                                                height="14"
+                                                fill="currentColor"
+                                                viewBox="0 0 16 16"
+                                              >
+                                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                              </svg>
+                                            </button>
+                                            <button
+                                              onClick={
+                                                handleCancelEditAttribute
+                                              }
+                                              className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                              title="Cancel"
+                                            >
+                                              <svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="14"
+                                                height="14"
+                                                fill="currentColor"
+                                                viewBox="0 0 16 16"
+                                              >
+                                                <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                              </svg>
+                                            </button>
+                                          </div>
+                                        ) : (
                                           <button
                                             onClick={() =>
-                                              handleSaveAttribute(
+                                              handleStartEditAttribute(
                                                 part.id,
-                                                "material"
+                                                "material",
+                                                part.material
                                               )
                                             }
-                                            className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
-                                            title="Save"
+                                            className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                            title="Click to edit"
                                           >
-                                            <svg
-                                              xmlns="http://www.w3.org/2000/svg"
-                                              width="14"
-                                              height="14"
-                                              fill="currentColor"
-                                              viewBox="0 0 16 16"
-                                            >
-                                              <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
-                                            </svg>
+                                            <span className="text-sm text-gray-900 dark:text-gray-100">
+                                              {part.material || (
+                                                <span className="text-gray-400 dark:text-gray-500 italic">
+                                                  Click to add
+                                                </span>
+                                              )}
+                                            </span>
                                           </button>
-                                          <button
-                                            onClick={handleCancelEditAttribute}
-                                            className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
-                                            title="Cancel"
-                                          >
-                                            <svg
-                                              xmlns="http://www.w3.org/2000/svg"
-                                              width="14"
-                                              height="14"
-                                              fill="currentColor"
-                                              viewBox="0 0 16 16"
-                                            >
-                                              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                                            </svg>
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <button
-                                          onClick={() =>
-                                            handleStartEditAttribute(
-                                              part.id,
-                                              "material",
-                                              part.material
-                                            )
-                                          }
-                                          className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                          title="Click to edit"
-                                        >
-                                          <span className="text-sm text-gray-900 dark:text-gray-100">
-                                            {part.material || (
-                                              <span className="text-gray-400 dark:text-gray-500 italic">
-                                                Click to add
-                                              </span>
-                                            )}
-                                          </span>
-                                        </button>
-                                      )}
-                                    </div>
+                                        )}
+                                      </div>
 
-                                    {/* Tolerance */}
-                                    <div className="flex flex-col">
-                                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
-                                        Tolerance
-                                      </span>
-                                      {editingAttributeField?.partId ===
-                                        part.id &&
-                                      editingAttributeField?.field ===
-                                        "tolerance" ? (
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            type="text"
-                                            value={editingAttributeValue}
-                                            onChange={(e) =>
-                                              handleToleranceChange(
-                                                e.target.value
-                                              )
-                                            }
-                                            onKeyDown={(e) => {
-                                              if (e.key === "Enter") {
-                                                e.preventDefault();
+                                      {/* Tolerance */}
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
+                                          Tolerance
+                                        </span>
+                                        {editingAttributeField?.partId ===
+                                          part.id &&
+                                        editingAttributeField?.field ===
+                                          "tolerance" ? (
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="text"
+                                              value={editingAttributeValue}
+                                              onChange={(e) =>
+                                                handleToleranceChange(
+                                                  e.target.value
+                                                )
+                                              }
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                  e.preventDefault();
+                                                  handleSaveAttribute(
+                                                    part.id,
+                                                    "tolerance"
+                                                  );
+                                                } else if (e.key === "Escape") {
+                                                  handleCancelEditAttribute();
+                                                }
+                                              }}
+                                              className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                              placeholder="Tolerance"
+                                            />
+                                            <button
+                                              onClick={() =>
                                                 handleSaveAttribute(
                                                   part.id,
                                                   "tolerance"
-                                                );
-                                              } else if (e.key === "Escape") {
-                                                handleCancelEditAttribute();
+                                                )
                                               }
-                                            }}
-                                            className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            placeholder="Tolerance"
-                                          />
+                                              className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                              title="Save"
+                                            >
+                                              <svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="14"
+                                                height="14"
+                                                fill="currentColor"
+                                                viewBox="0 0 16 16"
+                                              >
+                                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                              </svg>
+                                            </button>
+                                            <button
+                                              onClick={
+                                                handleCancelEditAttribute
+                                              }
+                                              className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                              title="Cancel"
+                                            >
+                                              <svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="14"
+                                                height="14"
+                                                fill="currentColor"
+                                                viewBox="0 0 16 16"
+                                              >
+                                                <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                              </svg>
+                                            </button>
+                                          </div>
+                                        ) : (
                                           <button
                                             onClick={() =>
-                                              handleSaveAttribute(
+                                              handleStartEditAttribute(
                                                 part.id,
-                                                "tolerance"
+                                                "tolerance",
+                                                part.tolerance
                                               )
                                             }
-                                            className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
-                                            title="Save"
+                                            className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                            title="Click to edit"
                                           >
-                                            <svg
-                                              xmlns="http://www.w3.org/2000/svg"
-                                              width="14"
-                                              height="14"
-                                              fill="currentColor"
-                                              viewBox="0 0 16 16"
-                                            >
-                                              <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
-                                            </svg>
+                                            <span className="text-sm text-gray-900 dark:text-gray-100">
+                                              {part.tolerance || (
+                                                <span className="text-gray-400 dark:text-gray-500 italic">
+                                                  Click to add
+                                                </span>
+                                              )}
+                                            </span>
                                           </button>
-                                          <button
-                                            onClick={handleCancelEditAttribute}
-                                            className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
-                                            title="Cancel"
-                                          >
-                                            <svg
-                                              xmlns="http://www.w3.org/2000/svg"
-                                              width="14"
-                                              height="14"
-                                              fill="currentColor"
-                                              viewBox="0 0 16 16"
-                                            >
-                                              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                                            </svg>
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <button
-                                          onClick={() =>
-                                            handleStartEditAttribute(
-                                              part.id,
-                                              "tolerance",
-                                              part.tolerance
-                                            )
-                                          }
-                                          className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                          title="Click to edit"
-                                        >
-                                          <span className="text-sm text-gray-900 dark:text-gray-100">
-                                            {part.tolerance || (
-                                              <span className="text-gray-400 dark:text-gray-500 italic">
-                                                Click to add
-                                              </span>
-                                            )}
-                                          </span>
-                                        </button>
-                                      )}
-                                    </div>
+                                        )}
+                                      </div>
 
-                                    {/* Finishing */}
-                                    <div className="flex flex-col">
-                                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
-                                        Finishing
-                                      </span>
-                                      {editingAttributeField?.partId ===
-                                        part.id &&
-                                      editingAttributeField?.field ===
-                                        "finishing" ? (
-                                        <div className="flex items-center gap-2">
-                                          <input
-                                            type="text"
-                                            value={editingAttributeValue}
-                                            onChange={(e) =>
-                                              setEditingAttributeValue(
-                                                e.target.value
-                                              )
-                                            }
-                                            onKeyDown={(e) => {
-                                              if (e.key === "Enter") {
-                                                e.preventDefault();
+                                      {/* Finishing */}
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
+                                          Finishing
+                                        </span>
+                                        {editingAttributeField?.partId ===
+                                          part.id &&
+                                        editingAttributeField?.field ===
+                                          "finishing" ? (
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="text"
+                                              value={editingAttributeValue}
+                                              onChange={(e) =>
+                                                setEditingAttributeValue(
+                                                  e.target.value
+                                                )
+                                              }
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                  e.preventDefault();
+                                                  handleSaveAttribute(
+                                                    part.id,
+                                                    "finishing"
+                                                  );
+                                                } else if (e.key === "Escape") {
+                                                  handleCancelEditAttribute();
+                                                }
+                                              }}
+                                              className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                              placeholder="Finishing"
+                                            />
+                                            <button
+                                              onClick={() =>
                                                 handleSaveAttribute(
                                                   part.id,
                                                   "finishing"
-                                                );
-                                              } else if (e.key === "Escape") {
-                                                handleCancelEditAttribute();
+                                                )
                                               }
-                                            }}
-                                            className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                            placeholder="Finishing"
-                                          />
+                                              className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                                              title="Save"
+                                            >
+                                              <svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="14"
+                                                height="14"
+                                                fill="currentColor"
+                                                viewBox="0 0 16 16"
+                                              >
+                                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
+                                              </svg>
+                                            </button>
+                                            <button
+                                              onClick={
+                                                handleCancelEditAttribute
+                                              }
+                                              className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                                              title="Cancel"
+                                            >
+                                              <svg
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                width="14"
+                                                height="14"
+                                                fill="currentColor"
+                                                viewBox="0 0 16 16"
+                                              >
+                                                <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
+                                              </svg>
+                                            </button>
+                                          </div>
+                                        ) : (
                                           <button
                                             onClick={() =>
-                                              handleSaveAttribute(
+                                              handleStartEditAttribute(
                                                 part.id,
-                                                "finishing"
+                                                "finishing",
+                                                part.finishing
                                               )
                                             }
-                                            className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
-                                            title="Save"
+                                            className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                                            title="Click to edit"
                                           >
-                                            <svg
-                                              xmlns="http://www.w3.org/2000/svg"
-                                              width="14"
-                                              height="14"
-                                              fill="currentColor"
-                                              viewBox="0 0 16 16"
-                                            >
-                                              <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z" />
-                                            </svg>
+                                            <span className="text-sm text-gray-900 dark:text-gray-100">
+                                              {part.finishing || (
+                                                <span className="text-gray-400 dark:text-gray-500 italic">
+                                                  Click to add
+                                                </span>
+                                              )}
+                                            </span>
                                           </button>
-                                          <button
-                                            onClick={handleCancelEditAttribute}
-                                            className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
-                                            title="Cancel"
-                                          >
-                                            <svg
-                                              xmlns="http://www.w3.org/2000/svg"
-                                              width="14"
-                                              height="14"
-                                              fill="currentColor"
-                                              viewBox="0 0 16 16"
-                                            >
-                                              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z" />
-                                            </svg>
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <button
-                                          onClick={() =>
-                                            handleStartEditAttribute(
-                                              part.id,
-                                              "finishing",
-                                              part.finishing
-                                            )
-                                          }
-                                          className="text-left px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                          title="Click to edit"
-                                        >
-                                          <span className="text-sm text-gray-900 dark:text-gray-100">
-                                            {part.finishing || (
-                                              <span className="text-gray-400 dark:text-gray-500 italic">
-                                                Click to add
-                                              </span>
-                                            )}
-                                          </span>
-                                        </button>
-                                      )}
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
                                 </td>
@@ -2757,6 +3282,16 @@ export default function OrderDetails() {
           fileName={selectedFile.fileName}
           contentType={selectedFile.contentType}
           fileSize={selectedFile.fileSize}
+          onDelete={
+            selectedFile.drawingId && selectedFile.partId
+              ? () =>
+                  handleDeleteDrawing(
+                    selectedFile.drawingId!,
+                    selectedFile.partId!
+                  )
+              : undefined
+          }
+          isDeleting={drawingDeleteFetcher.state === "submitting"}
         />
       )}
 

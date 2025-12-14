@@ -50,6 +50,7 @@ import {
 } from "~/lib/s3.server";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
+import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import {
   getNotes,
   createNote,
@@ -194,12 +195,27 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
             const attachment = record.attachment!;
             try {
               const signedUrl = await getDownloadUrl(attachment.s3Key, 3600);
+
+              // Generate thumbnail signed URL if available
+              let thumbnailSignedUrl: string | null = null;
+              if (attachment.thumbnailS3Key) {
+                try {
+                  thumbnailSignedUrl = await getDownloadUrl(
+                    attachment.thumbnailS3Key,
+                    3600
+                  );
+                } catch {
+                  // Thumbnail URL generation failed, will fall back to icon
+                }
+              }
+
               return {
                 id: attachment.id,
                 fileName: attachment.fileName,
                 contentType: attachment.contentType,
                 fileSize: attachment.fileSize,
                 signedUrl,
+                thumbnailSignedUrl,
               };
             } catch (error) {
               console.error(
@@ -484,15 +500,39 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   .replace(/[^a-zA-Z0-9._-]/g, "");
 
                 // Upload drawing to S3
-                const drawingKey = `quote-parts/${
-                  newQuotePart.id
-                }/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+                const timestamp = Date.now();
+                const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}`;
                 const drawingUploadResult = await uploadFile({
                   key: drawingKey,
                   buffer: drawingBuffer,
                   contentType: drawing.type || "application/pdf",
                   fileName: sanitizedDrawingName,
                 });
+
+                // Generate thumbnail for PDFs
+                let thumbnailS3Key: string | null = null;
+                if (isPdfFile(drawing.type, drawing.name)) {
+                  try {
+                    const thumbnail = await generatePdfThumbnail(
+                      drawingBuffer,
+                      200,
+                      200
+                    );
+                    const thumbnailKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}.thumb.png`;
+                    await uploadFile({
+                      key: thumbnailKey,
+                      buffer: thumbnail.buffer,
+                      contentType: "image/png",
+                      fileName: `${sanitizedDrawingName}.thumb.png`,
+                    });
+                    thumbnailS3Key = thumbnailKey;
+                  } catch (thumbnailError) {
+                    console.error(
+                      "Failed to generate PDF thumbnail:",
+                      thumbnailError
+                    );
+                  }
+                }
 
                 // Create attachment record
                 const [attachment] = await db
@@ -503,6 +543,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                     fileName: drawing.name,
                     contentType: drawing.type || "application/pdf",
                     fileSize: drawing.size,
+                    thumbnailS3Key,
                   })
                   .returning();
 
@@ -574,13 +615,39 @@ export async function action({ request, params }: ActionFunctionArgs) {
               .replace(/[^a-zA-Z0-9._-]/g, "");
 
             // Upload drawing to S3
-            const drawingKey = `quote-parts/${quotePartId}/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+            const timestamp = Date.now();
+            const drawingKey = `quote-parts/${quotePartId}/drawings/${timestamp}-${i}-${sanitizedDrawingName}`;
             const drawingUploadResult = await uploadFile({
               key: drawingKey,
               buffer: drawingBuffer,
               contentType: drawing.type || "application/pdf",
               fileName: sanitizedDrawingName,
             });
+
+            // Generate thumbnail for PDFs
+            let thumbnailS3Key: string | null = null;
+            if (isPdfFile(drawing.type, drawing.name)) {
+              try {
+                const thumbnail = await generatePdfThumbnail(
+                  drawingBuffer,
+                  200,
+                  200
+                );
+                const thumbnailKey = `quote-parts/${quotePartId}/drawings/${timestamp}-${i}-${sanitizedDrawingName}.thumb.png`;
+                await uploadFile({
+                  key: thumbnailKey,
+                  buffer: thumbnail.buffer,
+                  contentType: "image/png",
+                  fileName: `${sanitizedDrawingName}.thumb.png`,
+                });
+                thumbnailS3Key = thumbnailKey;
+              } catch (thumbnailError) {
+                console.error(
+                  "Failed to generate PDF thumbnail:",
+                  thumbnailError
+                );
+              }
+            }
 
             // Create attachment record
             const [attachment] = await db
@@ -591,6 +658,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 fileName: drawing.name,
                 contentType: drawing.type || "application/pdf",
                 fileSize: drawing.size,
+                thumbnailS3Key,
               })
               .returning();
 
@@ -1547,7 +1615,13 @@ export default function QuoteDetail() {
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [currentCalculatorPartIndex, setCurrentCalculatorPartIndex] =
     useState(0);
-  const calculatorFetcher = useFetcher();
+  const [calculatorMode, setCalculatorMode] = useState<
+    "allParts" | "singlePart"
+  >("allParts");
+  const calculatorFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+  }>();
   const [isDownloading, setIsDownloading] = useState(false);
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
@@ -1580,7 +1654,11 @@ export default function QuoteDetail() {
   useEffect(() => {
     const MAX_POLL_COUNT = 120; // Max 10 minutes (120 * 5 seconds)
 
-    if (hasConvertingParts && !pollIntervalRef.current && pollCount < MAX_POLL_COUNT) {
+    if (
+      hasConvertingParts &&
+      !pollIntervalRef.current &&
+      pollCount < MAX_POLL_COUNT
+    ) {
       pollIntervalRef.current = setInterval(() => {
         setPollCount((prev) => prev + 1);
         // Revalidate the page data to get updated conversion status
@@ -1626,6 +1704,38 @@ export default function QuoteDetail() {
       setOptimisticTotal(total.toFixed(2));
     }
   }, [optimisticLineItems]);
+
+  // Track if we've handled the last fetcher response to prevent re-triggering
+  const [lastHandledFetcherData, setLastHandledFetcherData] =
+    useState<unknown>(null);
+
+  // Monitor calculator fetcher state to handle success/error
+  useEffect(() => {
+    // Skip if we've already handled this response
+    if (calculatorFetcher.data === lastHandledFetcherData) {
+      return;
+    }
+
+    // When fetcher completes successfully, revalidate data
+    // Note: Modal closing is handled by the modal component itself:
+    // - In singlePart mode: closes immediately after save
+    // - In allParts mode: closes when user clicks "Save & Close" on last part
+    if (calculatorFetcher.state === "idle" && calculatorFetcher.data?.success) {
+      setLastHandledFetcherData(calculatorFetcher.data);
+      revalidator.revalidate();
+    }
+
+    // Handle errors
+    if (calculatorFetcher.state === "idle" && calculatorFetcher.data?.error) {
+      setLastHandledFetcherData(calculatorFetcher.data);
+      alert(`Failed to save calculation: ${calculatorFetcher.data.error}`);
+    }
+  }, [
+    calculatorFetcher.state,
+    calculatorFetcher.data,
+    revalidator,
+    lastHandledFetcherData,
+  ]);
 
   const handleFileUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1782,6 +1892,7 @@ export default function QuoteDetail() {
 
   const handleOpenCalculator = () => {
     if (!canAccessPriceCalculator) return;
+    setCalculatorMode("allParts");
     setIsCalculatorOpen(true);
     setCurrentCalculatorPartIndex(0);
   };
@@ -1799,6 +1910,7 @@ export default function QuoteDetail() {
     // Find the index of the part in the quote.parts array
     const partIndex =
       quote.parts?.findIndex((p: { id: string }) => p.id === partId) ?? 0;
+    setCalculatorMode("singlePart");
     setCurrentCalculatorPartIndex(partIndex);
     setIsCalculatorOpen(true);
   };
@@ -1845,6 +1957,11 @@ export default function QuoteDetail() {
   };
 
   const handleSaveCalculation = (calculationData: Record<string, unknown>) => {
+    // Don't submit if already submitting
+    if (calculatorFetcher.state !== "idle") {
+      return;
+    }
+
     const formData = new FormData();
     formData.append("intent", "savePriceCalculation");
     formData.append("calculationData", JSON.stringify(calculationData));
@@ -1853,12 +1970,7 @@ export default function QuoteDetail() {
       method: "post",
     });
 
-    // If this is the last part, close the modal
-    if (currentCalculatorPartIndex >= (quote.parts?.length || 1) - 1) {
-      setIsCalculatorOpen(false);
-      // Revalidate to get the updated prices
-      revalidator.revalidate();
-    }
+    // Modal closing is handled by the useEffect that monitors calculatorFetcher.state
   };
 
   const handleDeleteLineItem = (lineItemId: number, quotePartId?: string) => {
@@ -3590,6 +3702,8 @@ export default function QuoteDetail() {
           currentPartIndex={currentCalculatorPartIndex}
           onPartChange={setCurrentCalculatorPartIndex}
           existingCalculations={priceCalculations || []}
+          isSaving={calculatorFetcher.state !== "idle"}
+          mode={calculatorMode}
         />
       )}
 

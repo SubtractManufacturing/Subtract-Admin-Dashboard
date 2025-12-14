@@ -31,6 +31,8 @@ interface Part3DViewerProps {
   showBanana?: boolean; // Whether to show the banana model
 }
 
+type PartBoundingBox = { size: Vector3; center: Vector3 };
+
 function Model3D({
   url,
   onLoad,
@@ -362,7 +364,7 @@ function BananaModel({
 
   // Calculate rotation to align banana's long axis with part's long axis
   let rotation: [number, number, number] = [0, 0, 0];
-  
+
   if (partBoundingBox && bananaSize) {
     const partAxis = getDominantAxis(partBoundingBox.size);
     const bananaAxis = getDominantAxis(bananaSize);
@@ -376,7 +378,7 @@ function BananaModel({
 
   if (partBoundingBox && bananaSize) {
     const partAxis = getDominantAxis(partBoundingBox.size);
-    
+
     // Use the MAXIMUM dimension of each object as "radius" for guaranteed separation
     // This treats each object as a sphere containing it - no rotation can cause overlap
     const partMaxDim = Math.max(
@@ -385,19 +387,19 @@ function BananaModel({
       partBoundingBox.size.z
     );
     const bananaMaxDim = Math.max(bananaSize.x, bananaSize.y, bananaSize.z);
-    
+
     // Half of each max dimension = "radius" of bounding sphere
     const partRadius = partMaxDim / 2;
     const bananaRadius = bananaMaxDim / 2;
-    
+
     // Dynamic gap: scales with part size
     // Small parts (~1"): gap ~1", Large parts (~20"): gap ~2.5"
     const gap = Math.max(1, 0.5 + Math.sqrt(partMaxDim) * 0.3);
-    
+
     // Total offset = sum of both radii + gap
     // This GUARANTEES no overlap regardless of rotation
     const offsetDistance = partRadius + bananaRadius + gap;
-    
+
     // Choose offset axis perpendicular to the long axis
     const offsetAxis = partAxis === "x" ? "z" : partAxis === "y" ? "x" : "x";
 
@@ -435,6 +437,8 @@ function Scene({
   disableInteraction,
   bananaModelUrl,
   showBanana,
+  partBoundingBox,
+  onPartBoundingBoxComputed,
 }: {
   modelUrl?: string;
   onLoad?: () => void;
@@ -444,12 +448,9 @@ function Scene({
   disableInteraction?: boolean;
   bananaModelUrl?: string;
   showBanana?: boolean;
+  partBoundingBox: PartBoundingBox | null;
+  onPartBoundingBoxComputed?: (bbox: PartBoundingBox | null) => void;
 }) {
-  const [partBoundingBox, setPartBoundingBox] = useState<{
-    size: Vector3;
-    center: Vector3;
-  } | null>(null);
-
   return (
     <>
       <PerspectiveCamera makeDefault position={[10, 10, 10]} fov={50} />
@@ -502,7 +503,7 @@ function Scene({
             onLoad={onLoad}
             onError={onError}
             isLightMode={isLightMode}
-            onBoundingBoxComputed={setPartBoundingBox}
+            onBoundingBoxComputed={onPartBoundingBoxComputed}
           />
         </Center>
       )}
@@ -544,9 +545,13 @@ export function Part3DViewer({
   const [hasGeneratedThumbnail, setHasGeneratedThumbnail] = useState(false);
   const [signedModelUrl, setSignedModelUrl] = useState<string | undefined>();
   const [showBanana, setShowBanana] = useState(initialShowBanana);
+  const [partBoundingBox, setPartBoundingBox] =
+    useState<PartBoundingBox | null>(null);
   const { theme } = useTheme();
   const isLightMode = theme === "light";
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const handleLoad = useCallback(() => setIsLoading(false), []);
 
   // Fetch signed URL for mesh model if needed
   useEffect(() => {
@@ -879,6 +884,31 @@ export function Part3DViewer({
         )}
       </div>
 
+      {/* Bounding box dimensions (all parts) */}
+      {partBoundingBox?.size && (
+        <div className="absolute bottom-3 left-3 z-10">
+          <div
+            className={`${
+              isLightMode ? "bg-white/70" : "bg-gray-800/70"
+            } backdrop-blur-sm px-2 py-1 rounded text-xs ${
+              isLightMode ? "text-gray-700" : "text-gray-300"
+            }`}
+          >
+            {(() => {
+              // Assumption: mesh scene units are millimeters.
+              const mmToIn = (mm: number) => mm / 25.4;
+              const fmt = (n: number) => mmToIn(n).toFixed(2);
+              const { x, y, z } = partBoundingBox.size;
+              return (
+                <>
+                  {fmt(x)} × {fmt(y)} × {fmt(z)} in
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* Camera Mode Capture Button */}
       {isCameraMode && (
         <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20">
@@ -997,13 +1027,15 @@ export function Part3DViewer({
         <Suspense fallback={null}>
           <Scene
             modelUrl={signedModelUrl}
-            onLoad={() => setIsLoading(false)}
+            onLoad={handleLoad}
             onError={setLoadError}
             showGrid={showGrid}
             isLightMode={isLightMode}
             disableInteraction={disableInteraction}
             bananaModelUrl={bananaModelUrl}
             showBanana={showBanana}
+            partBoundingBox={partBoundingBox}
+            onPartBoundingBoxComputed={setPartBoundingBox}
           />
         </Suspense>
       </Canvas>

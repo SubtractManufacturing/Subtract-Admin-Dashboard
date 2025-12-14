@@ -11,61 +11,104 @@
  *
  * All errors are logged to console. Critical errors are also logged as events for tracking.
  */
-import { db } from "./db/index.js"
-import { quotes, customers, vendors, quoteLineItems, quoteParts, orders, orderLineItems, parts, attachments, quotePartDrawings, quoteAttachments, orderAttachments, notes, partDrawings, cadFileVersions } from "./db/schema.js"
-import { eq, desc, and, lte, isNull, sql } from 'drizzle-orm'
-import type { Customer, Vendor, QuoteLineItem, QuotePart, Quote, NewQuote } from "./db/schema.js"
-import { getNextQuoteNumber, generateUniqueOrderNumber } from "./number-generator.js"
-import { createEvent } from "./events.js"
-import { uploadFile, copyFile } from "./s3.server.js"
-import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js"
-import crypto from "crypto"
+import { db } from "./db/index.js";
+import {
+  quotes,
+  customers,
+  vendors,
+  quoteLineItems,
+  quoteParts,
+  orders,
+  orderLineItems,
+  parts,
+  attachments,
+  quotePartDrawings,
+  quoteAttachments,
+  orderAttachments,
+  notes,
+  partDrawings,
+  cadFileVersions,
+} from "./db/schema.js";
+import { eq, desc, and, lte, isNull, sql } from "drizzle-orm";
+import type {
+  Customer,
+  Vendor,
+  QuoteLineItem,
+  QuotePart,
+  Quote,
+  NewQuote,
+} from "./db/schema.js";
+import {
+  getNextQuoteNumber,
+  generateUniqueOrderNumber,
+} from "./number-generator.js";
+import { createEvent } from "./events.js";
+import { uploadFile, copyFile } from "./s3.server.js";
+import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js";
+import { generatePdfThumbnail, isPdfFile } from "./pdf-thumbnail.server.js";
+import crypto from "crypto";
 
 export type QuoteWithRelations = {
-  id: number
-  quoteNumber: string
-  customerId: number
-  vendorId: number | null
-  status: 'RFQ' | 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Dropped' | 'Expired'
-  validUntil: Date | null
-  expirationDays: number | null
-  sentAt: Date | null
-  expiredAt: Date | null
-  archivedAt: Date | null
-  subtotal: string | null
-  total: string | null
-  createdById: string | null
-  convertedToOrderId: number | null
-  rejectionReason: string | null
-  isArchived: boolean
-  createdAt: Date
-  updatedAt: Date
-  customer?: Customer | null
-  vendor?: Vendor | null
-  lineItems?: QuoteLineItem[]
-  parts?: QuotePart[]
-}
+  id: number;
+  quoteNumber: string;
+  customerId: number;
+  vendorId: number | null;
+  status:
+    | "RFQ"
+    | "Draft"
+    | "Sent"
+    | "Accepted"
+    | "Rejected"
+    | "Dropped"
+    | "Expired";
+  validUntil: Date | null;
+  expirationDays: number | null;
+  sentAt: Date | null;
+  expiredAt: Date | null;
+  archivedAt: Date | null;
+  subtotal: string | null;
+  total: string | null;
+  createdById: string | null;
+  convertedToOrderId: number | null;
+  rejectionReason: string | null;
+  isArchived: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  customer?: Customer | null;
+  vendor?: Vendor | null;
+  lineItems?: QuoteLineItem[];
+  parts?: QuotePart[];
+};
 
 export type QuoteInput = {
-  quoteNumber?: string | null
-  customerId: number
-  vendorId?: number | null
-  status?: 'RFQ' | 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Dropped' | 'Expired'
-  validUntil?: Date | null
-  expirationDays?: number | null
-  rejectionReason?: string | null
-  createdById?: string | null
-}
+  quoteNumber?: string | null;
+  customerId: number;
+  vendorId?: number | null;
+  status?:
+    | "RFQ"
+    | "Draft"
+    | "Sent"
+    | "Accepted"
+    | "Rejected"
+    | "Dropped"
+    | "Expired";
+  validUntil?: Date | null;
+  expirationDays?: number | null;
+  rejectionReason?: string | null;
+  createdById?: string | null;
+};
 
 export type QuoteEventContext = {
-  userId?: string
-  userEmail?: string
-}
+  userId?: string;
+  userEmail?: string;
+};
 
-export async function getQuotes(includeArchived = false): Promise<QuoteWithRelations[]> {
+export async function getQuotes(
+  includeArchived = false
+): Promise<QuoteWithRelations[]> {
   try {
     // Check and update expired quotes before fetching
-    await checkAndUpdateExpiredQuotes()
+    await checkAndUpdateExpiredQuotes();
 
     // Fetch all quotes with customers and vendors using joins
     const quotesWithBasicRelations = await db
@@ -78,39 +121,43 @@ export async function getQuotes(includeArchived = false): Promise<QuoteWithRelat
       .leftJoin(customers, eq(quotes.customerId, customers.id))
       .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
       .where(includeArchived ? sql`1=1` : eq(quotes.isArchived, false))
-      .orderBy(desc(quotes.createdAt))
+      .orderBy(desc(quotes.createdAt));
 
-    if (!quotesWithBasicRelations.length) return []
+    if (!quotesWithBasicRelations.length) return [];
 
     // Fetch all line items for these quotes in bulk
-    const quoteIds = quotesWithBasicRelations.map(q => q.quote.id)
+    const quoteIds = quotesWithBasicRelations.map((q) => q.quote.id);
     const allLineItems = await db
       .select()
       .from(quoteLineItems)
-      .where(sql`${quoteLineItems.quoteId} IN ${sql.raw(`(${quoteIds.join(',')})`)}`)
-      .orderBy(quoteLineItems.sortOrder)
+      .where(
+        sql`${quoteLineItems.quoteId} IN ${sql.raw(`(${quoteIds.join(",")})`)}`
+      )
+      .orderBy(quoteLineItems.sortOrder);
 
     // Fetch all parts for these quotes in bulk
     const allParts = await db
       .select()
       .from(quoteParts)
-      .where(sql`${quoteParts.quoteId} IN ${sql.raw(`(${quoteIds.join(',')})`)}`);
+      .where(
+        sql`${quoteParts.quoteId} IN ${sql.raw(`(${quoteIds.join(",")})`)}`
+      );
 
     // Group line items and parts by quote ID
-    const lineItemsByQuote = new Map<number, typeof allLineItems>()
-    const partsByQuote = new Map<number, typeof allParts>()
+    const lineItemsByQuote = new Map<number, typeof allLineItems>();
+    const partsByQuote = new Map<number, typeof allParts>();
 
-    allLineItems.forEach(item => {
-      const items = lineItemsByQuote.get(item.quoteId) || []
-      items.push(item)
-      lineItemsByQuote.set(item.quoteId, items)
-    })
+    allLineItems.forEach((item) => {
+      const items = lineItemsByQuote.get(item.quoteId) || [];
+      items.push(item);
+      lineItemsByQuote.set(item.quoteId, items);
+    });
 
-    allParts.forEach(part => {
-      const parts = partsByQuote.get(part.quoteId) || []
-      parts.push(part)
-      partsByQuote.set(part.quoteId, parts)
-    })
+    allParts.forEach((part) => {
+      const parts = partsByQuote.get(part.quoteId) || [];
+      parts.push(part);
+      partsByQuote.set(part.quoteId, parts);
+    });
 
     // Assemble final results
     return quotesWithBasicRelations.map(({ quote, customer, vendor }) => ({
@@ -118,55 +165,60 @@ export async function getQuotes(includeArchived = false): Promise<QuoteWithRelat
       customer,
       vendor,
       lineItems: lineItemsByQuote.get(quote.id) || [],
-      parts: partsByQuote.get(quote.id) || []
-    }))
+      parts: partsByQuote.get(quote.id) || [],
+    }));
   } catch (error) {
-    console.error('Error fetching quotes:', error)
-    return []
+    console.error("Error fetching quotes:", error);
+    return [];
   }
 }
 
 export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
   try {
     // Check and update expired quotes before fetching
-    await checkAndUpdateExpiredQuotes()
+    await checkAndUpdateExpiredQuotes();
 
     const [quote] = await db
       .select()
       .from(quotes)
       .where(eq(quotes.id, id))
-      .limit(1)
+      .limit(1);
 
-    if (!quote) return null
+    if (!quote) return null;
 
     const [customer, vendor, lineItems, parts] = await Promise.all([
       quote.customerId
-        ? db.select().from(customers).where(eq(customers.id, quote.customerId)).limit(1)
+        ? db
+            .select()
+            .from(customers)
+            .where(eq(customers.id, quote.customerId))
+            .limit(1)
         : [null],
       quote.vendorId
-        ? db.select().from(vendors).where(eq(vendors.id, quote.vendorId)).limit(1)
+        ? db
+            .select()
+            .from(vendors)
+            .where(eq(vendors.id, quote.vendorId))
+            .limit(1)
         : [null],
       db
         .select()
         .from(quoteLineItems)
         .where(eq(quoteLineItems.quoteId, quote.id))
         .orderBy(quoteLineItems.sortOrder),
-      db
-        .select()
-        .from(quoteParts)
-        .where(eq(quoteParts.quoteId, quote.id))
-    ])
+      db.select().from(quoteParts).where(eq(quoteParts.quoteId, quote.id)),
+    ]);
 
     return {
       ...quote,
       customer: customer[0],
       vendor: vendor[0],
       lineItems,
-      parts
-    }
+      parts,
+    };
   } catch (error) {
-    console.error('Error fetching quote:', error)
-    return null
+    console.error("Error fetching quote:", error);
+    return null;
   }
 }
 
@@ -175,7 +227,7 @@ export async function createQuote(
   context?: QuoteEventContext
 ): Promise<Quote | null> {
   try {
-    const quoteNumber = input.quoteNumber || await getNextQuoteNumber()
+    const quoteNumber = input.quoteNumber || (await getNextQuoteNumber());
 
     const [newQuote] = await db
       .insert(quotes)
@@ -183,21 +235,21 @@ export async function createQuote(
         quoteNumber,
         customerId: input.customerId,
         vendorId: input.vendorId,
-        status: input.status || 'RFQ',
+        status: input.status || "RFQ",
         validUntil: input.validUntil,
         expirationDays: input.expirationDays,
         createdById: input.createdById || context?.userId,
         rejectionReason: input.rejectionReason,
       })
-      .returning()
+      .returning();
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: newQuote.id.toString(),
-      eventType: 'quote_created',
-      eventCategory: 'system',
-      title: 'Quote Created',
+      eventType: "quote_created",
+      eventCategory: "system",
+      title: "Quote Created",
       description: `Quote ${quoteNumber} was created`,
       metadata: {
         quoteNumber,
@@ -206,12 +258,12 @@ export async function createQuote(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return newQuote
+    return newQuote;
   } catch (error) {
-    console.error('Error creating quote:', error)
-    return null
+    console.error("Error creating quote:", error);
+    return null;
   }
 }
 
@@ -221,51 +273,52 @@ export async function updateQuote(
   context?: QuoteEventContext
 ): Promise<Quote | null> {
   try {
-    const oldQuote = await getQuote(id)
+    const oldQuote = await getQuote(id);
     if (!oldQuote) {
-      throw new Error('Quote not found')
+      throw new Error("Quote not found");
     }
 
-    const updateData: Partial<Omit<NewQuote, 'quoteNumber'>> = {
+    const updateData: Partial<Omit<NewQuote, "quoteNumber">> = {
       ...updates,
-      updatedAt: new Date()
-    }
+      updatedAt: new Date(),
+    };
 
     // Handle status transitions
-    if (updates.status === 'Sent' && oldQuote.status !== 'Sent') {
-      updateData.sentAt = new Date()
+    if (updates.status === "Sent" && oldQuote.status !== "Sent") {
+      updateData.sentAt = new Date();
 
       // Calculate validUntil if not already set
       if (!updateData.validUntil) {
-        const expirationDays = updates.expirationDays || oldQuote.expirationDays || 14
-        const validUntil = new Date()
-        validUntil.setDate(validUntil.getDate() + expirationDays)
-        updateData.validUntil = validUntil
+        const expirationDays =
+          updates.expirationDays || oldQuote.expirationDays || 14;
+        const validUntil = new Date();
+        validUntil.setDate(validUntil.getDate() + expirationDays);
+        updateData.validUntil = validUntil;
       }
     }
 
-    if (updates.status === 'Accepted' && oldQuote.status !== 'Accepted') {
-      updateData.acceptedAt = new Date()
+    if (updates.status === "Accepted" && oldQuote.status !== "Accepted") {
+      updateData.acceptedAt = new Date();
     }
 
-    if (updates.status === 'Expired' && oldQuote.status !== 'Expired') {
-      updateData.expiredAt = new Date()
+    if (updates.status === "Expired" && oldQuote.status !== "Expired") {
+      updateData.expiredAt = new Date();
     }
 
     const [updatedQuote] = await db
       .update(quotes)
       .set(updateData)
       .where(eq(quotes.id, id))
-      .returning()
+      .returning();
 
     // Log status change events
     if (updates.status && updates.status !== oldQuote.status) {
       await createEvent({
-        entityType: 'quote',
+        entityType: "quote",
         entityId: id.toString(),
-        eventType: 'quote_status_changed',
-        eventCategory: 'status',
-        title: 'Quote Status Updated',
+        eventType: "quote_status_changed",
+        eventCategory: "status",
+        title: "Quote Status Updated",
         description: `Quote status changed from ${oldQuote.status} to ${updates.status}`,
         metadata: {
           oldStatus: oldQuote.status,
@@ -274,35 +327,46 @@ export async function updateQuote(
         },
         userId: context?.userId,
         userEmail: context?.userEmail,
-      })
+      });
     }
 
     // Log vendor change events
-    if (updates.vendorId !== undefined && updates.vendorId !== oldQuote.vendorId) {
+    if (
+      updates.vendorId !== undefined &&
+      updates.vendorId !== oldQuote.vendorId
+    ) {
       // Fetch vendor names for the event
-      let oldVendorName = 'None'
-      let newVendorName = 'None'
+      let oldVendorName = "None";
+      let newVendorName = "None";
 
       if (oldQuote.vendorId) {
-        const oldVendor = await db.select().from(vendors).where(eq(vendors.id, oldQuote.vendorId)).limit(1)
+        const oldVendor = await db
+          .select()
+          .from(vendors)
+          .where(eq(vendors.id, oldQuote.vendorId))
+          .limit(1);
         if (oldVendor[0]) {
-          oldVendorName = oldVendor[0].displayName
+          oldVendorName = oldVendor[0].displayName;
         }
       }
 
       if (updates.vendorId) {
-        const newVendor = await db.select().from(vendors).where(eq(vendors.id, updates.vendorId)).limit(1)
+        const newVendor = await db
+          .select()
+          .from(vendors)
+          .where(eq(vendors.id, updates.vendorId))
+          .limit(1);
         if (newVendor[0]) {
-          newVendorName = newVendor[0].displayName
+          newVendorName = newVendor[0].displayName;
         }
       }
 
       await createEvent({
-        entityType: 'quote',
+        entityType: "quote",
         entityId: id.toString(),
-        eventType: 'quote_vendor_changed',
-        eventCategory: 'system',
-        title: 'Quote Vendor Updated',
+        eventType: "quote_vendor_changed",
+        eventCategory: "system",
+        title: "Quote Vendor Updated",
         description: `Quote vendor changed from ${oldVendorName} to ${newVendorName}`,
         metadata: {
           oldVendorId: oldQuote.vendorId,
@@ -313,35 +377,46 @@ export async function updateQuote(
         },
         userId: context?.userId,
         userEmail: context?.userEmail,
-      })
+      });
     }
 
     // Log customer change events
-    if (updates.customerId !== undefined && updates.customerId !== oldQuote.customerId) {
+    if (
+      updates.customerId !== undefined &&
+      updates.customerId !== oldQuote.customerId
+    ) {
       // Fetch customer names for the event
-      let oldCustomerName = 'Unknown'
-      let newCustomerName = 'Unknown'
+      let oldCustomerName = "Unknown";
+      let newCustomerName = "Unknown";
 
       if (oldQuote.customerId) {
-        const oldCustomer = await db.select().from(customers).where(eq(customers.id, oldQuote.customerId)).limit(1)
+        const oldCustomer = await db
+          .select()
+          .from(customers)
+          .where(eq(customers.id, oldQuote.customerId))
+          .limit(1);
         if (oldCustomer[0]) {
-          oldCustomerName = oldCustomer[0].displayName
+          oldCustomerName = oldCustomer[0].displayName;
         }
       }
 
       if (updates.customerId) {
-        const newCustomer = await db.select().from(customers).where(eq(customers.id, updates.customerId)).limit(1)
+        const newCustomer = await db
+          .select()
+          .from(customers)
+          .where(eq(customers.id, updates.customerId))
+          .limit(1);
         if (newCustomer[0]) {
-          newCustomerName = newCustomer[0].displayName
+          newCustomerName = newCustomer[0].displayName;
         }
       }
 
       await createEvent({
-        entityType: 'quote',
+        entityType: "quote",
         entityId: id.toString(),
-        eventType: 'quote_customer_changed',
-        eventCategory: 'system',
-        title: 'Quote Customer Updated',
+        eventType: "quote_customer_changed",
+        eventCategory: "system",
+        title: "Quote Customer Updated",
         description: `Quote customer changed from ${oldCustomerName} to ${newCustomerName}`,
         metadata: {
           oldCustomerId: oldQuote.customerId,
@@ -352,13 +427,13 @@ export async function updateQuote(
         },
         userId: context?.userId,
         userEmail: context?.userEmail,
-      })
+      });
     }
 
-    return updatedQuote
+    return updatedQuote;
   } catch (error) {
-    console.error('Error updating quote:', error)
-    return null
+    console.error("Error updating quote:", error);
+    return null;
   }
 }
 
@@ -367,9 +442,9 @@ export async function archiveQuote(
   context?: QuoteEventContext
 ): Promise<boolean> {
   try {
-    const quote = await getQuote(id)
+    const quote = await getQuote(id);
     if (!quote) {
-      throw new Error('Quote not found')
+      throw new Error("Quote not found");
     }
 
     await db
@@ -377,17 +452,17 @@ export async function archiveQuote(
       .set({
         isArchived: true,
         archivedAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       })
-      .where(eq(quotes.id, id))
+      .where(eq(quotes.id, id));
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: id.toString(),
-      eventType: 'quote_archived',
-      eventCategory: 'system',
-      title: 'Quote Archived',
+      eventType: "quote_archived",
+      eventCategory: "system",
+      title: "Quote Archived",
       description: `Quote ${quote.quoteNumber} was archived`,
       metadata: {
         quoteNumber: quote.quoteNumber,
@@ -395,12 +470,12 @@ export async function archiveQuote(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return true
+    return true;
   } catch (error) {
-    console.error('Error archiving quote:', error)
-    return false
+    console.error("Error archiving quote:", error);
+    return false;
   }
 }
 
@@ -409,9 +484,9 @@ export async function restoreQuote(
   context?: QuoteEventContext
 ): Promise<boolean> {
   try {
-    const quote = await getQuote(id)
+    const quote = await getQuote(id);
     if (!quote) {
-      throw new Error('Quote not found')
+      throw new Error("Quote not found");
     }
 
     await db
@@ -419,17 +494,17 @@ export async function restoreQuote(
       .set({
         isArchived: false,
         archivedAt: null,
-        updatedAt: new Date()
+        updatedAt: new Date(),
       })
-      .where(eq(quotes.id, id))
+      .where(eq(quotes.id, id));
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: id.toString(),
-      eventType: 'quote_restored',
-      eventCategory: 'system',
-      title: 'Quote Restored',
+      eventType: "quote_restored",
+      eventCategory: "system",
+      title: "Quote Restored",
       description: `Quote ${quote.quoteNumber} was restored from archive`,
       metadata: {
         quoteNumber: quote.quoteNumber,
@@ -437,107 +512,139 @@ export async function restoreQuote(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return true
+    return true;
   } catch (error) {
-    console.error('Error restoring quote:', error)
-    return false
+    console.error("Error restoring quote:", error);
+    return false;
   }
 }
 
 export async function convertQuoteToOrder(
   quoteId: number,
   context?: QuoteEventContext
-): Promise<{ success: boolean; orderId?: number; orderNumber?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  orderId?: number;
+  orderNumber?: string;
+  error?: string;
+}> {
   try {
-    const quote = await getQuote(quoteId)
+    const quote = await getQuote(quoteId);
     if (!quote) {
-      return { success: false, error: 'Quote not found' }
+      return { success: false, error: "Quote not found" };
     }
 
-    if (quote.status !== 'Accepted' && quote.status !== 'Sent') {
-      return { success: false, error: 'Quote must be in Accepted or Sent status to convert' }
+    if (quote.status !== "Accepted" && quote.status !== "Sent") {
+      return {
+        success: false,
+        error: "Quote must be in Accepted or Sent status to convert",
+      };
     }
 
     if (quote.convertedToOrderId) {
-      return { success: false, error: 'Quote has already been converted to an order' }
+      return {
+        success: false,
+        error: "Quote has already been converted to an order",
+      };
     }
 
     // Validation: Ensure quote has line items
     if (!quote.lineItems || quote.lineItems.length === 0) {
-      return { success: false, error: 'Cannot convert quote with no line items' }
+      return {
+        success: false,
+        error: "Cannot convert quote with no line items",
+      };
     }
 
     // Validation: Ensure all line items have valid quantities and prices
     for (const item of quote.lineItems) {
       if (item.quantity <= 0) {
-        return { success: false, error: `Line item has invalid quantity: ${item.quantity}` }
+        return {
+          success: false,
+          error: `Line item has invalid quantity: ${item.quantity}`,
+        };
       }
-      const unitPrice = parseFloat(item.unitPrice || '0')
+      const unitPrice = parseFloat(item.unitPrice || "0");
       if (unitPrice < 0) {
-        return { success: false, error: `Line item has invalid price: ${unitPrice}` }
+        return {
+          success: false,
+          error: `Line item has invalid price: ${unitPrice}`,
+        };
       }
     }
 
     // Validation: Ensure quote total is greater than 0
-    const total = parseFloat(quote.total || '0')
+    const total = parseFloat(quote.total || "0");
     if (total <= 0) {
-      return { success: false, error: 'Cannot convert quote with $0 total' }
+      return { success: false, error: "Cannot convert quote with $0 total" };
     }
 
     // Additional validation: Check if any quote parts have pending conversions
     if (quote.parts && quote.parts.length > 0) {
       const pendingConversions = quote.parts.filter(
-        part => part.conversionStatus === 'in_progress' ||
-        part.conversionStatus === 'queued' ||
-        (part.conversionStatus === 'pending' && part.partFileUrl)
-      )
+        (part) =>
+          part.conversionStatus === "in_progress" ||
+          part.conversionStatus === "queued" ||
+          (part.conversionStatus === "pending" && part.partFileUrl)
+      );
 
       if (pendingConversions.length > 0) {
         return {
           success: false,
-          error: `Cannot convert quote while ${pendingConversions.length} part(s) have pending mesh conversions. Please wait for all conversions to complete.`
-        }
+          error: `Cannot convert quote while ${pendingConversions.length} part(s) have pending mesh conversions. Please wait for all conversions to complete.`,
+        };
       }
 
       // Warn about failed conversions but allow conversion to proceed
       const failedConversions = quote.parts.filter(
-        part => part.conversionStatus === 'failed'
-      )
+        (part) => part.conversionStatus === "failed"
+      );
 
       if (failedConversions.length > 0) {
-        console.warn(`Converting quote ${quoteId} with ${failedConversions.length} failed mesh conversions`)
+        console.warn(
+          `Converting quote ${quoteId} with ${failedConversions.length} failed mesh conversions`
+        );
       }
 
       // Validate that all quote parts have required fields
       for (const part of quote.parts) {
-        if (!part.partName || part.partName.trim() === '') {
-          return { success: false, error: `Quote part ${part.partNumber} is missing a name` }
+        if (!part.partName || part.partName.trim() === "") {
+          return {
+            success: false,
+            error: `Quote part ${part.partNumber} is missing a name`,
+          };
         }
 
         // Check if part has a corresponding line item
-        const hasLineItem = quote.lineItems?.some(item => item.quotePartId === part.id)
+        const hasLineItem = quote.lineItems?.some(
+          (item) => item.quotePartId === part.id
+        );
         if (!hasLineItem) {
-          return { success: false, error: `Quote part ${part.partName} has no associated line item with pricing` }
+          return {
+            success: false,
+            error: `Quote part ${part.partName} has no associated line item with pricing`,
+          };
         }
       }
     }
 
     // Generate a unique order number BEFORE the transaction
     // This uses retry logic to handle race conditions
-    const orderNumber = await generateUniqueOrderNumber()
+    const orderNumber = await generateUniqueOrderNumber();
 
     // Start a transaction
     const result = await db.transaction(async (tx) => {
       // Create the order
       // Calculate total from quote line items to ensure accuracy
-      const calculatedTotal = quote.lineItems?.reduce((sum, item) => {
-        return sum + (item.quantity * parseFloat(item.unitPrice || '0'))
-      }, 0) || 0
+      const calculatedTotal =
+        quote.lineItems?.reduce((sum, item) => {
+          return sum + item.quantity * parseFloat(item.unitPrice || "0");
+        }, 0) || 0;
 
       // Calculate vendor pay as 70% of total by default
-      const defaultVendorPay = (calculatedTotal * 0.7).toFixed(2)
+      const defaultVendorPay = (calculatedTotal * 0.7).toFixed(2);
 
       const [order] = await tx
         .insert(orders)
@@ -546,11 +653,11 @@ export async function convertQuoteToOrder(
           customerId: quote.customerId,
           vendorId: quote.vendorId,
           sourceQuoteId: quoteId,
-          status: 'Pending',
+          status: "Pending",
           totalPrice: calculatedTotal.toFixed(2),
           vendorPay: defaultVendorPay, // Store as dollar amount (70% of total)
         })
-        .returning()
+        .returning();
 
       // Update quote with converted order ID and status
       // Use atomic check to prevent race condition - only update if not already converted
@@ -558,22 +665,19 @@ export async function convertQuoteToOrder(
         .update(quotes)
         .set({
           convertedToOrderId: order.id,
-          status: 'Accepted',
-          updatedAt: new Date()
+          status: "Accepted",
+          updatedAt: new Date(),
         })
-        .where(and(
-          eq(quotes.id, quoteId),
-          isNull(quotes.convertedToOrderId)
-        ))
-        .returning()
+        .where(and(eq(quotes.id, quoteId), isNull(quotes.convertedToOrderId)))
+        .returning();
 
       // If no rows were updated, quote was already converted by another request
       if (updatedQuotes.length === 0) {
-        throw new Error('Quote has already been converted to an order')
+        throw new Error("Quote has already been converted to an order");
       }
 
       // Track which line items have been processed (those with associated parts)
-      const processedLineItemIds = new Set<number>()
+      const processedLineItemIds = new Set<number>();
 
       // Convert quote parts to customer parts and create order line items
       if (quote.parts && quote.parts.length > 0) {
@@ -592,92 +696,109 @@ export async function convertQuoteToOrder(
                 thumbnailUrl: null, // Will be updated after copying
                 partFileUrl: null, // Will be updated after copying
                 partMeshUrl: null, // Will be updated after copying
-                meshConversionStatus: quotePart.conversionStatus || 'pending',
+                meshConversionStatus: quotePart.conversionStatus || "pending",
                 meshConversionError: quotePart.meshConversionError || null,
                 meshConversionJobId: quotePart.meshConversionJobId || null,
-                meshConversionStartedAt: quotePart.meshConversionStartedAt || null,
-                meshConversionCompletedAt: quotePart.meshConversionCompletedAt || null,
+                meshConversionStartedAt:
+                  quotePart.meshConversionStartedAt || null,
+                meshConversionCompletedAt:
+                  quotePart.meshConversionCompletedAt || null,
                 notes: quotePart.description || null,
               })
-              .returning()
+              .returning();
 
             if (!customerPart) {
-              throw new Error(`Failed to create customer part for quote part: ${quotePart.partName}`)
+              throw new Error(
+                `Failed to create customer part for quote part: ${quotePart.partName}`
+              );
             }
 
             // Copy CAD files from quote-parts location to parts location
-            let newPartFileUrl: string | null = null
-            let newPartMeshUrl: string | null = null
-            let newThumbnailUrl: string | null = null
+            let newPartFileUrl: string | null = null;
+            let newPartMeshUrl: string | null = null;
+            let newThumbnailUrl: string | null = null;
 
             // Helper to extract S3 key from URL or path
             const extractS3Key = (urlOrPath: string): string | null => {
-              if (!urlOrPath) return null
+              if (!urlOrPath) return null;
               // Handle full URLs - extract everything starting from 'quote-parts/' or 'parts/'
-              if (urlOrPath.startsWith('http')) {
-                const quotePartsIdx = urlOrPath.indexOf('quote-parts/')
+              if (urlOrPath.startsWith("http")) {
+                const quotePartsIdx = urlOrPath.indexOf("quote-parts/");
                 if (quotePartsIdx >= 0) {
-                  return urlOrPath.substring(quotePartsIdx)
+                  return urlOrPath.substring(quotePartsIdx);
                 }
-                const partsIdx = urlOrPath.indexOf('parts/')
+                const partsIdx = urlOrPath.indexOf("parts/");
                 if (partsIdx >= 0) {
-                  return urlOrPath.substring(partsIdx)
+                  return urlOrPath.substring(partsIdx);
                 }
-                return null
+                return null;
               }
               // Handle relative paths
-              if (urlOrPath.startsWith('quote-parts/') || urlOrPath.startsWith('parts/')) {
-                return urlOrPath
+              if (
+                urlOrPath.startsWith("quote-parts/") ||
+                urlOrPath.startsWith("parts/")
+              ) {
+                return urlOrPath;
               }
-              return urlOrPath
-            }
+              return urlOrPath;
+            };
 
             // Copy CAD source file
             if (quotePart.partFileUrl) {
               try {
-                const sourceKey = extractS3Key(quotePart.partFileUrl)
+                const sourceKey = extractS3Key(quotePart.partFileUrl);
                 if (sourceKey) {
                   // Extract filename from source key
-                  const fileName = sourceKey.split('/').pop() || 'cad-file'
-                  const destKey = `parts/${customerPart.id}/source/v1/${fileName}`
-                  await copyFile(sourceKey, destKey)
-                  newPartFileUrl = destKey
+                  const fileName = sourceKey.split("/").pop() || "cad-file";
+                  const destKey = `parts/${customerPart.id}/source/v1/${fileName}`;
+                  await copyFile(sourceKey, destKey);
+                  newPartFileUrl = destKey;
                 }
               } catch (copyError) {
-                console.warn(`Failed to copy CAD file for part ${quotePart.partName}, falling back to reference:`, copyError)
-                newPartFileUrl = quotePart.partFileUrl // Fall back to reference if copy fails
+                console.warn(
+                  `Failed to copy CAD file for part ${quotePart.partName}, falling back to reference:`,
+                  copyError
+                );
+                newPartFileUrl = quotePart.partFileUrl; // Fall back to reference if copy fails
               }
             }
 
             // Copy mesh file
             if (quotePart.partMeshUrl) {
               try {
-                const sourceKey = extractS3Key(quotePart.partMeshUrl)
+                const sourceKey = extractS3Key(quotePart.partMeshUrl);
                 if (sourceKey) {
-                  const fileName = sourceKey.split('/').pop() || 'mesh.glb'
-                  const destKey = `parts/${customerPart.id}/mesh/${fileName}`
-                  await copyFile(sourceKey, destKey)
-                  newPartMeshUrl = destKey
+                  const fileName = sourceKey.split("/").pop() || "mesh.glb";
+                  const destKey = `parts/${customerPart.id}/mesh/${fileName}`;
+                  await copyFile(sourceKey, destKey);
+                  newPartMeshUrl = destKey;
                 }
               } catch (copyError) {
-                console.warn(`Failed to copy mesh file for part ${quotePart.partName}, falling back to reference:`, copyError)
-                newPartMeshUrl = quotePart.partMeshUrl // Fall back to reference if copy fails
+                console.warn(
+                  `Failed to copy mesh file for part ${quotePart.partName}, falling back to reference:`,
+                  copyError
+                );
+                newPartMeshUrl = quotePart.partMeshUrl; // Fall back to reference if copy fails
               }
             }
 
             // Copy thumbnail
             if (quotePart.thumbnailUrl) {
               try {
-                const sourceKey = extractS3Key(quotePart.thumbnailUrl)
+                const sourceKey = extractS3Key(quotePart.thumbnailUrl);
                 if (sourceKey) {
-                  const fileName = sourceKey.split('/').pop() || 'thumbnail.png'
-                  const destKey = `parts/${customerPart.id}/thumbnails/${fileName}`
-                  await copyFile(sourceKey, destKey)
-                  newThumbnailUrl = destKey
+                  const fileName =
+                    sourceKey.split("/").pop() || "thumbnail.png";
+                  const destKey = `parts/${customerPart.id}/thumbnails/${fileName}`;
+                  await copyFile(sourceKey, destKey);
+                  newThumbnailUrl = destKey;
                 }
               } catch (copyError) {
-                console.warn(`Failed to copy thumbnail for part ${quotePart.partName}, falling back to reference:`, copyError)
-                newThumbnailUrl = quotePart.thumbnailUrl // Fall back to reference if copy fails
+                console.warn(
+                  `Failed to copy thumbnail for part ${quotePart.partName}, falling back to reference:`,
+                  copyError
+                );
+                newThumbnailUrl = quotePart.thumbnailUrl; // Fall back to reference if copy fails
               }
             }
 
@@ -690,92 +811,107 @@ export async function convertQuoteToOrder(
                 thumbnailUrl: newThumbnailUrl,
                 updatedAt: new Date(),
               })
-              .where(eq(parts.id, customerPart.id))
+              .where(eq(parts.id, customerPart.id));
 
             // Copy CAD version history from quote_part to part
             const quotePartVersions = await tx
               .select()
               .from(cadFileVersions)
-              .where(and(
-                eq(cadFileVersions.entityType, 'quote_part'),
-                eq(cadFileVersions.entityId, quotePart.id)
-              ))
+              .where(
+                and(
+                  eq(cadFileVersions.entityType, "quote_part"),
+                  eq(cadFileVersions.entityId, quotePart.id)
+                )
+              );
 
             if (quotePartVersions.length > 0) {
               for (const version of quotePartVersions) {
                 try {
                   // Copy the versioned CAD file
-                  const sourceKey = version.s3Key
-                  const fileName = sourceKey.split('/').pop() || version.fileName
-                  const destKey = `parts/${customerPart.id}/source/v${version.version}/${fileName}`
+                  const sourceKey = version.s3Key;
+                  const fileName =
+                    sourceKey.split("/").pop() || version.fileName;
+                  const destKey = `parts/${customerPart.id}/source/v${version.version}/${fileName}`;
 
-                  await copyFile(sourceKey, destKey)
+                  await copyFile(sourceKey, destKey);
 
                   // Create new version record for the part
-                  await tx
-                    .insert(cadFileVersions)
-                    .values({
-                      entityType: 'part',
-                      entityId: customerPart.id,
-                      version: version.version,
-                      isCurrentVersion: version.isCurrentVersion,
-                      s3Key: destKey,
-                      fileName: version.fileName,
-                      fileSize: version.fileSize,
-                      contentType: version.contentType,
-                      uploadedBy: version.uploadedBy,
-                      uploadedByEmail: version.uploadedByEmail,
-                      notes: version.notes,
-                    })
+                  await tx.insert(cadFileVersions).values({
+                    entityType: "part",
+                    entityId: customerPart.id,
+                    version: version.version,
+                    isCurrentVersion: version.isCurrentVersion,
+                    s3Key: destKey,
+                    fileName: version.fileName,
+                    fileSize: version.fileSize,
+                    contentType: version.contentType,
+                    uploadedBy: version.uploadedBy,
+                    uploadedByEmail: version.uploadedByEmail,
+                    notes: version.notes,
+                  });
                 } catch (versionCopyError) {
-                  console.warn(`Failed to copy version ${version.version} for part ${quotePart.partName}:`, versionCopyError)
+                  console.warn(
+                    `Failed to copy version ${version.version} for part ${quotePart.partName}:`,
+                    versionCopyError
+                  );
                   // Continue with other versions even if one fails
                 }
               }
             }
 
-          // Migrate quote part drawings to the new customer part
-          const quotePartDrawingRecords = await tx
-            .select({ attachmentId: quotePartDrawings.attachmentId, version: quotePartDrawings.version })
-            .from(quotePartDrawings)
-            .where(eq(quotePartDrawings.quotePartId, quotePart.id))
+            // Migrate quote part drawings to the new customer part
+            const quotePartDrawingRecords = await tx
+              .select({
+                attachmentId: quotePartDrawings.attachmentId,
+                version: quotePartDrawings.version,
+              })
+              .from(quotePartDrawings)
+              .where(eq(quotePartDrawings.quotePartId, quotePart.id));
 
-          if (quotePartDrawingRecords.length > 0) {
-            await tx
-              .insert(partDrawings)
-              .values(
-                quotePartDrawingRecords.map(record => ({
+            if (quotePartDrawingRecords.length > 0) {
+              await tx.insert(partDrawings).values(
+                quotePartDrawingRecords.map((record) => ({
                   partId: customerPart.id,
                   attachmentId: record.attachmentId,
                   version: record.version,
                 }))
-              )
-          }
+              );
+            }
 
-          // Find the corresponding line item for this quote part
-          const lineItem = quote.lineItems?.find(li => li.quotePartId === quotePart.id)
+            // Find the corresponding line item for this quote part
+            const lineItem = quote.lineItems?.find(
+              (li) => li.quotePartId === quotePart.id
+            );
 
             if (lineItem) {
               // Create order line item with reference to the new customer part
-              await tx
-                .insert(orderLineItems)
-                .values({
-                  orderId: order.id,
-                  partId: customerPart.id,
-                  name: quotePart.partName,
-                  description: lineItem.description || quotePart.description || '',
-                  quantity: lineItem.quantity,
-                  unitPrice: lineItem.unitPrice,
-                  notes: lineItem.notes || null,
-                })
+              await tx.insert(orderLineItems).values({
+                orderId: order.id,
+                partId: customerPart.id,
+                name: quotePart.partName,
+                description:
+                  lineItem.description || quotePart.description || "",
+                quantity: lineItem.quantity,
+                unitPrice: lineItem.unitPrice,
+                notes: lineItem.notes || null,
+              });
 
               // Mark this line item as processed
-              processedLineItemIds.add(lineItem.id)
+              processedLineItemIds.add(lineItem.id);
             }
           } catch (partConversionError) {
             // If any part conversion fails, rollback the entire transaction
-            console.error(`Failed to convert quote part ${quotePart.partName}:`, partConversionError)
-            throw new Error(`Failed to convert part "${quotePart.partName}": ${partConversionError instanceof Error ? partConversionError.message : 'Unknown error'}`)
+            console.error(
+              `Failed to convert quote part ${quotePart.partName}:`,
+              partConversionError
+            );
+            throw new Error(
+              `Failed to convert part "${quotePart.partName}": ${
+                partConversionError instanceof Error
+                  ? partConversionError.message
+                  : "Unknown error"
+              }`
+            );
           }
         }
       }
@@ -783,24 +919,22 @@ export async function convertQuoteToOrder(
       // Now handle any line items that don't have associated parts
       if (quote.lineItems && quote.lineItems.length > 0) {
         const unprocessedLineItems = quote.lineItems.filter(
-          item => !processedLineItemIds.has(item.id)
-        )
+          (item) => !processedLineItemIds.has(item.id)
+        );
 
         if (unprocessedLineItems.length > 0) {
           // Create order line items for items without parts
-          await tx
-            .insert(orderLineItems)
-            .values(
-              unprocessedLineItems.map(item => ({
-                orderId: order.id,
-                partId: null,
-                name: item.name || `Line item from quote ${quote.quoteNumber}`,
-                description: item.description || '',
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                notes: item.notes || null,
-              }))
-            )
+          await tx.insert(orderLineItems).values(
+            unprocessedLineItems.map((item) => ({
+              orderId: order.id,
+              partId: null,
+              name: item.name || `Line item from quote ${quote.quoteNumber}`,
+              description: item.description || "",
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              notes: item.notes || null,
+            }))
+          );
         }
       }
 
@@ -808,17 +942,15 @@ export async function convertQuoteToOrder(
       const quoteAttachmentRecords = await tx
         .select({ attachmentId: quoteAttachments.attachmentId })
         .from(quoteAttachments)
-        .where(eq(quoteAttachments.quoteId, quoteId))
+        .where(eq(quoteAttachments.quoteId, quoteId));
 
       if (quoteAttachmentRecords.length > 0) {
-        await tx
-          .insert(orderAttachments)
-          .values(
-            quoteAttachmentRecords.map(record => ({
-              orderId: order.id,
-              attachmentId: record.attachmentId,
-            }))
-          )
+        await tx.insert(orderAttachments).values(
+          quoteAttachmentRecords.map((record) => ({
+            orderId: order.id,
+            attachmentId: record.attachmentId,
+          }))
+        );
       }
 
       // Migrate notes from quote to order
@@ -827,36 +959,34 @@ export async function convertQuoteToOrder(
         .from(notes)
         .where(
           and(
-            eq(notes.entityType, 'quote'),
+            eq(notes.entityType, "quote"),
             eq(notes.entityId, quoteId.toString()),
             eq(notes.isArchived, false)
           )
-        )
+        );
 
       if (quoteNotes.length > 0) {
-        await tx
-          .insert(notes)
-          .values(
-            quoteNotes.map(note => ({
-              entityType: 'order',
-              entityId: order.id.toString(),
-              content: note.content,
-              createdBy: note.createdBy,
-              isArchived: false,
-            }))
-          )
+        await tx.insert(notes).values(
+          quoteNotes.map((note) => ({
+            entityType: "order",
+            entityId: order.id.toString(),
+            content: note.content,
+            createdBy: note.createdBy,
+            isArchived: false,
+          }))
+        );
       }
 
-      return { orderId: order.id, orderNumber: order.orderNumber }
-    })
+      return { orderId: order.id, orderNumber: order.orderNumber };
+    });
 
     // Log conversion event on quote
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: quoteId.toString(),
-      eventType: 'quote_converted',
-      eventCategory: 'system',
-      title: 'Quote Converted to Order',
+      eventType: "quote_converted",
+      eventCategory: "system",
+      title: "Quote Converted to Order",
       description: `Quote ${quote.quoteNumber} was converted to order ${result.orderNumber}`,
       metadata: {
         quoteNumber: quote.quoteNumber,
@@ -865,15 +995,15 @@ export async function convertQuoteToOrder(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
     // Log creation event on order
     await createEvent({
-      entityType: 'order',
+      entityType: "order",
       entityId: result.orderId.toString(),
-      eventType: 'order_created',
-      eventCategory: 'system',
-      title: 'Order Created',
+      eventType: "order_created",
+      eventCategory: "system",
+      title: "Order Created",
       description: `Quote ${quote.quoteNumber} accepted`,
       metadata: {
         orderNumber: result.orderNumber,
@@ -881,36 +1011,40 @@ export async function convertQuoteToOrder(
         quoteNumber: quote.quoteNumber,
         customerId: quote.customerId,
         vendorId: quote.vendorId,
-        initialStatus: 'Pending',
+        initialStatus: "Pending",
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return { success: true, orderId: result.orderId, orderNumber: result.orderNumber }
+    return {
+      success: true,
+      orderId: result.orderId,
+      orderNumber: result.orderNumber,
+    };
   } catch (error) {
-    console.error('Error converting quote to order:', error)
-    return { success: false, error: 'Failed to convert quote to order' }
+    console.error("Error converting quote to order:", error);
+    return { success: false, error: "Failed to convert quote to order" };
   }
 }
 
 export async function calculateQuoteTotals(quoteId: number): Promise<{
-  subtotal: number
-  total: number
+  subtotal: number;
+  total: number;
 } | null> {
   try {
     const lineItems = await db
       .select()
       .from(quoteLineItems)
-      .where(eq(quoteLineItems.quoteId, quoteId))
+      .where(eq(quoteLineItems.quoteId, quoteId));
 
     const subtotal = lineItems.reduce((sum, item) => {
-      const totalPrice = parseFloat(item.totalPrice || '0')
-      return sum + totalPrice
-    }, 0)
+      const totalPrice = parseFloat(item.totalPrice || "0");
+      return sum + totalPrice;
+    }, 0);
 
     // Total is same as subtotal - tax handled by financial platform
-    const total = subtotal
+    const total = subtotal;
 
     // Update the quote with calculated totals
     await db
@@ -918,20 +1052,20 @@ export async function calculateQuoteTotals(quoteId: number): Promise<{
       .set({
         subtotal: subtotal.toFixed(2),
         total: total.toFixed(2),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       })
-      .where(eq(quotes.id, quoteId))
+      .where(eq(quotes.id, quoteId));
 
-    return { subtotal, total }
+    return { subtotal, total };
   } catch (error) {
-    console.error('Error calculating quote totals:', error)
-    return null
+    console.error("Error calculating quote totals:", error);
+    return null;
   }
 }
 
 export async function checkAndUpdateExpiredQuotes(): Promise<number> {
   try {
-    const now = new Date()
+    const now = new Date();
 
     // Find quotes that should be expired
     const expiredQuotes = await db
@@ -939,145 +1073,192 @@ export async function checkAndUpdateExpiredQuotes(): Promise<number> {
       .from(quotes)
       .where(
         and(
-          eq(quotes.status, 'Sent'),
+          eq(quotes.status, "Sent"),
           lte(quotes.validUntil, now),
           isNull(quotes.expiredAt)
         )
-      )
+      );
 
     // Update each expired quote
     for (const quote of expiredQuotes) {
       await db
         .update(quotes)
         .set({
-          status: 'Expired',
+          status: "Expired",
           expiredAt: now,
-          updatedAt: now
+          updatedAt: now,
         })
-        .where(eq(quotes.id, quote.id))
+        .where(eq(quotes.id, quote.id));
 
       // Log expiration event
       await createEvent({
-        entityType: 'quote',
+        entityType: "quote",
         entityId: quote.id.toString(),
-        eventType: 'quote_expired',
-        eventCategory: 'system',
-        title: 'Quote Expired',
+        eventType: "quote_expired",
+        eventCategory: "system",
+        title: "Quote Expired",
         description: `Quote ${quote.quoteNumber} has expired`,
         metadata: {
           quoteNumber: quote.quoteNumber,
           validUntil: quote.validUntil,
         },
-      })
+      });
     }
 
-    return expiredQuotes.length
+    return expiredQuotes.length;
   } catch (error) {
-    console.error('Error checking expired quotes:', error)
-    return 0
+    console.error("Error checking expired quotes:", error);
+    return 0;
   }
 }
 
 export async function createQuoteWithParts(
   quoteData: QuoteInput,
   partsData: Array<{
-    file?: Buffer
-    fileName?: string
-    partName: string
-    material?: string
-    tolerances?: string
-    surfaceFinish?: string
-    quantity: number
-    notes?: string
-    drawings?: Array<{ buffer: Buffer; fileName: string }>
+    file?: Buffer;
+    fileName?: string;
+    partName: string;
+    material?: string;
+    tolerances?: string;
+    surfaceFinish?: string;
+    quantity: number;
+    notes?: string;
+    drawings?: Array<{ buffer: Buffer; fileName: string }>;
   }>,
   context?: QuoteEventContext
 ): Promise<{ success: boolean; quoteId?: number; error?: string }> {
   try {
-    const quote = await createQuote(quoteData, context)
+    const quote = await createQuote(quoteData, context);
     if (!quote) {
-      throw new Error('Failed to create quote')
+      throw new Error("Failed to create quote");
     }
 
     for (let i = 0; i < partsData.length; i++) {
-      const part = partsData[i]
+      const part = partsData[i];
 
       // Create the quote part first to get its ID
-      const [quotePart] = await db.insert(quoteParts).values({
-        quoteId: quote.id,
-        partName: part.partName || `Part ${i + 1}`,
-        partNumber: `PART-${Date.now()}-${i}`,
-        material: part.material || null,
-        finish: part.surfaceFinish || null,
-        tolerance: part.tolerances || null,
-        partFileUrl: null,
-        conversionStatus: 'pending',
-        specifications: {
-          tolerances: part.tolerances,
-          notes: part.notes
-        }
-      }).returning()
+      const [quotePart] = await db
+        .insert(quoteParts)
+        .values({
+          quoteId: quote.id,
+          partName: part.partName || `Part ${i + 1}`,
+          partNumber: `PART-${Date.now()}-${i}`,
+          material: part.material || null,
+          finish: part.surfaceFinish || null,
+          tolerance: part.tolerances || null,
+          partFileUrl: null,
+          conversionStatus: "pending",
+          specifications: {
+            tolerances: part.tolerances,
+            notes: part.notes,
+          },
+        })
+        .returning();
 
       // Now upload the file using the structured path with the quote part ID
-      let partFileUrl: string | null = null
+      let partFileUrl: string | null = null;
       if (part.file && part.fileName) {
-        const timestamp = Date.now()
-        const randomString = crypto.randomBytes(8).toString('hex')
-        const sanitizedFileName = part.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '')
-        const key = `quote-parts/${quotePart.id}/source/${timestamp}-${randomString}-${sanitizedFileName}`
+        const timestamp = Date.now();
+        const randomString = crypto.randomBytes(8).toString("hex");
+        const sanitizedFileName = part.fileName
+          .replace(/\s+/g, "-")
+          .replace(/[^a-zA-Z0-9._-]/g, "");
+        const key = `quote-parts/${quotePart.id}/source/${timestamp}-${randomString}-${sanitizedFileName}`;
 
         const uploadResult = await uploadFile({
           key,
           buffer: part.file,
-          contentType: 'application/octet-stream',
-          fileName: part.fileName
-        })
-        partFileUrl = uploadResult.key
+          contentType: "application/octet-stream",
+          fileName: part.fileName,
+        });
+        partFileUrl = uploadResult.key;
 
         // Update the quote part with the file URL
-        await db.update(quoteParts).set({
-          partFileUrl,
-          updatedAt: new Date()
-        }).where(eq(quoteParts.id, quotePart.id))
+        await db
+          .update(quoteParts)
+          .set({
+            partFileUrl,
+            updatedAt: new Date(),
+          })
+          .where(eq(quoteParts.id, quotePart.id));
 
         // Trigger mesh conversion if applicable
-        await triggerQuotePartMeshConversion(quotePart.id, partFileUrl)
+        await triggerQuotePartMeshConversion(quotePart.id, partFileUrl);
       }
 
       // Upload technical drawings if provided
       if (part.drawings && part.drawings.length > 0) {
-        for (const drawing of part.drawings) {
-          const timestamp = Date.now()
-          const randomString = crypto.randomBytes(8).toString('hex')
-          const sanitizedFileName = drawing.fileName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9._-]/g, '')
-          const key = `quote-parts/${quotePart.id}/drawings/${timestamp}-${randomString}-${sanitizedFileName}`
+        for (
+          let drawingIndex = 0;
+          drawingIndex < part.drawings.length;
+          drawingIndex++
+        ) {
+          const drawing = part.drawings[drawingIndex];
+          const timestamp = Date.now();
+          const randomString = crypto.randomBytes(8).toString("hex");
+          const sanitizedFileName = drawing.fileName
+            .replace(/\s+/g, "-")
+            .replace(/[^a-zA-Z0-9._-]/g, "");
+          const contentType = drawing.fileName.toLowerCase().endsWith(".pdf")
+            ? "application/pdf"
+            : "image/png";
+          const key = `quote-parts/${quotePart.id}/drawings/${timestamp}-${randomString}-${sanitizedFileName}`;
 
           const uploadResult = await uploadFile({
             key,
             buffer: drawing.buffer,
-            contentType: drawing.fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png',
-            fileName: sanitizedFileName
-          })
+            contentType,
+            fileName: sanitizedFileName,
+          });
+
+          // Generate thumbnail for PDFs
+          let thumbnailS3Key: string | null = null;
+          if (isPdfFile(contentType, drawing.fileName)) {
+            try {
+              const thumbnail = await generatePdfThumbnail(
+                drawing.buffer,
+                200,
+                200
+              );
+              const thumbnailKey = `quote-parts/${quotePart.id}/drawings/${timestamp}-${randomString}-${sanitizedFileName}.thumb.png`;
+              await uploadFile({
+                key: thumbnailKey,
+                buffer: thumbnail.buffer,
+                contentType: "image/png",
+                fileName: `${sanitizedFileName}.thumb.png`,
+              });
+              thumbnailS3Key = thumbnailKey;
+            } catch (thumbnailError) {
+              console.error(
+                "Failed to generate PDF thumbnail:",
+                thumbnailError
+              );
+            }
+          }
 
           // Create attachment record
           if (!process.env.S3_BUCKET) {
-            throw new Error('S3_BUCKET environment variable is not configured')
+            throw new Error("S3_BUCKET environment variable is not configured");
           }
 
-          const [attachment] = await db.insert(attachments).values({
-            s3Bucket: process.env.S3_BUCKET,
-            s3Key: uploadResult.key,
-            fileName: drawing.fileName,
-            contentType: drawing.fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png',
-            fileSize: drawing.buffer.length
-          }).returning()
+          const [attachment] = await db
+            .insert(attachments)
+            .values({
+              s3Bucket: process.env.S3_BUCKET,
+              s3Key: uploadResult.key,
+              fileName: drawing.fileName,
+              contentType,
+              fileSize: drawing.buffer.length,
+              thumbnailS3Key,
+            })
+            .returning();
 
           // Link attachment to quote part
           await db.insert(quotePartDrawings).values({
             quotePartId: quotePart.id,
             attachmentId: attachment.id,
-            version: 1
-          })
+            version: 1,
+          });
         }
       }
 
@@ -1085,51 +1266,51 @@ export async function createQuoteWithParts(
         quoteId: quote.id,
         quotePartId: quotePart.id,
         quantity: part.quantity,
-        unitPrice: '0',
-        totalPrice: '0',
+        unitPrice: "0",
+        totalPrice: "0",
         leadTimeDays: null,
         notes: part.notes || null,
-        sortOrder: i
-      })
+        sortOrder: i,
+      });
 
       await createEvent({
-        entityType: 'quote',
+        entityType: "quote",
         entityId: quote.id.toString(),
-        eventType: 'quote_part_created',
-        eventCategory: 'document',
-        title: 'Quote Part Added',
+        eventType: "quote_part_created",
+        eventCategory: "document",
+        title: "Quote Part Added",
         description: `Added part ${quotePart.partName} to quote`,
         metadata: {
           partName: quotePart.partName,
           quoteId: quote.id,
           material: part.material,
           tolerances: part.tolerances,
-          surfaceFinish: part.surfaceFinish
+          surfaceFinish: part.surfaceFinish,
         },
         userId: context?.userId,
-        userEmail: context?.userEmail
-      })
+        userEmail: context?.userEmail,
+      });
     }
 
-    return { success: true, quoteId: quote.id }
+    return { success: true, quoteId: quote.id };
   } catch (error) {
-    console.error('Error creating quote with parts:', error)
+    console.error("Error creating quote with parts:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to create quote'
-    }
+      error: error instanceof Error ? error.message : "Failed to create quote",
+    };
   }
 }
 
 export async function createQuotePart(
   quoteId: number,
   partData: {
-    partNumber: string
-    partName: string
-    description?: string
-    material?: string
-    finish?: string
-    specifications?: Record<string, unknown> | null
+    partNumber: string;
+    partName: string;
+    description?: string;
+    material?: string;
+    finish?: string;
+    specifications?: Record<string, unknown> | null;
   },
   context?: QuoteEventContext
 ): Promise<QuotePart | null> {
@@ -1140,15 +1321,15 @@ export async function createQuotePart(
         quoteId,
         ...partData,
       })
-      .returning()
+      .returning();
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: quoteId.toString(),
-      eventType: 'quote_part_added',
-      eventCategory: 'system',
-      title: 'Part Added to Quote',
+      eventType: "quote_part_added",
+      eventCategory: "system",
+      title: "Part Added to Quote",
       description: `Part ${partData.partNumber} - ${partData.partName} was added`,
       metadata: {
         partId: newPart.id,
@@ -1157,24 +1338,24 @@ export async function createQuotePart(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return newPart
+    return newPart;
   } catch (error) {
-    console.error('Error creating quote part:', error)
-    return null
+    console.error("Error creating quote part:", error);
+    return null;
   }
 }
 
 export async function updateQuotePart(
   partId: string,
   updates: Partial<{
-    partNumber: string
-    partName: string
-    description: string
-    material: string
-    finish: string
-    specifications: Record<string, unknown>
+    partNumber: string;
+    partName: string;
+    description: string;
+    material: string;
+    finish: string;
+    specifications: Record<string, unknown>;
   }>,
   context?: QuoteEventContext
 ): Promise<QuotePart | null> {
@@ -1186,15 +1367,15 @@ export async function updateQuotePart(
         updatedAt: new Date(),
       })
       .where(eq(quoteParts.id, partId))
-      .returning()
+      .returning();
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: updatedPart.quoteId.toString(),
-      eventType: 'quote_part_updated',
-      eventCategory: 'system',
-      title: 'Quote Part Updated',
+      eventType: "quote_part_updated",
+      eventCategory: "system",
+      title: "Quote Part Updated",
       description: `Part ${updatedPart.partNumber} was updated`,
       metadata: {
         partId,
@@ -1202,12 +1383,12 @@ export async function updateQuotePart(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return updatedPart
+    return updatedPart;
   } catch (error) {
-    console.error('Error updating quote part:', error)
-    return null
+    console.error("Error updating quote part:", error);
+    return null;
   }
 }
 
@@ -1220,29 +1401,27 @@ export async function deleteQuotePart(
     const [part] = await db
       .select()
       .from(quoteParts)
-      .where(eq(quoteParts.id, partId))
+      .where(eq(quoteParts.id, partId));
 
     if (!part) {
-      return false
+      return false;
     }
 
     // Delete associated line items first
     await db
       .delete(quoteLineItems)
-      .where(eq(quoteLineItems.quotePartId, partId))
+      .where(eq(quoteLineItems.quotePartId, partId));
 
     // Delete the part
-    await db
-      .delete(quoteParts)
-      .where(eq(quoteParts.id, partId))
+    await db.delete(quoteParts).where(eq(quoteParts.id, partId));
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: part.quoteId.toString(),
-      eventType: 'quote_part_deleted',
-      eventCategory: 'system',
-      title: 'Quote Part Deleted',
+      eventType: "quote_part_deleted",
+      eventCategory: "system",
+      title: "Quote Part Deleted",
       description: `Part ${part.partNumber} was deleted`,
       metadata: {
         partId,
@@ -1251,12 +1430,12 @@ export async function deleteQuotePart(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return true
+    return true;
   } catch (error) {
-    console.error('Error deleting quote part:', error)
-    return false
+    console.error("Error deleting quote part:", error);
+    return false;
   }
 }
 
@@ -1264,19 +1443,19 @@ export async function deleteQuotePart(
 export async function createQuoteLineItem(
   quoteId: number,
   itemData: {
-    quotePartId?: string
-    name?: string
-    quantity: number
-    unitPrice: number
-    leadTimeDays?: number
-    description?: string
-    notes?: string
-    sortOrder?: number
+    quotePartId?: string;
+    name?: string;
+    quantity: number;
+    unitPrice: number;
+    leadTimeDays?: number;
+    description?: string;
+    notes?: string;
+    sortOrder?: number;
   },
   context?: QuoteEventContext
 ): Promise<QuoteLineItem | null> {
   try {
-    const totalPrice = (itemData.quantity * itemData.unitPrice).toFixed(2)
+    const totalPrice = (itemData.quantity * itemData.unitPrice).toFixed(2);
 
     const [newItem] = await db
       .insert(quoteLineItems)
@@ -1292,32 +1471,32 @@ export async function createQuoteLineItem(
         notes: itemData.notes || null,
         sortOrder: itemData.sortOrder || 0,
       })
-      .returning()
+      .returning();
 
     // Recalculate quote totals
-    await calculateQuoteTotals(quoteId)
+    await calculateQuoteTotals(quoteId);
 
     // Get part name if applicable
-    let partName = 'Unknown Part'
+    let partName = "Unknown Part";
     if (itemData.quotePartId) {
       const [quotePart] = await db
         .select()
         .from(quoteParts)
         .where(eq(quoteParts.id, itemData.quotePartId))
-        .limit(1)
+        .limit(1);
 
       if (quotePart) {
-        partName = quotePart.partName
+        partName = quotePart.partName;
       }
     }
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: quoteId.toString(),
-      eventType: 'quote_line_item_added',
-      eventCategory: 'financial',
-      title: 'Line Item Added',
+      eventType: "quote_line_item_added",
+      eventCategory: "financial",
+      title: "Line Item Added",
       description: `Added ${partName}`,
       metadata: {
         lineItemId: newItem.id,
@@ -1328,24 +1507,24 @@ export async function createQuoteLineItem(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return newItem
+    return newItem;
   } catch (error) {
-    console.error('Error creating quote line item:', error)
-    return null
+    console.error("Error creating quote line item:", error);
+    return null;
   }
 }
 
 export async function updateQuoteLineItem(
   itemId: number,
   updates: Partial<{
-    quantity: number
-    unitPrice: number
-    leadTimeDays: number
-    description: string
-    notes: string
-    sortOrder: number
+    quantity: number;
+    unitPrice: number;
+    leadTimeDays: number;
+    description: string;
+    notes: string;
+    sortOrder: number;
   }>,
   context?: QuoteEventContext
 ): Promise<QuoteLineItem | null> {
@@ -1354,16 +1533,16 @@ export async function updateQuoteLineItem(
     const [currentItem] = await db
       .select()
       .from(quoteLineItems)
-      .where(eq(quoteLineItems.id, itemId))
+      .where(eq(quoteLineItems.id, itemId));
 
     if (!currentItem) {
-      return null
+      return null;
     }
 
     // Calculate new total price if quantity or unit price changed
-    const quantity = updates.quantity ?? currentItem.quantity
-    const unitPrice = updates.unitPrice ?? parseFloat(currentItem.unitPrice)
-    const totalPrice = (quantity * unitPrice).toFixed(2)
+    const quantity = updates.quantity ?? currentItem.quantity;
+    const unitPrice = updates.unitPrice ?? parseFloat(currentItem.unitPrice);
+    const totalPrice = (quantity * unitPrice).toFixed(2);
 
     const [updatedItem] = await db
       .update(quoteLineItems)
@@ -1374,32 +1553,32 @@ export async function updateQuoteLineItem(
         updatedAt: new Date(),
       })
       .where(eq(quoteLineItems.id, itemId))
-      .returning()
+      .returning();
 
     // Recalculate quote totals
-    await calculateQuoteTotals(currentItem.quoteId)
+    await calculateQuoteTotals(currentItem.quoteId);
 
     // Get part name if applicable
-    let partName = 'Unknown Part'
+    let partName = "Unknown Part";
     if (currentItem.quotePartId) {
       const [quotePart] = await db
         .select()
         .from(quoteParts)
         .where(eq(quoteParts.id, currentItem.quotePartId))
-        .limit(1)
+        .limit(1);
 
       if (quotePart) {
-        partName = quotePart.partName
+        partName = quotePart.partName;
       }
     }
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: currentItem.quoteId.toString(),
-      eventType: 'quote_line_item_updated',
-      eventCategory: 'financial',
-      title: 'Line Item Updated',
+      eventType: "quote_line_item_updated",
+      eventCategory: "financial",
+      title: "Line Item Updated",
       description: `Updated ${partName}`,
       metadata: {
         lineItemId: itemId,
@@ -1409,12 +1588,12 @@ export async function updateQuoteLineItem(
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return updatedItem
+    return updatedItem;
   } catch (error) {
-    console.error('Error updating quote line item:', error)
-    return null
+    console.error("Error updating quote line item:", error);
+    return null;
   }
 }
 
@@ -1427,55 +1606,53 @@ export async function deleteQuoteLineItem(
     const [item] = await db
       .select()
       .from(quoteLineItems)
-      .where(eq(quoteLineItems.id, itemId))
+      .where(eq(quoteLineItems.id, itemId));
 
     if (!item) {
-      return false
+      return false;
     }
 
     // Delete the item
-    await db
-      .delete(quoteLineItems)
-      .where(eq(quoteLineItems.id, itemId))
+    await db.delete(quoteLineItems).where(eq(quoteLineItems.id, itemId));
 
     // Recalculate quote totals
-    await calculateQuoteTotals(item.quoteId)
+    await calculateQuoteTotals(item.quoteId);
 
     // Get part name if applicable
-    let partName = 'Unknown Part'
+    let partName = "Unknown Part";
     if (item.quotePartId) {
       const [quotePart] = await db
         .select()
         .from(quoteParts)
         .where(eq(quoteParts.id, item.quotePartId))
-        .limit(1)
+        .limit(1);
 
       if (quotePart) {
-        partName = quotePart.partName
+        partName = quotePart.partName;
       }
     }
 
     // Log event
     await createEvent({
-      entityType: 'quote',
+      entityType: "quote",
       entityId: item.quoteId.toString(),
-      eventType: 'quote_line_item_deleted',
-      eventCategory: 'financial',
-      title: 'Line Item Deleted',
+      eventType: "quote_line_item_deleted",
+      eventCategory: "financial",
+      title: "Line Item Deleted",
       description: `Deleted ${partName}`,
       metadata: {
         lineItemId: itemId,
         partName,
         quantity: item.quantity,
-        totalPrice: parseFloat(item.totalPrice || '0').toFixed(2),
+        totalPrice: parseFloat(item.totalPrice || "0").toFixed(2),
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
-    })
+    });
 
-    return true
+    return true;
   } catch (error) {
-    console.error('Error deleting quote line item:', error)
-    return false
+    console.error("Error deleting quote line item:", error);
+    return false;
   }
 }

@@ -10,9 +10,18 @@ import {
 import { eq } from "drizzle-orm";
 import { createEvent } from "./events";
 
+export type PartDrawing = {
+  id: string;
+  fileName: string;
+  contentType: string | null;
+  fileSize: number | null;
+  signedUrl: string;
+  thumbnailSignedUrl: string | null;
+};
+
 export type LineItemWithPart = {
   lineItem: OrderLineItem;
-  part: Part | null;
+  part: (Part & { drawings?: PartDrawing[] }) | null;
 };
 
 export type LineItemEventContext = {
@@ -50,7 +59,7 @@ async function updateOrderTotal(orderId: number): Promise<number> {
     .update(orders)
     .set({
       totalPrice: total.toFixed(2),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     })
     .where(eq(orders.id, orderId));
 
