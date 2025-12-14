@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.2.0...v1.2.1) (2025-12-14)
+
+
+### Bug Fixes
+
+* add 3d part dimensions to viewer modal ([061a855](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/061a855182d2924cdcd44749b5a3a3843d6345cd))
+* add drawing viewer/thumbnails to order details page line items ([990c777](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/990c777df41ed5416d9337e6d05684000f4dacf0))
+* correct quote PDF to use current date instead of quote created date ([55a453f](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/55a453f04895b6a278c6cc6d618ca677db104579))
+* externalize mupdf to resolve runtime WASM error ([1df465e](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/1df465e79dbbee0c337f73f0e55174c8cbf0a206))
+* fix lint ([11ed002](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/11ed002f92fbd43aedd66a7c93d90aeb843a69c9))
+* fix quote calculator working only once ([127cd79](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/127cd7920ec216f8e00b9b4778355ad9367c078b))
+* fix scroll behaviour on price calculator modal ([d8e63bf](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/d8e63bf42ea423c02f02cac0c7bf04f27793ed92))
+* **quotes:** add mode support to calculator modal for single vs all parts pricing ([cecf6b6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/cecf6b63ba246b771e94dc45efa3e3a88b92c921))
+* resolve lint and typecheck errors ([bb31bc3](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/bb31bc3cf849406edf275a1911a4b617045e9d52))
+* update part dimensions for order parts too ([d6114bf](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/d6114bf13509c8b718a6e7f567ec5fac51ee8479))
+* update vite build target to es2022 to support top-level await ([b43d2c5](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/b43d2c574b8c995d97a6bd67f85329d7f2a39021))
+
 ## [1.2.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.1.1...v1.2.0) (2025-12-11)
 
 
