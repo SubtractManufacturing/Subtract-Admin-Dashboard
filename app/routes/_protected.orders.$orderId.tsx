@@ -170,10 +170,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       (
         item.part as typeof item.part & {
           drawings: Array<{
-            id: number;
+            id: string;
             fileName: string;
             contentType: string;
-            fileSize: number;
+            fileSize: number | null;
             signedUrl: string;
             thumbnailSignedUrl: string | null;
           }>;

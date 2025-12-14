@@ -1618,7 +1618,10 @@ export default function QuoteDetail() {
   const [calculatorMode, setCalculatorMode] = useState<
     "allParts" | "singlePart"
   >("allParts");
-  const calculatorFetcher = useFetcher();
+  const calculatorFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+  }>();
   const [isDownloading, setIsDownloading] = useState(false);
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
