@@ -50,6 +50,7 @@ import {
 } from "~/lib/s3.server";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
+import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import {
   getNotes,
   createNote,
@@ -194,12 +195,27 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
             const attachment = record.attachment!;
             try {
               const signedUrl = await getDownloadUrl(attachment.s3Key, 3600);
+
+              // Generate thumbnail signed URL if available
+              let thumbnailSignedUrl: string | null = null;
+              if (attachment.thumbnailS3Key) {
+                try {
+                  thumbnailSignedUrl = await getDownloadUrl(
+                    attachment.thumbnailS3Key,
+                    3600
+                  );
+                } catch {
+                  // Thumbnail URL generation failed, will fall back to icon
+                }
+              }
+
               return {
                 id: attachment.id,
                 fileName: attachment.fileName,
                 contentType: attachment.contentType,
                 fileSize: attachment.fileSize,
                 signedUrl,
+                thumbnailSignedUrl,
               };
             } catch (error) {
               console.error(
@@ -484,15 +500,39 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   .replace(/[^a-zA-Z0-9._-]/g, "");
 
                 // Upload drawing to S3
-                const drawingKey = `quote-parts/${
-                  newQuotePart.id
-                }/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+                const timestamp = Date.now();
+                const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}`;
                 const drawingUploadResult = await uploadFile({
                   key: drawingKey,
                   buffer: drawingBuffer,
                   contentType: drawing.type || "application/pdf",
                   fileName: sanitizedDrawingName,
                 });
+
+                // Generate thumbnail for PDFs
+                let thumbnailS3Key: string | null = null;
+                if (isPdfFile(drawing.type, drawing.name)) {
+                  try {
+                    const thumbnail = await generatePdfThumbnail(
+                      drawingBuffer,
+                      200,
+                      200
+                    );
+                    const thumbnailKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}.thumb.png`;
+                    await uploadFile({
+                      key: thumbnailKey,
+                      buffer: thumbnail.buffer,
+                      contentType: "image/png",
+                      fileName: `${sanitizedDrawingName}.thumb.png`,
+                    });
+                    thumbnailS3Key = thumbnailKey;
+                  } catch (thumbnailError) {
+                    console.error(
+                      "Failed to generate PDF thumbnail:",
+                      thumbnailError
+                    );
+                  }
+                }
 
                 // Create attachment record
                 const [attachment] = await db
@@ -503,6 +543,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                     fileName: drawing.name,
                     contentType: drawing.type || "application/pdf",
                     fileSize: drawing.size,
+                    thumbnailS3Key,
                   })
                   .returning();
 
@@ -574,13 +615,39 @@ export async function action({ request, params }: ActionFunctionArgs) {
               .replace(/[^a-zA-Z0-9._-]/g, "");
 
             // Upload drawing to S3
-            const drawingKey = `quote-parts/${quotePartId}/drawings/${Date.now()}-${i}-${sanitizedDrawingName}`;
+            const timestamp = Date.now();
+            const drawingKey = `quote-parts/${quotePartId}/drawings/${timestamp}-${i}-${sanitizedDrawingName}`;
             const drawingUploadResult = await uploadFile({
               key: drawingKey,
               buffer: drawingBuffer,
               contentType: drawing.type || "application/pdf",
               fileName: sanitizedDrawingName,
             });
+
+            // Generate thumbnail for PDFs
+            let thumbnailS3Key: string | null = null;
+            if (isPdfFile(drawing.type, drawing.name)) {
+              try {
+                const thumbnail = await generatePdfThumbnail(
+                  drawingBuffer,
+                  200,
+                  200
+                );
+                const thumbnailKey = `quote-parts/${quotePartId}/drawings/${timestamp}-${i}-${sanitizedDrawingName}.thumb.png`;
+                await uploadFile({
+                  key: thumbnailKey,
+                  buffer: thumbnail.buffer,
+                  contentType: "image/png",
+                  fileName: `${sanitizedDrawingName}.thumb.png`,
+                });
+                thumbnailS3Key = thumbnailKey;
+              } catch (thumbnailError) {
+                console.error(
+                  "Failed to generate PDF thumbnail:",
+                  thumbnailError
+                );
+              }
+            }
 
             // Create attachment record
             const [attachment] = await db
@@ -591,6 +658,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 fileName: drawing.name,
                 contentType: drawing.type || "application/pdf",
                 fileSize: drawing.size,
+                thumbnailS3Key,
               })
               .returning();
 

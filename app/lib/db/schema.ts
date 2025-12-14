@@ -50,86 +50,94 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const customers = pgTable("customers", {
-  id: serial("id").primaryKey(),
-  displayName: text("display_name").notNull(),
+export const customers = pgTable(
+  "customers",
+  {
+    id: serial("id").primaryKey(),
+    displayName: text("display_name").notNull(),
 
-  // Contact info
-  companyName: text("company_name"),
-  contactName: text("contact_name"),
-  title: text("title"),
-  email: text("email"),
-  phone: text("phone"),
-  isPrimaryContact: boolean("is_primary_contact").default(false),
+    // Contact info
+    companyName: text("company_name"),
+    contactName: text("contact_name"),
+    title: text("title"),
+    email: text("email"),
+    phone: text("phone"),
+    isPrimaryContact: boolean("is_primary_contact").default(false),
 
-  // Billing address (structured for shipping integrations)
-  billingAddressLine1: text("billing_address_line1"),
-  billingAddressLine2: text("billing_address_line2"),
-  billingCity: text("billing_city"),
-  billingState: text("billing_state"),
-  billingPostalCode: text("billing_postal_code"),
-  billingCountry: text("billing_country").default("US"),
+    // Billing address (structured for shipping integrations)
+    billingAddressLine1: text("billing_address_line1"),
+    billingAddressLine2: text("billing_address_line2"),
+    billingCity: text("billing_city"),
+    billingState: text("billing_state"),
+    billingPostalCode: text("billing_postal_code"),
+    billingCountry: text("billing_country").default("US"),
 
-  // Shipping address (structured for shipping integrations)
-  shippingAddressLine1: text("shipping_address_line1"),
-  shippingAddressLine2: text("shipping_address_line2"),
-  shippingCity: text("shipping_city"),
-  shippingState: text("shipping_state"),
-  shippingPostalCode: text("shipping_postal_code"),
-  shippingCountry: text("shipping_country").default("US"),
+    // Shipping address (structured for shipping integrations)
+    shippingAddressLine1: text("shipping_address_line1"),
+    shippingAddressLine2: text("shipping_address_line2"),
+    shippingCity: text("shipping_city"),
+    shippingState: text("shipping_state"),
+    shippingPostalCode: text("shipping_postal_code"),
+    shippingCountry: text("shipping_country").default("US"),
 
-  // Business terms
-  paymentTerms: text("payment_terms"),
+    // Business terms
+    paymentTerms: text("payment_terms"),
 
-  isArchived: boolean("is_archived").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => ({
-  companyNameIdx: index("customers_company_name_idx").on(table.companyName),
-}));
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    companyNameIdx: index("customers_company_name_idx").on(table.companyName),
+  })
+);
 
-export const vendors = pgTable("vendors", {
-  id: serial("id").primaryKey(),
-  displayName: text("display_name").notNull(),
+export const vendors = pgTable(
+  "vendors",
+  {
+    id: serial("id").primaryKey(),
+    displayName: text("display_name").notNull(),
 
-  // Contact info
-  companyName: text("company_name"),
-  contactName: text("contact_name"),
-  title: text("title"),
-  email: text("email"),
-  phone: text("phone"),
-  isPrimaryContact: boolean("is_primary_contact").default(false),
+    // Contact info
+    companyName: text("company_name"),
+    contactName: text("contact_name"),
+    title: text("title"),
+    email: text("email"),
+    phone: text("phone"),
+    isPrimaryContact: boolean("is_primary_contact").default(false),
 
-  // Billing address (structured for shipping integrations)
-  billingAddressLine1: text("billing_address_line1"),
-  billingAddressLine2: text("billing_address_line2"),
-  billingCity: text("billing_city"),
-  billingState: text("billing_state"),
-  billingPostalCode: text("billing_postal_code"),
-  billingCountry: text("billing_country").default("US"),
+    // Billing address (structured for shipping integrations)
+    billingAddressLine1: text("billing_address_line1"),
+    billingAddressLine2: text("billing_address_line2"),
+    billingCity: text("billing_city"),
+    billingState: text("billing_state"),
+    billingPostalCode: text("billing_postal_code"),
+    billingCountry: text("billing_country").default("US"),
 
-  // Shipping address (structured for shipping integrations)
-  shippingAddressLine1: text("shipping_address_line1"),
-  shippingAddressLine2: text("shipping_address_line2"),
-  shippingCity: text("shipping_city"),
-  shippingState: text("shipping_state"),
-  shippingPostalCode: text("shipping_postal_code"),
-  shippingCountry: text("shipping_country").default("US"),
+    // Shipping address (structured for shipping integrations)
+    shippingAddressLine1: text("shipping_address_line1"),
+    shippingAddressLine2: text("shipping_address_line2"),
+    shippingCity: text("shipping_city"),
+    shippingState: text("shipping_state"),
+    shippingPostalCode: text("shipping_postal_code"),
+    shippingCountry: text("shipping_country").default("US"),
 
-  // Business terms
-  paymentTerms: text("payment_terms"),
+    // Business terms
+    paymentTerms: text("payment_terms"),
 
-  // Legacy fields
-  address: text("address"), // Keep for now, can migrate data later
-  notes: text("notes"),
-  discordId: text("discord_id"),
+    // Legacy fields
+    address: text("address"), // Keep for now, can migrate data later
+    notes: text("notes"),
+    discordId: text("discord_id"),
 
-  isArchived: boolean("is_archived").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => ({
-  companyNameIdx: index("vendors_company_name_idx").on(table.companyName),
-}));
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    companyNameIdx: index("vendors_company_name_idx").on(table.companyName),
+  })
+);
 
 export const quotes = pgTable("quotes", {
   id: serial("id").primaryKey(),
@@ -148,7 +156,9 @@ export const quotes = pgTable("quotes", {
   subtotal: numeric("subtotal", { precision: 10, scale: 2 }),
   total: numeric("total", { precision: 10, scale: 2 }),
   createdById: text("created_by_id").references(() => users.id),
-  convertedToOrderId: integer("converted_to_order_id").references(() => orders.id),
+  convertedToOrderId: integer("converted_to_order_id").references(
+    () => orders.id
+  ),
   rejectionReason: text("rejection_reason"),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -174,11 +184,11 @@ export const orders = pgTable("orders", {
 
 export const meshConversionStatusEnum = pgEnum("mesh_conversion_status", [
   "pending",
-  "queued", 
+  "queued",
   "in_progress",
   "completed",
   "failed",
-  "skipped"
+  "skipped",
 ]);
 
 export const parts = pgTable("parts", {
@@ -209,39 +219,66 @@ export const attachments = pgTable("attachments", {
   fileName: text("file_name").notNull(),
   contentType: text("content_type").notNull(),
   fileSize: integer("file_size"),
+  thumbnailS3Key: text("thumbnail_s3_key"), // For PDF/document thumbnails
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const partDrawings = pgTable("part_drawings", {
-  partId: uuid("part_id").notNull().references(() => parts.id),
-  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
-  version: integer("version").notNull().default(1),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.partId, table.attachmentId] }),
-}));
+export const partDrawings = pgTable(
+  "part_drawings",
+  {
+    partId: uuid("part_id")
+      .notNull()
+      .references(() => parts.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.partId, table.attachmentId] }),
+  })
+);
 
-export const quotePartDrawings = pgTable("quote_part_drawings", {
-  quotePartId: uuid("quote_part_id").notNull().references(() => quoteParts.id),
-  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
-  version: integer("version").notNull().default(1),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.quotePartId, table.attachmentId] }),
-}));
+export const quotePartDrawings = pgTable(
+  "quote_part_drawings",
+  {
+    quotePartId: uuid("quote_part_id")
+      .notNull()
+      .references(() => quoteParts.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.quotePartId, table.attachmentId] }),
+  })
+);
 
-export const partModels = pgTable("part_models", {
-  partId: uuid("part_id").notNull().references(() => parts.id),
-  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
-  version: integer("version").notNull().default(1),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.partId, table.attachmentId] }),
-}));
+export const partModels = pgTable(
+  "part_models",
+  {
+    partId: uuid("part_id")
+      .notNull()
+      .references(() => parts.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.partId, table.attachmentId] }),
+  })
+);
 
 export const orderLineItems = pgTable("order_line_items", {
   id: serial("id").primaryKey(),
-  orderId: integer("order_id").notNull().references(() => orders.id),
+  orderId: integer("order_id")
+    .notNull()
+    .references(() => orders.id),
   partId: uuid("part_id").references(() => parts.id),
   name: text("name"),
   description: text("description"),
@@ -252,7 +289,9 @@ export const orderLineItems = pgTable("order_line_items", {
 
 export const quoteParts = pgTable("quote_parts", {
   id: uuid("id").primaryKey().defaultRandom(),
-  quoteId: integer("quote_id").notNull().references(() => quotes.id),
+  quoteId: integer("quote_id")
+    .notNull()
+    .references(() => quotes.id),
   partNumber: text("part_number").notNull(),
   partName: text("part_name").notNull(),
   description: text("description"),
@@ -262,7 +301,8 @@ export const quoteParts = pgTable("quote_parts", {
   thumbnailUrl: text("thumbnail_url"),
   partFileUrl: text("part_file_url"),
   partMeshUrl: text("part_mesh_url"),
-  conversionStatus: meshConversionStatusEnum("conversion_status").default("pending"),
+  conversionStatus:
+    meshConversionStatusEnum("conversion_status").default("pending"),
   meshConversionError: text("mesh_conversion_error"),
   meshConversionJobId: text("mesh_conversion_job_id"),
   meshConversionStartedAt: timestamp("mesh_conversion_started_at"),
@@ -274,7 +314,9 @@ export const quoteParts = pgTable("quote_parts", {
 
 export const quoteLineItems = pgTable("quote_line_items", {
   id: serial("id").primaryKey(),
-  quoteId: integer("quote_id").notNull().references(() => quotes.id),
+  quoteId: integer("quote_id")
+    .notNull()
+    .references(() => quotes.id),
   quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
   name: text("name"),
   quantity: integer("quantity").notNull(),
@@ -288,37 +330,69 @@ export const quoteLineItems = pgTable("quote_line_items", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const orderAttachments = pgTable("order_attachments", {
-  orderId: integer("order_id").notNull().references(() => orders.id),
-  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.orderId, table.attachmentId] }),
-}));
+export const orderAttachments = pgTable(
+  "order_attachments",
+  {
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => orders.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.orderId, table.attachmentId] }),
+  })
+);
 
-export const quoteAttachments = pgTable("quote_attachments", {
-  quoteId: integer("quote_id").notNull().references(() => quotes.id),
-  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.quoteId, table.attachmentId] }),
-}));
+export const quoteAttachments = pgTable(
+  "quote_attachments",
+  {
+    quoteId: integer("quote_id")
+      .notNull()
+      .references(() => quotes.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.quoteId, table.attachmentId] }),
+  })
+);
 
-export const customerAttachments = pgTable("customer_attachments", {
-  customerId: integer("customer_id").notNull().references(() => customers.id),
-  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.customerId, table.attachmentId] }),
-}));
+export const customerAttachments = pgTable(
+  "customer_attachments",
+  {
+    customerId: integer("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.customerId, table.attachmentId] }),
+  })
+);
 
-export const vendorAttachments = pgTable("vendor_attachments", {
-  vendorId: integer("vendor_id").notNull().references(() => vendors.id),
-  attachmentId: uuid("attachment_id").notNull().references(() => attachments.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  pk: primaryKey({ columns: [table.vendorId, table.attachmentId] }),
-}));
+export const vendorAttachments = pgTable(
+  "vendor_attachments",
+  {
+    vendorId: integer("vendor_id")
+      .notNull()
+      .references(() => vendors.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.vendorId, table.attachmentId] }),
+  })
+);
 
 export const loginAuditLogs = pgTable("login_audit_logs", {
   id: serial("id").primaryKey(),
@@ -378,80 +452,93 @@ export const eventCategoryEnum = pgEnum("event_category", [
   "manufacturing",
 ]);
 
+export const eventLogs = pgTable(
+  "event_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
 
-export const eventLogs = pgTable("event_logs", {
-  id: uuid("id").primaryKey().defaultRandom(),
+    // Polymorphic association
+    entityType: text("entity_type").notNull(), // 'order', 'customer', 'vendor', 'part', 'quote'
+    entityId: text("entity_id").notNull(),
 
-  // Polymorphic association
-  entityType: text("entity_type").notNull(), // 'order', 'customer', 'vendor', 'part', 'quote'
-  entityId: text("entity_id").notNull(),
+    // Event details
+    eventType: text("event_type").notNull(),
+    eventCategory: eventCategoryEnum("event_category").notNull(),
 
-  // Event details
-  eventType: text("event_type").notNull(),
-  eventCategory: eventCategoryEnum("event_category").notNull(),
+    // Event data
+    title: text("title").notNull(),
+    description: text("description"),
+    metadata: jsonb("metadata"), // Additional structured data
 
-  // Event data
-  title: text("title").notNull(),
-  description: text("description"),
-  metadata: jsonb("metadata"), // Additional structured data
+    // User tracking
+    userId: text("user_id").references(() => users.id),
+    userEmail: text("user_email"),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
 
-  // User tracking
-  userId: text("user_id").references(() => users.id),
-  userEmail: text("user_email"),
-  ipAddress: text("ip_address"),
-  userAgent: text("user_agent"),
+    // Dismissal tracking
+    isDismissed: boolean("is_dismissed").notNull().default(false),
+    dismissedAt: timestamp("dismissed_at"),
+    dismissedBy: text("dismissed_by"),
 
-  // Dismissal tracking
-  isDismissed: boolean("is_dismissed").notNull().default(false),
-  dismissedAt: timestamp("dismissed_at"),
-  dismissedBy: text("dismissed_by"),
-
-  // Timestamps
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  entityIdx: index("event_logs_entity_idx").on(table.entityType, table.entityId),
-  timestampIdx: index("event_logs_timestamp_idx").on(table.createdAt),
-  categoryIdx: index("event_logs_category_idx").on(table.eventCategory),
-}));
+    // Timestamps
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    entityIdx: index("event_logs_entity_idx").on(
+      table.entityType,
+      table.entityId
+    ),
+    timestampIdx: index("event_logs_timestamp_idx").on(table.createdAt),
+    categoryIdx: index("event_logs_category_idx").on(table.eventCategory),
+  })
+);
 
 // CAD File Version tracking for quote parts and regular parts
-export const cadFileVersions = pgTable("cad_file_versions", {
-  id: uuid("id").primaryKey().defaultRandom(),
+export const cadFileVersions = pgTable(
+  "cad_file_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
 
-  // Polymorphic reference (quote part or regular part)
-  entityType: text("entity_type").notNull(), // "quote_part" or "part"
-  entityId: uuid("entity_id").notNull(), // quotePartId or partId
+    // Polymorphic reference (quote part or regular part)
+    entityType: text("entity_type").notNull(), // "quote_part" or "part"
+    entityId: uuid("entity_id").notNull(), // quotePartId or partId
 
-  // Version info
-  version: integer("version").notNull(),
-  isCurrentVersion: boolean("is_current_version").default(false).notNull(),
+    // Version info
+    version: integer("version").notNull(),
+    isCurrentVersion: boolean("is_current_version").default(false).notNull(),
 
-  // File info (CAD file only - mesh is stored on parent entity)
-  s3Key: text("s3_key").notNull(),
-  fileName: text("file_name").notNull(),
-  fileSize: integer("file_size"),
-  contentType: text("content_type"),
+    // File info (CAD file only - mesh is stored on parent entity)
+    s3Key: text("s3_key").notNull(),
+    fileName: text("file_name").notNull(),
+    fileSize: integer("file_size"),
+    contentType: text("content_type"),
 
-  // Audit trail
-  uploadedBy: text("uploaded_by").references(() => users.id),
-  uploadedByEmail: text("uploaded_by_email"), // Denormalized for audit
-  notes: text("notes"), // Optional revision notes
+    // Audit trail
+    uploadedBy: text("uploaded_by").references(() => users.id),
+    uploadedByEmail: text("uploaded_by_email"), // Denormalized for audit
+    notes: text("notes"), // Optional revision notes
 
-  // Timestamps
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (table) => ({
-  entityIdx: index("cad_versions_entity_idx").on(table.entityType, table.entityId),
-  currentIdx: index("cad_versions_current_idx").on(
-    table.entityType,
-    table.entityId,
-    table.isCurrentVersion
-  ),
-  versionIdx: index("cad_versions_version_idx").on(
-    table.entityType,
-    table.entityId,
-    table.version
-  ),
-}));
+    // Timestamps
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    entityIdx: index("cad_versions_entity_idx").on(
+      table.entityType,
+      table.entityId
+    ),
+    currentIdx: index("cad_versions_current_idx").on(
+      table.entityType,
+      table.entityId,
+      table.isCurrentVersion
+    ),
+    versionIdx: index("cad_versions_version_idx").on(
+      table.entityType,
+      table.entityId,
+      table.version
+    ),
+  })
+);
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -497,73 +584,112 @@ export type EventLog = typeof eventLogs.$inferSelect;
 export type NewEventLog = typeof eventLogs.$inferInsert;
 
 // Quote Pricing Calculator Schema
-export const quotePriceCalculations = pgTable("quote_price_calculations", {
-  id: serial("id").primaryKey(),
-  quoteId: integer("quote_id").notNull().references(() => quotes.id),
-  quoteLineItemId: integer("quote_line_item_id"),
-  quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
+export const quotePriceCalculations = pgTable(
+  "quote_price_calculations",
+  {
+    id: serial("id").primaryKey(),
+    quoteId: integer("quote_id")
+      .notNull()
+      .references(() => quotes.id),
+    quoteLineItemId: integer("quote_line_item_id"),
+    quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
 
-  // Base inputs
-  toolpathGrandTotal: numeric("toolpath_grand_total", { precision: 10, scale: 2 }).notNull(),
+    // Base inputs
+    toolpathGrandTotal: numeric("toolpath_grand_total", {
+      precision: 10,
+      scale: 2,
+    }).notNull(),
 
-  // Lead time
-  leadTimeOption: text("lead_time_option").notNull(), // "3-5 Days", "5-7 Days", "7-12 Days"
-  leadTimeMultiplier: numeric("lead_time_multiplier", { precision: 4, scale: 2 }).notNull(),
+    // Lead time
+    leadTimeOption: text("lead_time_option").notNull(), // "3-5 Days", "5-7 Days", "7-12 Days"
+    leadTimeMultiplier: numeric("lead_time_multiplier", {
+      precision: 4,
+      scale: 2,
+    }).notNull(),
 
-  // Thread costs
-  smallThreadCount: integer("small_thread_count").default(0).notNull(),
-  smallThreadRate: numeric("small_thread_rate", { precision: 6, scale: 2 }).default("0.90").notNull(),
-  mediumThreadCount: integer("medium_thread_count").default(0).notNull(),
-  mediumThreadRate: numeric("medium_thread_rate", { precision: 6, scale: 2 }).default("0.75").notNull(),
-  largeThreadCount: integer("large_thread_count").default(0).notNull(),
-  largeThreadRate: numeric("large_thread_rate", { precision: 6, scale: 2 }).default("1.10").notNull(),
-  totalThreadCost: numeric("total_thread_cost", { precision: 10, scale: 2 }).notNull(),
+    // Thread costs
+    smallThreadCount: integer("small_thread_count").default(0).notNull(),
+    smallThreadRate: numeric("small_thread_rate", { precision: 6, scale: 2 })
+      .default("0.90")
+      .notNull(),
+    mediumThreadCount: integer("medium_thread_count").default(0).notNull(),
+    mediumThreadRate: numeric("medium_thread_rate", { precision: 6, scale: 2 })
+      .default("0.75")
+      .notNull(),
+    largeThreadCount: integer("large_thread_count").default(0).notNull(),
+    largeThreadRate: numeric("large_thread_rate", { precision: 6, scale: 2 })
+      .default("1.10")
+      .notNull(),
+    totalThreadCost: numeric("total_thread_cost", {
+      precision: 10,
+      scale: 2,
+    }).notNull(),
 
-  // Multipliers
-  complexityMultiplier: numeric("complexity_multiplier", { precision: 4, scale: 2 }).notNull(),
-  toleranceMultiplier: numeric("tolerance_multiplier", { precision: 4, scale: 2 }).notNull(),
+    // Multipliers
+    complexityMultiplier: numeric("complexity_multiplier", {
+      precision: 4,
+      scale: 2,
+    }).notNull(),
+    toleranceMultiplier: numeric("tolerance_multiplier", {
+      precision: 4,
+      scale: 2,
+    }).notNull(),
 
-  // Optional tooling
-  toolingCost: numeric("tooling_cost", { precision: 10, scale: 2 }),
-  toolingMarkup: numeric("tooling_markup", { precision: 10, scale: 2 }),
+    // Optional tooling
+    toolingCost: numeric("tooling_cost", { precision: 10, scale: 2 }),
+    toolingMarkup: numeric("tooling_markup", { precision: 10, scale: 2 }),
 
-  // Calculated prices
-  basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
-  adjustedPrice: numeric("adjusted_price", { precision: 10, scale: 2 }).notNull(),
-  finalPrice: numeric("final_price", { precision: 10, scale: 2 }).notNull(),
+    // Calculated prices
+    basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
+    adjustedPrice: numeric("adjusted_price", {
+      precision: 10,
+      scale: 2,
+    }).notNull(),
+    finalPrice: numeric("final_price", { precision: 10, scale: 2 }).notNull(),
 
-  // Metadata
-  notes: text("notes"),
-  calculatedBy: text("calculated_by").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => ({
-  lineItemFk: foreignKey({
-    columns: [table.quoteLineItemId],
-    foreignColumns: [quoteLineItems.id],
-    name: "quote_calc_line_item_fk"
-  }).onDelete("cascade"),
-}));
+    // Metadata
+    notes: text("notes"),
+    calculatedBy: text("calculated_by").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    lineItemFk: foreignKey({
+      columns: [table.quoteLineItemId],
+      foreignColumns: [quoteLineItems.id],
+      name: "quote_calc_line_item_fk",
+    }).onDelete("cascade"),
+  })
+);
 
-export const quotePriceCalculationTemplates = pgTable("quote_price_calculation_templates", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description"),
+export const quotePriceCalculationTemplates = pgTable(
+  "quote_price_calculation_templates",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
 
-  // Default values
-  leadTimeOption: text("lead_time_option"),
-  smallThreadCount: integer("small_thread_count"),
-  mediumThreadCount: integer("medium_thread_count"),
-  largeThreadCount: integer("large_thread_count"),
-  complexityMultiplier: numeric("complexity_multiplier", { precision: 4, scale: 2 }),
-  toleranceMultiplier: numeric("tolerance_multiplier", { precision: 4, scale: 2 }),
+    // Default values
+    leadTimeOption: text("lead_time_option"),
+    smallThreadCount: integer("small_thread_count"),
+    mediumThreadCount: integer("medium_thread_count"),
+    largeThreadCount: integer("large_thread_count"),
+    complexityMultiplier: numeric("complexity_multiplier", {
+      precision: 4,
+      scale: 2,
+    }),
+    toleranceMultiplier: numeric("tolerance_multiplier", {
+      precision: 4,
+      scale: 2,
+    }),
 
-  // Metadata
-  isGlobal: boolean("is_global").default(false).notNull(),
-  createdBy: text("created_by").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+    // Metadata
+    isGlobal: boolean("is_global").default(false).notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  }
+);
 
 // Developer Settings for storing key-value configuration (e.g., banana model URLs)
 export const developerSettings = pgTable("developer_settings", {
@@ -575,9 +701,12 @@ export const developerSettings = pgTable("developer_settings", {
 });
 
 export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
-export type NewQuotePriceCalculation = typeof quotePriceCalculations.$inferInsert;
-export type QuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferSelect;
-export type NewQuotePriceCalculationTemplate = typeof quotePriceCalculationTemplates.$inferInsert;
+export type NewQuotePriceCalculation =
+  typeof quotePriceCalculations.$inferInsert;
+export type QuotePriceCalculationTemplate =
+  typeof quotePriceCalculationTemplates.$inferSelect;
+export type NewQuotePriceCalculationTemplate =
+  typeof quotePriceCalculationTemplates.$inferInsert;
 export type CadFileVersion = typeof cadFileVersions.$inferSelect;
 export type NewCadFileVersion = typeof cadFileVersions.$inferInsert;
 export type DeveloperSetting = typeof developerSettings.$inferSelect;

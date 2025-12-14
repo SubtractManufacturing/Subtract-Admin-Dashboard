@@ -15,6 +15,14 @@ export default defineConfig({
     alias: {
       "~": path.resolve(__dirname, "./app"),
     },
-    extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
+    extensions: [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"],
+  },
+  // Exclude server-only packages from client bundling
+  optimizeDeps: {
+    exclude: ["mupdf"],
+  },
+  ssr: {
+    // Don't externalize mupdf in SSR - let it be bundled
+    noExternal: ["mupdf"],
   },
 });
