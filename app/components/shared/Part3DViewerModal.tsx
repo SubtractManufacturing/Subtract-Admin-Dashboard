@@ -127,7 +127,7 @@ export function Part3DViewerModal({
     } finally {
       setIsLoadingVersions(false);
     }
-  }, [entityId, routePrefix]);
+  }, [entityId, routePrefix, showCadRevisionsUI]);
 
   useEffect(() => {
     if (isOpen && entityId && showCadRevisionsUI) {
