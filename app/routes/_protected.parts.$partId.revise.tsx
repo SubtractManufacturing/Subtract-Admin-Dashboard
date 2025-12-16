@@ -58,7 +58,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
 
     // Validate file type
-    const allowedExtensions = [".step", ".stp", ".iges", ".igs", ".brep"];
+    const allowedExtensions = [".step", ".stp", ".iges", ".igs", ".brep", ".sldprt", ".svg", ".dxf"];
     const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
     if (!allowedExtensions.includes(fileExtension)) {
       return json({

@@ -509,7 +509,7 @@ export function Part3DViewerModal({
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept=".step,.stp,.iges,.igs,.brep"
+                        accept=".step,.stp,.iges,.igs,.brep,.sldprt,.svg,.dxf"
                         onChange={handleFileSelect}
                         className="hidden"
                       />
@@ -541,7 +541,8 @@ export function Part3DViewerModal({
                           <div className="text-gray-500 dark:text-gray-400 text-sm">
                             <p>Click to select file</p>
                             <p className="text-xs text-gray-400 dark:text-gray-500">
-                              .step, .stp, .iges, .igs, .brep
+                              .step, .stp, .iges, .igs, .brep, .sldprt, .svg,
+                              .dxf
                             </p>
                           </div>
                         )}
