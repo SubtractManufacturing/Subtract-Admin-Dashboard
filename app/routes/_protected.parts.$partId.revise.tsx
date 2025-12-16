@@ -5,7 +5,6 @@ import {
   unstable_createMemoryUploadHandler,
 } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
-import { canUserUploadCadRevision } from "~/lib/featureFlags";
 import { createCadVersion, getLatestVersionNumber, backfillExistingCadFile } from "~/lib/cadVersions";
 import { handlePartCadRevision } from "~/lib/part-mesh-converter.server";
 import { uploadFile } from "~/lib/s3.server";
@@ -26,12 +25,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   if (!user?.id) {
     return json({ error: "User authentication failed" }, { status: 401 });
-  }
-
-  // Feature flag check
-  const canRevise = await canUserUploadCadRevision(userDetails?.role);
-  if (!canRevise) {
-    return json({ error: "CAD revisions are not enabled for your account" }, { status: 403 });
   }
 
   // Verify part exists and get customer ID and existing file info for event logging

@@ -22,11 +22,14 @@ export const FEATURE_FLAGS = {
 } as const;
 
 // Default feature flags with their metadata
-const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt">> = [
+const DEFAULT_FLAGS: Array<
+  Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt">
+> = [
   {
     key: FEATURE_FLAGS.MESH_UPLOADS_DEV,
     name: "Enable Mesh Uploads for Developers",
-    description: "Allow users with Developer role to upload 3D mesh files (STL, OBJ, GLTF)",
+    description:
+      "Allow users with Developer role to upload 3D mesh files (STL, OBJ, GLTF)",
     enabled: false,
   },
   {
@@ -38,7 +41,8 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
   {
     key: FEATURE_FLAGS.EVENTS_ACCESS_ALL,
     name: "Enable Events Route for All Users",
-    description: "Allow all users to access the /events route (Admin and Dev users always have access)",
+    description:
+      "Allow all users to access the /events route (Admin and Dev users always have access)",
     enabled: true,
   },
   {
@@ -50,7 +54,8 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
   {
     key: FEATURE_FLAGS.PRICE_CALCULATOR_DEV,
     name: "Enable Price Calculator for Admins/Devs",
-    description: "Allow users with Admin or Developer role to access the quote price calculator",
+    description:
+      "Allow users with Admin or Developer role to access the quote price calculator",
     enabled: true,
   },
   {
@@ -62,31 +67,36 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
   {
     key: FEATURE_FLAGS.PDF_AUTO_DOWNLOAD,
     name: "Auto-Download Generated PDFs",
-    description: "Automatically download PDFs to user's computer when generated (disable for development)",
+    description:
+      "Automatically download PDFs to user's computer when generated (disable for development)",
     enabled: true,
   },
   {
     key: FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED,
     name: "Require Rejection Reason for Quotes",
-    description: "Make the rejection reason required when rejecting a quote (when disabled, reason is optional)",
+    description:
+      "Make the rejection reason required when rejecting a quote (when disabled, reason is optional)",
     enabled: false,
   },
   {
     key: FEATURE_FLAGS.S3_MIGRATION_ENABLED,
     name: "Enable S3 Storage Migration Tools",
-    description: "Allow developers to run S3 storage consolidation and cleanup operations (Dev only)",
+    description:
+      "Allow developers to run S3 storage consolidation and cleanup operations (Dev only)",
     enabled: false,
   },
   {
     key: FEATURE_FLAGS.CAD_REVISIONS_DEV,
     name: "Enable CAD Revisions for Developers",
-    description: "Allow users with Developer role to upload revised CAD files to quotes and orders",
+    description:
+      "Allow users with Developer role to upload revised CAD files to quotes and orders",
     enabled: false,
   },
   {
     key: FEATURE_FLAGS.CAD_REVISIONS_ADMIN,
     name: "Enable CAD Revisions for Admins",
-    description: "Allow users with Admin role (and Dev) to upload revised CAD files",
+    description:
+      "Allow users with Admin role (and Dev) to upload revised CAD files",
     enabled: false,
   },
   {
@@ -98,7 +108,8 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
   {
     key: FEATURE_FLAGS.BANANA_FOR_SCALE,
     name: "Banana for Scale",
-    description: "Show a banana model next to parts in 3D viewer for size reference (Dev only)",
+    description:
+      "Show a banana model next to parts in 3D viewer for size reference (Dev only)",
     enabled: false,
   },
   {
@@ -110,7 +121,8 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
   {
     key: FEATURE_FLAGS.EMAIL_SEND_DEV,
     name: "Enable Email Integration",
-    description: "Enable Gmail integration for sending emails from quotes (Admin and Dev users)",
+    description:
+      "Enable Gmail integration for sending emails from quotes (Admin and Dev users)",
     enabled: false,
   },
 ];
@@ -126,11 +138,15 @@ export async function getFeatureFlag(key: string) {
     .from(featureFlags)
     .where(eq(featureFlags.key, key))
     .limit(1);
-  
+
   return result[0];
 }
 
-export async function updateFeatureFlag(key: string, enabled: boolean, updatedBy: string) {
+export async function updateFeatureFlag(
+  key: string,
+  enabled: boolean,
+  updatedBy: string
+) {
   const result = await db
     .update(featureFlags)
     .set({
@@ -140,7 +156,7 @@ export async function updateFeatureFlag(key: string, enabled: boolean, updatedBy
     })
     .where(eq(featureFlags.key, key))
     .returning();
-  
+
   return result[0];
 }
 
@@ -151,7 +167,10 @@ export async function initializeFeatureFlags() {
     const existing = await getFeatureFlag(flag.key);
     if (!existing) {
       await db.insert(featureFlags).values(flag);
-    } else if (existing.name !== flag.name || existing.description !== flag.description) {
+    } else if (
+      existing.name !== flag.name ||
+      existing.description !== flag.description
+    ) {
       // Update name and description if they've changed (preserves enabled state)
       await db
         .update(featureFlags)
@@ -170,7 +189,7 @@ export async function isFeatureEnabled(key: string) {
 
   // If flag doesn't exist, create it with default value
   if (!flag) {
-    const defaultFlag = DEFAULT_FLAGS.find(f => f.key === key);
+    const defaultFlag = DEFAULT_FLAGS.find((f) => f.key === key);
     if (defaultFlag) {
       try {
         await db.insert(featureFlags).values(defaultFlag);
@@ -187,7 +206,9 @@ export async function isFeatureEnabled(key: string) {
 
 export async function canUserUploadMesh(userRole?: string | null) {
   // Check if mesh uploads are enabled for all users
-  const allUsersEnabled = await isFeatureEnabled(FEATURE_FLAGS.MESH_UPLOADS_ALL);
+  const allUsersEnabled = await isFeatureEnabled(
+    FEATURE_FLAGS.MESH_UPLOADS_ALL
+  );
   if (allUsersEnabled) return true;
 
   // Check if mesh uploads are enabled for developers and user is a developer
@@ -218,12 +239,16 @@ export async function shouldShowEventsInNav() {
 
 export async function canUserAccessPriceCalculator(userRole?: string | null) {
   // Check if price calculator is enabled for all users
-  const allUsersEnabled = await isFeatureEnabled(FEATURE_FLAGS.PRICE_CALCULATOR_ALL);
+  const allUsersEnabled = await isFeatureEnabled(
+    FEATURE_FLAGS.PRICE_CALCULATOR_ALL
+  );
   if (allUsersEnabled) return true;
 
   // Check if price calculator is enabled for admins/devs and user has elevated role
   if (userRole === "Admin" || userRole === "Dev") {
-    const devEnabled = await isFeatureEnabled(FEATURE_FLAGS.PRICE_CALCULATOR_DEV);
+    const devEnabled = await isFeatureEnabled(
+      FEATURE_FLAGS.PRICE_CALCULATOR_DEV
+    );
     return devEnabled;
   }
 
@@ -231,17 +256,21 @@ export async function canUserAccessPriceCalculator(userRole?: string | null) {
 }
 
 /**
- * Check if user can upload CAD revisions
+ * Check if user should see the CAD revisions UI
  * Uses three-tiered fallthrough: ALL -> ADMIN -> DEV
  */
-export async function canUserUploadCadRevision(userRole?: string | null) {
+export async function canUserSeeCadRevisionsUI(userRole?: string | null) {
   // Check if enabled for all users first
-  const allUsersEnabled = await isFeatureEnabled(FEATURE_FLAGS.CAD_REVISIONS_ALL);
+  const allUsersEnabled = await isFeatureEnabled(
+    FEATURE_FLAGS.CAD_REVISIONS_ALL
+  );
   if (allUsersEnabled) return true;
 
   // Check Admin tier (includes Dev users)
   if (userRole === "Admin" || userRole === "Dev") {
-    const adminEnabled = await isFeatureEnabled(FEATURE_FLAGS.CAD_REVISIONS_ADMIN);
+    const adminEnabled = await isFeatureEnabled(
+      FEATURE_FLAGS.CAD_REVISIONS_ADMIN
+    );
     if (adminEnabled) return true;
   }
 

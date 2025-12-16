@@ -32,9 +32,10 @@ interface QuotePartsModalProps {
   onClose: () => void;
   parts: QuotePart[];
   quoteId?: number;
+  showCadRevisionsUI?: boolean;
 }
 
-export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsModalProps) {
+export function QuotePartsModal({ isOpen, onClose, parts, quoteId, showCadRevisionsUI }: QuotePartsModalProps) {
   const meshFetcher = useFetcher();
   const deleteFetcher = useFetcher();
   const uploadFetcher = useFetcher();
@@ -506,6 +507,8 @@ export function QuotePartsModal({ isOpen, onClose, parts, quoteId }: QuotePartsM
           solidModelUrl={selectedPart.signedFileUrl}
           quotePartId={selectedPart.id}
           isQuotePart={true}
+          canRevise={showCadRevisionsUI}
+          showCadRevisionsUI={showCadRevisionsUI}
         />
       )}
 

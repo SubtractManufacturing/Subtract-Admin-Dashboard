@@ -183,14 +183,23 @@ export async function getCadVersionCount(
 }
 
 /**
+ * Check if a filename has the timestamp-hash prefix pattern
+ * Pattern: 1765909500913-137c241618d7e1dc-filename.ext
+ */
+function hasPrefixedFilename(fileName: string): boolean {
+  const prefixPattern = /^\d{13,}-[a-f0-9]{16}-.+$/i;
+  return prefixPattern.test(fileName);
+}
+
+/**
  * Backfill existing CAD file as v1 if no version history exists
  * This preserves files uploaded before version history was implemented
+ * Also updates existing v1 records if they have missing data (fileSize, prefixed filename)
  *
  * @param entityType - "quote_part" or "part"
  * @param entityId - The entity ID
  * @param existingFile - Info about the existing file to backfill
- * @param systemNote - Note to add explaining this is a backfilled version
- * @returns The created version record, or null if no backfill was needed
+ * @returns The created/updated version record, or null if no backfill was needed
  */
 export async function backfillExistingCadFile(
   entityType: CadEntityType,
@@ -202,16 +211,46 @@ export async function backfillExistingCadFile(
     contentType?: string;
   } | null
 ): Promise<CadFileVersion | null> {
-  // Check if version history already exists
-  const versionCount = await getCadVersionCount(entityType, entityId);
-  if (versionCount > 0) {
-    // Already has version history, no backfill needed
-    return null;
-  }
-
   // Check if there's an existing file to backfill
   if (!existingFile?.s3Key) {
     // No existing file, no backfill needed
+    return null;
+  }
+
+  // Check if version history already exists
+  const existingVersions = await getCadVersions(entityType, entityId);
+  
+  if (existingVersions.length > 0) {
+    // Version exists - check if we should update it with better data
+    const v1 = existingVersions.find(v => v.version === 1);
+    if (v1) {
+      const needsUpdate = 
+        // Update if existing has no fileSize but we have one
+        (v1.fileSize === null && existingFile.fileSize) ||
+        // Update if existing has prefixed filename but we have a clean one
+        (hasPrefixedFilename(v1.fileName) && !hasPrefixedFilename(existingFile.fileName));
+      
+      if (needsUpdate) {
+        const updates: Partial<CadFileVersion> = {};
+        
+        if (v1.fileSize === null && existingFile.fileSize) {
+          updates.fileSize = existingFile.fileSize;
+        }
+        
+        if (hasPrefixedFilename(v1.fileName) && !hasPrefixedFilename(existingFile.fileName)) {
+          updates.fileName = existingFile.fileName;
+        }
+        
+        if (Object.keys(updates).length > 0) {
+          const [updatedVersion] = await db
+            .update(cadFileVersions)
+            .set(updates)
+            .where(eq(cadFileVersions.id, v1.id))
+            .returning();
+          return updatedVersion;
+        }
+      }
+    }
     return null;
   }
 

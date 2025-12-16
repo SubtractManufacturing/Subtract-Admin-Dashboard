@@ -1,6 +1,5 @@
 import { json, ActionFunctionArgs } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
-import { canUserUploadCadRevision } from "~/lib/featureFlags";
 import { restoreVersion, getCadVersionById, getCurrentCadVersion } from "~/lib/cadVersions";
 import { handlePartVersionRestore } from "~/lib/part-mesh-converter.server";
 import { createEvent } from "~/lib/events";
@@ -14,12 +13,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   if (!partId) {
     return json({ error: "Part ID is required" }, { status: 400 });
-  }
-
-  // Feature flag check - use same permission as revision upload
-  const canRevise = await canUserUploadCadRevision(userDetails?.role);
-  if (!canRevise) {
-    return json({ error: "CAD revisions are not enabled for your account" }, { status: 403 });
   }
 
   // Verify part exists and get customer ID for event logging

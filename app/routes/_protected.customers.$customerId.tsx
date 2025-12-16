@@ -8,7 +8,7 @@ import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } 
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh, shouldShowEventsInNav, shouldShowVersionInHeader, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
+import { canUserUploadMesh, shouldShowEventsInNav, shouldShowVersionInHeader, canUserSeeCadRevisionsUI, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl, getDownloadUrl as getS3DownloadUrl } from "~/lib/s3.server";
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
@@ -54,7 +54,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled] = await Promise.all([
+  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, showVersionInHeader, events, showCadRevisionsUI, bananaEnabled] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
@@ -63,7 +63,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
     getEventsByEntity("customer", customer.id.toString(), 10),
-    canUserUploadCadRevision(userDetails?.role),
+    canUserSeeCadRevisionsUI(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
 
@@ -146,7 +146,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled, bananaModelUrl }),
+    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, showCadRevisionsUI, bananaEnabled, bananaModelUrl }),
     headers
   );
 }
@@ -699,7 +699,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, showCadRevisionsUI, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
@@ -1932,7 +1932,8 @@ export default function CustomerDetails() {
         partId={selected3DPart?.id}
         entityType="part"
         cadFileUrl={selected3DPart?.partFileUrl || undefined}
-        canRevise={canRevise}
+        canRevise={showCadRevisionsUI}
+        showCadRevisionsUI={showCadRevisionsUI}
         onThumbnailUpdate={() => {
           revalidator.revalidate();
         }}

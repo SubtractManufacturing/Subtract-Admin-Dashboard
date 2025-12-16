@@ -5,7 +5,6 @@ import {
   unstable_createMemoryUploadHandler,
 } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
-import { canUserUploadCadRevision } from "~/lib/featureFlags";
 import { createCadVersion, getLatestVersionNumber, backfillExistingCadFile } from "~/lib/cadVersions";
 import { handleCadRevision } from "~/lib/quote-part-mesh-converter.server";
 import { uploadFile } from "~/lib/s3.server";
@@ -22,12 +21,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   if (!quotePartId) {
     return json({ error: "Quote Part ID is required" }, { status: 400 });
-  }
-
-  // Feature flag check
-  const canRevise = await canUserUploadCadRevision(userDetails?.role);
-  if (!canRevise) {
-    return json({ error: "CAD revisions are not enabled for your account" }, { status: 403 });
   }
 
   // Verify quote part exists and get quote ID and existing file info for event logging

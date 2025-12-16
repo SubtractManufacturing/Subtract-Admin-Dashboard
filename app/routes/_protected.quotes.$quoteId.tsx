@@ -37,7 +37,7 @@ import {
   shouldShowEventsInNav,
   shouldShowVersionInHeader,
   canUserAccessPriceCalculator,
-  canUserUploadCadRevision,
+  canUserSeeCadRevisionsUI,
   canUserSendEmail,
   isFeatureEnabled,
   FEATURE_FLAGS,
@@ -278,7 +278,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     pdfAutoDownload,
     rejectionReasonRequired,
     events,
-    canRevise,
+    showCadRevisionsUI,
     bananaEnabled,
   ] = await Promise.all([
     shouldShowEventsInNav(),
@@ -288,7 +288,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
-    canUserUploadCadRevision(userDetails?.role),
+    canUserSeeCadRevisionsUI(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
 
@@ -338,7 +338,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       rejectionReasonRequired,
       events,
       convertedOrder,
-      canRevise,
+      showCadRevisionsUI,
       bananaEnabled,
       bananaModelUrl,
     }),
@@ -1551,7 +1551,7 @@ export default function QuoteDetail() {
     rejectionReasonRequired,
     events,
     convertedOrder,
-    canRevise,
+    showCadRevisionsUI,
     bananaEnabled,
     bananaModelUrl,
   } = useLoaderData<typeof loader>();
@@ -3078,6 +3078,7 @@ export default function QuoteDetail() {
                                             signedMeshUrl?: string;
                                             signedFileUrl?: string;
                                             signedThumbnailUrl?: string;
+                                            partFileUrl?: string | null;
                                           }
                                         )
                                       }
@@ -3091,12 +3092,28 @@ export default function QuoteDetail() {
                                       />
                                     </button>
                                   ) : (
-                                    <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleView3DModel(
+                                          part as {
+                                            id: string;
+                                            partName: string;
+                                            signedMeshUrl?: string;
+                                            signedFileUrl?: string;
+                                            signedThumbnailUrl?: string;
+                                            partFileUrl?: string | null;
+                                          }
+                                        )
+                                      }
+                                      className="w-12 h-12 bg-gray-200 dark:bg-gray-600 rounded flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0"
+                                      title="Click to view part details"
+                                    >
                                       {isProcessing ? (
                                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
                                       ) : (
                                         <svg
-                                          className="w-6 h-6 text-gray-400"
+                                          className="w-6 h-6 text-gray-400 dark:text-gray-500"
                                           fill="none"
                                           stroke="currentColor"
                                           viewBox="0 0 24 24"
@@ -3109,7 +3126,7 @@ export default function QuoteDetail() {
                                           />
                                         </svg>
                                       )}
-                                    </div>
+                                    </button>
                                   )}
                                 </>
                               )}
@@ -3619,6 +3636,7 @@ export default function QuoteDetail() {
           onClose={() => setIsPartsModalOpen(false)}
           parts={quote.parts}
           quoteId={quote.id}
+          showCadRevisionsUI={showCadRevisionsUI}
         />
       )}
 
@@ -3642,7 +3660,8 @@ export default function QuoteDetail() {
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
           isQuotePart={true}
           cadFileUrl={selectedPart3D.cadFileUrl}
-          canRevise={canRevise}
+          canRevise={showCadRevisionsUI}
+          showCadRevisionsUI={showCadRevisionsUI}
           onRevisionComplete={() => {
             // Close the modal after revision - the mesh is being converted
             // and the old modelUrl is no longer valid

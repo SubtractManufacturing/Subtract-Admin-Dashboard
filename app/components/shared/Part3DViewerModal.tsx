@@ -38,6 +38,8 @@ interface Part3DViewerModalProps {
   bananaEnabled?: boolean;
   /** URL to the banana mesh model */
   bananaModelUrl?: string;
+  /** Whether to show the CAD revisions UI (history/upload). Defaults to false. */
+  showCadRevisionsUI?: boolean;
 }
 
 export function Part3DViewerModal({
@@ -58,6 +60,7 @@ export function Part3DViewerModal({
   onRevisionComplete,
   entityType: propEntityType,
   bananaModelUrl,
+  showCadRevisionsUI = false,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -110,7 +113,7 @@ export function Part3DViewerModal({
 
   // Fetch version history when panel is opened
   const fetchVersionHistory = useCallback(async () => {
-    if (!entityId) return;
+    if (!entityId || !showCadRevisionsUI) return;
 
     setIsLoadingVersions(true);
     try {
@@ -127,10 +130,10 @@ export function Part3DViewerModal({
   }, [entityId, routePrefix]);
 
   useEffect(() => {
-    if (isOpen && entityId) {
+    if (isOpen && entityId && showCadRevisionsUI) {
       fetchVersionHistory();
     }
-  }, [isOpen, entityId, fetchVersionHistory]);
+  }, [isOpen, entityId, showCadRevisionsUI, fetchVersionHistory]);
 
   // Reset state when modal closes
   useEffect(() => {
@@ -342,7 +345,7 @@ export function Part3DViewerModal({
         </button>
 
         {/* Version Control Button - top right, next to close */}
-        {entityId && (
+        {entityId && showCadRevisionsUI && (
           <div ref={dropdownRef} className="absolute top-2 right-14 z-20">
             <button
               onClick={() => setShowVersionPanel(!showVersionPanel)}
@@ -621,14 +624,75 @@ export function Part3DViewerModal({
                 <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zM4.5 7.5a.5.5 0 0 0 0 1h7a.5.5 0 0 0 0-1h-7z" />
               </svg>
               <p className="text-lg mb-1">No 3D preview available</p>
-              <p className="text-sm text-gray-400 dark:text-gray-500">
+              <p className="text-sm text-gray-400 dark:text-gray-500 mb-4">
                 Mesh conversion may be in progress or failed
               </p>
-              {hasCadFile && (
-                <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">
-                  CAD file is available for download
-                </p>
-              )}
+              {/* Show current file info and download button */}
+              {(() => {
+                const currentVersionFile = versions.find(
+                  (v) => v.isCurrentVersion
+                );
+                if (currentVersionFile) {
+                  return (
+                    <div className="flex flex-col items-center gap-3 mt-2 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 max-w-md">
+                      <div className="flex items-center gap-3">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="24"
+                          height="24"
+                          fill="currentColor"
+                          viewBox="0 0 16 16"
+                          className="text-gray-500 dark:text-gray-400 flex-shrink-0"
+                        >
+                          <path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5L14 4.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5h-2z" />
+                        </svg>
+                        <div className="min-w-0">
+                          <p
+                            className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-xs"
+                            title={currentVersionFile.fileName}
+                          >
+                            {currentVersionFile.fileName}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {formatFileSize(currentVersionFile.fileSize)} • v
+                            {currentVersionFile.version}
+                          </p>
+                        </div>
+                      </div>
+                      {currentVersionFile.downloadUrl && (
+                        <button
+                          onClick={() =>
+                            window.open(
+                              currentVersionFile.downloadUrl!,
+                              "_blank"
+                            )
+                          }
+                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            fill="currentColor"
+                            viewBox="0 0 16 16"
+                          >
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
+                          </svg>
+                          Download CAD File
+                        </button>
+                      )}
+                    </div>
+                  );
+                } else if (hasCadFile) {
+                  return (
+                    <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">
+                      CAD file is available for download via version history
+                    </p>
+                  );
+                }
+                return null;
+              })()}
             </div>
           )}
         </div>

@@ -31,7 +31,7 @@ import {
   shouldShowVersionInHeader,
   isFeatureEnabled,
   FEATURE_FLAGS,
-  canUserUploadCadRevision,
+  canUserSeeCadRevisionsUI,
 } from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import {
@@ -196,14 +196,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     showVersionInHeader,
     pdfAutoDownload,
     events,
-    canRevise,
+    showCadRevisionsUI,
     bananaEnabled,
   ] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsForOrder(order.id, 10),
-    canUserUploadCadRevision(userDetails?.role),
+    canUserSeeCadRevisionsUI(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
   ]);
 
@@ -232,7 +232,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       showVersionInHeader,
       pdfAutoDownload,
       events,
-      canRevise,
+      showCadRevisionsUI,
       bananaEnabled,
       bananaModelUrl,
     }),
@@ -1105,7 +1105,7 @@ export default function OrderDetails() {
     showVersionInHeader,
     pdfAutoDownload,
     events,
-    canRevise,
+    showCadRevisionsUI,
     bananaEnabled,
     bananaModelUrl,
   } = useLoaderData<typeof loader>();
@@ -3320,7 +3320,8 @@ export default function OrderDetails() {
           partId={selectedPart3D.partId}
           entityType="part"
           cadFileUrl={selectedPart3D.cadFileUrl}
-          canRevise={canRevise}
+          canRevise={showCadRevisionsUI}
+          showCadRevisionsUI={showCadRevisionsUI}
           onThumbnailUpdate={() => {
             revalidator.revalidate();
           }}
