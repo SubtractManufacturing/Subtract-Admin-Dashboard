@@ -4,24 +4,17 @@ import { createQuoteWithParts, type QuoteInput, type QuoteEventContext } from "~
 import { createCustomer, getCustomers } from "~/lib/customers";
 import { createEvent } from "~/lib/events";
 import { useLoaderData, useNavigate, useRouteError, isRouteErrorResponse } from "@remix-run/react";
-import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav } from "~/lib/featureFlags";
-import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import NewQuoteModal from "~/components/quotes/NewQuoteModal";
 import { useState } from "react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  const appConfig = getAppConfig();
 
-  const [customers, showEventsLink] = await Promise.all([
-    getCustomers(),
-    shouldShowEventsInNav()
-  ]);
+  const customers = await getCustomers();
 
   return withAuthHeaders(
-    json({ user, userDetails, appConfig, customers, showEventsLink }),
+    json({ user, userDetails, customers }),
     headers
   );
 }
@@ -165,7 +158,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function NewQuotePage() {
-  const { user, userDetails, customers, showEventsLink } = useLoaderData<typeof loader>();
+  const { user, userDetails, customers } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(true);
 
@@ -185,12 +178,6 @@ export default function NewQuotePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar
-        userName={userDetails?.name || user?.email}
-        userEmail={user?.email}
-        userInitials={userDetails?.name?.split(' ').map((n: string) => n[0]).join('').toUpperCase() || 'U'}
-        showEventsLink={showEventsLink}
-      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Breadcrumbs items={breadcrumbItems} />
 

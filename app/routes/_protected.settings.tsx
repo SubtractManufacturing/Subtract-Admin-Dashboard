@@ -6,13 +6,10 @@ import { getAppConfig } from "~/lib/config.server";
 import { createServerClient } from "~/lib/supabase";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
-import Navbar from "~/components/Navbar";
 import {
   getAllFeatureFlags,
   updateFeatureFlag,
   initializeFeatureFlags,
-  shouldShowEventsInNav,
-  shouldShowVersionInHeader,
   isFeatureEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
@@ -48,12 +45,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const message = url.searchParams.get("message");
 
-  // Get events nav visibility
-  const showEventsLink = await shouldShowEventsInNav();
-
-  // Get version header visibility
-  const showVersionInHeader = await shouldShowVersionInHeader();
-
   // Get S3 migration status for Dev users
   const s3MigrationEnabled =
     userDetails.role === "Dev"
@@ -81,6 +72,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
       : false;
   const emailSendAsAddresses =
     emailIntegrationEnabled ? await getAllSendAsAddresses() : [];
+  
+  // Get email configuration (for Postmark)
+  const { 
+    getEmailReplyToAddress, 
+    getEmailOutboundBccAddress,
+    getEmailInboundForwardAddress 
+  } = await import("~/lib/developerSettings");
+  
+  const emailReplyToAddress =
+    emailIntegrationEnabled ? await getEmailReplyToAddress() : null;
+  const emailOutboundBccAddress =
+    emailIntegrationEnabled ? await getEmailOutboundBccAddress() : null;
+  const emailInboundForwardAddress =
+    emailIntegrationEnabled ? await getEmailInboundForwardAddress() : null;
 
   return withAuthHeaders(
     json({
@@ -89,14 +94,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
       message,
       appConfig,
       featureFlags,
-      showEventsLink,
-      showVersionInHeader,
       s3MigrationEnabled,
       s3MigrationStatus,
       bananaForScaleEnabled,
       bananaModelStatus,
       emailIntegrationEnabled,
       emailSendAsAddresses,
+      emailReplyToAddress,
+      emailOutboundBccAddress,
+      emailInboundForwardAddress,
     }),
     headers
   );
@@ -364,24 +370,28 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    // Validate that the address is configured as "Send As" in Gmail
+    // Validate that the address is properly formatted for Postmark
     try {
-      const { validateSendAsAddress } = await import(
-        "~/lib/gmail/gmail-client.server"
+      const { validateSenderAddress } = await import(
+        "~/lib/postmark/postmark-client.server"
       );
-      const validation = await validateSendAsAddress(email);
+      const validation = validateSenderAddress(email);
 
       if (!validation.valid) {
         return withAuthHeaders(
           json({
-            error: validation.error || "This address is not configured as a 'Send As' address in Gmail",
+            error: validation.warning || "Invalid email address format",
           }, { status: 400 }),
           headers
         );
       }
+      // Log a reminder about Postmark Sender Signatures
+      if (validation.warning) {
+        console.log("Postmark reminder:", validation.warning);
+      }
     } catch (validationError) {
-      // If Gmail API validation fails, still allow adding but warn
-      console.error("Gmail validation failed:", validationError);
+      // If validation fails, still allow adding but warn
+      console.error("Email validation failed:", validationError);
       // Continue without blocking - the address might still work
     }
 
@@ -418,6 +428,78 @@ export async function action({ request }: ActionFunctionArgs) {
     } catch (error) {
       return withAuthHeaders(
         json({ error: "Failed to delete email address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Update email reply-to address (for Postmark inbound routing)
+  if (intent === "updateEmailReplyTo" && userDetails.role === "Dev") {
+    const replyToAddress = formData.get("replyToAddress") as string;
+
+    try {
+      // Basic email validation
+      if (replyToAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyToAddress)) {
+        return withAuthHeaders(
+          json({ error: "Invalid email address format" }, { status: 400 }),
+          headers
+        );
+      }
+
+      const { setEmailReplyToAddress } = await import("~/lib/developerSettings");
+      await setEmailReplyToAddress(replyToAddress || null, user.id);
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update reply-to address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Update outbound BCC address (Gmail mirroring for sent emails)
+  if (intent === "updateOutboundBcc" && userDetails.role === "Dev") {
+    const bccAddress = formData.get("bccAddress") as string;
+
+    try {
+      // Basic email validation
+      if (bccAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bccAddress)) {
+        return withAuthHeaders(
+          json({ error: "Invalid email address format" }, { status: 400 }),
+          headers
+        );
+      }
+
+      const { setEmailOutboundBccAddress } = await import("~/lib/developerSettings");
+      await setEmailOutboundBccAddress(bccAddress || null, user.id);
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update outbound BCC address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Update inbound forward address (Gmail mirroring for received emails)
+  if (intent === "updateInboundForward" && userDetails.role === "Dev") {
+    const forwardAddress = formData.get("forwardAddress") as string;
+
+    try {
+      // Basic email validation
+      if (forwardAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forwardAddress)) {
+        return withAuthHeaders(
+          json({ error: "Invalid email address format" }, { status: 400 }),
+          headers
+        );
+      }
+
+      const { setEmailInboundForwardAddress } = await import("~/lib/developerSettings");
+      await setEmailInboundForwardAddress(forwardAddress || null, user.id);
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update inbound forward address" }, { status: 500 }),
         headers
       );
     }
@@ -695,14 +777,15 @@ export default function Settings() {
     message,
     appConfig,
     featureFlags: initialFeatureFlags,
-    showEventsLink,
-    showVersionInHeader,
     s3MigrationEnabled,
     s3MigrationStatus,
     bananaForScaleEnabled,
     bananaModelStatus,
     emailIntegrationEnabled,
     emailSendAsAddresses,
+    emailReplyToAddress,
+    emailOutboundBccAddress,
+    emailInboundForwardAddress,
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
@@ -711,6 +794,9 @@ export default function Settings() {
   const s3ConsolidateFetcher = useFetcher<typeof action>();
   const s3CleanupFetcher = useFetcher<typeof action>();
   const emailAddressFetcher = useFetcher<typeof action>();
+  const emailReplyToFetcher = useFetcher<typeof action>();
+  const emailOutboundBccFetcher = useFetcher<typeof action>();
+  const emailInboundForwardFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
 
   // State for adding new email address
@@ -823,27 +909,18 @@ export default function Settings() {
   }
 
   return (
-    <div>
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={(userDetails?.name || user.email).charAt(0).toUpperCase()}
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
-      />
-      <div className="p-4 md:p-6 max-w-6xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Settings
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            Manage your account settings and preferences
-          </p>
-        </div>
+    <div className="p-4 md:p-6 max-w-6xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          Settings
+        </h1>
+        <p className="text-gray-600 dark:text-gray-400 mt-1">
+          Manage your account settings and preferences
+        </p>
+      </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-          <div className="border-b border-gray-200 dark:border-gray-700">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div className="border-b border-gray-200 dark:border-gray-700">
             <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
               {tabs.map((tab) => (
                 <button
@@ -1128,6 +1205,153 @@ export default function Settings() {
                       {emailAddressFetcher.data && "error" in emailAddressFetcher.data && (
                         <p className="text-sm text-red-600 dark:text-red-400 mt-2">
                           {emailAddressFetcher.data.error}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Reply-To Address Configuration */}
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        Reply-To Address
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Configure the reply-to address for outbound emails. This should be your Postmark inbound address
+                        (e.g., inbound@yourdomain.com) to ensure replies are captured via webhook.
+                      </p>
+
+                      <emailReplyToFetcher.Form method="post" className="space-y-3">
+                        <input type="hidden" name="intent" value="updateEmailReplyTo" />
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            name="replyToAddress"
+                            defaultValue={emailReplyToAddress || ""}
+                            placeholder="inbound@yourdomain.com"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                          />
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={emailReplyToFetcher.state === "submitting"}
+                          >
+                            {emailReplyToFetcher.state === "submitting" ? "Saving..." : "Save"}
+                          </Button>
+                        </div>
+                      </emailReplyToFetcher.Form>
+
+                      {emailReplyToAddress && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Current: {emailReplyToAddress}
+                        </p>
+                      )}
+
+                      {emailReplyToFetcher.data && "error" in emailReplyToFetcher.data && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                          {emailReplyToFetcher.data.error}
+                        </p>
+                      )}
+                      {emailReplyToFetcher.data && "success" in emailReplyToFetcher.data && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Reply-to address saved successfully!
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Outbound BCC Address (Gmail Mirroring for Sent Emails) */}
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        Outbound Email BCC (Gmail Mirroring)
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        BCC a copy of all outbound emails to this address so your team can see sent emails in Gmail.
+                        This requires the &quot;Enable Outbound Email BCC&quot; feature flag to be enabled.
+                      </p>
+
+                      <emailOutboundBccFetcher.Form method="post" className="space-y-3">
+                        <input type="hidden" name="intent" value="updateOutboundBcc" />
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            name="bccAddress"
+                            defaultValue={emailOutboundBccAddress || ""}
+                            placeholder="archive@yourdomain.com"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                          />
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={emailOutboundBccFetcher.state === "submitting"}
+                          >
+                            {emailOutboundBccFetcher.state === "submitting" ? "Saving..." : "Save"}
+                          </Button>
+                        </div>
+                      </emailOutboundBccFetcher.Form>
+
+                      {emailOutboundBccAddress && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Current: {emailOutboundBccAddress}
+                        </p>
+                      )}
+
+                      {emailOutboundBccFetcher.data && "error" in emailOutboundBccFetcher.data && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                          {emailOutboundBccFetcher.data.error}
+                        </p>
+                      )}
+                      {emailOutboundBccFetcher.data && "success" in emailOutboundBccFetcher.data && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Outbound BCC address saved successfully!
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Inbound Forward Address (Gmail Mirroring for Received Emails) */}
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        Inbound Email Forwarding (Gmail Mirroring)
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        Forward inbound emails to this address so your team can see customer replies in Gmail.
+                        This requires the &quot;Enable Inbound Email Forwarding&quot; feature flag to be enabled.
+                      </p>
+
+                      <emailInboundForwardFetcher.Form method="post" className="space-y-3">
+                        <input type="hidden" name="intent" value="updateInboundForward" />
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            name="forwardAddress"
+                            defaultValue={emailInboundForwardAddress || ""}
+                            placeholder="team@yourdomain.com"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                          />
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={emailInboundForwardFetcher.state === "submitting"}
+                          >
+                            {emailInboundForwardFetcher.state === "submitting" ? "Saving..." : "Save"}
+                          </Button>
+                        </div>
+                      </emailInboundForwardFetcher.Form>
+
+                      {emailInboundForwardAddress && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Current: {emailInboundForwardAddress}
+                        </p>
+                      )}
+
+                      {emailInboundForwardFetcher.data && "error" in emailInboundForwardFetcher.data && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                          {emailInboundForwardFetcher.data.error}
+                        </p>
+                      )}
+                      {emailInboundForwardFetcher.data && "success" in emailInboundForwardFetcher.data && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Inbound forward address saved successfully!
                         </p>
                       )}
                     </div>
@@ -1525,7 +1749,6 @@ export default function Settings() {
               </div>
             )}
           </div>
-        </div>
       </div>
     </div>
   );

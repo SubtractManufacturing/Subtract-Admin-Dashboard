@@ -17,17 +17,14 @@ import { getVendors } from "~/lib/vendors";
 import { getOrdersWithRelations, restoreOrder } from "~/lib/orders";
 import { restoreQuote } from "~/lib/quotes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getAppConfig } from "~/lib/config.server";
-import { canUserAccessEvents, shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
+import { canUserAccessEvents } from "~/lib/featureFlags";
 
-import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
 import { tableStyles } from "~/utils/tw-styles";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  const appConfig = getAppConfig();
 
   // Check if user has access to events
   const hasAccess = await canUserAccessEvents(userDetails?.role);
@@ -57,12 +54,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   try {
     const { events, totalCount } = await getRecentEvents(filters);
-    const [customers, vendors, orders, showEventsLink, showVersionInHeader] = await Promise.all([
+    const [customers, vendors, orders] = await Promise.all([
       getCustomers(),
       getVendors(),
       getOrdersWithRelations(),
-      shouldShowEventsInNav(),
-      shouldShowVersionInHeader(),
     ]);
 
     return withAuthHeaders(
@@ -75,9 +70,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
         orders,
         user,
         userDetails,
-        appConfig,
-        showEventsLink,
-        showVersionInHeader,
       }),
       headers
     );
@@ -93,9 +85,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
         orders: [],
         user,
         userDetails,
-        appConfig,
-        showEventsLink: true,
-        showVersionInHeader: false,
       }),
       headers
     );
@@ -229,9 +218,6 @@ export default function EventsPage() {
     orders,
     user,
     userDetails,
-    appConfig,
-    showEventsLink,
-    showVersionInHeader,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
 
@@ -516,21 +502,6 @@ export default function EventsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar
-        userName={userDetails?.name || user?.email}
-        userEmail={user?.email}
-        userInitials={
-          userDetails?.name
-            ?.split(" ")
-            .map((n: string) => n[0])
-            .join("")
-            .toUpperCase() || "U"
-        }
-        version={appConfig?.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
-      />
-
       <div className="px-8 py-6">
         {/* Header with Filters */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">

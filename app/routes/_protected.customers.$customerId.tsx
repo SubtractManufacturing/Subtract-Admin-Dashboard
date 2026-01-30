@@ -7,12 +7,10 @@ import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getAppConfig } from "~/lib/config.server";
-import { canUserUploadMesh, shouldShowEventsInNav, shouldShowVersionInHeader, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
+import { canUserUploadMesh, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl, getDownloadUrl as getS3DownloadUrl } from "~/lib/s3.server";
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
-import Navbar from "~/components/Navbar";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import Button from "~/components/shared/Button";
 import { InputField as FormField, PhoneInputField } from "~/components/shared/FormField";
@@ -41,7 +39,6 @@ type CustomerOrder = {
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  const appConfig = getAppConfig();
   
   const customerId = params.customerId;
   if (!customerId) {
@@ -54,14 +51,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, rawParts, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled] = await Promise.all([
+  const [orders, stats, notes, rawParts, canUploadMesh, events, canRevise, bananaEnabled] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
     getPartsByCustomerId(customer.id),
     canUserUploadMesh(userDetails.role),
-    shouldShowEventsInNav(),
-    shouldShowVersionInHeader(),
     getEventsByEntity("customer", customer.id.toString(), 10),
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
@@ -146,7 +141,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled, bananaModelUrl }),
+    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl }),
     headers
   );
 }
@@ -699,7 +694,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, appConfig, canUploadMesh, showEventsLink, showVersionInHeader, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
+  const { customer, orders, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
@@ -1093,14 +1088,6 @@ export default function CustomerDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
-      />
       <div className="max-w-[1920px] mx-auto">
         <div className="flex justify-between items-center px-10 py-2.5">
           <Breadcrumbs items={[

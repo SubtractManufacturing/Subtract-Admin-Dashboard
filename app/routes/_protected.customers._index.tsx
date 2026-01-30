@@ -6,10 +6,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
 import type { Customer, CustomerInput, CustomerEventContext } from "~/lib/customers"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
-import { getAppConfig } from "~/lib/config.server"
-import { shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags"
 
-import Navbar from "~/components/Navbar"
 import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
@@ -18,22 +15,17 @@ import { tableStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
-  const appConfig = getAppConfig()
   
   try {
-    const [customers, showEventsLink, showVersionInHeader] = await Promise.all([
-      getCustomers(),
-      shouldShowEventsInNav(),
-      shouldShowVersionInHeader(),
-    ])
+    const customers = await getCustomers()
     return withAuthHeaders(
-      json({ customers, user, userDetails, appConfig, showEventsLink, showVersionInHeader }),
+      json({ customers, user, userDetails }),
       headers
     )
   } catch (error) {
     console.error("Customers loader error:", error)
     return withAuthHeaders(
-      json({ customers: [], user, userDetails, appConfig, showEventsLink: true, showVersionInHeader: false }),
+      json({ customers: [], user, userDetails }),
       headers
     )
   }
@@ -91,7 +83,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers, user, userDetails, appConfig, showEventsLink, showVersionInHeader } = useLoaderData<typeof loader>()
+  const { customers, user, userDetails } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
@@ -139,23 +131,14 @@ export default function Customers() {
   }
 
   return (
-    <div>
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={userDetails?.name?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
+    <div className="max-w-[1920px] mx-auto">
+      <SearchHeader 
+        breadcrumbs={[
+          { label: "Dashboard", href: "/" },
+          { label: "Customers" }
+        ]}
+        onSearch={setSearchQuery}
       />
-      <div className="max-w-[1920px] mx-auto">
-        <SearchHeader 
-          breadcrumbs={[
-            { label: "Dashboard", href: "/" },
-            { label: "Customers" }
-          ]}
-          onSearch={setSearchQuery}
-        />
         
         <div className="px-10 py-8">
         <div className="flex justify-between items-center mb-5">
@@ -375,7 +358,6 @@ export default function Customers() {
           </div>
         </fetcher.Form>
       </Modal>
-      </div>
     </div>
   )
 }

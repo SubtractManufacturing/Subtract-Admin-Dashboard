@@ -7,6 +7,9 @@ export const DEV_SETTINGS = {
   BANANA_CAD_URL: "banana_cad_url",
   BANANA_MESH_URL: "banana_mesh_url",
   BANANA_CONVERSION_STATUS: "banana_conversion_status",
+  EMAIL_REPLY_TO_ADDRESS: "email_reply_to_address",
+  EMAIL_OUTBOUND_BCC_ADDRESS: "email_outbound_bcc_address",
+  EMAIL_INBOUND_FORWARD_ADDRESS: "email_inbound_forward_address",
 } as const;
 
 /**
@@ -114,3 +117,53 @@ export async function setBananaModelUrls(
   }
 }
 
+/**
+ * Get the email reply-to address for Postmark inbound routing
+ */
+export async function getEmailReplyToAddress(): Promise<string | null> {
+  return getDeveloperSetting(DEV_SETTINGS.EMAIL_REPLY_TO_ADDRESS);
+}
+
+/**
+ * Set the email reply-to address for Postmark inbound routing
+ */
+export async function setEmailReplyToAddress(
+  address: string | null,
+  updatedBy?: string
+): Promise<boolean> {
+  return setDeveloperSetting(DEV_SETTINGS.EMAIL_REPLY_TO_ADDRESS, address, updatedBy);
+}
+
+/**
+ * Get the outbound BCC address for Gmail mirroring (sent emails)
+ */
+export async function getEmailOutboundBccAddress(): Promise<string | null> {
+  return getDeveloperSetting(DEV_SETTINGS.EMAIL_OUTBOUND_BCC_ADDRESS);
+}
+
+/**
+ * Set the outbound BCC address for Gmail mirroring (sent emails)
+ */
+export async function setEmailOutboundBccAddress(
+  address: string | null,
+  updatedBy?: string
+): Promise<boolean> {
+  return setDeveloperSetting(DEV_SETTINGS.EMAIL_OUTBOUND_BCC_ADDRESS, address, updatedBy);
+}
+
+/**
+ * Get the inbound forward address for Gmail mirroring (received emails)
+ */
+export async function getEmailInboundForwardAddress(): Promise<string | null> {
+  return getDeveloperSetting(DEV_SETTINGS.EMAIL_INBOUND_FORWARD_ADDRESS);
+}
+
+/**
+ * Set the inbound forward address for Gmail mirroring (received emails)
+ */
+export async function setEmailInboundForwardAddress(
+  address: string | null,
+  updatedBy?: string
+): Promise<boolean> {
+  return setDeveloperSetting(DEV_SETTINGS.EMAIL_INBOUND_FORWARD_ADDRESS, address, updatedBy);
+}

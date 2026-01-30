@@ -700,6 +700,121 @@ export const developerSettings = pgTable("developer_settings", {
   updatedBy: text("updated_by"),
 });
 
+// Email tracking enums
+export const emailDirectionEnum = pgEnum("email_direction", [
+  "inbound",
+  "outbound",
+]);
+
+export const emailStatusEnum = pgEnum("email_status", [
+  "sent",
+  "delivered",
+  "bounced",
+  "spam_complaint",
+  "failed",
+]);
+
+// Emails table - tracks all inbound and outbound email communications
+export const emails = pgTable(
+  "emails",
+  {
+    id: serial("id").primaryKey(),
+
+    // Postmark identifiers
+    postmarkMessageId: text("postmark_message_id").unique(),
+    postmarkMessageStreamId: text("postmark_message_stream_id"),
+
+    // Threading - CRITICAL for conversation grouping
+    threadId: text("thread_id").notNull(), // UUID generated for thread root, inherited by replies
+
+    // Direction and status
+    direction: emailDirectionEnum("direction").notNull(),
+    status: emailStatusEnum("status").default("sent").notNull(),
+
+    // Email addresses
+    fromAddress: text("from_address").notNull(),
+    fromName: text("from_name"),
+    toAddresses: text("to_addresses").array().notNull(),
+    ccAddresses: text("cc_addresses").array(),
+    bccAddresses: text("bcc_addresses").array(),
+    replyTo: text("reply_to"),
+
+    // Content
+    subject: text("subject").notNull(),
+    textBody: text("text_body"),
+    htmlBody: text("html_body"),
+
+    // Headers for threading
+    messageId: text("message_id"), // RFC 2822 Message-ID
+    inReplyTo: text("in_reply_to"),
+    references: text("references"),
+
+    // Entity relationships (nullable) - stored in metadata AND columns for efficient queries
+    quoteId: integer("quote_id").references(() => quotes.id),
+    orderId: integer("order_id").references(() => orders.id),
+    customerId: integer("customer_id").references(() => customers.id),
+    vendorId: integer("vendor_id").references(() => vendors.id),
+
+    // Metadata - CRITICAL: includes Postmark metadata for efficient lookups
+    metadata: jsonb("metadata"), // Contains: { quoteId, orderId, customerId, postmarkMetadata }
+
+    // Gmail mirroring
+    gmailMirrored: boolean("gmail_mirrored").default(false),
+
+    // Timestamps
+    sentAt: timestamp("sent_at"),
+    deliveredAt: timestamp("delivered_at"),
+    bouncedAt: timestamp("bounced_at"),
+    openedAt: timestamp("opened_at"),
+    clickedAt: timestamp("clicked_at"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    // CRITICAL: These indexes are essential for performance at scale (1000+ emails)
+    quoteIdx: index("emails_quote_idx").on(table.quoteId),
+    orderIdx: index("emails_order_idx").on(table.orderId),
+    customerIdx: index("emails_customer_idx").on(table.customerId),
+    messageIdIdx: index("emails_message_id_idx").on(table.messageId),
+    postmarkIdx: index("emails_postmark_idx").on(table.postmarkMessageId),
+    threadIdx: index("emails_thread_idx").on(table.threadId), // For thread queries
+    inReplyToIdx: index("emails_in_reply_to_idx").on(table.inReplyTo), // For thread matching
+    directionStatusIdx: index("emails_direction_status_idx").on(
+      table.direction,
+      table.status
+    ), // For inbox filtering
+    sentAtIdx: index("emails_sent_at_idx").on(table.sentAt), // For sorting by date
+  })
+);
+
+// Email attachments table - tracks attachments stored in S3
+export const emailAttachments = pgTable(
+  "email_attachments",
+  {
+    id: serial("id").primaryKey(),
+    emailId: integer("email_id")
+      .references(() => emails.id)
+      .notNull(),
+
+    filename: text("filename").notNull(),
+    contentType: text("content_type"),
+    contentLength: integer("content_length"),
+
+    // Storage location (S3)
+    s3Bucket: text("s3_bucket"),
+    s3Key: text("s3_key"),
+
+    // Postmark specific
+    contentId: text("content_id"), // For inline attachments
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    emailIdx: index("email_attachments_email_idx").on(table.emailId),
+  })
+);
+
 export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
 export type NewQuotePriceCalculation =
   typeof quotePriceCalculations.$inferInsert;
@@ -711,3 +826,7 @@ export type CadFileVersion = typeof cadFileVersions.$inferSelect;
 export type NewCadFileVersion = typeof cadFileVersions.$inferInsert;
 export type DeveloperSetting = typeof developerSettings.$inferSelect;
 export type NewDeveloperSetting = typeof developerSettings.$inferInsert;
+export type Email = typeof emails.$inferSelect;
+export type NewEmail = typeof emails.$inferInsert;
+export type EmailAttachment = typeof emailAttachments.$inferSelect;
+export type NewEmailAttachment = typeof emailAttachments.$inferInsert;
