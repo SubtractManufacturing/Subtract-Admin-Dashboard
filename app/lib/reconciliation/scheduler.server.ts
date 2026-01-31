@@ -15,16 +15,16 @@
  * 3. Configure cron schedules via developer_settings table
  */
 
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import { getDeveloperSetting } from "~/lib/developerSettings";
-import { ReconciliationTaskRegistry, type ReconciliationResult } from "./types";
+import { ReconciliationTaskRegistry, type ReconciliationResult, type ReconciliationOptions } from "./types";
 import { logReconciliationStart, logReconciliationComplete } from "./event-logger";
 import { withAdvisoryLock } from "~/lib/db/advisory-lock";
 
 interface ScheduledJob {
   taskId: string;
   schedule: string;
-  job: cron.ScheduledTask;
+  job: ScheduledTask;
 }
 
 /**
@@ -137,7 +137,6 @@ export class ReconciliationScheduler {
         await this.executeTask(taskId, "scheduled");
       },
       {
-        scheduled: true,
         timezone: "UTC", // Use UTC for consistency
       }
     );
@@ -206,9 +205,9 @@ export class ReconciliationScheduler {
    * Run a task with logging to event_logs
    */
   private async runTaskWithLogging(
-    task: { execute: (options: any) => Promise<ReconciliationResult>; name: string },
+    task: { execute: (options: ReconciliationOptions) => Promise<ReconciliationResult>; name: string },
     taskId: string,
-    triggerSource: string,
+    triggerSource: "scheduled" | "manual" | "startup" | "api",
     triggeredBy?: string
   ): Promise<ReconciliationResult> {
     // Get window hours from settings

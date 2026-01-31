@@ -24,7 +24,9 @@ import { PostmarkReconciliationTask } from "~/lib/reconciliation/tasks/postmark.
 
 // HMR Safety: Declare global variable type
 declare global {
+  // eslint-disable-next-line no-var
   var __reconciliationScheduler: ReconciliationScheduler | undefined;
+  // eslint-disable-next-line no-var
   var __reconciliationInitialized: boolean | undefined;
 }
 

@@ -18,7 +18,7 @@ import {
   cleanupDeprecatedQuotesFolder,
   getMigrationStatus,
 } from "~/lib/s3-migration.server";
-import { getBananaModelUrls } from "~/lib/developerSettings";
+import { getBananaModelUrls, getReconciliationTaskConfig } from "~/lib/developerSettings";
 import {
   getAllSendAsAddresses,
   addSendAsAddress,
@@ -27,7 +27,6 @@ import {
   sendAsAddressExists,
 } from "~/lib/emailSendAsAddresses";
 import { ReconciliationTaskRegistry } from "~/lib/reconciliation/types";
-import { getReconciliationTaskConfig } from "~/lib/developerSettings";
 import type { FeatureFlag, EmailSendAsAddress } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -1873,10 +1872,14 @@ export default function Settings() {
 
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                  <label 
+                                    htmlFor={`cron-${task.id}`}
+                                    className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+                                  >
                                     Schedule (Cron Syntax)
                                   </label>
                                   <input
+                                    id={`cron-${task.id}`}
                                     type="text"
                                     name="cron"
                                     defaultValue={task.cron}
@@ -1897,10 +1900,14 @@ export default function Settings() {
                                 </div>
 
                                 <div>
-                                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                  <label 
+                                    htmlFor={`windowHours-${task.id}`}
+                                    className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+                                  >
                                     Lookback Window (hours)
                                   </label>
                                   <input
+                                    id={`windowHours-${task.id}`}
                                     type="number"
                                     name="windowHours"
                                     defaultValue={task.windowHours}

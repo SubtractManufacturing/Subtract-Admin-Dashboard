@@ -25,7 +25,6 @@ export interface OutboundMessage {
   Metadata?: Record<string, string>;
   TrackOpens?: boolean;
   TrackLinks?: string;
-  Attachments?: Array<{ Name: string; ContentLength: number }>;
 }
 
 export interface InboundMessage {
@@ -67,7 +66,6 @@ export interface OutboundMessageDetails extends OutboundMessage {
   TextBody?: string;
   HtmlBody?: string;
   Body?: string;
-  MessageEvents?: MessageEvent[];
 }
 
 /**
@@ -102,7 +100,8 @@ export class PostmarkReconciliationAPI {
     const batchSize = 500; // Postmark max per request
 
     try {
-      while (true) {
+      let hasMore = true;
+      while (hasMore) {
         console.log(
           `[PostmarkAPI] Fetching outbound messages (offset: ${offset})...`
         );
@@ -114,22 +113,34 @@ export class PostmarkReconciliationAPI {
           todate: options.toDate.toISOString(),
         });
 
-        const messages = (response.Messages || []) as OutboundMessage[];
-        allMessages.push(...messages);
+        const messages = response.Messages || [];
+        for (const msg of messages) {
+          allMessages.push({
+            MessageID: msg.MessageID,
+            To: msg.To as Array<{ Email: string; Name?: string }>,
+            From: msg.From,
+            Subject: msg.Subject,
+            Status: msg.Status,
+            ReceivedAt: msg.ReceivedAt,
+            MessageStream: msg.MessageStream || "outbound",
+            Tag: msg.Tag,
+            Metadata: msg.Metadata as Record<string, string> | undefined,
+            TrackOpens: msg.TrackOpens,
+            TrackLinks: msg.TrackLinks,
+          });
+        }
 
+        const totalCount = Number(response.TotalCount) || 0;
         console.log(
-          `[PostmarkAPI] Fetched ${messages.length} outbound messages (offset: ${offset}, total: ${response.TotalCount})`
+          `[PostmarkAPI] Fetched ${messages.length} outbound messages (offset: ${offset}, total: ${totalCount})`
         );
 
         // Stop if we've fetched all messages or this page was empty
-        if (
-          messages.length === 0 ||
-          offset + batchSize >= response.TotalCount
-        ) {
-          break;
+        if (messages.length === 0 || offset + batchSize >= totalCount) {
+          hasMore = false;
+        } else {
+          offset += batchSize;
         }
-
-        offset += batchSize;
       }
 
       console.log(
@@ -159,7 +170,8 @@ export class PostmarkReconciliationAPI {
     const batchSize = 500;
 
     try {
-      while (true) {
+      let hasMore = true;
+      while (hasMore) {
         console.log(
           `[PostmarkAPI] Fetching inbound messages (offset: ${offset})...`
         );
@@ -167,25 +179,42 @@ export class PostmarkReconciliationAPI {
         const response = await this.client.getInboundMessages({
           count: batchSize,
           offset,
-          fromdate: options.fromDate.toISOString(),
-          todate: options.toDate.toISOString(),
+          fromDate: options.fromDate.toISOString(),
+          toDate: options.toDate.toISOString(),
         });
 
-        const messages = (response.InboundMessages || []) as InboundMessage[];
-        allMessages.push(...messages);
-
-        console.log(
-          `[PostmarkAPI] Fetched ${messages.length} inbound messages (offset: ${offset}, total: ${response.TotalCount})`
-        );
-
-        if (
-          messages.length === 0 ||
-          offset + batchSize >= response.TotalCount
-        ) {
-          break;
+        const messages = response.InboundMessages || [];
+        for (const msg of messages) {
+          // Cast to access properties that exist in API response but not in SDK types
+          const msgAny = msg as unknown as Record<string, unknown>;
+          allMessages.push({
+            MessageID: msg.MessageID,
+            From: msg.From,
+            FromFull: msg.FromFull as { Email: string; Name?: string },
+            To: msg.To,
+            ToFull: msg.ToFull as Array<{ Email: string; Name?: string }>,
+            Cc: msg.Cc,
+            CcFull: msg.CcFull as Array<{ Email: string; Name?: string }> | undefined,
+            Subject: msg.Subject,
+            Date: msg.Date,
+            MailboxHash: msg.MailboxHash,
+            TextBody: msgAny.TextBody as string | undefined,
+            HtmlBody: msgAny.HtmlBody as string | undefined,
+            Tag: msg.Tag,
+            Headers: msgAny.Headers as Array<{ Name: string; Value: string }> | undefined,
+          });
         }
 
-        offset += batchSize;
+        const totalCount = Number(response.TotalCount) || 0;
+        console.log(
+          `[PostmarkAPI] Fetched ${messages.length} inbound messages (offset: ${offset}, total: ${totalCount})`
+        );
+
+        if (messages.length === 0 || offset + batchSize >= totalCount) {
+          hasMore = false;
+        } else {
+          offset += batchSize;
+        }
       }
 
       console.log(
@@ -209,13 +238,27 @@ export class PostmarkReconciliationAPI {
   ): Promise<OutboundMessageDetails | null> {
     try {
       const response = await this.client.getOutboundMessageDetails(messageId);
-      return response as OutboundMessageDetails;
-    } catch (error: any) {
-      // Handle 404 - message not found
-      if (error?.statusCode === 404) {
-        console.warn(
-          `[PostmarkAPI] Message not found: ${messageId}`
-        );
+      return {
+        MessageID: response.MessageID,
+        To: response.To as Array<{ Email: string; Name?: string }>,
+        From: response.From,
+        Subject: response.Subject,
+        Status: response.Status,
+        ReceivedAt: response.ReceivedAt,
+        MessageStream: response.MessageStream || "outbound",
+        Tag: response.Tag,
+        Metadata: response.Metadata as Record<string, string> | undefined,
+        TrackOpens: response.TrackOpens,
+        TrackLinks: response.TrackLinks,
+        TextBody: response.TextBody,
+        HtmlBody: response.HtmlBody,
+        Body: response.Body,
+      };
+    } catch (error: unknown) {
+      // Handle 404/422 - message not found
+      const err = error as { statusCode?: number };
+      if (err?.statusCode === 404 || err?.statusCode === 422) {
+        console.warn(`[PostmarkAPI] Message not found: ${messageId}`);
         return null;
       }
       console.error(
@@ -229,9 +272,6 @@ export class PostmarkReconciliationAPI {
   /**
    * Get events for a specific outbound message
    * Events include: Delivery, Bounce, Open, Click, SpamComplaint
-   * 
-   * NOTE: Postmark's message details endpoint includes MessageEvents array,
-   * but for some message types you may need to use the opens/clicks endpoints.
    * 
    * @param messageId Postmark MessageID
    */
@@ -257,11 +297,6 @@ export class PostmarkReconciliationAPI {
         });
       }
 
-      // Add any events from MessageEvents array if present
-      if (details.MessageEvents && Array.isArray(details.MessageEvents)) {
-        events.push(...details.MessageEvents);
-      }
-
       return events;
     } catch (error) {
       console.error(
@@ -269,65 +304,6 @@ export class PostmarkReconciliationAPI {
         error
       );
       throw error;
-    }
-  }
-
-  /**
-   * Get message opens for a specific message
-   * 
-   * @param messageId Postmark MessageID
-   */
-  async getMessageOpens(
-    messageId: string
-  ): Promise<Array<{ ReceivedAt: string; Recipient: string; UserAgent?: string }>> {
-    try {
-      const response = await this.client.getMessageOpens({
-        count: 100,
-        offset: 0,
-      });
-
-      // Filter to just this message
-      const opens = (response.Opens || []).filter(
-        (open: any) => open.MessageID === messageId
-      );
-
-      return opens.map((open: any) => ({
-        ReceivedAt: open.ReceivedAt,
-        Recipient: open.Recipient,
-        UserAgent: open.UserAgent,
-      }));
-    } catch (error) {
-      console.error(
-        `[PostmarkAPI] Failed to fetch opens for message ${messageId}:`,
-        error
-      );
-      return [];
-    }
-  }
-
-  /**
-   * Get message clicks for a specific message
-   * 
-   * @param messageId Postmark MessageID
-   */
-  async getMessageClicks(
-    messageId: string
-  ): Promise<
-    Array<{ ReceivedAt: string; Recipient: string; OriginalLink?: string }>
-  > {
-    try {
-      const response = await this.client.getClickCounts({
-        // Note: This endpoint doesn't filter by messageId directly
-        // You may need to use getOutboundMessageDetails for click events
-      });
-
-      return [];
-    } catch (error) {
-      console.error(
-        `[PostmarkAPI] Failed to fetch clicks for message ${messageId}:`,
-        error
-      );
-      return [];
     }
   }
 

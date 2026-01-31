@@ -18,7 +18,7 @@
 import { randomUUID } from "crypto";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { db } from "~/lib/db";
-import { emails, type Email, type NewEmail, emailStatusEnum } from "~/lib/db/schema";
+import { emails, type Email } from "~/lib/db/schema";
 import { createEmail, getEmailByPostmarkId } from "~/lib/emails";
 import {
   PostmarkReconciliationAPI,
