@@ -18,11 +18,8 @@ import { getVendors } from "~/lib/vendors";
 import type { Vendor } from "~/lib/vendors";
 import type { OrderWithRelations, OrderInput, OrderEventContext } from "~/lib/orders";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getAppConfig } from "~/lib/config.server";
 import { getNextOrderNumber } from "~/lib/number-generator";
-import { shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
 
-import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
@@ -31,18 +28,15 @@ import { tableStyles, statusStyles } from "~/utils/tw-styles";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  const appConfig = getAppConfig();
 
   try {
-    const [orders, customers, vendors, showEventsLink, showVersionInHeader] = await Promise.all([
+    const [orders, customers, vendors] = await Promise.all([
       getOrdersWithRelations(),
       getCustomers(),
       getVendors(),
-      shouldShowEventsInNav(),
-      shouldShowVersionInHeader(),
     ]);
     return withAuthHeaders(
-      json({ orders, customers, vendors, user, userDetails, appConfig, showEventsLink, showVersionInHeader }),
+      json({ orders, customers, vendors, user, userDetails }),
       headers
     );
   } catch (error) {
@@ -54,9 +48,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
         vendors: [],
         user,
         userDetails,
-        appConfig,
-        showEventsLink: true,
-        showVersionInHeader: false,
       }),
       headers
     );
@@ -181,7 +172,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Orders() {
-  const { orders, customers, vendors, user, userDetails, appConfig, showEventsLink, showVersionInHeader } =
+  const { orders, customers, vendors } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const navigate = useNavigate();
@@ -379,25 +370,13 @@ export default function Orders() {
   };
 
   return (
-    <div>
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={
-          userDetails?.name?.charAt(0).toUpperCase() ||
-          user.email.charAt(0).toUpperCase()
-        }
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
+    <div className="max-w-[1920px] mx-auto">
+      <SearchHeader
+        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Orders" }]}
+        onSearch={setSearchQuery}
       />
-      <div className="max-w-[1920px] mx-auto">
-        <SearchHeader
-          breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Orders" }]}
-          onSearch={setSearchQuery}
-        />
 
-        <div className="px-10 py-8">
+      <div className="px-10 py-8">
           <div className="flex justify-between items-center mb-5">
             <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
               Orders ({filteredOrders.length})
@@ -542,7 +521,6 @@ export default function Orders() {
             </tbody>
           </table>
         </div>
-      </div>
 
       <Modal
         isOpen={modalOpen}

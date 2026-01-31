@@ -32,10 +32,7 @@ import {
   type AttachmentEventContext,
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getAppConfig } from "~/lib/config.server";
 import {
-  shouldShowEventsInNav,
-  shouldShowVersionInHeader,
   canUserAccessPriceCalculator,
   canUserUploadCadRevision,
   canUserSendEmail,
@@ -68,7 +65,6 @@ import {
 } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
-import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
@@ -93,7 +89,6 @@ import {
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  const appConfig = getAppConfig();
 
   const quoteId = params.quoteId;
   if (!quoteId) {
@@ -271,8 +266,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   // Get feature flags and events
   const [
-    showEventsLink,
-    showVersionInHeader,
     canAccessPriceCalculator,
     canSendEmail,
     pdfAutoDownload,
@@ -281,8 +274,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     canRevise,
     bananaEnabled,
   ] = await Promise.all([
-    shouldShowEventsInNav(),
-    shouldShowVersionInHeader(),
     canUserAccessPriceCalculator(userDetails?.role),
     canUserSendEmail(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
@@ -312,7 +303,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Get available "Send As" addresses for email (only if user can send emails)
   let sendAsAddresses: { email: string; label: string }[] = [];
   if (canSendEmail) {
-    const { getSendAsAddresses } = await import("~/lib/gmail/config");
+    const { getSendAsAddresses } = await import("~/lib/email/config");
     sendAsAddresses = await getSendAsAddresses();
   }
 
@@ -328,9 +319,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       user,
       userDetails,
       priceCalculations,
-      appConfig,
-      showEventsLink,
-      showVersionInHeader,
       canAccessPriceCalculator,
       canSendEmail,
       sendAsAddresses,
@@ -1463,20 +1451,22 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const subject = formData.get("subject") as string;
         const body = formData.get("body") as string;
 
-        if (!to || !subject || !body) {
+        if (!from || !to || !subject || !body) {
           return json(
-            { error: "Missing required fields: to, subject, and body" },
+            { error: "Missing required fields: from, to, subject, and body" },
             { status: 400 }
           );
         }
 
         try {
-          const { sendEmail } = await import("~/lib/gmail/gmail-client.server");
+          const { sendEmail } = await import("~/lib/postmark/postmark-client.server");
           const result = await sendEmail({
+            from,
             to,
             subject,
             body,
-            from: from || undefined,
+            quoteId: quote.id,
+            customerId: quote.customerId,
           });
 
           if (result.success) {
@@ -1541,9 +1531,6 @@ export default function QuoteDetail() {
     user,
     userDetails,
     priceCalculations,
-    appConfig,
-    showEventsLink,
-    showVersionInHeader,
     canAccessPriceCalculator,
     canSendEmail,
     sendAsAddresses,
@@ -2178,18 +2165,6 @@ export default function QuoteDetail() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={
-          userDetails?.name?.charAt(0).toUpperCase() ||
-          user.email.charAt(0).toUpperCase()
-        }
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
-      />
-
       <div className="max-w-[1920px] mx-auto">
         {/* Custom breadcrumb bar with buttons */}
         <div className="flex justify-between items-center px-10 py-2.5">

@@ -6,13 +6,10 @@ import { getAppConfig } from "~/lib/config.server";
 import { createServerClient } from "~/lib/supabase";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
-import Navbar from "~/components/Navbar";
 import {
   getAllFeatureFlags,
   updateFeatureFlag,
   initializeFeatureFlags,
-  shouldShowEventsInNav,
-  shouldShowVersionInHeader,
   isFeatureEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
@@ -21,7 +18,7 @@ import {
   cleanupDeprecatedQuotesFolder,
   getMigrationStatus,
 } from "~/lib/s3-migration.server";
-import { getBananaModelUrls } from "~/lib/developerSettings";
+import { getBananaModelUrls, getReconciliationTaskConfig } from "~/lib/developerSettings";
 import {
   getAllSendAsAddresses,
   addSendAsAddress,
@@ -29,6 +26,7 @@ import {
   setDefaultSendAsAddress,
   sendAsAddressExists,
 } from "~/lib/emailSendAsAddresses";
+import { ReconciliationTaskRegistry } from "~/lib/reconciliation/types";
 import type { FeatureFlag, EmailSendAsAddress } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -47,12 +45,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Check for success message in URL
   const url = new URL(request.url);
   const message = url.searchParams.get("message");
-
-  // Get events nav visibility
-  const showEventsLink = await shouldShowEventsInNav();
-
-  // Get version header visibility
-  const showVersionInHeader = await shouldShowVersionInHeader();
 
   // Get S3 migration status for Dev users
   const s3MigrationEnabled =
@@ -81,6 +73,38 @@ export async function loader({ request }: LoaderFunctionArgs) {
       : false;
   const emailSendAsAddresses =
     emailIntegrationEnabled ? await getAllSendAsAddresses() : [];
+  
+  // Get email configuration (for Postmark)
+  const { 
+    getEmailReplyToAddress, 
+    getEmailOutboundBccAddress,
+    getEmailInboundForwardAddress 
+  } = await import("~/lib/developerSettings");
+  
+  const emailReplyToAddress =
+    emailIntegrationEnabled ? await getEmailReplyToAddress() : null;
+  const emailOutboundBccAddress =
+    emailIntegrationEnabled ? await getEmailOutboundBccAddress() : null;
+  const emailInboundForwardAddress =
+    emailIntegrationEnabled ? await getEmailInboundForwardAddress() : null;
+
+  // Get reconciliation tasks config for Dev users
+  const reconciliationTasks =
+    userDetails.role === "Dev"
+      ? await Promise.all(
+          ReconciliationTaskRegistry.getAll().map(async (task) => {
+            const config = await getReconciliationTaskConfig(task.id);
+            return {
+              id: task.id,
+              name: task.name,
+              description: task.description,
+              enabled: config.enabled,
+              cron: config.cron,
+              windowHours: config.windowHours,
+            };
+          })
+        )
+      : [];
 
   return withAuthHeaders(
     json({
@@ -89,14 +113,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
       message,
       appConfig,
       featureFlags,
-      showEventsLink,
-      showVersionInHeader,
       s3MigrationEnabled,
       s3MigrationStatus,
       bananaForScaleEnabled,
       bananaModelStatus,
       emailIntegrationEnabled,
       emailSendAsAddresses,
+      emailReplyToAddress,
+      emailOutboundBccAddress,
+      emailInboundForwardAddress,
+      reconciliationTasks,
     }),
     headers
   );
@@ -364,24 +390,28 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    // Validate that the address is configured as "Send As" in Gmail
+    // Validate that the address is properly formatted for Postmark
     try {
-      const { validateSendAsAddress } = await import(
-        "~/lib/gmail/gmail-client.server"
+      const { validateSenderAddress } = await import(
+        "~/lib/postmark/postmark-client.server"
       );
-      const validation = await validateSendAsAddress(email);
+      const validation = validateSenderAddress(email);
 
       if (!validation.valid) {
         return withAuthHeaders(
           json({
-            error: validation.error || "This address is not configured as a 'Send As' address in Gmail",
+            error: validation.warning || "Invalid email address format",
           }, { status: 400 }),
           headers
         );
       }
+      // Log a reminder about Postmark Sender Signatures
+      if (validation.warning) {
+        console.log("Postmark reminder:", validation.warning);
+      }
     } catch (validationError) {
-      // If Gmail API validation fails, still allow adding but warn
-      console.error("Gmail validation failed:", validationError);
+      // If validation fails, still allow adding but warn
+      console.error("Email validation failed:", validationError);
       // Continue without blocking - the address might still work
     }
 
@@ -423,6 +453,78 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  // Update email reply-to address (for Postmark inbound routing)
+  if (intent === "updateEmailReplyTo" && userDetails.role === "Dev") {
+    const replyToAddress = formData.get("replyToAddress") as string;
+
+    try {
+      // Basic email validation
+      if (replyToAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyToAddress)) {
+        return withAuthHeaders(
+          json({ error: "Invalid email address format" }, { status: 400 }),
+          headers
+        );
+      }
+
+      const { setEmailReplyToAddress } = await import("~/lib/developerSettings");
+      await setEmailReplyToAddress(replyToAddress || null, user.id);
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update reply-to address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Update outbound BCC address (Gmail mirroring for sent emails)
+  if (intent === "updateOutboundBcc" && userDetails.role === "Dev") {
+    const bccAddress = formData.get("bccAddress") as string;
+
+    try {
+      // Basic email validation
+      if (bccAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bccAddress)) {
+        return withAuthHeaders(
+          json({ error: "Invalid email address format" }, { status: 400 }),
+          headers
+        );
+      }
+
+      const { setEmailOutboundBccAddress } = await import("~/lib/developerSettings");
+      await setEmailOutboundBccAddress(bccAddress || null, user.id);
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update outbound BCC address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Update inbound forward address (Gmail mirroring for received emails)
+  if (intent === "updateInboundForward" && userDetails.role === "Dev") {
+    const forwardAddress = formData.get("forwardAddress") as string;
+
+    try {
+      // Basic email validation
+      if (forwardAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forwardAddress)) {
+        return withAuthHeaders(
+          json({ error: "Invalid email address format" }, { status: 400 }),
+          headers
+        );
+      }
+
+      const { setEmailInboundForwardAddress } = await import("~/lib/developerSettings");
+      await setEmailInboundForwardAddress(forwardAddress || null, user.id);
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update inbound forward address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
   if (intent === "setDefaultEmailSendAs" && userDetails.role === "Dev") {
     const id = formData.get("id") as string;
 
@@ -439,6 +541,92 @@ export async function action({ request }: ActionFunctionArgs) {
     } catch (error) {
       return withAuthHeaders(
         json({ error: "Failed to set default address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Update reconciliation task settings
+  if (intent === "updateReconciliationTask" && userDetails.role === "Dev") {
+    const taskId = formData.get("taskId") as string;
+    const enabled = formData.get("enabled") === "true";
+    const cronSchedule = formData.get("cron") as string;
+    const windowHours = formData.get("windowHours") as string;
+
+    if (!taskId) {
+      return withAuthHeaders(
+        json({ error: "Task ID is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    // Validate cron syntax
+    const cron = await import("node-cron");
+    if (cronSchedule && !cron.validate(cronSchedule)) {
+      return withAuthHeaders(
+        json({ error: "Invalid cron syntax. Use format like '0 */6 * * *'" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      // Save settings
+      const { setReconciliationTaskConfig } = await import("~/lib/developerSettings");
+      await setReconciliationTaskConfig(
+        taskId,
+        {
+          enabled,
+          cron: cronSchedule,
+          windowHours: parseInt(windowHours) || 72,
+        },
+        user.id
+      );
+
+      // Restart scheduler with new config
+      const { ReconciliationScheduler } = await import("~/lib/reconciliation/scheduler.server");
+      await ReconciliationScheduler.getInstance().restartTask(taskId);
+
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ 
+          error: `Failed to update settings: ${error instanceof Error ? error.message : "Unknown error"}` 
+        }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Trigger manual reconciliation
+  if (intent === "triggerReconciliation" && userDetails.role === "Dev") {
+    const taskId = formData.get("taskId") as string;
+
+    if (!taskId) {
+      return withAuthHeaders(
+        json({ error: "Task ID is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const { ReconciliationScheduler } = await import("~/lib/reconciliation/scheduler.server");
+      
+      // Execute task asynchronously (don't wait for completion)
+      ReconciliationScheduler.getInstance()
+        .executeTask(taskId, "manual", user.id)
+        .catch((error) => {
+          console.error(`Manual reconciliation failed for ${taskId}:`, error);
+        });
+
+      return withAuthHeaders(
+        json({ success: true, message: "Reconciliation started" }),
+        headers
+      );
+    } catch (error) {
+      return withAuthHeaders(
+        json({ 
+          error: `Failed to trigger reconciliation: ${error instanceof Error ? error.message : "Unknown error"}` 
+        }, { status: 500 }),
         headers
       );
     }
@@ -695,14 +883,16 @@ export default function Settings() {
     message,
     appConfig,
     featureFlags: initialFeatureFlags,
-    showEventsLink,
-    showVersionInHeader,
     s3MigrationEnabled,
     s3MigrationStatus,
     bananaForScaleEnabled,
     bananaModelStatus,
     emailIntegrationEnabled,
     emailSendAsAddresses,
+    emailReplyToAddress,
+    emailOutboundBccAddress,
+    emailInboundForwardAddress,
+    reconciliationTasks,
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
@@ -711,6 +901,10 @@ export default function Settings() {
   const s3ConsolidateFetcher = useFetcher<typeof action>();
   const s3CleanupFetcher = useFetcher<typeof action>();
   const emailAddressFetcher = useFetcher<typeof action>();
+  const emailReplyToFetcher = useFetcher<typeof action>();
+  const emailOutboundBccFetcher = useFetcher<typeof action>();
+  const emailInboundForwardFetcher = useFetcher<typeof action>();
+  const reconciliationFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
 
   // State for adding new email address
@@ -823,27 +1017,18 @@ export default function Settings() {
   }
 
   return (
-    <div>
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={(userDetails?.name || user.email).charAt(0).toUpperCase()}
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
-      />
-      <div className="p-4 md:p-6 max-w-6xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Settings
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            Manage your account settings and preferences
-          </p>
-        </div>
+    <div className="p-4 md:p-6 max-w-6xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          Settings
+        </h1>
+        <p className="text-gray-600 dark:text-gray-400 mt-1">
+          Manage your account settings and preferences
+        </p>
+      </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-          <div className="border-b border-gray-200 dark:border-gray-700">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div className="border-b border-gray-200 dark:border-gray-700">
             <nav className="-mb-px flex space-x-8 px-6" aria-label="Tabs">
               {tabs.map((tab) => (
                 <button
@@ -1128,6 +1313,153 @@ export default function Settings() {
                       {emailAddressFetcher.data && "error" in emailAddressFetcher.data && (
                         <p className="text-sm text-red-600 dark:text-red-400 mt-2">
                           {emailAddressFetcher.data.error}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Reply-To Address Configuration */}
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        Reply-To Address
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Configure the reply-to address for outbound emails. This should be your Postmark inbound address
+                        (e.g., inbound@yourdomain.com) to ensure replies are captured via webhook.
+                      </p>
+
+                      <emailReplyToFetcher.Form method="post" className="space-y-3">
+                        <input type="hidden" name="intent" value="updateEmailReplyTo" />
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            name="replyToAddress"
+                            defaultValue={emailReplyToAddress || ""}
+                            placeholder="inbound@yourdomain.com"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                          />
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={emailReplyToFetcher.state === "submitting"}
+                          >
+                            {emailReplyToFetcher.state === "submitting" ? "Saving..." : "Save"}
+                          </Button>
+                        </div>
+                      </emailReplyToFetcher.Form>
+
+                      {emailReplyToAddress && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Current: {emailReplyToAddress}
+                        </p>
+                      )}
+
+                      {emailReplyToFetcher.data && "error" in emailReplyToFetcher.data && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                          {emailReplyToFetcher.data.error}
+                        </p>
+                      )}
+                      {emailReplyToFetcher.data && "success" in emailReplyToFetcher.data && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Reply-to address saved successfully!
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Outbound BCC Address (Gmail Mirroring for Sent Emails) */}
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        Outbound Email BCC (Gmail Mirroring)
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        BCC a copy of all outbound emails to this address so your team can see sent emails in Gmail.
+                        This requires the &quot;Enable Outbound Email BCC&quot; feature flag to be enabled.
+                      </p>
+
+                      <emailOutboundBccFetcher.Form method="post" className="space-y-3">
+                        <input type="hidden" name="intent" value="updateOutboundBcc" />
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            name="bccAddress"
+                            defaultValue={emailOutboundBccAddress || ""}
+                            placeholder="archive@yourdomain.com"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                          />
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={emailOutboundBccFetcher.state === "submitting"}
+                          >
+                            {emailOutboundBccFetcher.state === "submitting" ? "Saving..." : "Save"}
+                          </Button>
+                        </div>
+                      </emailOutboundBccFetcher.Form>
+
+                      {emailOutboundBccAddress && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Current: {emailOutboundBccAddress}
+                        </p>
+                      )}
+
+                      {emailOutboundBccFetcher.data && "error" in emailOutboundBccFetcher.data && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                          {emailOutboundBccFetcher.data.error}
+                        </p>
+                      )}
+                      {emailOutboundBccFetcher.data && "success" in emailOutboundBccFetcher.data && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Outbound BCC address saved successfully!
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Inbound Forward Address (Gmail Mirroring for Received Emails) */}
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
+                        Inbound Email Forwarding (Gmail Mirroring)
+                      </h4>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        Forward inbound emails to this address so your team can see customer replies in Gmail.
+                        This requires the &quot;Enable Inbound Email Forwarding&quot; feature flag to be enabled.
+                      </p>
+
+                      <emailInboundForwardFetcher.Form method="post" className="space-y-3">
+                        <input type="hidden" name="intent" value="updateInboundForward" />
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            name="forwardAddress"
+                            defaultValue={emailInboundForwardAddress || ""}
+                            placeholder="team@yourdomain.com"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                          />
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={emailInboundForwardFetcher.state === "submitting"}
+                          >
+                            {emailInboundForwardFetcher.state === "submitting" ? "Saving..." : "Save"}
+                          </Button>
+                        </div>
+                      </emailInboundForwardFetcher.Form>
+
+                      {emailInboundForwardAddress && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Current: {emailInboundForwardAddress}
+                        </p>
+                      )}
+
+                      {emailInboundForwardFetcher.data && "error" in emailInboundForwardFetcher.data && (
+                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                          {emailInboundForwardFetcher.data.error}
+                        </p>
+                      )}
+                      {emailInboundForwardFetcher.data && "success" in emailInboundForwardFetcher.data && (
+                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                          Inbound forward address saved successfully!
                         </p>
                       )}
                     </div>
@@ -1477,6 +1809,171 @@ export default function Settings() {
                       bananaModelStatus={bananaModelStatus} 
                     />
                   )}
+
+                  {/* Reconciliation Settings */}
+                  {reconciliationTasks && reconciliationTasks.length > 0 && (
+                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-lg p-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+                        <span>🔄</span>
+                        Data Reconciliation
+                      </h4>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
+                        Configure scheduled reconciliation tasks to sync data with external services. 
+                        Reconciliation ensures local data stays in sync with the source of truth (e.g., Postmark APIs).
+                      </p>
+
+                      <div className="space-y-4">
+                        {reconciliationTasks.map((task: {
+                          id: string;
+                          name: string;
+                          description: string;
+                          enabled: boolean;
+                          cron: string;
+                          windowHours: number;
+                        }) => (
+                          <div 
+                            key={task.id} 
+                            className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700"
+                          >
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <h5 className="text-sm font-medium text-gray-900 dark:text-white">
+                                  {task.name}
+                                </h5>
+                                <p className="text-xs text-gray-600 dark:text-gray-400">
+                                  {task.description}
+                                </p>
+                              </div>
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                task.enabled 
+                                  ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" 
+                                  : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+                              }`}>
+                                {task.enabled ? "Enabled" : "Disabled"}
+                              </span>
+                            </div>
+
+                            <reconciliationFetcher.Form method="post" className="space-y-3">
+                              <input type="hidden" name="intent" value="updateReconciliationTask" />
+                              <input type="hidden" name="taskId" value={task.id} />
+                              
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  name="enabled"
+                                  value="true"
+                                  defaultChecked={task.enabled}
+                                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700 dark:text-gray-300">
+                                  Enable automatic reconciliation
+                                </span>
+                              </label>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <label 
+                                    htmlFor={`cron-${task.id}`}
+                                    className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+                                  >
+                                    Schedule (Cron Syntax)
+                                  </label>
+                                  <input
+                                    id={`cron-${task.id}`}
+                                    type="text"
+                                    name="cron"
+                                    defaultValue={task.cron}
+                                    placeholder="0 */6 * * *"
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                                  />
+                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    <a 
+                                      href="https://crontab.guru" 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                                    >
+                                      Cron syntax help
+                                    </a>
+                                    {" • Default: every 6 hours"}
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <label 
+                                    htmlFor={`windowHours-${task.id}`}
+                                    className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+                                  >
+                                    Lookback Window (hours)
+                                  </label>
+                                  <input
+                                    id={`windowHours-${task.id}`}
+                                    type="number"
+                                    name="windowHours"
+                                    defaultValue={task.windowHours}
+                                    min="1"
+                                    max="720"
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                  />
+                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    How far back to reconcile (default: 72h)
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 pt-2">
+                                <Button
+                                  type="submit"
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled={reconciliationFetcher.state === "submitting"}
+                                >
+                                  {reconciliationFetcher.state === "submitting" 
+                                    ? "Saving..." 
+                                    : "Save Settings"}
+                                </Button>
+                              </div>
+                            </reconciliationFetcher.Form>
+
+                            {/* Manual Trigger */}
+                            <div className="mt-4 pt-3 border-t border-gray-200 dark:border-gray-700">
+                              <reconciliationFetcher.Form method="post" className="flex items-center gap-3">
+                                <input type="hidden" name="intent" value="triggerReconciliation" />
+                                <input type="hidden" name="taskId" value={task.id} />
+                                <Button
+                                  type="submit"
+                                  variant="primary"
+                                  size="sm"
+                                  disabled={reconciliationFetcher.state === "submitting"}
+                                >
+                                  Run Now
+                                </Button>
+                                <span className="text-xs text-gray-500 dark:text-gray-400">
+                                  Trigger manual reconciliation
+                                </span>
+                              </reconciliationFetcher.Form>
+                            </div>
+
+                            {/* Result messages */}
+                            {reconciliationFetcher.data && "success" in reconciliationFetcher.data && (
+                              <div className="mt-3 p-2 bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded text-sm text-green-700 dark:text-green-300">
+                                {reconciliationFetcher.data.message || "Settings saved successfully!"}
+                              </div>
+                            )}
+                            {reconciliationFetcher.data && "error" in reconciliationFetcher.data && (
+                              <div className="mt-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded text-sm text-red-700 dark:text-red-300">
+                                {reconciliationFetcher.data.error}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-4">
+                        Reconciliation runs in the background. Check the Events log for results.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1525,7 +2022,6 @@ export default function Settings() {
               </div>
             )}
           </div>
-        </div>
       </div>
     </div>
   );

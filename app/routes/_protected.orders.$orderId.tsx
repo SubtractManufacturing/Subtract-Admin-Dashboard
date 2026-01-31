@@ -25,10 +25,7 @@ import {
   type AttachmentEventContext,
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getAppConfig } from "~/lib/config.server";
 import {
-  shouldShowEventsInNav,
-  shouldShowVersionInHeader,
   isFeatureEnabled,
   FEATURE_FLAGS,
   canUserUploadCadRevision,
@@ -42,7 +39,6 @@ import {
 } from "~/lib/s3.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
-import Navbar from "~/components/Navbar";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
@@ -83,7 +79,6 @@ import { EventTimeline } from "~/components/EventTimeline";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  const appConfig = getAppConfig();
 
   const orderNumber = params.orderId; // Note: param name stays the same but now represents orderNumber
   if (!orderNumber) {
@@ -192,15 +187,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   // Get feature flags and events
   const [
-    showEventsLink,
-    showVersionInHeader,
     pdfAutoDownload,
     events,
     canRevise,
     bananaEnabled,
   ] = await Promise.all([
-    shouldShowEventsInNav(),
-    shouldShowVersionInHeader(),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsForOrder(order.id, 10),
     canUserUploadCadRevision(userDetails?.role),
@@ -227,9 +218,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       parts,
       user,
       userDetails,
-      appConfig,
-      showEventsLink,
-      showVersionInHeader,
       pdfAutoDownload,
       events,
       canRevise,
@@ -1100,9 +1088,6 @@ export default function OrderDetails() {
     parts,
     user,
     userDetails,
-    appConfig,
-    showEventsLink,
-    showVersionInHeader,
     pdfAutoDownload,
     events,
     canRevise,
@@ -1821,17 +1806,6 @@ export default function OrderDetails() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={
-          userDetails?.name?.charAt(0).toUpperCase() ||
-          user.email.charAt(0).toUpperCase()
-        }
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
-      />
       <div className="max-w-[1920px] mx-auto">
         {/* Custom breadcrumb bar with buttons */}
         <div className="flex justify-between items-center px-10 py-2.5">

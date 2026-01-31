@@ -26,14 +26,8 @@ import type {
   QuoteEventContext,
 } from "~/lib/quotes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getAppConfig } from "~/lib/config.server";
 import { getNextQuoteNumber } from "~/lib/number-generator";
-import {
-  shouldShowEventsInNav,
-  shouldShowVersionInHeader,
-} from "~/lib/featureFlags";
 
-import Navbar from "~/components/Navbar";
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
 import { tableStyles, statusStyles } from "~/utils/tw-styles";
@@ -41,7 +35,6 @@ import NewQuoteModal from "~/components/quotes/NewQuoteModal";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
-  const appConfig = getAppConfig();
 
   // Load customers and vendors first, separately, to ensure they always load
   let customers: Customer[] = [];
@@ -61,15 +54,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   // Now load the rest
   let quotes: QuoteWithRelations[] = [];
-  let showEventsLink = true;
-  let showVersionInHeader = false;
 
   try {
-    [quotes, showEventsLink, showVersionInHeader] = await Promise.all([
-      getQuotes(),
-      shouldShowEventsInNav(),
-      shouldShowVersionInHeader(),
-    ]);
+    quotes = await getQuotes();
   } catch (error) {
     console.error("Failed to load quotes:", error);
     // Continue with empty quotes array but customers/vendors should still be loaded
@@ -82,9 +69,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       vendors,
       user,
       userDetails,
-      appConfig,
-      showEventsLink,
-      showVersionInHeader,
     }),
     headers
   );
@@ -152,12 +136,6 @@ export default function QuotesIndex() {
   const {
     quotes,
     customers,
-    user,
-    userDetails,
-    appConfig,
-    showEventsLink,
-    showVersionInHeader,
-    showQuotesLink,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const archiveFetcher = useFetcher(); // Dedicated fetcher for archive actions
@@ -253,26 +231,13 @@ export default function QuotesIndex() {
   };
 
   return (
-    <div>
-      <Navbar
-        userName={userDetails?.name || user.email}
-        userEmail={user.email}
-        userInitials={
-          userDetails?.name?.charAt(0).toUpperCase() ||
-          user.email.charAt(0).toUpperCase()
-        }
-        version={appConfig.version}
-        showVersion={showVersionInHeader}
-        showEventsLink={showEventsLink}
-        showQuotesLink={showQuotesLink}
+    <div className="max-w-[1920px] mx-auto">
+      <SearchHeader
+        breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Quotes" }]}
+        onSearch={setSearchQuery}
       />
-      <div className="max-w-[1920px] mx-auto">
-        <SearchHeader
-          breadcrumbs={[{ label: "Dashboard", href: "/" }, { label: "Quotes" }]}
-          onSearch={setSearchQuery}
-        />
 
-        <div className="px-10 py-8">
+      <div className="px-10 py-8">
           <div className="flex justify-between items-end mb-5">
             <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
               Quotes ({filteredQuotes.length})
@@ -414,7 +379,6 @@ export default function QuotesIndex() {
             </tbody>
           </table>
         </div>
-      </div>
 
       {/* New Quote Modal */}
       <NewQuoteModal
