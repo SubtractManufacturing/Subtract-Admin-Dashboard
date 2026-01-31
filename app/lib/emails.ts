@@ -10,6 +10,27 @@ import {
 } from "./db/schema";
 import { eq, desc, asc, and } from "drizzle-orm";
 
+// ============================================
+// Thread Types
+// ============================================
+
+export interface ThreadSummary {
+  threadId: string;
+  subject: string;
+  participants: string[];
+  lastEmailAt: Date | null;
+  emailCount: number;
+  latestSnippet: string;
+  quoteId: number | null;
+  orderId: number | null;
+  customerId: number | null;
+  vendorId: number | null;
+  // Latest email info for display
+  latestFromAddress: string;
+  latestFromName: string | null;
+  latestDirection: "inbound" | "outbound";
+}
+
 // CONSTRAINT 2: Database Integrity & Performance
 // Thread ID logic: randomUUID() for roots, inherit parent's UUID for replies
 export async function getOrCreateThreadId(
@@ -245,4 +266,152 @@ export async function getEmailAttachmentById(
     where: eq(emailAttachments.id, id),
   });
   return attachment || null;
+}
+
+// ============================================
+// Thread Queries
+// ============================================
+
+/**
+ * Get email threads with summaries, grouped by threadId
+ * Returns threads sorted by most recent email
+ */
+export async function getEmailThreads(options?: {
+  direction?: "inbound" | "outbound";
+  limit?: number;
+  offset?: number;
+}): Promise<ThreadSummary[]> {
+  const limitVal = options?.limit || 25;
+  const offsetVal = options?.offset || 0;
+
+  // Get all emails with optional direction filter
+  const conditions = [];
+  if (options?.direction) {
+    conditions.push(eq(emails.direction, options.direction));
+  }
+
+  const allEmails = await db.query.emails.findMany({
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    orderBy: desc(emails.sentAt),
+  });
+
+  // Group emails by threadId
+  const threadMap = new Map<string, typeof allEmails>();
+  for (const email of allEmails) {
+    const existing = threadMap.get(email.threadId) || [];
+    existing.push(email);
+    threadMap.set(email.threadId, existing);
+  }
+
+  // Convert to thread summaries
+  const threadSummaries: ThreadSummary[] = [];
+  for (const [threadId, threadEmails] of threadMap) {
+    // Sort emails by date (newest first for getting latest)
+    const sortedEmails = [...threadEmails].sort((a, b) => {
+      const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
+      const dateB = b.sentAt ? new Date(b.sentAt).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    const latestEmail = sortedEmails[0];
+    const firstEmail = sortedEmails[sortedEmails.length - 1];
+    const participants = [...new Set(threadEmails.map((e) => e.fromAddress))];
+
+    threadSummaries.push({
+      threadId,
+      subject: firstEmail.subject || "(No Subject)",
+      participants,
+      lastEmailAt: latestEmail.sentAt,
+      emailCount: threadEmails.length,
+      latestSnippet: truncateText(latestEmail.textBody || "", 150),
+      quoteId: threadEmails.find((e) => e.quoteId)?.quoteId || null,
+      orderId: threadEmails.find((e) => e.orderId)?.orderId || null,
+      customerId: threadEmails.find((e) => e.customerId)?.customerId || null,
+      vendorId: threadEmails.find((e) => e.vendorId)?.vendorId || null,
+      latestFromAddress: latestEmail.fromAddress,
+      latestFromName: latestEmail.fromName,
+      latestDirection: latestEmail.direction,
+    });
+  }
+
+  // Sort by most recent and apply pagination
+  threadSummaries.sort((a, b) => {
+    const dateA = a.lastEmailAt ? new Date(a.lastEmailAt).getTime() : 0;
+    const dateB = b.lastEmailAt ? new Date(b.lastEmailAt).getTime() : 0;
+    return dateB - dateA;
+  });
+
+  return threadSummaries.slice(offsetVal, offsetVal + limitVal);
+}
+
+/**
+ * Get a single thread by ID with all its emails
+ */
+export async function getThreadById(threadId: string): Promise<{
+  thread: ThreadSummary;
+  emails: Email[];
+} | null> {
+  // Get all emails in the thread
+  const threadEmails = await db.query.emails.findMany({
+    where: eq(emails.threadId, threadId),
+    orderBy: asc(emails.sentAt),
+  });
+
+  if (threadEmails.length === 0) {
+    return null;
+  }
+
+  // Build thread summary from the emails
+  const latestEmail = threadEmails[threadEmails.length - 1];
+  const firstEmail = threadEmails[0];
+  const participants = [...new Set(threadEmails.map((e) => e.fromAddress))];
+
+  const thread: ThreadSummary = {
+    threadId,
+    subject: firstEmail.subject || "(No Subject)",
+    participants,
+    lastEmailAt: latestEmail.sentAt,
+    emailCount: threadEmails.length,
+    latestSnippet: truncateText(latestEmail.textBody || "", 150),
+    quoteId: threadEmails.find((e) => e.quoteId)?.quoteId || null,
+    orderId: threadEmails.find((e) => e.orderId)?.orderId || null,
+    customerId: threadEmails.find((e) => e.customerId)?.customerId || null,
+    vendorId: threadEmails.find((e) => e.vendorId)?.vendorId || null,
+    latestFromAddress: latestEmail.fromAddress,
+    latestFromName: latestEmail.fromName,
+    latestDirection: latestEmail.direction,
+  };
+
+  return { thread, emails: threadEmails };
+}
+
+/**
+ * Get thread count for pagination
+ */
+export async function getThreadCount(options?: {
+  direction?: "inbound" | "outbound";
+}): Promise<number> {
+  // Get all emails with optional direction filter
+  const conditions = [];
+  if (options?.direction) {
+    conditions.push(eq(emails.direction, options.direction));
+  }
+
+  const allEmails = await db.query.emails.findMany({
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    columns: { threadId: true },
+  });
+
+  // Count unique thread IDs
+  const uniqueThreads = new Set(allEmails.map((e) => e.threadId));
+  return uniqueThreads.size;
+}
+
+/**
+ * Helper to truncate text with ellipsis
+ */
+function truncateText(text: string, maxLength: number): string {
+  if (!text) return "";
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength).trim() + "...";
 }
