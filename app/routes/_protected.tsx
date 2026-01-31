@@ -3,7 +3,7 @@ import { Outlet, useLoaderData } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { createServerClient } from "~/lib/supabase";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
+import { shouldShowEventsInNav, shouldShowVersionInHeader, shouldShowEmailsInNav } from "~/lib/featureFlags";
 import Sidebar from "~/components/Sidebar";
 import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
 
@@ -11,9 +11,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
   
-  const [showEventsLink, showVersionInHeader] = await Promise.all([
+  const [showEventsLink, showVersionInHeader, showEmailsLink] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
+    shouldShowEmailsInNav(),
   ]);
   
   return withAuthHeaders(
@@ -23,6 +24,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       appConfig,
       showEventsLink,
       showVersionInHeader,
+      showEmailsLink,
     }),
     headers
   );
@@ -38,7 +40,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 function ProtectedLayoutContent() {
-  const { user, userDetails, appConfig, showEventsLink, showVersionInHeader } = useLoaderData<typeof loader>();
+  const { user, userDetails, appConfig, showEventsLink, showVersionInHeader, showEmailsLink } = useLoaderData<typeof loader>();
   const { isExpanded } = useSidebar();
   
   return (
@@ -50,6 +52,7 @@ function ProtectedLayoutContent() {
         version={appConfig.version}
         showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
+        showEmailsLink={showEmailsLink}
       />
       <main className={`flex-1 transition-all duration-300 ${isExpanded ? "ml-64" : "ml-20"}`}>
         <Outlet />

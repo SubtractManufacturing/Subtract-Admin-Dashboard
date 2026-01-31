@@ -2202,11 +2202,6 @@ export default function QuoteDetail() {
                     onDownloadFiles={handleDownloadFiles}
                     onGeneratePdf={handleGeneratePdf}
                     onGenerateInvoice={handleGenerateInvoice}
-                    onSendEmail={
-                      canSendEmail
-                        ? () => setIsSendEmailModalOpen(true)
-                        : undefined
-                    }
                     isDownloading={isDownloading}
                     hasCustomer={!!quote.customerId}
                   />
