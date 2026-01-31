@@ -13,7 +13,7 @@ import Modal from "~/components/shared/Modal";
 import type { Email, EmailAttachment } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { user, userDetails, headers } = await requireAuth(request);
+  const { headers } = await requireAuth(request);
 
   const url = new URL(request.url);
   const direction = url.searchParams.get("direction") as
@@ -36,8 +36,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   return withAuthHeaders(
     json({
-      user,
-      userDetails,
       emails,
       sendAsAddresses,
       currentPage: page,
@@ -48,7 +46,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { user, userDetails, headers } = await requireAuth(request);
+  const { headers } = await requireAuth(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -259,7 +257,15 @@ export default function EmailsPage() {
             {emails.map((email: Email) => (
               <div
                 key={email.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleEmailClick(email)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleEmailClick(email);
+                  }
+                }}
                 className="flex items-start gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors"
               >
                 {/* Direction indicator */}
@@ -521,11 +527,12 @@ function ComposeEmailModal({
 
         {/* From */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="email-from" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             From
           </label>
           {sendAsAddresses.length > 1 ? (
             <select
+              id="email-from"
               value={formData.from}
               onChange={(e) =>
                 setFormData({ ...formData, from: e.target.value })
@@ -540,7 +547,7 @@ function ComposeEmailModal({
               ))}
             </select>
           ) : (
-            <div className="px-3 py-2 text-gray-700 dark:text-gray-300">
+            <div id="email-from" className="px-3 py-2 text-gray-700 dark:text-gray-300">
               {sendAsAddresses[0]?.label || "No sender configured"} &lt;
               {sendAsAddresses[0]?.email || ""}&gt;
             </div>
@@ -549,10 +556,11 @@ function ComposeEmailModal({
 
         {/* To */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="email-to" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             To
           </label>
           <input
+            id="email-to"
             type="email"
             value={formData.to}
             onChange={(e) => setFormData({ ...formData, to: e.target.value })}
@@ -565,10 +573,11 @@ function ComposeEmailModal({
 
         {/* Subject */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="email-subject" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Subject
           </label>
           <input
+            id="email-subject"
             type="text"
             value={formData.subject}
             onChange={(e) =>
@@ -583,10 +592,11 @@ function ComposeEmailModal({
 
         {/* Body */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label htmlFor="email-body" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Message
           </label>
           <textarea
+            id="email-body"
             value={formData.body}
             onChange={(e) => setFormData({ ...formData, body: e.target.value })}
             rows={8}

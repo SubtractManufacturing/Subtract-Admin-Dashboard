@@ -172,7 +172,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Orders() {
-  const { orders, customers, vendors, user, userDetails } =
+  const { orders, customers, vendors } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const navigate = useNavigate();

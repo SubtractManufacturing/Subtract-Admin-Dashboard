@@ -8,7 +8,7 @@ import {
   type EmailAttachment,
   type NewEmailAttachment,
 } from "./db/schema";
-import { eq, desc, asc, and, or } from "drizzle-orm";
+import { eq, desc, asc, and } from "drizzle-orm";
 
 // CONSTRAINT 2: Database Integrity & Performance
 // Thread ID logic: randomUUID() for roots, inherit parent's UUID for replies

@@ -216,8 +216,6 @@ export default function EventsPage() {
     customers,
     vendors,
     orders,
-    user,
-    userDetails,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
 

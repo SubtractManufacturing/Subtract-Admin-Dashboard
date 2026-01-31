@@ -196,9 +196,10 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
       messageId: result.MessageID,
       threadId,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     // CONSTRAINT 3: Handle Postmark Error 422 - Unverified sender
-    if (error?.statusCode === 422 || error?.ErrorCode === 422) {
+    const err = error as { statusCode?: number; ErrorCode?: number; message?: string };
+    if (err?.statusCode === 422 || err?.ErrorCode === 422) {
       const errorMessage =
         `Email address '${from}' is not verified in Postmark. ` +
         `Please add it as a Sender Signature in the Postmark dashboard: ` +
@@ -218,8 +219,8 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     console.error("Failed to send email via Postmark:", error);
     return {
       success: false,
-      error: error?.message || "Failed to send email",
-      errorCode: error?.statusCode,
+      error: err?.message || "Failed to send email",
+      errorCode: err?.statusCode,
     };
   }
 }

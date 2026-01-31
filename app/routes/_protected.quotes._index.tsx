@@ -136,8 +136,6 @@ export default function QuotesIndex() {
   const {
     quotes,
     customers,
-    user,
-    userDetails,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const archiveFetcher = useFetcher(); // Dedicated fetcher for archive actions

@@ -92,7 +92,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Vendors() {
-  const { vendors, user, userDetails } = useLoaderData<typeof loader>()
+  const { vendors } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)

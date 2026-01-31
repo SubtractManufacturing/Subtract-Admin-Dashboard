@@ -158,7 +158,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function NewQuotePage() {
-  const { user, userDetails, customers } = useLoaderData<typeof loader>();
+  const { customers } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(true);
 
