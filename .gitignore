@@ -120,6 +120,8 @@ CLAUDE.md
 *.claude
 /.claude
 
+.cursorrules
+
 /planning
 /logs
 /scripts

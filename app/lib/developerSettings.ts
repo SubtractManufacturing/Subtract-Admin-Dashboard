@@ -10,6 +10,17 @@ export const DEV_SETTINGS = {
   EMAIL_REPLY_TO_ADDRESS: "email_reply_to_address",
   EMAIL_OUTBOUND_BCC_ADDRESS: "email_outbound_bcc_address",
   EMAIL_INBOUND_FORWARD_ADDRESS: "email_inbound_forward_address",
+  
+  // Reconciliation settings
+  // Postmark reconciliation
+  RECONCILIATION_POSTMARK_ENABLED: "reconciliation_postmark_enabled",
+  RECONCILIATION_POSTMARK_CRON: "reconciliation_postmark_cron",
+  RECONCILIATION_POSTMARK_WINDOW_HOURS: "reconciliation_postmark_window_hours",
+  
+  // Future: Stripe reconciliation
+  // RECONCILIATION_STRIPE_ENABLED: "reconciliation_stripe_enabled",
+  // RECONCILIATION_STRIPE_CRON: "reconciliation_stripe_cron",
+  // RECONCILIATION_STRIPE_WINDOW_HOURS: "reconciliation_stripe_window_hours",
 } as const;
 
 /**
@@ -166,4 +177,100 @@ export async function setEmailInboundForwardAddress(
   updatedBy?: string
 ): Promise<boolean> {
   return setDeveloperSetting(DEV_SETTINGS.EMAIL_INBOUND_FORWARD_ADDRESS, address, updatedBy);
+}
+
+// ============================================
+// Reconciliation Settings
+// ============================================
+
+/**
+ * Reconciliation task configuration
+ */
+export interface ReconciliationTaskConfig {
+  enabled: boolean;
+  cron: string;
+  windowHours: number;
+}
+
+/**
+ * Get reconciliation configuration for a specific task
+ */
+export async function getReconciliationTaskConfig(
+  taskId: string
+): Promise<ReconciliationTaskConfig> {
+  const [enabled, cron, windowHours] = await Promise.all([
+    getDeveloperSetting(`reconciliation_${taskId}_enabled`),
+    getDeveloperSetting(`reconciliation_${taskId}_cron`),
+    getDeveloperSetting(`reconciliation_${taskId}_window_hours`),
+  ]);
+
+  return {
+    enabled: enabled === "true",
+    cron: cron || "0 */6 * * *", // Default: every 6 hours
+    windowHours: windowHours ? parseInt(windowHours) : 72, // Default: 72 hours
+  };
+}
+
+/**
+ * Set reconciliation configuration for a specific task
+ */
+export async function setReconciliationTaskConfig(
+  taskId: string,
+  config: Partial<ReconciliationTaskConfig>,
+  updatedBy?: string
+): Promise<boolean> {
+  try {
+    const updates: Promise<boolean>[] = [];
+
+    if (config.enabled !== undefined) {
+      updates.push(
+        setDeveloperSetting(
+          `reconciliation_${taskId}_enabled`,
+          config.enabled ? "true" : "false",
+          updatedBy
+        )
+      );
+    }
+    if (config.cron !== undefined) {
+      updates.push(
+        setDeveloperSetting(
+          `reconciliation_${taskId}_cron`,
+          config.cron,
+          updatedBy
+        )
+      );
+    }
+    if (config.windowHours !== undefined) {
+      updates.push(
+        setDeveloperSetting(
+          `reconciliation_${taskId}_window_hours`,
+          String(config.windowHours),
+          updatedBy
+        )
+      );
+    }
+
+    const results = await Promise.all(updates);
+    return results.every(Boolean);
+  } catch (error) {
+    console.error(`Error setting reconciliation config for ${taskId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Get Postmark reconciliation configuration
+ */
+export async function getPostmarkReconciliationConfig(): Promise<ReconciliationTaskConfig> {
+  return getReconciliationTaskConfig("postmark");
+}
+
+/**
+ * Set Postmark reconciliation configuration
+ */
+export async function setPostmarkReconciliationConfig(
+  config: Partial<ReconciliationTaskConfig>,
+  updatedBy?: string
+): Promise<boolean> {
+  return setReconciliationTaskConfig("postmark", config, updatedBy);
 }

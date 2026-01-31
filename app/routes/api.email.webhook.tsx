@@ -4,9 +4,11 @@ import {
   createEmail,
   updateEmailStatus,
   getOrCreateThreadId,
+  getEmailByPostmarkId,
 } from "~/lib/emails";
 import { processAttachments } from "~/lib/postmark/attachment-handler.server";
 import { createEvent } from "~/lib/events";
+import { logEmailEvent } from "~/lib/reconciliation/event-logger";
 import { isInboundForwardEnabled } from "~/lib/featureFlags";
 import { getEmailInboundForwardAddress } from "~/lib/developerSettings";
 
@@ -191,6 +193,16 @@ export async function action({ request }: ActionFunctionArgs) {
             : new Date(),
         });
 
+        // Log email event for audit trail
+        const email = await getEmailByPostmarkId(payload.MessageID);
+        if (email) {
+          await logEmailEvent(email.id, "delivered", {
+            postmarkMessageId: payload.MessageID,
+            source: "webhook",
+            recipient: payload.Recipient,
+          });
+        }
+
         return json({ success: true });
       }
 
@@ -206,6 +218,18 @@ export async function action({ request }: ActionFunctionArgs) {
           },
         });
 
+        // Log email event for audit trail
+        const bouncedEmail = await getEmailByPostmarkId(payload.MessageID);
+        if (bouncedEmail) {
+          await logEmailEvent(bouncedEmail.id, "bounced", {
+            postmarkMessageId: payload.MessageID,
+            source: "webhook",
+            recipient: payload.Email,
+            bounceReason: payload.Description,
+            bounceType: payload.Type,
+          });
+        }
+
         return json({ success: true });
       }
 
@@ -218,6 +242,16 @@ export async function action({ request }: ActionFunctionArgs) {
               : new Date(),
           },
         });
+
+        // Log email event for audit trail
+        const spamEmail = await getEmailByPostmarkId(payload.MessageID);
+        if (spamEmail) {
+          await logEmailEvent(spamEmail.id, "spam_complaint", {
+            postmarkMessageId: payload.MessageID,
+            source: "webhook",
+            recipient: payload.Email,
+          });
+        }
 
         return json({ success: true });
       }
@@ -232,6 +266,20 @@ export async function action({ request }: ActionFunctionArgs) {
           metadata: { openCount: payload.OpenCount || 1 },
         });
 
+        // Log email event for audit trail
+        const openedEmail = await getEmailByPostmarkId(payload.MessageID);
+        if (openedEmail) {
+          await logEmailEvent(openedEmail.id, "opened", {
+            postmarkMessageId: payload.MessageID,
+            source: "webhook",
+            recipient: payload.Recipient,
+            userAgent: payload.UserAgent,
+            geo: payload.Geo
+              ? { city: payload.Geo.City, country: payload.Geo.Country }
+              : undefined,
+          });
+        }
+
         return json({ success: true });
       }
 
@@ -244,6 +292,17 @@ export async function action({ request }: ActionFunctionArgs) {
             : new Date(),
           metadata: { clickedUrl: payload.OriginalLink },
         });
+
+        // Log email event for audit trail
+        const clickedEmail = await getEmailByPostmarkId(payload.MessageID);
+        if (clickedEmail) {
+          await logEmailEvent(clickedEmail.id, "clicked", {
+            postmarkMessageId: payload.MessageID,
+            source: "webhook",
+            recipient: payload.Recipient,
+            clickedUrl: payload.OriginalLink,
+          });
+        }
 
         return json({ success: true });
       }

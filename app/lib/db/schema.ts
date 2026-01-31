@@ -770,6 +770,14 @@ export const emails = pgTable(
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
+
+    // Reconciliation tracking
+    // lastReconciledAt: When this email was last verified against Postmark API
+    lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }),
+    // stateSource: How the current status was determined ('webhook', 'reconciliation', 'manual')
+    stateSource: text("state_source").default("webhook"),
+    // reconciliationNotes: Notes from reconciliation (e.g., "State corrected from sent to delivered")
+    reconciliationNotes: text("reconciliation_notes"),
   },
   (table) => ({
     // CRITICAL: These indexes are essential for performance at scale (1000+ emails)
@@ -785,6 +793,8 @@ export const emails = pgTable(
       table.status
     ), // For inbox filtering
     sentAtIdx: index("emails_sent_at_idx").on(table.sentAt), // For sorting by date
+    // Index for reconciliation queries - find emails that need reconciliation
+    lastReconciledIdx: index("emails_last_reconciled_idx").on(table.lastReconciledAt),
   })
 );
 

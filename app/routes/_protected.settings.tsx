@@ -26,6 +26,8 @@ import {
   setDefaultSendAsAddress,
   sendAsAddressExists,
 } from "~/lib/emailSendAsAddresses";
+import { ReconciliationTaskRegistry } from "~/lib/reconciliation/types";
+import { getReconciliationTaskConfig } from "~/lib/developerSettings";
 import type { FeatureFlag, EmailSendAsAddress } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -87,6 +89,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const emailInboundForwardAddress =
     emailIntegrationEnabled ? await getEmailInboundForwardAddress() : null;
 
+  // Get reconciliation tasks config for Dev users
+  const reconciliationTasks =
+    userDetails.role === "Dev"
+      ? await Promise.all(
+          ReconciliationTaskRegistry.getAll().map(async (task) => {
+            const config = await getReconciliationTaskConfig(task.id);
+            return {
+              id: task.id,
+              name: task.name,
+              description: task.description,
+              enabled: config.enabled,
+              cron: config.cron,
+              windowHours: config.windowHours,
+            };
+          })
+        )
+      : [];
+
   return withAuthHeaders(
     json({
       user,
@@ -103,6 +123,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       emailReplyToAddress,
       emailOutboundBccAddress,
       emailInboundForwardAddress,
+      reconciliationTasks,
     }),
     headers
   );
@@ -526,6 +547,92 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  // Update reconciliation task settings
+  if (intent === "updateReconciliationTask" && userDetails.role === "Dev") {
+    const taskId = formData.get("taskId") as string;
+    const enabled = formData.get("enabled") === "true";
+    const cronSchedule = formData.get("cron") as string;
+    const windowHours = formData.get("windowHours") as string;
+
+    if (!taskId) {
+      return withAuthHeaders(
+        json({ error: "Task ID is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    // Validate cron syntax
+    const cron = await import("node-cron");
+    if (cronSchedule && !cron.validate(cronSchedule)) {
+      return withAuthHeaders(
+        json({ error: "Invalid cron syntax. Use format like '0 */6 * * *'" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      // Save settings
+      const { setReconciliationTaskConfig } = await import("~/lib/developerSettings");
+      await setReconciliationTaskConfig(
+        taskId,
+        {
+          enabled,
+          cron: cronSchedule,
+          windowHours: parseInt(windowHours) || 72,
+        },
+        user.id
+      );
+
+      // Restart scheduler with new config
+      const { ReconciliationScheduler } = await import("~/lib/reconciliation/scheduler.server");
+      await ReconciliationScheduler.getInstance().restartTask(taskId);
+
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ 
+          error: `Failed to update settings: ${error instanceof Error ? error.message : "Unknown error"}` 
+        }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Trigger manual reconciliation
+  if (intent === "triggerReconciliation" && userDetails.role === "Dev") {
+    const taskId = formData.get("taskId") as string;
+
+    if (!taskId) {
+      return withAuthHeaders(
+        json({ error: "Task ID is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const { ReconciliationScheduler } = await import("~/lib/reconciliation/scheduler.server");
+      
+      // Execute task asynchronously (don't wait for completion)
+      ReconciliationScheduler.getInstance()
+        .executeTask(taskId, "manual", user.id)
+        .catch((error) => {
+          console.error(`Manual reconciliation failed for ${taskId}:`, error);
+        });
+
+      return withAuthHeaders(
+        json({ success: true, message: "Reconciliation started" }),
+        headers
+      );
+    } catch (error) {
+      return withAuthHeaders(
+        json({ 
+          error: `Failed to trigger reconciliation: ${error instanceof Error ? error.message : "Unknown error"}` 
+        }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
   return withAuthHeaders(
     json({ error: "Invalid intent" }, { status: 400 }),
     headers
@@ -786,6 +893,7 @@ export default function Settings() {
     emailReplyToAddress,
     emailOutboundBccAddress,
     emailInboundForwardAddress,
+    reconciliationTasks,
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
@@ -797,6 +905,7 @@ export default function Settings() {
   const emailReplyToFetcher = useFetcher<typeof action>();
   const emailOutboundBccFetcher = useFetcher<typeof action>();
   const emailInboundForwardFetcher = useFetcher<typeof action>();
+  const reconciliationFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
 
   // State for adding new email address
@@ -1700,6 +1809,163 @@ export default function Settings() {
                     <BananaModelUploadSection 
                       bananaModelStatus={bananaModelStatus} 
                     />
+                  )}
+
+                  {/* Reconciliation Settings */}
+                  {reconciliationTasks && reconciliationTasks.length > 0 && (
+                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-lg p-4">
+                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+                        <span>🔄</span>
+                        Data Reconciliation
+                      </h4>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
+                        Configure scheduled reconciliation tasks to sync data with external services. 
+                        Reconciliation ensures local data stays in sync with the source of truth (e.g., Postmark APIs).
+                      </p>
+
+                      <div className="space-y-4">
+                        {reconciliationTasks.map((task: {
+                          id: string;
+                          name: string;
+                          description: string;
+                          enabled: boolean;
+                          cron: string;
+                          windowHours: number;
+                        }) => (
+                          <div 
+                            key={task.id} 
+                            className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700"
+                          >
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <h5 className="text-sm font-medium text-gray-900 dark:text-white">
+                                  {task.name}
+                                </h5>
+                                <p className="text-xs text-gray-600 dark:text-gray-400">
+                                  {task.description}
+                                </p>
+                              </div>
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                task.enabled 
+                                  ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" 
+                                  : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+                              }`}>
+                                {task.enabled ? "Enabled" : "Disabled"}
+                              </span>
+                            </div>
+
+                            <reconciliationFetcher.Form method="post" className="space-y-3">
+                              <input type="hidden" name="intent" value="updateReconciliationTask" />
+                              <input type="hidden" name="taskId" value={task.id} />
+                              
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  name="enabled"
+                                  value="true"
+                                  defaultChecked={task.enabled}
+                                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700 dark:text-gray-300">
+                                  Enable automatic reconciliation
+                                </span>
+                              </label>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    Schedule (Cron Syntax)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="cron"
+                                    defaultValue={task.cron}
+                                    placeholder="0 */6 * * *"
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
+                                  />
+                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    <a 
+                                      href="https://crontab.guru" 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                                    >
+                                      Cron syntax help
+                                    </a>
+                                    {" • Default: every 6 hours"}
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    Lookback Window (hours)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    name="windowHours"
+                                    defaultValue={task.windowHours}
+                                    min="1"
+                                    max="720"
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                  />
+                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    How far back to reconcile (default: 72h)
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 pt-2">
+                                <Button
+                                  type="submit"
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled={reconciliationFetcher.state === "submitting"}
+                                >
+                                  {reconciliationFetcher.state === "submitting" 
+                                    ? "Saving..." 
+                                    : "Save Settings"}
+                                </Button>
+                              </div>
+                            </reconciliationFetcher.Form>
+
+                            {/* Manual Trigger */}
+                            <div className="mt-4 pt-3 border-t border-gray-200 dark:border-gray-700">
+                              <reconciliationFetcher.Form method="post" className="flex items-center gap-3">
+                                <input type="hidden" name="intent" value="triggerReconciliation" />
+                                <input type="hidden" name="taskId" value={task.id} />
+                                <Button
+                                  type="submit"
+                                  variant="primary"
+                                  size="sm"
+                                  disabled={reconciliationFetcher.state === "submitting"}
+                                >
+                                  Run Now
+                                </Button>
+                                <span className="text-xs text-gray-500 dark:text-gray-400">
+                                  Trigger manual reconciliation
+                                </span>
+                              </reconciliationFetcher.Form>
+                            </div>
+
+                            {/* Result messages */}
+                            {reconciliationFetcher.data && "success" in reconciliationFetcher.data && (
+                              <div className="mt-3 p-2 bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded text-sm text-green-700 dark:text-green-300">
+                                {reconciliationFetcher.data.message || "Settings saved successfully!"}
+                              </div>
+                            )}
+                            {reconciliationFetcher.data && "error" in reconciliationFetcher.data && (
+                              <div className="mt-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded text-sm text-red-700 dark:text-red-300">
+                                {reconciliationFetcher.data.error}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-4">
+                        Reconciliation runs in the background. Check the Events log for results.
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>
