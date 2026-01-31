@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.2.1...v1.3.0) (2026-01-31)
+
+
+### Features
+
+* **email:** add postmark reconciliation system with scheduled sync ([be633e8](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/be633e8b7abe26a5905b36d65ab29f1008df7fa2))
+* replace top navbar with sidebar navigation and migrate from Gmail to Postmark ([448a5ee](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/448a5eeed78f818eded9e407ee64371503792657))
+
+
+### Bug Fixes
+
+* clean up types and remove abandoned functions (linting/typechecking) ([5337946](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/5337946fa575bf8b85157018113061e120bac833))
+* prep for email deployment ([#79](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/79)) ([9a8d707](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/9a8d707bcf791fc4f3972bae28a3f011e815f1fb))
+* remove unused imports and changed to proper type assertions ([3a91dc6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/3a91dc6703281834f0fc33138045de3cbafdd8ee))
+* update fastxml parser to clear CVE-2026-25128 ([#78](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/78)) ([f2c567d](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/f2c567db77725e8e283d849779ebd5d8f11d4323))
+
 ## [1.2.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.2.0...v1.2.1) (2025-12-14)
 
 
