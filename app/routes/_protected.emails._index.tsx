@@ -1,53 +1,93 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   json,
   LoaderFunctionArgs,
   ActionFunctionArgs,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams, useNavigate, useOutletContext } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getEmailThreads, getThreadCount } from "~/lib/emails";
+import { 
+  getEmailThreads, 
+  getThreadCount, 
+  getThreadById, 
+  getCategoryCounts, 
+  getEmailAttachments,
+  markThreadAsRead,
+  markThreadAsImportant,
+  assignThread,
+  archiveThread,
+} from "~/lib/emails";
 import { getActiveSendAsAddresses } from "~/lib/emailSendAsAddresses";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
-import { ThreadListItem } from "~/components/email/ThreadListItem";
+import { EmailLayout, ThreadListPanel, ThreadPreviewPanel } from "~/components/email";
 import type { ThreadSummary } from "~/lib/emails";
+import type { Email, EmailAttachment } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { headers, user } = await requireAuth(request);
 
   const url = new URL(request.url);
-  const direction = url.searchParams.get("direction") as
-    | "inbound"
-    | "outbound"
-    | null;
+  const category = url.searchParams.get("category");
   const page = parseInt(url.searchParams.get("page") || "1");
+  const selectedThreadId = url.searchParams.get("thread");
   const limit = 25;
   const offset = (page - 1) * limit;
 
+  // Determine direction filter based on category
+  let direction: "inbound" | "outbound" | undefined;
+  if (category === "sent") {
+    direction = "outbound";
+  }
+
   // Fetch email threads (grouped by threadId)
   const threads = await getEmailThreads({
-    direction: direction || undefined,
+    direction,
     limit,
     offset,
   });
 
   // Get thread count for pagination
   const totalThreads = await getThreadCount({
-    direction: direction || undefined,
+    direction,
   });
+
+  // Get category counts for sidebar badges
+  const categoryCounts = await getCategoryCounts(user?.id);
 
   // Get send-as addresses for compose
   const sendAsAddresses = await getActiveSendAsAddresses();
+
+  // If a thread is selected, load its details
+  let selectedThread: ThreadSummary | null = null;
+  let selectedThreadEmails: Array<{ email: Email; attachments: EmailAttachment[] }> = [];
+  
+  if (selectedThreadId) {
+    const threadData = await getThreadById(selectedThreadId);
+    if (threadData) {
+      selectedThread = threadData.thread;
+      // Load attachments for each email
+      selectedThreadEmails = await Promise.all(
+        threadData.emails.map(async (email) => {
+          const attachments = await getEmailAttachments(email.id);
+          return { email, attachments };
+        })
+      );
+    }
+  }
 
   return withAuthHeaders(
     json({
       threads,
       sendAsAddresses,
       currentPage: page,
-      direction,
+      category,
       totalThreads,
       hasMore: threads.length === limit,
+      categoryCounts,
+      selectedThread,
+      selectedThreadEmails,
+      selectedThreadId,
     }),
     headers
   );
@@ -58,6 +98,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // Send email
   if (intent === "sendEmail") {
     const from = formData.get("from") as string;
     const to = formData.get("to") as string;
@@ -99,6 +140,149 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  // Mark thread as read/unread
+  if (intent === "markRead") {
+    const threadId = formData.get("threadId") as string;
+    const isRead = formData.get("isRead") === "true";
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const thread = await markThreadAsRead(threadId, isRead);
+      
+      if (!thread) {
+        return withAuthHeaders(
+          json({ error: "Thread not found" }, { status: 404 }),
+          headers
+        );
+      }
+
+      return withAuthHeaders(
+        json({ success: true, thread }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as read:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as important/starred
+  if (intent === "markImportant") {
+    const threadId = formData.get("threadId") as string;
+    const isImportant = formData.get("isImportant") === "true";
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const thread = await markThreadAsImportant(threadId, isImportant);
+      
+      if (!thread) {
+        return withAuthHeaders(
+          json({ error: "Thread not found" }, { status: 404 }),
+          headers
+        );
+      }
+
+      return withAuthHeaders(
+        json({ success: true, thread }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as important:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Assign thread to a user
+  if (intent === "assignThread") {
+    const threadId = formData.get("threadId") as string;
+    const userId = formData.get("userId") as string | null;
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      // If userId is empty string, treat it as null (unassign)
+      const effectiveUserId = userId && userId.trim() !== "" ? userId : null;
+      
+      const thread = await assignThread(threadId, effectiveUserId);
+      
+      if (!thread) {
+        return withAuthHeaders(
+          json({ error: "Thread not found" }, { status: 404 }),
+          headers
+        );
+      }
+
+      return withAuthHeaders(
+        json({ success: true, thread }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to assign thread:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Archive/unarchive thread
+  if (intent === "archiveThread") {
+    const threadId = formData.get("threadId") as string;
+    const isArchived = formData.get("isArchived") !== "false"; // Default to true
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const thread = await archiveThread(threadId, isArchived);
+      
+      if (!thread) {
+        return withAuthHeaders(
+          json({ error: "Thread not found" }, { status: 404 }),
+          headers
+        );
+      }
+
+      return withAuthHeaders(
+        json({ success: true, thread }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to archive thread:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
   return withAuthHeaders(
     json({ error: "Invalid intent" }, { status: 400 }),
     headers
@@ -106,159 +290,78 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function EmailsPage() {
-  const { threads, sendAsAddresses, currentPage, direction, hasMore } =
-    useLoaderData<typeof loader>();
+  const {
+    threads,
+    sendAsAddresses,
+    currentPage,
+    category,
+    hasMore,
+    totalThreads,
+    categoryCounts,
+    selectedThread,
+    selectedThreadEmails,
+    selectedThreadId,
+  } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isComposeModalOpen, setIsComposeModalOpen] = useState(false);
+  const navigate = useNavigate();
 
-  // Filter change
-  const handleFilterChange = (newDirection: string | null) => {
-    const params = new URLSearchParams(searchParams);
-    if (newDirection) {
-      params.set("direction", newDirection);
-    } else {
-      params.delete("direction");
+  // Check for compose param in URL to auto-open modal
+  useEffect(() => {
+    const shouldCompose = searchParams.get("compose") === "true";
+    if (shouldCompose) {
+      setIsComposeModalOpen(true);
+      // Remove the compose param from URL
+      const params = new URLSearchParams(searchParams);
+      params.delete("compose");
+      setSearchParams(params, { replace: true });
     }
-    params.set("page", "1");
+  }, [searchParams, setSearchParams]);
+
+  // Handle thread selection
+  const handleThreadSelect = useCallback((threadId: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("thread", threadId);
     setSearchParams(params);
-  };
+  }, [searchParams, setSearchParams]);
+
+  // Handle star click (mark important)
+  const handleStarClick = useCallback((threadId: string, isImportant: boolean) => {
+    // Optimistic update is handled in the component
+    // The actual API call would be made via fetcher
+  }, []);
 
   return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-            Emails
-          </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Conversations grouped by thread
-          </p>
-        </div>
-        <Button variant="primary" onClick={() => setIsComposeModalOpen(true)}>
-          <span className="flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Compose
-          </span>
-        </Button>
-      </div>
-
-      {/* Filters */}
-      <div className="flex gap-2 mb-4">
-        <button
-          onClick={() => handleFilterChange(null)}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            !direction
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-          }`}
-        >
-          All Threads
-        </button>
-        <button
-          onClick={() => handleFilterChange("inbound")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            direction === "inbound"
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-          }`}
-        >
-          Inbox
-        </button>
-        <button
-          onClick={() => handleFilterChange("outbound")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            direction === "outbound"
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-          }`}
-        >
-          Sent
-        </button>
-      </div>
-
-      {/* Thread List */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-        {threads.length === 0 ? (
-          <div className="p-12 text-center">
-            <svg
-              className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-              />
-            </svg>
-            <h3 className="mt-4 text-lg font-medium text-gray-900 dark:text-white">
-              No conversations
-            </h3>
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              {direction === "inbound"
-                ? "No emails received yet."
-                : direction === "outbound"
-                ? "No emails sent yet."
-                : "Start a conversation by composing a new email."}
-            </p>
-            <div className="mt-6">
-              <Button variant="primary" onClick={() => setIsComposeModalOpen(true)}>
-                Compose Email
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div>
-            {threads.map((thread: ThreadSummary) => (
-              <ThreadListItem key={thread.threadId} thread={thread} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Pagination */}
-      {threads.length > 0 && (
-        <div className="flex justify-center gap-2 mt-4">
-          <Button
-            variant="secondary"
-            disabled={currentPage <= 1}
-            onClick={() => {
-              const params = new URLSearchParams(searchParams);
-              params.set("page", String(currentPage - 1));
-              setSearchParams(params);
-            }}
-          >
-            Previous
-          </Button>
-          <span className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">
-            Page {currentPage}
-          </span>
-          <Button
-            variant="secondary"
-            disabled={!hasMore}
-            onClick={() => {
-              const params = new URLSearchParams(searchParams);
-              params.set("page", String(currentPage + 1));
-              setSearchParams(params);
-            }}
-          >
-            Next
-          </Button>
-        </div>
-      )}
-
+    <EmailLayout
+      threadList={
+        <ThreadListPanel
+          threads={threads}
+          selectedThreadId={selectedThreadId}
+          onThreadSelect={handleThreadSelect}
+          currentPage={currentPage}
+          hasMore={hasMore}
+          totalThreads={totalThreads}
+        />
+      }
+      threadPreview={
+        selectedThread && selectedThreadEmails.length > 0 ? (
+          <ThreadPreviewPanel
+            thread={selectedThread}
+            emailsWithAttachments={selectedThreadEmails}
+            sendAsAddresses={sendAsAddresses}
+          />
+        ) : undefined
+      }
+      selectedThreadId={selectedThreadId}
+      onThreadSelect={handleThreadSelect}
+    >
       {/* Compose Modal */}
       <ComposeEmailModal
         isOpen={isComposeModalOpen}
         onClose={() => setIsComposeModalOpen(false)}
         sendAsAddresses={sendAsAddresses}
       />
-    </div>
+    </EmailLayout>
   );
 }
 

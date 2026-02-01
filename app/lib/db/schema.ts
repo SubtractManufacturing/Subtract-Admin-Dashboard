@@ -714,6 +714,73 @@ export const emailStatusEnum = pgEnum("email_status", [
   "failed",
 ]);
 
+export const emailCategoryEnum = pgEnum("email_category", [
+  "general",
+  "order",
+  "quote",
+  "support",
+  "sales",
+]);
+
+// Email threads table - tracks thread-level metadata for shared inbox features
+export const emailThreads = pgTable(
+  "email_threads",
+  {
+    id: text("id").primaryKey(), // Same as threadId in emails table (UUID)
+
+    // Thread metadata
+    subject: text("subject").notNull(),
+
+    // Read/Unread status (thread level)
+    isRead: boolean("is_read").default(false).notNull(),
+
+    // Important/Starred status (for subscribed/flagged threads)
+    isImportant: boolean("is_important").default(false).notNull(),
+
+    // Assignment (for "assigned to me" feature)
+    assignedToUserId: text("assigned_to_user_id").references(() => users.id),
+
+    // Category for filtering
+    category: emailCategoryEnum("category").default("general").notNull(),
+
+    // Archive status
+    isArchived: boolean("is_archived").default(false).notNull(),
+
+    // Entity relationships (denormalized for efficient queries)
+    quoteId: integer("quote_id").references(() => quotes.id),
+    orderId: integer("order_id").references(() => orders.id),
+    customerId: integer("customer_id").references(() => customers.id),
+    vendorId: integer("vendor_id").references(() => vendors.id),
+
+    // Aggregated data (updated on email changes)
+    emailCount: integer("email_count").default(0).notNull(),
+    lastEmailAt: timestamp("last_email_at"),
+    latestSnippet: text("latest_snippet"),
+
+    // Participants (stored as JSON array of email addresses)
+    participants: text("participants").array(),
+
+    // Latest email info
+    latestFromAddress: text("latest_from_address"),
+    latestFromName: text("latest_from_name"),
+    latestDirection: emailDirectionEnum("latest_direction"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    isReadIdx: index("email_threads_is_read_idx").on(table.isRead),
+    isImportantIdx: index("email_threads_is_important_idx").on(table.isImportant),
+    assignedIdx: index("email_threads_assigned_idx").on(table.assignedToUserId),
+    categoryIdx: index("email_threads_category_idx").on(table.category),
+    isArchivedIdx: index("email_threads_is_archived_idx").on(table.isArchived),
+    quoteIdx: index("email_threads_quote_idx").on(table.quoteId),
+    orderIdx: index("email_threads_order_idx").on(table.orderId),
+    customerIdx: index("email_threads_customer_idx").on(table.customerId),
+    lastEmailAtIdx: index("email_threads_last_email_at_idx").on(table.lastEmailAt),
+  })
+);
+
 // Emails table - tracks all inbound and outbound email communications
 export const emails = pgTable(
   "emails",
@@ -840,3 +907,5 @@ export type Email = typeof emails.$inferSelect;
 export type NewEmail = typeof emails.$inferInsert;
 export type EmailAttachment = typeof emailAttachments.$inferSelect;
 export type NewEmailAttachment = typeof emailAttachments.$inferInsert;
+export type EmailThread = typeof emailThreads.$inferSelect;
+export type NewEmailThread = typeof emailThreads.$inferInsert;

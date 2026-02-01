@@ -3,12 +3,15 @@ import { db } from "./db";
 import {
   emails,
   emailAttachments,
+  emailThreads,
   type Email,
   type NewEmail,
   type EmailAttachment,
   type NewEmailAttachment,
+  type EmailThread,
+  type NewEmailThread,
 } from "./db/schema";
-import { eq, desc, asc, and } from "drizzle-orm";
+import { eq, desc, asc, and, isNull, isNotNull, sql } from "drizzle-orm";
 
 // ============================================
 // Thread Types
@@ -414,4 +417,236 @@ function truncateText(text: string, maxLength: number): string {
   if (!text) return "";
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength).trim() + "...";
+}
+
+// ============================================
+// Thread State Management
+// ============================================
+
+/**
+ * Get or create an email thread record
+ */
+export async function getOrCreateEmailThread(
+  threadId: string,
+  initialData?: Partial<NewEmailThread>
+): Promise<EmailThread> {
+  // Try to find existing thread
+  const existing = await db.query.emailThreads.findFirst({
+    where: eq(emailThreads.id, threadId),
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  // Create new thread record
+  const [thread] = await db
+    .insert(emailThreads)
+    .values({
+      id: threadId,
+      subject: initialData?.subject || "(No Subject)",
+      isRead: initialData?.isRead ?? false,
+      isImportant: initialData?.isImportant ?? false,
+      isArchived: initialData?.isArchived ?? false,
+      category: initialData?.category ?? "general",
+      quoteId: initialData?.quoteId,
+      orderId: initialData?.orderId,
+      customerId: initialData?.customerId,
+      vendorId: initialData?.vendorId,
+      emailCount: initialData?.emailCount ?? 0,
+      lastEmailAt: initialData?.lastEmailAt,
+      latestSnippet: initialData?.latestSnippet,
+      participants: initialData?.participants,
+      latestFromAddress: initialData?.latestFromAddress,
+      latestFromName: initialData?.latestFromName,
+      latestDirection: initialData?.latestDirection,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .returning();
+
+  return thread;
+}
+
+/**
+ * Mark a thread as read or unread
+ */
+export async function markThreadAsRead(
+  threadId: string,
+  isRead: boolean
+): Promise<EmailThread | null> {
+  // Ensure thread exists
+  const thread = await getOrCreateEmailThread(threadId, {
+    subject: "(No Subject)",
+  });
+
+  const [updated] = await db
+    .update(emailThreads)
+    .set({
+      isRead,
+      updatedAt: new Date(),
+    })
+    .where(eq(emailThreads.id, threadId))
+    .returning();
+
+  return updated || null;
+}
+
+/**
+ * Mark a thread as important/starred
+ */
+export async function markThreadAsImportant(
+  threadId: string,
+  isImportant: boolean
+): Promise<EmailThread | null> {
+  // Ensure thread exists
+  await getOrCreateEmailThread(threadId, {
+    subject: "(No Subject)",
+  });
+
+  const [updated] = await db
+    .update(emailThreads)
+    .set({
+      isImportant,
+      updatedAt: new Date(),
+    })
+    .where(eq(emailThreads.id, threadId))
+    .returning();
+
+  return updated || null;
+}
+
+/**
+ * Assign a thread to a user
+ */
+export async function assignThread(
+  threadId: string,
+  userId: string | null
+): Promise<EmailThread | null> {
+  // Ensure thread exists
+  await getOrCreateEmailThread(threadId, {
+    subject: "(No Subject)",
+  });
+
+  const [updated] = await db
+    .update(emailThreads)
+    .set({
+      assignedToUserId: userId,
+      updatedAt: new Date(),
+    })
+    .where(eq(emailThreads.id, threadId))
+    .returning();
+
+  return updated || null;
+}
+
+/**
+ * Archive a thread
+ */
+export async function archiveThread(
+  threadId: string,
+  isArchived: boolean = true
+): Promise<EmailThread | null> {
+  // Ensure thread exists
+  await getOrCreateEmailThread(threadId, {
+    subject: "(No Subject)",
+  });
+
+  const [updated] = await db
+    .update(emailThreads)
+    .set({
+      isArchived,
+      updatedAt: new Date(),
+    })
+    .where(eq(emailThreads.id, threadId))
+    .returning();
+
+  return updated || null;
+}
+
+/**
+ * Get thread metadata by ID
+ */
+export async function getThreadMetadata(
+  threadId: string
+): Promise<EmailThread | null> {
+  const thread = await db.query.emailThreads.findFirst({
+    where: eq(emailThreads.id, threadId),
+  });
+  return thread || null;
+}
+
+/**
+ * Get category counts for sidebar badges
+ */
+export async function getCategoryCounts(userId?: string): Promise<{
+  inbox: number;
+  orders: number;
+  quotes: number;
+  assignedToMe: number;
+  important: number;
+  sent: number;
+  archived: number;
+}> {
+  // For now, count based on email aggregations since we may not have thread records yet
+  // This is a simplified version - in production you'd query the emailThreads table
+  
+  const allEmails = await db.query.emails.findMany({
+    columns: {
+      threadId: true,
+      orderId: true,
+      quoteId: true,
+      direction: true,
+    },
+  });
+
+  // Group by thread to count unique threads
+  const threadMap = new Map<string, typeof allEmails[0]>();
+  for (const email of allEmails) {
+    if (!threadMap.has(email.threadId)) {
+      threadMap.set(email.threadId, email);
+    }
+  }
+
+  const threads = Array.from(threadMap.values());
+
+  // Count categories
+  let orders = 0;
+  let quotes = 0;
+  let sent = 0;
+
+  for (const thread of threads) {
+    if (thread.orderId) orders++;
+    if (thread.quoteId) quotes++;
+    if (thread.direction === "outbound") sent++;
+  }
+
+  // For assignedToMe and important, we'd need to check emailThreads table
+  // For now, return placeholder values
+  const threadRecords = await db.query.emailThreads.findMany({
+    columns: {
+      id: true,
+      isImportant: true,
+      assignedToUserId: true,
+      isArchived: true,
+      isRead: true,
+    },
+  });
+
+  const important = threadRecords.filter((t) => t.isImportant).length;
+  const assignedToMe = userId
+    ? threadRecords.filter((t) => t.assignedToUserId === userId).length
+    : 0;
+  const archived = threadRecords.filter((t) => t.isArchived).length;
+  const unreadCount = threadRecords.filter((t) => !t.isRead).length;
+
+  return {
+    inbox: unreadCount || threads.length, // Fall back to total threads if no read tracking yet
+    orders,
+    quotes,
+    assignedToMe,
+    important,
+    sent,
+    archived,
+  };
 }
