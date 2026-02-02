@@ -1197,8 +1197,9 @@ export default function Settings() {
                               <emailAddressFetcher.Form method="post" className="flex items-center gap-2 pt-2 border-t border-gray-100 dark:border-gray-700">
                                 <input type="hidden" name="intent" value="updateSendAsReplyTo" />
                                 <input type="hidden" name="id" value={addr.id} />
-                                <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Reply-To:</label>
+                                <label htmlFor={`reply-to-${addr.id}`} className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Reply-To:</label>
                                 <input
+                                  id={`reply-to-${addr.id}`}
                                   type="email"
                                   name="replyToAddress"
                                   defaultValue={addr.replyToAddress || ""}

@@ -264,7 +264,13 @@ export function ThreadListItem({
   // Otherwise use a Link for navigation
   if (onClick) {
     return (
-      <div className={containerClasses} onClick={onClick}>
+      <div
+        role="button"
+        tabIndex={0}
+        className={containerClasses}
+        onClick={onClick}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick(); }}
+      >
         {Content}
       </div>
     );

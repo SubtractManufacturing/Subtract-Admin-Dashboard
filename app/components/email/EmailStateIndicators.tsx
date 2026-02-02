@@ -143,7 +143,6 @@ export function CategoryBadge({
 }
 
 interface AssignmentBadgeProps {
-  userId: string;
   userName?: string;
   userInitials?: string;
   size?: "sm" | "md";
@@ -154,7 +153,6 @@ interface AssignmentBadgeProps {
  * Shows assigned user initials in a circular badge
  */
 export function AssignmentBadge({
-  userId,
   userName,
   userInitials,
   size = "sm",

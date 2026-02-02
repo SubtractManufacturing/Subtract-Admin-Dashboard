@@ -147,11 +147,13 @@ export function ReplyComposer({
 
         {/* From field */}
         <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-500 dark:text-gray-400 w-12">
+          <span className="text-sm text-gray-500 dark:text-gray-400 w-12">
             From:
-          </label>
+          </span>
           {sendAsAddresses.length > 1 ? (
             <select
+              id="reply-from"
+              aria-label="From address"
               value={formData.from}
               onChange={(e) => setFormData({ ...formData, from: e.target.value })}
               className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -172,10 +174,12 @@ export function ReplyComposer({
 
         {/* To field */}
         <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-500 dark:text-gray-400 w-12">
+          <span className="text-sm text-gray-500 dark:text-gray-400 w-12">
             To:
-          </label>
+          </span>
           <input
+            id="reply-to"
+            aria-label="To address"
             type="email"
             value={formData.to}
             onChange={(e) => setFormData({ ...formData, to: e.target.value })}
@@ -186,9 +190,9 @@ export function ReplyComposer({
 
         {/* Subject (read-only, shows what it will be) */}
         <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-500 dark:text-gray-400 w-12">
+          <span className="text-sm text-gray-500 dark:text-gray-400 w-12">
             Subject:
-          </label>
+          </span>
           <span className="text-sm text-gray-700 dark:text-gray-300">
             {replyToEmail.subject.startsWith("Re:")
               ? replyToEmail.subject
@@ -199,13 +203,14 @@ export function ReplyComposer({
         {/* Body */}
         <div>
           <textarea
+            id="reply-body"
+            aria-label="Reply message"
             value={formData.body}
             onChange={(e) => setFormData({ ...formData, body: e.target.value })}
             rows={6}
             className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             placeholder="Write your reply..."
             disabled={isSubmitting}
-            autoFocus
           />
         </div>
 

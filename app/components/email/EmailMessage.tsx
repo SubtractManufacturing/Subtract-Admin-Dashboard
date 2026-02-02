@@ -60,7 +60,6 @@ export function EmailMessage({
     fromName,
     toAddresses,
     ccAddresses,
-    subject,
     textBody,
     htmlBody,
     sentAt,
@@ -74,7 +73,10 @@ export function EmailMessage({
   if (!isExpanded) {
     return (
       <div
+        role="button"
+        tabIndex={0}
         onClick={() => setIsExpanded(true)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setIsExpanded(true); }}
         className="flex items-center gap-3 p-4 hover:bg-gray-50 dark:hover:bg-gray-700/30 cursor-pointer border-b border-gray-200 dark:border-gray-700 transition-colors"
       >
         {/* Avatar */}
