@@ -1,15 +1,12 @@
 import { Link } from "@remix-run/react";
-import { useState, useCallback } from "react";
-import { UnreadDot, StarIcon, CategoryBadge } from "./EmailStateIndicators";
+import { UnreadDot, CategoryBadge } from "./EmailStateIndicators";
 import type { ThreadSummary } from "~/lib/emails";
 
 interface ThreadListItemProps {
   thread: ThreadSummary;
   isSelected?: boolean;
-  isUnread?: boolean;
-  isImportant?: boolean;
+  currentUserId?: string;
   onClick?: () => void;
-  onStarClick?: (threadId: string, isImportant: boolean) => void;
 }
 
 /**
@@ -58,18 +55,17 @@ function getInitials(name: string | null, email: string): string {
  * Shows thread subject prominently, with participants below
  * 
  * Visual indicators:
- * - Unread: Bold text, blue dot, white background
- * - Read: Normal text, muted colors, no dot
+ * - Assigned to me + Unread: Orange left border, orange background tint, bold text
+ * - Unread (not assigned to me): White background, bold text, blue dot
+ * - Read: Grayed background, normal text, no dot
  * - Important: Yellow star icon (filled when starred)
  * - Selected: Blue left border, light blue background
  */
 export function ThreadListItem({
   thread,
   isSelected = false,
-  isUnread = true, // Default to unread for now until we have the DB field
-  isImportant = false,
+  currentUserId,
   onClick,
-  onStarClick,
 }: ThreadListItemProps) {
   const {
     threadId,
@@ -84,18 +80,15 @@ export function ThreadListItem({
     latestFromAddress,
     latestFromName,
     latestDirection,
+    isReadByCurrentUser,
+    assignedUserIds,
+    assignedUsers,
   } = thread;
 
-  const [localIsImportant, setLocalIsImportant] = useState(isImportant);
-
-  // Handle star click
-  const handleStarClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const newValue = !localIsImportant;
-    setLocalIsImportant(newValue);
-    onStarClick?.(threadId, newValue);
-  }, [localIsImportant, threadId, onStarClick]);
+  // Derived state
+  const isAssignedToMe = currentUserId ? assignedUserIds.includes(currentUserId) : false;
+  const isUnreadByMe = !isReadByCurrentUser;
+  const needsMyAttention = isAssignedToMe && isUnreadByMe;
 
   // Format participants for display
   const formatParticipants = () => {
@@ -114,23 +107,37 @@ export function ThreadListItem({
     }
   };
 
+  // Format assigned users for display
+  const formatAssignedUsers = () => {
+    if (assignedUsers.length === 0) return null;
+    if (assignedUsers.length === 1) {
+      return assignedUsers[0].userName || assignedUsers[0].userEmail.split("@")[0];
+    }
+    if (assignedUsers.length === 2) {
+      return `${assignedUsers[0].userName || assignedUsers[0].userEmail.split("@")[0]}, ${assignedUsers[1].userName || assignedUsers[1].userEmail.split("@")[0]}`;
+    }
+    return `${assignedUsers[0].userName || assignedUsers[0].userEmail.split("@")[0]} +${assignedUsers.length - 1}`;
+  };
+
   // Container classes based on state
-  // Using py-3.5 for better touch targets (minimum 44px height)
+  // Orange styling for "assigned to me + unread", Gmail-style for others
   const containerClasses = `
-    flex items-start gap-3 px-3 py-3.5 cursor-pointer transition-colors
+    flex items-start gap-3 px-3 py-3.5 cursor-pointer transition-colors border-l-4
     active:bg-gray-100 dark:active:bg-gray-700
     ${isSelected
-      ? "bg-blue-50 dark:bg-blue-900/20 border-l-3 border-l-blue-600"
-      : isUnread
-        ? "bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-        : "bg-gray-50/50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-700/30"
+      ? "bg-blue-50 dark:bg-blue-900/20 border-l-blue-600"
+      : needsMyAttention
+        ? "bg-orange-50/50 dark:bg-orange-900/10 border-l-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20"
+        : isUnreadByMe
+          ? "bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 border-l-transparent"
+          : "bg-gray-50/50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-700/30 border-l-transparent"
     }
   `;
 
-  // Text classes based on read state
+  // Text classes based on read state and assignment
   const subjectClasses = `
     text-sm truncate
-    ${isUnread
+    ${needsMyAttention || isUnreadByMe
       ? "font-semibold text-gray-900 dark:text-white"
       : "font-normal text-gray-700 dark:text-gray-300"
     }
@@ -138,7 +145,7 @@ export function ThreadListItem({
 
   const participantClasses = `
     text-xs truncate
-    ${isUnread
+    ${needsMyAttention || isUnreadByMe
       ? "font-medium text-gray-700 dark:text-gray-300"
       : "font-normal text-gray-500 dark:text-gray-400"
     }
@@ -146,7 +153,7 @@ export function ThreadListItem({
 
   const snippetClasses = `
     text-xs truncate mt-0.5
-    ${isUnread
+    ${isUnreadByMe
       ? "text-gray-600 dark:text-gray-400"
       : "text-gray-400 dark:text-gray-500"
     }
@@ -156,17 +163,14 @@ export function ThreadListItem({
     <>
       {/* Left side: Indicators + Avatar */}
       <div className="flex items-center gap-2 flex-shrink-0">
-        {/* Unread dot */}
+        {/* Unread dot - orange for assigned+unread, blue for just unread */}
         <div className="w-2 flex justify-center">
-          <UnreadDot isUnread={isUnread} />
+          {needsMyAttention ? (
+            <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" aria-label="Needs attention" />
+          ) : (
+            <UnreadDot isUnread={isUnreadByMe} />
+          )}
         </div>
-
-        {/* Star icon */}
-        <StarIcon
-          isStarred={localIsImportant}
-          onClick={handleStarClick}
-          size="sm"
-        />
 
         {/* Avatar */}
         <div
@@ -211,8 +215,8 @@ export function ThreadListItem({
           {latestSnippet || "(No preview available)"}
         </p>
 
-        {/* Entity badges */}
-        <div className="flex flex-wrap gap-1 mt-1.5">
+        {/* Entity badges and assigned users */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           {orderId && (
             <CategoryBadge variant="order">Order #{orderId}</CategoryBadge>
           )}
@@ -221,6 +225,35 @@ export function ThreadListItem({
           )}
           {customerId && (
             <CategoryBadge variant="customer">Customer #{customerId}</CategoryBadge>
+          )}
+          
+          {/* Assigned users */}
+          {assignedUsers.length > 0 && (
+            <div className="flex items-center gap-1">
+              {/* Avatars */}
+              <div className="flex -space-x-1">
+                {assignedUsers.slice(0, 2).map((user) => (
+                  <div
+                    key={user.userId}
+                    className={`
+                      w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-medium text-white
+                      ${user.userId === currentUserId
+                        ? "ring-1 ring-orange-500 bg-orange-500"
+                        : "bg-gray-400 dark:bg-gray-500"
+                      }
+                    `}
+                    title={user.userName || user.userEmail}
+                  >
+                    {getInitials(user.userName, user.userEmail)}
+                  </div>
+                ))}
+              </div>
+              
+              {/* Names */}
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                {formatAssignedUsers()}
+              </span>
+            </div>
           )}
         </div>
       </div>

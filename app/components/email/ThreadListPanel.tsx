@@ -11,6 +11,7 @@ interface ThreadListPanelProps {
   hasMore: boolean;
   totalThreads?: number;
   isLoading?: boolean;
+  currentUserId?: string;
 }
 
 /**
@@ -31,6 +32,7 @@ export function ThreadListPanel({
   hasMore,
   totalThreads,
   isLoading = false,
+  currentUserId,
 }: ThreadListPanelProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState("");
@@ -138,6 +140,7 @@ export function ThreadListPanel({
                 key={thread.threadId}
                 thread={thread}
                 isSelected={selectedThreadId === thread.threadId}
+                currentUserId={currentUserId}
                 onClick={() => onThreadSelect?.(thread.threadId)}
               />
             ))}

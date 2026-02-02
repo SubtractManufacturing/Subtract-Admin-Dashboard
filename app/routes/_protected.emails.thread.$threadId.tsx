@@ -6,9 +6,16 @@ import {
 } from "@remix-run/node";
 import { useLoaderData, useFetcher, Link, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getThreadById, getEmailAttachments } from "~/lib/emails";
+import { 
+  getThreadById, 
+  getEmailAttachments, 
+  autoAssignThreadToUser,
+  markThreadAsReadByUser,
+  getEmailById,
+} from "~/lib/emails";
 import { getActiveSendAsAddresses } from "~/lib/emailSendAsAddresses";
 import { sendReply } from "~/lib/postmark/postmark-client.server";
+import { isAutoAssignRepliedEmailsEnabled } from "~/lib/featureFlags";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import Button from "~/components/shared/Button";
 import { EmailMessage } from "~/components/email/EmailMessage";
@@ -16,7 +23,7 @@ import { ReplyComposer } from "~/components/email/ReplyComposer";
 import type { Email, EmailAttachment } from "~/lib/db/schema";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { headers, user } = await requireAuth(request);
 
   const threadId = params.threadId;
   if (!threadId) {
@@ -24,9 +31,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Fetch thread with all emails
-  const threadData = await getThreadById(threadId);
+  const threadData = await getThreadById(threadId, user?.id);
   if (!threadData) {
     throw new Response("Thread not found", { status: 404 });
+  }
+
+  // Auto-mark as read when user opens the thread
+  if (user?.id) {
+    await markThreadAsReadByUser(threadId, user.id);
   }
 
   // Fetch attachments for all emails in the thread
@@ -45,13 +57,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       thread: threadData.thread,
       emailsWithAttachments,
       sendAsAddresses,
+      currentUserId: user?.id,
     }),
     headers
   );
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { headers, user } = await requireAuth(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -77,6 +90,18 @@ export async function action({ request }: ActionFunctionArgs) {
       });
 
       if (result.success) {
+        // Auto-assign the thread to the user who replied (if feature enabled and not already assigned)
+        if (user?.id) {
+          const autoAssignEnabled = await isAutoAssignRepliedEmailsEnabled();
+          if (autoAssignEnabled) {
+            // Get the thread ID from the reply-to email
+            const replyToEmail = await getEmailById(parseInt(replyToEmailId));
+            if (replyToEmail?.threadId) {
+              await autoAssignThreadToUser(replyToEmail.threadId, user.id);
+            }
+          }
+        }
+        
         return withAuthHeaders(json({ success: true }), headers);
       } else {
         return withAuthHeaders(

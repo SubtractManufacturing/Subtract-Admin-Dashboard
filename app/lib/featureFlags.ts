@@ -20,6 +20,7 @@ export const FEATURE_FLAGS = {
   EMAIL_SEND_DEV: "email_send_dev",
   EMAIL_OUTBOUND_BCC_ENABLED: "email_outbound_bcc_enabled",
   EMAIL_INBOUND_FORWARD_ENABLED: "email_inbound_forward_enabled",
+  EMAIL_AUTO_ASSIGN_REPLIED: "email_auto_assign_replied",
 } as const;
 
 // Default feature flags with their metadata
@@ -119,6 +120,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     name: "Enable Inbound Email Forwarding (Gmail Mirroring)",
     description: "Forward inbound emails to a team inbox for visibility in Gmail",
     enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.EMAIL_AUTO_ASSIGN_REPLIED,
+    name: "Auto-Assign Replied Emails",
+    description: "Automatically assign unassigned email threads to the user who replies to them",
+    enabled: true,
   },
 ];
 
@@ -293,4 +300,11 @@ export async function isOutboundBccEnabled(): Promise<boolean> {
  */
 export async function isInboundForwardEnabled(): Promise<boolean> {
   return isFeatureEnabled(FEATURE_FLAGS.EMAIL_INBOUND_FORWARD_ENABLED);
+}
+
+/**
+ * Check if auto-assign for replied emails is enabled
+ */
+export async function isAutoAssignRepliedEmailsEnabled(): Promise<boolean> {
+  return isFeatureEnabled(FEATURE_FLAGS.EMAIL_AUTO_ASSIGN_REPLIED);
 }

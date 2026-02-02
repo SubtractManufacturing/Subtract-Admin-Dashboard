@@ -4,7 +4,7 @@ import {
   LoaderFunctionArgs,
   ActionFunctionArgs,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams, useNavigate, useOutletContext } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams, useNavigate, useOutletContext, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { 
   getEmailThreads, 
@@ -14,10 +14,18 @@ import {
   getEmailAttachments,
   markThreadAsRead,
   markThreadAsImportant,
-  assignThread,
+  markThreadAsReadByUser,
+  markThreadAsUnreadByUser,
+  assignUsersToThread,
+  unassignUserFromThread,
   archiveThread,
+  getAllUsers,
+  autoAssignThreadToUser,
+  getEmailById,
 } from "~/lib/emails";
 import { getActiveSendAsAddresses } from "~/lib/emailSendAsAddresses";
+import { sendReply } from "~/lib/postmark/postmark-client.server";
+import { isAutoAssignRepliedEmailsEnabled } from "~/lib/featureFlags";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
 import { EmailLayout, ThreadListPanel, ThreadPreviewPanel } from "~/components/email";
@@ -31,6 +39,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const category = url.searchParams.get("category");
   const page = parseInt(url.searchParams.get("page") || "1");
   const selectedThreadId = url.searchParams.get("thread");
+  const assignedToMe = url.searchParams.get("assignedToMe") === "true";
+  const unreadOnly = url.searchParams.get("status") === "unread";
   const limit = 25;
   const offset = (page - 1) * limit;
 
@@ -40,9 +50,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
     direction = "outbound";
   }
 
-  // Fetch email threads (grouped by threadId)
+  // Fetch email threads (grouped by threadId) with currentUserId for read tracking
   const threads = await getEmailThreads({
     direction,
+    currentUserId: user?.id,
+    assignedToMe,
+    unreadOnly,
     limit,
     offset,
   });
@@ -50,6 +63,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Get thread count for pagination
   const totalThreads = await getThreadCount({
     direction,
+    currentUserId: user?.id,
+    assignedToMe,
+    unreadOnly,
   });
 
   // Get category counts for sidebar badges
@@ -58,12 +74,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Get send-as addresses for compose
   const sendAsAddresses = await getActiveSendAsAddresses();
 
-  // If a thread is selected, load its details
+  // Get all users for assignment dropdown
+  const allUsers = await getAllUsers();
+
+  // If a thread is selected, load its details and auto-mark as read
   let selectedThread: ThreadSummary | null = null;
   let selectedThreadEmails: Array<{ email: Email; attachments: EmailAttachment[] }> = [];
   
   if (selectedThreadId) {
-    const threadData = await getThreadById(selectedThreadId);
+    const threadData = await getThreadById(selectedThreadId, user?.id);
     if (threadData) {
       selectedThread = threadData.thread;
       // Load attachments for each email
@@ -73,6 +92,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
           return { email, attachments };
         })
       );
+      
+      // Auto-mark thread as read when user opens it in preview
+      if (user?.id) {
+        await markThreadAsReadByUser(selectedThreadId, user.id);
+        // Update the selectedThread to reflect the new read status
+        selectedThread = { ...selectedThread, isReadByCurrentUser: true };
+      }
     }
   }
 
@@ -80,6 +106,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     json({
       threads,
       sendAsAddresses,
+      allUsers,
+      currentUserId: user?.id,
       currentPage: page,
       category,
       totalThreads,
@@ -140,7 +168,59 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  // Mark thread as read/unread
+  // Send reply to existing email thread
+  if (intent === "sendReply") {
+    const { user } = await requireAuth(request);
+    const replyToEmailId = formData.get("replyToEmailId") as string;
+    const from = formData.get("from") as string;
+    const body = formData.get("body") as string;
+    const to = formData.get("to") as string | null;
+
+    if (!replyToEmailId || !from || !body) {
+      return withAuthHeaders(
+        json({ error: "Missing required fields" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const result = await sendReply({
+        replyToEmailId: parseInt(replyToEmailId),
+        from,
+        body,
+        to: to || undefined,
+      });
+
+      if (result.success) {
+        // Auto-assign the thread to the user who replied (if feature enabled and not already assigned)
+        if (user?.id) {
+          const autoAssignEnabled = await isAutoAssignRepliedEmailsEnabled();
+          if (autoAssignEnabled) {
+            // Get the thread ID from the reply-to email
+            const replyToEmail = await getEmailById(parseInt(replyToEmailId));
+            if (replyToEmail?.threadId) {
+              await autoAssignThreadToUser(replyToEmail.threadId, user.id);
+            }
+          }
+        }
+        
+        return withAuthHeaders(json({ success: true }), headers);
+      } else {
+        return withAuthHeaders(
+          json({ error: result.error }, { status: 400 }),
+          headers
+        );
+      }
+    } catch (error) {
+      console.error("Failed to send reply:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to send reply" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as read/unread (team-wide - legacy)
   if (intent === "markRead") {
     const threadId = formData.get("threadId") as string;
     const isRead = formData.get("isRead") === "true";
@@ -168,6 +248,74 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     } catch (error) {
       console.error("Failed to mark thread as read:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as read by current user (per-user tracking)
+  if (intent === "markAsReadByMe") {
+    const { user } = await requireAuth(request);
+    const threadId = formData.get("threadId") as string;
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    if (!user?.id) {
+      return withAuthHeaders(
+        json({ error: "User not authenticated" }, { status: 401 }),
+        headers
+      );
+    }
+
+    try {
+      await markThreadAsReadByUser(threadId, user.id);
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as read by user:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as unread by current user (per-user tracking)
+  if (intent === "markAsUnreadByMe") {
+    const { user } = await requireAuth(request);
+    const threadId = formData.get("threadId") as string;
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    if (!user?.id) {
+      return withAuthHeaders(
+        json({ error: "User not authenticated" }, { status: 401 }),
+        headers
+      );
+    }
+
+    try {
+      await markThreadAsUnreadByUser(threadId, user.id);
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as unread by user:", error);
       return withAuthHeaders(
         json({ error: "Failed to update thread" }, { status: 500 }),
         headers
@@ -210,10 +358,11 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  // Assign thread to a user
-  if (intent === "assignThread") {
+  // Assign multiple users to thread
+  if (intent === "assignUsers") {
+    const { user } = await requireAuth(request);
     const threadId = formData.get("threadId") as string;
-    const userId = formData.get("userId") as string | null;
+    const userIdsJson = formData.get("userIds") as string;
 
     if (!threadId) {
       return withAuthHeaders(
@@ -222,25 +371,49 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    try {
-      // If userId is empty string, treat it as null (unassign)
-      const effectiveUserId = userId && userId.trim() !== "" ? userId : null;
-      
-      const thread = await assignThread(threadId, effectiveUserId);
-      
-      if (!thread) {
-        return withAuthHeaders(
-          json({ error: "Thread not found" }, { status: 404 }),
-          headers
-        );
-      }
-
+    if (!user?.id) {
       return withAuthHeaders(
-        json({ success: true, thread }),
+        json({ error: "User not authenticated" }, { status: 401 }),
+        headers
+      );
+    }
+
+    try {
+      const userIds = JSON.parse(userIdsJson) as string[];
+      await assignUsersToThread(threadId, userIds, user.id);
+      return withAuthHeaders(
+        json({ success: true }),
         headers
       );
     } catch (error) {
-      console.error("Failed to assign thread:", error);
+      console.error("Failed to assign users to thread:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Unassign a single user from thread
+  if (intent === "unassignUser") {
+    const threadId = formData.get("threadId") as string;
+    const userId = formData.get("userId") as string;
+
+    if (!threadId || !userId) {
+      return withAuthHeaders(
+        json({ error: "threadId and userId are required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      await unassignUserFromThread(threadId, userId);
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to unassign user from thread:", error);
       return withAuthHeaders(
         json({ error: "Failed to update thread" }, { status: 500 }),
         headers
@@ -293,6 +466,8 @@ export default function EmailsPage() {
   const {
     threads,
     sendAsAddresses,
+    allUsers,
+    currentUserId,
     currentPage,
     category,
     hasMore,
@@ -305,6 +480,19 @@ export default function EmailsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [isComposeModalOpen, setIsComposeModalOpen] = useState(false);
   const navigate = useNavigate();
+  const revalidator = useRevalidator();
+
+  // Poll for new emails every 15 seconds
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      // Only poll if we're not already loading and the tab is visible
+      if (revalidator.state === "idle" && document.visibilityState === "visible") {
+        revalidator.revalidate();
+      }
+    }, 15000); // 15 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [revalidator]);
 
   // Check for compose param in URL to auto-open modal
   useEffect(() => {
@@ -325,6 +513,13 @@ export default function EmailsPage() {
     setSearchParams(params);
   }, [searchParams, setSearchParams]);
 
+  // Handle close thread (deselect)
+  const handleCloseThread = useCallback(() => {
+    const params = new URLSearchParams(searchParams);
+    params.delete("thread");
+    setSearchParams(params);
+  }, [searchParams, setSearchParams]);
+
   // Handle star click (mark important)
   const handleStarClick = useCallback((threadId: string, isImportant: boolean) => {
     // Optimistic update is handled in the component
@@ -341,6 +536,7 @@ export default function EmailsPage() {
           currentPage={currentPage}
           hasMore={hasMore}
           totalThreads={totalThreads}
+          currentUserId={currentUserId}
         />
       }
       threadPreview={
@@ -349,6 +545,9 @@ export default function EmailsPage() {
             thread={selectedThread}
             emailsWithAttachments={selectedThreadEmails}
             sendAsAddresses={sendAsAddresses}
+            allUsers={allUsers}
+            currentUserId={currentUserId}
+            onClose={handleCloseThread}
           />
         ) : undefined
       }

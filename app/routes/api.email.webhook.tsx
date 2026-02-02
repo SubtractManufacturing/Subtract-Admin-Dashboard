@@ -5,6 +5,7 @@ import {
   updateEmailStatus,
   getOrCreateThreadId,
   getEmailByPostmarkId,
+  markThreadAsUnreadForAll,
 } from "~/lib/emails";
 import { processAttachments } from "~/lib/postmark/attachment-handler.server";
 import { createEvent } from "~/lib/events";
@@ -98,9 +99,21 @@ export async function action({ request }: ActionFunctionArgs) {
               h.Name.toLowerCase() === "in-reply-to"
           )?.Value || null;
 
-        const messageId = payload.MessageID;
+        // Extract the RFC 5322 Message-ID header from the email
+        // This is what email clients use for threading (different from Postmark's internal ID)
+        const rfcMessageId =
+          payload.Headers?.find(
+            (h: { Name: string; Value: string }) =>
+              h.Name.toLowerCase() === "message-id"
+          )?.Value || null;
+
+        // Use RFC Message-ID for threading, fall back to Postmark ID if not found
+        const messageId = rfcMessageId || payload.MessageID;
         // Uses randomUUID() for new threads, inherits parent's UUID for replies
         const threadId = await getOrCreateThreadId(inReplyTo, messageId);
+        
+        console.log(`Message-ID: ${messageId} (RFC: ${rfcMessageId ? 'yes' : 'no, using Postmark ID'})`);
+        console.log(`In-Reply-To: ${inReplyTo}`);
 
         console.log(`Thread assignment: ${threadId} (reply: ${!!inReplyTo})`);
 
@@ -131,6 +144,11 @@ export async function action({ request }: ActionFunctionArgs) {
         });
 
         console.log(`Created email record: ${emailRecord.id}`);
+
+        // Mark the thread as unread for all users when a new reply arrives
+        // This ensures everyone sees the new message in their inbox
+        await markThreadAsUnreadForAll(threadId);
+        console.log(`Marked thread ${threadId} as unread for all users`);
 
         // CONSTRAINT 1: Process attachments with memory-safe streaming
         if (payload.Attachments && payload.Attachments.length > 0) {

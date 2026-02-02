@@ -44,14 +44,24 @@ function getPostmarkClient(): ServerClient {
 }
 
 /**
- * Get the reply-to address from developer settings
+ * Get the reply-to address - first checks per-address config, then falls back to global default
  */
-async function getReplyToAddress(): Promise<string | null> {
+async function getReplyToAddress(fromAddress?: string): Promise<string | null> {
   try {
+    // If a from address is provided, check if it has a per-address reply-to
+    if (fromAddress) {
+      const { getSendAsAddressByEmail } = await import("~/lib/emailSendAsAddresses");
+      const sendAsConfig = await getSendAsAddressByEmail(fromAddress);
+      if (sendAsConfig?.replyToAddress) {
+        return sendAsConfig.replyToAddress;
+      }
+    }
+    
+    // Fall back to global default reply-to
     const { getEmailReplyToAddress } = await import("~/lib/developerSettings");
     return await getEmailReplyToAddress();
   } catch (error) {
-    console.warn("Could not load reply-to from developerSettings:", error);
+    console.warn("Could not load reply-to address:", error);
     return null;
   }
 }
@@ -110,8 +120,8 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     // Generate Message-ID for threading (RFC 2822 format)
     const messageId = `<${Date.now()}-${randomUUID()}@${EMAIL_DOMAIN}>`;
 
-    // Get reply-to address for inbound routing
-    const replyTo = await getReplyToAddress();
+    // Get reply-to address for inbound routing (checks per-address config, then global default)
+    const replyTo = await getReplyToAddress(from);
     
     // Get BCC address for Gmail mirroring (if enabled via feature flag)
     const bccAddress = await getOutboundBccAddress();
@@ -306,8 +316,8 @@ export async function sendReply(options: SendReplyOptions): Promise<SendEmailRes
     // Inherit thread ID from parent (maintains our internal threading)
     const threadId = parentEmail.threadId;
 
-    // Get reply-to address for inbound routing
-    const replyToAddress = await getReplyToAddress();
+    // Get reply-to address for inbound routing (checks per-address config, then global default)
+    const replyToAddress = await getReplyToAddress(from);
 
     // Get BCC address for Gmail mirroring (if enabled)
     const bccAddress = await getOutboundBccAddress();

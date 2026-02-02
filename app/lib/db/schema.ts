@@ -432,6 +432,7 @@ export const emailSendAsAddresses = pgTable("email_send_as_addresses", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   label: text("label").notNull(),
+  replyToAddress: text("reply_to_address"), // Optional per-address reply-to
   isDefault: boolean("is_default").default(false).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -737,9 +738,6 @@ export const emailThreads = pgTable(
     // Important/Starred status (for subscribed/flagged threads)
     isImportant: boolean("is_important").default(false).notNull(),
 
-    // Assignment (for "assigned to me" feature)
-    assignedToUserId: text("assigned_to_user_id").references(() => users.id),
-
     // Category for filtering
     category: emailCategoryEnum("category").default("general").notNull(),
 
@@ -771,7 +769,6 @@ export const emailThreads = pgTable(
   (table) => ({
     isReadIdx: index("email_threads_is_read_idx").on(table.isRead),
     isImportantIdx: index("email_threads_is_important_idx").on(table.isImportant),
-    assignedIdx: index("email_threads_assigned_idx").on(table.assignedToUserId),
     categoryIdx: index("email_threads_category_idx").on(table.category),
     isArchivedIdx: index("email_threads_is_archived_idx").on(table.isArchived),
     quoteIdx: index("email_threads_quote_idx").on(table.quoteId),
@@ -892,6 +889,49 @@ export const emailAttachments = pgTable(
   })
 );
 
+// Email thread reads - per-user read tracking
+export const emailThreadReads = pgTable(
+  "email_thread_reads",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => emailThreads.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    readAt: timestamp("read_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.threadId, table.userId] }),
+    userIdx: index("email_thread_reads_user_idx").on(table.userId),
+    threadIdx: index("email_thread_reads_thread_idx").on(table.threadId),
+  })
+);
+
+// Email thread assignments - multi-user assignment support
+export const emailThreadAssignments = pgTable(
+  "email_thread_assignments",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => emailThreads.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    assignedAt: timestamp("assigned_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    assignedBy: text("assigned_by").references(() => users.id),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.threadId, table.userId] }),
+    userIdx: index("email_thread_assignments_user_idx").on(table.userId),
+    threadIdx: index("email_thread_assignments_thread_idx").on(table.threadId),
+  })
+);
+
 export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
 export type NewQuotePriceCalculation =
   typeof quotePriceCalculations.$inferInsert;
@@ -909,3 +949,7 @@ export type EmailAttachment = typeof emailAttachments.$inferSelect;
 export type NewEmailAttachment = typeof emailAttachments.$inferInsert;
 export type EmailThread = typeof emailThreads.$inferSelect;
 export type NewEmailThread = typeof emailThreads.$inferInsert;
+export type EmailThreadRead = typeof emailThreadReads.$inferSelect;
+export type NewEmailThreadRead = typeof emailThreadReads.$inferInsert;
+export type EmailThreadAssignment = typeof emailThreadAssignments.$inferSelect;
+export type NewEmailThreadAssignment = typeof emailThreadAssignments.$inferInsert;

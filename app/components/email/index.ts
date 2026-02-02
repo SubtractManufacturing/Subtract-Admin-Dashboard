@@ -5,3 +5,4 @@ export { EmailLayout } from "./EmailLayout";
 export { ThreadListPanel } from "./ThreadListPanel";
 export { ThreadPreviewPanel } from "./ThreadPreviewPanel";
 export { EmailStateIndicators, UnreadDot, StarIcon, CategoryBadge, AssignmentBadge } from "./EmailStateIndicators";
+export { AssignmentDropdown } from "./AssignmentDropdown";

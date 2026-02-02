@@ -4,18 +4,30 @@ import {
   emails,
   emailAttachments,
   emailThreads,
+  emailThreadReads,
+  emailThreadAssignments,
+  users,
   type Email,
   type NewEmail,
   type EmailAttachment,
   type NewEmailAttachment,
   type EmailThread,
   type NewEmailThread,
+  type EmailThreadRead,
+  type EmailThreadAssignment,
 } from "./db/schema";
-import { eq, desc, asc, and, isNull, isNotNull, sql } from "drizzle-orm";
+import { eq, desc, asc, and, isNull, isNotNull, sql, inArray } from "drizzle-orm";
 
 // ============================================
 // Thread Types
 // ============================================
+
+export interface AssignedUser {
+  userId: string;
+  userName: string | null;
+  userEmail: string;
+  hasRead: boolean;
+}
 
 export interface ThreadSummary {
   threadId: string;
@@ -32,6 +44,15 @@ export interface ThreadSummary {
   latestFromAddress: string;
   latestFromName: string | null;
   latestDirection: "inbound" | "outbound";
+  // Per-user read tracking
+  isReadByCurrentUser: boolean;
+  // Multi-user assignment support
+  assignedUserIds: string[];
+  assignedUsers: AssignedUser[];
+  // Thread metadata from emailThreads table
+  isImportant: boolean;
+  category: "general" | "order" | "quote" | "support" | "sales";
+  isArchived: boolean;
 }
 
 // CONSTRAINT 2: Database Integrity & Performance
@@ -281,11 +302,15 @@ export async function getEmailAttachmentById(
  */
 export async function getEmailThreads(options?: {
   direction?: "inbound" | "outbound";
+  currentUserId?: string;
+  assignedToMe?: boolean;
+  unreadOnly?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<ThreadSummary[]> {
   const limitVal = options?.limit || 25;
   const offsetVal = options?.offset || 0;
+  const currentUserId = options?.currentUserId;
 
   // Get all emails with optional direction filter
   const conditions = [];
@@ -306,9 +331,116 @@ export async function getEmailThreads(options?: {
     threadMap.set(email.threadId, existing);
   }
 
+  // Get thread IDs
+  const threadIds = Array.from(threadMap.keys());
+
+  // Batch load read status for current user
+  let userReadMap = new Map<string, boolean>();
+  if (currentUserId && threadIds.length > 0) {
+    const reads = await db.query.emailThreadReads.findMany({
+      where: and(
+        inArray(emailThreadReads.threadId, threadIds),
+        eq(emailThreadReads.userId, currentUserId)
+      ),
+    });
+    for (const read of reads) {
+      userReadMap.set(read.threadId, true);
+    }
+  }
+
+  // Batch load assignments with user info
+  let assignmentMap = new Map<string, AssignedUser[]>();
+  if (threadIds.length > 0) {
+    const assignments = await db
+      .select({
+        threadId: emailThreadAssignments.threadId,
+        userId: emailThreadAssignments.userId,
+        userName: users.name,
+        userEmail: users.email,
+      })
+      .from(emailThreadAssignments)
+      .innerJoin(users, eq(emailThreadAssignments.userId, users.id))
+      .where(inArray(emailThreadAssignments.threadId, threadIds));
+
+    // Get read status for all assigned users
+    const assignedUserIds = [...new Set(assignments.map(a => a.userId))];
+    let assignedUserReadMap = new Map<string, Set<string>>(); // threadId -> Set of userIds who have read
+
+    if (assignedUserIds.length > 0) {
+      const assignedReads = await db.query.emailThreadReads.findMany({
+        where: and(
+          inArray(emailThreadReads.threadId, threadIds),
+          inArray(emailThreadReads.userId, assignedUserIds)
+        ),
+      });
+      for (const read of assignedReads) {
+        if (!assignedUserReadMap.has(read.threadId)) {
+          assignedUserReadMap.set(read.threadId, new Set());
+        }
+        assignedUserReadMap.get(read.threadId)!.add(read.userId);
+      }
+    }
+
+    for (const assignment of assignments) {
+      if (!assignmentMap.has(assignment.threadId)) {
+        assignmentMap.set(assignment.threadId, []);
+      }
+      const threadReaders = assignedUserReadMap.get(assignment.threadId) || new Set();
+      assignmentMap.get(assignment.threadId)!.push({
+        userId: assignment.userId,
+        userName: assignment.userName,
+        userEmail: assignment.userEmail,
+        hasRead: threadReaders.has(assignment.userId),
+      });
+    }
+  }
+
+  // Batch load thread metadata
+  let threadMetadataMap = new Map<string, { isImportant: boolean; category: string; isArchived: boolean }>();
+  if (threadIds.length > 0) {
+    const threadRecords = await db.query.emailThreads.findMany({
+      where: inArray(emailThreads.id, threadIds),
+      columns: {
+        id: true,
+        isImportant: true,
+        category: true,
+        isArchived: true,
+      },
+    });
+    for (const record of threadRecords) {
+      threadMetadataMap.set(record.id, {
+        isImportant: record.isImportant,
+        category: record.category,
+        isArchived: record.isArchived,
+      });
+    }
+  }
+
+  // If filtering by assignedToMe, get the list of thread IDs assigned to user
+  let assignedToMeThreadIds: Set<string> | null = null;
+  if (options?.assignedToMe && currentUserId) {
+    const myAssignments = await db.query.emailThreadAssignments.findMany({
+      where: eq(emailThreadAssignments.userId, currentUserId),
+      columns: { threadId: true },
+    });
+    assignedToMeThreadIds = new Set(myAssignments.map(a => a.threadId));
+  }
+
   // Convert to thread summaries
   const threadSummaries: ThreadSummary[] = [];
   for (const [threadId, threadEmails] of threadMap) {
+    // Filter by assignedToMe if needed
+    if (assignedToMeThreadIds && !assignedToMeThreadIds.has(threadId)) {
+      continue;
+    }
+
+    const isReadByCurrentUser = userReadMap.get(threadId) || false;
+
+    // Filter by unread if needed
+    if (options?.unreadOnly && isReadByCurrentUser) {
+      continue;
+    }
+
     // Sort emails by date (newest first for getting latest)
     const sortedEmails = [...threadEmails].sort((a, b) => {
       const dateA = a.sentAt ? new Date(a.sentAt).getTime() : 0;
@@ -319,6 +451,8 @@ export async function getEmailThreads(options?: {
     const latestEmail = sortedEmails[0];
     const firstEmail = sortedEmails[sortedEmails.length - 1];
     const participants = [...new Set(threadEmails.map((e) => e.fromAddress))];
+    const assignedUsers = assignmentMap.get(threadId) || [];
+    const metadata = threadMetadataMap.get(threadId);
 
     threadSummaries.push({
       threadId,
@@ -334,6 +468,12 @@ export async function getEmailThreads(options?: {
       latestFromAddress: latestEmail.fromAddress,
       latestFromName: latestEmail.fromName,
       latestDirection: latestEmail.direction,
+      isReadByCurrentUser,
+      assignedUserIds: assignedUsers.map(u => u.userId),
+      assignedUsers,
+      isImportant: metadata?.isImportant ?? false,
+      category: (metadata?.category as ThreadSummary["category"]) ?? "general",
+      isArchived: metadata?.isArchived ?? false,
     });
   }
 
@@ -350,7 +490,7 @@ export async function getEmailThreads(options?: {
 /**
  * Get a single thread by ID with all its emails
  */
-export async function getThreadById(threadId: string): Promise<{
+export async function getThreadById(threadId: string, currentUserId?: string): Promise<{
   thread: ThreadSummary;
   emails: Email[];
 } | null> {
@@ -369,6 +509,61 @@ export async function getThreadById(threadId: string): Promise<{
   const firstEmail = threadEmails[0];
   const participants = [...new Set(threadEmails.map((e) => e.fromAddress))];
 
+  // Get read status for current user
+  let isReadByCurrentUser = false;
+  if (currentUserId) {
+    const readRecord = await db.query.emailThreadReads.findFirst({
+      where: and(
+        eq(emailThreadReads.threadId, threadId),
+        eq(emailThreadReads.userId, currentUserId)
+      ),
+    });
+    isReadByCurrentUser = !!readRecord;
+  }
+
+  // Get assignments with user info
+  const assignments = await db
+    .select({
+      userId: emailThreadAssignments.userId,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(emailThreadAssignments)
+    .innerJoin(users, eq(emailThreadAssignments.userId, users.id))
+    .where(eq(emailThreadAssignments.threadId, threadId));
+
+  // Get read status for all assigned users
+  const assignedUserIds = assignments.map(a => a.userId);
+  let assignedUserReadMap = new Map<string, boolean>();
+  if (assignedUserIds.length > 0) {
+    const assignedReads = await db.query.emailThreadReads.findMany({
+      where: and(
+        eq(emailThreadReads.threadId, threadId),
+        inArray(emailThreadReads.userId, assignedUserIds)
+      ),
+    });
+    for (const read of assignedReads) {
+      assignedUserReadMap.set(read.userId, true);
+    }
+  }
+
+  const assignedUsers: AssignedUser[] = assignments.map(a => ({
+    userId: a.userId,
+    userName: a.userName,
+    userEmail: a.userEmail,
+    hasRead: assignedUserReadMap.get(a.userId) || false,
+  }));
+
+  // Get thread metadata
+  const threadMetadata = await db.query.emailThreads.findFirst({
+    where: eq(emailThreads.id, threadId),
+    columns: {
+      isImportant: true,
+      category: true,
+      isArchived: true,
+    },
+  });
+
   const thread: ThreadSummary = {
     threadId,
     subject: firstEmail.subject || "(No Subject)",
@@ -383,6 +578,12 @@ export async function getThreadById(threadId: string): Promise<{
     latestFromAddress: latestEmail.fromAddress,
     latestFromName: latestEmail.fromName,
     latestDirection: latestEmail.direction,
+    isReadByCurrentUser,
+    assignedUserIds: assignedUsers.map(u => u.userId),
+    assignedUsers,
+    isImportant: threadMetadata?.isImportant ?? false,
+    category: (threadMetadata?.category as ThreadSummary["category"]) ?? "general",
+    isArchived: threadMetadata?.isArchived ?? false,
   };
 
   return { thread, emails: threadEmails };
@@ -393,6 +594,9 @@ export async function getThreadById(threadId: string): Promise<{
  */
 export async function getThreadCount(options?: {
   direction?: "inbound" | "outbound";
+  currentUserId?: string;
+  assignedToMe?: boolean;
+  unreadOnly?: boolean;
 }): Promise<number> {
   // Get all emails with optional direction filter
   const conditions = [];
@@ -406,7 +610,34 @@ export async function getThreadCount(options?: {
   });
 
   // Count unique thread IDs
-  const uniqueThreads = new Set(allEmails.map((e) => e.threadId));
+  let uniqueThreads = new Set(allEmails.map((e) => e.threadId));
+
+  // Filter by assignedToMe if needed
+  if (options?.assignedToMe && options?.currentUserId) {
+    const myAssignments = await db.query.emailThreadAssignments.findMany({
+      where: eq(emailThreadAssignments.userId, options.currentUserId),
+      columns: { threadId: true },
+    });
+    const assignedThreadIds = new Set(myAssignments.map(a => a.threadId));
+    uniqueThreads = new Set([...uniqueThreads].filter(id => assignedThreadIds.has(id)));
+  }
+
+  // Filter by unread if needed
+  if (options?.unreadOnly && options?.currentUserId) {
+    const threadIds = [...uniqueThreads];
+    if (threadIds.length > 0) {
+      const reads = await db.query.emailThreadReads.findMany({
+        where: and(
+          inArray(emailThreadReads.threadId, threadIds),
+          eq(emailThreadReads.userId, options.currentUserId)
+        ),
+        columns: { threadId: true },
+      });
+      const readThreadIds = new Set(reads.map(r => r.threadId));
+      uniqueThreads = new Set([...uniqueThreads].filter(id => !readThreadIds.has(id)));
+    }
+  }
+
   return uniqueThreads.size;
 }
 
@@ -516,28 +747,242 @@ export async function markThreadAsImportant(
   return updated || null;
 }
 
+// ============================================
+// Per-User Read Tracking
+// ============================================
+
 /**
- * Assign a thread to a user
+ * Mark thread as read by a specific user
  */
-export async function assignThread(
+export async function markThreadAsReadByUser(
   threadId: string,
-  userId: string | null
-): Promise<EmailThread | null> {
+  userId: string
+): Promise<void> {
   // Ensure thread exists
   await getOrCreateEmailThread(threadId, {
     subject: "(No Subject)",
   });
 
-  const [updated] = await db
-    .update(emailThreads)
-    .set({
-      assignedToUserId: userId,
-      updatedAt: new Date(),
+  // Upsert the read record
+  await db
+    .insert(emailThreadReads)
+    .values({
+      threadId,
+      userId,
+      readAt: new Date(),
     })
-    .where(eq(emailThreads.id, threadId))
-    .returning();
+    .onConflictDoUpdate({
+      target: [emailThreadReads.threadId, emailThreadReads.userId],
+      set: {
+        readAt: new Date(),
+      },
+    });
+}
 
-  return updated || null;
+/**
+ * Mark thread as unread by a specific user (removes their read record)
+ */
+export async function markThreadAsUnreadByUser(
+  threadId: string,
+  userId: string
+): Promise<void> {
+  await db
+    .delete(emailThreadReads)
+    .where(
+      and(
+        eq(emailThreadReads.threadId, threadId),
+        eq(emailThreadReads.userId, userId)
+      )
+    );
+}
+
+/**
+ * Mark thread as unread for all users (when a new reply arrives)
+ */
+export async function markThreadAsUnreadForAll(threadId: string): Promise<void> {
+  await db
+    .delete(emailThreadReads)
+    .where(eq(emailThreadReads.threadId, threadId));
+}
+
+/**
+ * Check if a user has read a thread
+ */
+export async function hasUserReadThread(
+  threadId: string,
+  userId: string
+): Promise<boolean> {
+  const read = await db.query.emailThreadReads.findFirst({
+    where: and(
+      eq(emailThreadReads.threadId, threadId),
+      eq(emailThreadReads.userId, userId)
+    ),
+  });
+  return !!read;
+}
+
+/**
+ * Get all users who have read a thread
+ */
+export async function getThreadReaders(
+  threadId: string
+): Promise<Array<{ userId: string; readAt: Date }>> {
+  const reads = await db.query.emailThreadReads.findMany({
+    where: eq(emailThreadReads.threadId, threadId),
+  });
+  return reads.map(r => ({
+    userId: r.userId,
+    readAt: r.readAt,
+  }));
+}
+
+// ============================================
+// Multi-User Thread Assignments
+// ============================================
+
+/**
+ * Assign multiple users to a thread
+ */
+export async function assignUsersToThread(
+  threadId: string,
+  userIds: string[],
+  assignedBy: string
+): Promise<void> {
+  // Ensure thread exists
+  await getOrCreateEmailThread(threadId, {
+    subject: "(No Subject)",
+  });
+
+  // Remove existing assignments not in new list
+  const existingAssignments = await db.query.emailThreadAssignments.findMany({
+    where: eq(emailThreadAssignments.threadId, threadId),
+  });
+  const existingUserIds = existingAssignments.map(a => a.userId);
+  const toRemove = existingUserIds.filter(id => !userIds.includes(id));
+  const toAdd = userIds.filter(id => !existingUserIds.includes(id));
+
+  // Remove old assignments
+  if (toRemove.length > 0) {
+    await db
+      .delete(emailThreadAssignments)
+      .where(
+        and(
+          eq(emailThreadAssignments.threadId, threadId),
+          inArray(emailThreadAssignments.userId, toRemove)
+        )
+      );
+  }
+
+  // Add new assignments
+  if (toAdd.length > 0) {
+    await db.insert(emailThreadAssignments).values(
+      toAdd.map(userId => ({
+        threadId,
+        userId,
+        assignedAt: new Date(),
+        assignedBy,
+      }))
+    );
+  }
+}
+
+/**
+ * Unassign a specific user from a thread
+ */
+export async function unassignUserFromThread(
+  threadId: string,
+  userId: string
+): Promise<void> {
+  await db
+    .delete(emailThreadAssignments)
+    .where(
+      and(
+        eq(emailThreadAssignments.threadId, threadId),
+        eq(emailThreadAssignments.userId, userId)
+      )
+    );
+}
+
+/**
+ * Unassign all users from a thread
+ */
+export async function unassignAllFromThread(threadId: string): Promise<void> {
+  await db
+    .delete(emailThreadAssignments)
+    .where(eq(emailThreadAssignments.threadId, threadId));
+}
+
+/**
+ * Get all assignments for a thread with user info
+ */
+export async function getThreadAssignments(
+  threadId: string
+): Promise<AssignedUser[]> {
+  const assignments = await db
+    .select({
+      userId: emailThreadAssignments.userId,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(emailThreadAssignments)
+    .innerJoin(users, eq(emailThreadAssignments.userId, users.id))
+    .where(eq(emailThreadAssignments.threadId, threadId));
+
+  // Get read status for all assigned users
+  const userIds = assignments.map(a => a.userId);
+  let readMap = new Map<string, boolean>();
+  if (userIds.length > 0) {
+    const reads = await db.query.emailThreadReads.findMany({
+      where: and(
+        eq(emailThreadReads.threadId, threadId),
+        inArray(emailThreadReads.userId, userIds)
+      ),
+    });
+    for (const read of reads) {
+      readMap.set(read.userId, true);
+    }
+  }
+
+  return assignments.map(a => ({
+    userId: a.userId,
+    userName: a.userName,
+    userEmail: a.userEmail,
+    hasRead: readMap.get(a.userId) || false,
+  }));
+}
+
+/**
+ * Auto-assign a thread to a user (only if not already assigned)
+ */
+export async function autoAssignThreadToUser(
+  threadId: string,
+  userId: string
+): Promise<boolean> {
+  // Check if thread has any assignments
+  const existingAssignments = await db.query.emailThreadAssignments.findMany({
+    where: eq(emailThreadAssignments.threadId, threadId),
+    columns: { userId: true },
+  });
+
+  if (existingAssignments.length > 0) {
+    // Thread already has assignments, don't auto-assign
+    return false;
+  }
+
+  // Ensure thread exists
+  await getOrCreateEmailThread(threadId, {
+    subject: "(No Subject)",
+  });
+
+  // Auto-assign the user
+  await db.insert(emailThreadAssignments).values({
+    threadId,
+    userId,
+    assignedAt: new Date(),
+    assignedBy: userId, // Self-assigned via auto-assign
+  });
+
+  return true;
 }
 
 /**
@@ -588,9 +1033,7 @@ export async function getCategoryCounts(userId?: string): Promise<{
   sent: number;
   archived: number;
 }> {
-  // For now, count based on email aggregations since we may not have thread records yet
-  // This is a simplified version - in production you'd query the emailThreads table
-  
+  // Get all emails to find unique threads
   const allEmails = await db.query.emails.findMany({
     columns: {
       threadId: true,
@@ -609,6 +1052,7 @@ export async function getCategoryCounts(userId?: string): Promise<{
   }
 
   const threads = Array.from(threadMap.values());
+  const threadIds = Array.from(threadMap.keys());
 
   // Count categories
   let orders = 0;
@@ -621,27 +1065,45 @@ export async function getCategoryCounts(userId?: string): Promise<{
     if (thread.direction === "outbound") sent++;
   }
 
-  // For assignedToMe and important, we'd need to check emailThreads table
-  // For now, return placeholder values
+  // Get thread metadata for important/archived
   const threadRecords = await db.query.emailThreads.findMany({
     columns: {
       id: true,
       isImportant: true,
-      assignedToUserId: true,
       isArchived: true,
-      isRead: true,
     },
   });
 
   const important = threadRecords.filter((t) => t.isImportant).length;
-  const assignedToMe = userId
-    ? threadRecords.filter((t) => t.assignedToUserId === userId).length
-    : 0;
   const archived = threadRecords.filter((t) => t.isArchived).length;
-  const unreadCount = threadRecords.filter((t) => !t.isRead).length;
+
+  // Count unread threads for current user (used for inbox count and assignedToMe filtering)
+  let readThreadIds = new Set<string>();
+  if (userId && threadIds.length > 0) {
+    const reads = await db.query.emailThreadReads.findMany({
+      where: and(
+        inArray(emailThreadReads.threadId, threadIds),
+        eq(emailThreadReads.userId, userId)
+      ),
+      columns: { threadId: true },
+    });
+    readThreadIds = new Set(reads.map(r => r.threadId));
+  }
+  const unreadCount = threadIds.filter(id => !readThreadIds.has(id)).length;
+
+  // Count assigned to current user - only count UNREAD threads assigned to me
+  let assignedToMe = 0;
+  if (userId) {
+    const myAssignments = await db.query.emailThreadAssignments.findMany({
+      where: eq(emailThreadAssignments.userId, userId),
+      columns: { threadId: true },
+    });
+    // Filter to only count unread threads
+    assignedToMe = myAssignments.filter(a => !readThreadIds.has(a.threadId)).length;
+  }
 
   return {
-    inbox: unreadCount || threads.length, // Fall back to total threads if no read tracking yet
+    inbox: unreadCount,
     orders,
     quotes,
     assignedToMe,
@@ -649,4 +1111,26 @@ export async function getCategoryCounts(userId?: string): Promise<{
     sent,
     archived,
   };
+}
+
+// ============================================
+// User Queries
+// ============================================
+
+/**
+ * Get all users for assignment dropdown
+ */
+export async function getAllUsers(): Promise<Array<{
+  id: string;
+  name: string | null;
+  email: string;
+}>> {
+  return db.query.users.findMany({
+    columns: {
+      id: true,
+      name: true,
+      email: true,
+    },
+    orderBy: asc(users.name),
+  });
 }
