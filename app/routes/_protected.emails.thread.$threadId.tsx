@@ -4,7 +4,7 @@ import {
   LoaderFunctionArgs,
   ActionFunctionArgs,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, Link, useRevalidator } from "@remix-run/react";
+import { useLoaderData, Link, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { 
   getThreadById, 
@@ -234,11 +234,11 @@ export default function ThreadViewPage() {
       {/* Email messages */}
       <div className="flex-1 overflow-y-auto bg-white dark:bg-gray-800">
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
-          {emailsWithAttachments.map(({ email, attachments }, index) => (
+          {emailsWithAttachments.map(({ email, attachments }: { email: Email; attachments: EmailAttachment[] }, index: number) => (
             <EmailMessage
               key={email.id}
-              email={email as Email}
-              attachments={attachments as EmailAttachment[]}
+              email={email}
+              attachments={attachments}
               isFirst={index === 0}
               isLast={index === emailsWithAttachments.length - 1}
               onReply={handleReply}

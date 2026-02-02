@@ -4,7 +4,7 @@ import {
   LoaderFunctionArgs,
   ActionFunctionArgs,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams, useNavigate, useOutletContext, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { 
   getEmailThreads, 
@@ -469,17 +469,14 @@ export default function EmailsPage() {
     allUsers,
     currentUserId,
     currentPage,
-    category,
     hasMore,
     totalThreads,
-    categoryCounts,
     selectedThread,
     selectedThreadEmails,
     selectedThreadId,
   } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isComposeModalOpen, setIsComposeModalOpen] = useState(false);
-  const navigate = useNavigate();
   const revalidator = useRevalidator();
 
   // Poll for new emails every 15 seconds
@@ -507,9 +504,13 @@ export default function EmailsPage() {
   }, [searchParams, setSearchParams]);
 
   // Handle thread selection
-  const handleThreadSelect = useCallback((threadId: string) => {
+  const handleThreadSelect = useCallback((threadId: string | null) => {
     const params = new URLSearchParams(searchParams);
-    params.set("thread", threadId);
+    if (threadId) {
+      params.set("thread", threadId);
+    } else {
+      params.delete("thread");
+    }
     setSearchParams(params);
   }, [searchParams, setSearchParams]);
 
@@ -519,12 +520,6 @@ export default function EmailsPage() {
     params.delete("thread");
     setSearchParams(params);
   }, [searchParams, setSearchParams]);
-
-  // Handle star click (mark important)
-  const handleStarClick = useCallback((threadId: string, isImportant: boolean) => {
-    // Optimistic update is handled in the component
-    // The actual API call would be made via fetcher
-  }, []);
 
   return (
     <EmailLayout

@@ -58,7 +58,8 @@ export function ThreadPreviewPanel({
     // Reset new message indicator when thread changes
     setHasNewMessage(false);
     prevEmailCountRef.current = emailsWithAttachments.length;
-  }, [thread.threadId]); // Re-scroll when thread changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread.threadId]); // Re-scroll when thread changes, intentionally not including emailsWithAttachments.length
 
   // Detect new messages arriving
   useEffect(() => {

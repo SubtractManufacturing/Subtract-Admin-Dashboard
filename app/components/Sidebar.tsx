@@ -35,7 +35,7 @@ interface EmailSubItem {
   id: string;
   label: string;
   param: string | null;
-  countKey?: keyof SidebarProps["emailCategoryCounts"];
+  countKey?: "inbox" | "orders" | "quotes" | "assignedToMe" | "important" | "sent" | "archived";
   icon: React.ReactNode;
 }
 
@@ -268,9 +268,6 @@ export default function Sidebar({
       ),
     },
   ];
-
-  // Combined nav items for non-email routes
-  const navItems = [...navItemsBeforeEmails, ...navItemsAfterEmails];
 
   const isActiveRoute = (path: string) => {
     if (path === "/") {

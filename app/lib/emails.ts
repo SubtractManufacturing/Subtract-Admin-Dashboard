@@ -13,10 +13,8 @@ import {
   type NewEmailAttachment,
   type EmailThread,
   type NewEmailThread,
-  type EmailThreadRead,
-  type EmailThreadAssignment,
 } from "./db/schema";
-import { eq, desc, asc, and, isNull, isNotNull, sql, inArray } from "drizzle-orm";
+import { eq, desc, asc, and, inArray } from "drizzle-orm";
 
 // ============================================
 // Thread Types
@@ -335,7 +333,7 @@ export async function getEmailThreads(options?: {
   const threadIds = Array.from(threadMap.keys());
 
   // Batch load read status for current user
-  let userReadMap = new Map<string, boolean>();
+  const userReadMap = new Map<string, boolean>();
   if (currentUserId && threadIds.length > 0) {
     const reads = await db.query.emailThreadReads.findMany({
       where: and(
@@ -349,7 +347,7 @@ export async function getEmailThreads(options?: {
   }
 
   // Batch load assignments with user info
-  let assignmentMap = new Map<string, AssignedUser[]>();
+  const assignmentMap = new Map<string, AssignedUser[]>();
   if (threadIds.length > 0) {
     const assignments = await db
       .select({
@@ -364,7 +362,7 @@ export async function getEmailThreads(options?: {
 
     // Get read status for all assigned users
     const assignedUserIds = [...new Set(assignments.map(a => a.userId))];
-    let assignedUserReadMap = new Map<string, Set<string>>(); // threadId -> Set of userIds who have read
+    const assignedUserReadMap = new Map<string, Set<string>>(); // threadId -> Set of userIds who have read
 
     if (assignedUserIds.length > 0) {
       const assignedReads = await db.query.emailThreadReads.findMany({
@@ -396,7 +394,7 @@ export async function getEmailThreads(options?: {
   }
 
   // Batch load thread metadata
-  let threadMetadataMap = new Map<string, { isImportant: boolean; category: string; isArchived: boolean }>();
+  const threadMetadataMap = new Map<string, { isImportant: boolean; category: string; isArchived: boolean }>();
   if (threadIds.length > 0) {
     const threadRecords = await db.query.emailThreads.findMany({
       where: inArray(emailThreads.id, threadIds),
@@ -534,7 +532,7 @@ export async function getThreadById(threadId: string, currentUserId?: string): P
 
   // Get read status for all assigned users
   const assignedUserIds = assignments.map(a => a.userId);
-  let assignedUserReadMap = new Map<string, boolean>();
+  const assignedUserReadMap = new Map<string, boolean>();
   if (assignedUserIds.length > 0) {
     const assignedReads = await db.query.emailThreadReads.findMany({
       where: and(
@@ -707,7 +705,7 @@ export async function markThreadAsRead(
   isRead: boolean
 ): Promise<EmailThread | null> {
   // Ensure thread exists
-  const thread = await getOrCreateEmailThread(threadId, {
+  await getOrCreateEmailThread(threadId, {
     subject: "(No Subject)",
   });
 
@@ -930,7 +928,7 @@ export async function getThreadAssignments(
 
   // Get read status for all assigned users
   const userIds = assignments.map(a => a.userId);
-  let readMap = new Map<string, boolean>();
+  const readMap = new Map<string, boolean>();
   if (userIds.length > 0) {
     const reads = await db.query.emailThreadReads.findMany({
       where: and(
