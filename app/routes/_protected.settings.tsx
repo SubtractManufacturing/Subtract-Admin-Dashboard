@@ -444,6 +444,40 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  // Update Reply-To for a specific Send As address
+  if (intent === "updateSendAsReplyTo" && userDetails.role === "Dev") {
+    const id = formData.get("id") as string;
+    const replyToAddress = formData.get("replyToAddress") as string;
+
+    if (!id) {
+      return withAuthHeaders(
+        json({ error: "Address ID is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    // Basic email validation (allow empty to clear)
+    if (replyToAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyToAddress)) {
+      return withAuthHeaders(
+        json({ error: "Invalid email address format" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const { updateSendAsAddress } = await import("~/lib/emailSendAsAddresses");
+      await updateSendAsAddress(parseInt(id), {
+        replyToAddress: replyToAddress || null,
+      });
+      return withAuthHeaders(json({ success: true }), headers);
+    } catch (error) {
+      return withAuthHeaders(
+        json({ error: "Failed to update reply-to address" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
   // Update reconciliation task settings
   if (intent === "updateReconciliationTask" && userDetails.role === "Dev") {
     const taskId = formData.get("taskId") as string;
@@ -1103,58 +1137,83 @@ export default function Settings() {
 
                       {/* Existing addresses list */}
                       {emailSendAsAddresses && emailSendAsAddresses.length > 0 ? (
-                        <div className="space-y-2 mb-4">
+                        <div className="space-y-3 mb-4">
                           {emailSendAsAddresses.map((addr: EmailSendAsAddress) => (
                             <div
                               key={addr.id}
-                              className="flex items-center justify-between bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
+                              className="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
                             >
-                              <div className="flex items-center gap-3">
-                                {addr.isDefault && (
-                                  <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
-                                    Default
-                                  </span>
-                                )}
-                                <div>
-                                  <span className="font-medium text-gray-900 dark:text-white">
-                                    {addr.label}
-                                  </span>
-                                  <span className="text-gray-500 dark:text-gray-400 ml-2 text-sm">
-                                    &lt;{addr.email}&gt;
-                                  </span>
+                              {/* Address header row */}
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-3">
+                                  {addr.isDefault && (
+                                    <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
+                                      Default
+                                    </span>
+                                  )}
+                                  <div>
+                                    <span className="font-medium text-gray-900 dark:text-white">
+                                      {addr.label}
+                                    </span>
+                                    <span className="text-gray-500 dark:text-gray-400 ml-2 text-sm">
+                                      &lt;{addr.email}&gt;
+                                    </span>
+                                  </div>
+                                  {!addr.isActive && (
+                                    <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded">
+                                      Inactive
+                                    </span>
+                                  )}
                                 </div>
-                                {!addr.isActive && (
-                                  <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded">
-                                    Inactive
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {!addr.isDefault && (
+                                <div className="flex items-center gap-2">
+                                  {!addr.isDefault && (
+                                    <emailAddressFetcher.Form method="post" className="inline">
+                                      <input type="hidden" name="intent" value="setDefaultEmailSendAs" />
+                                      <input type="hidden" name="id" value={addr.id} />
+                                      <button
+                                        type="submit"
+                                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                        disabled={emailAddressFetcher.state === "submitting"}
+                                      >
+                                        Set Default
+                                      </button>
+                                    </emailAddressFetcher.Form>
+                                  )}
                                   <emailAddressFetcher.Form method="post" className="inline">
-                                    <input type="hidden" name="intent" value="setDefaultEmailSendAs" />
+                                    <input type="hidden" name="intent" value="deleteEmailSendAs" />
                                     <input type="hidden" name="id" value={addr.id} />
                                     <button
                                       type="submit"
-                                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                      className="text-xs text-red-600 dark:text-red-400 hover:underline"
                                       disabled={emailAddressFetcher.state === "submitting"}
                                     >
-                                      Set Default
+                                      Remove
                                     </button>
                                   </emailAddressFetcher.Form>
-                                )}
-                                <emailAddressFetcher.Form method="post" className="inline">
-                                  <input type="hidden" name="intent" value="deleteEmailSendAs" />
-                                  <input type="hidden" name="id" value={addr.id} />
-                                  <button
-                                    type="submit"
-                                    className="text-xs text-red-600 dark:text-red-400 hover:underline"
-                                    disabled={emailAddressFetcher.state === "submitting"}
-                                  >
-                                    Remove
-                                  </button>
-                                </emailAddressFetcher.Form>
+                                </div>
                               </div>
+                              
+                              {/* Reply-To address for this Send As */}
+                              <emailAddressFetcher.Form method="post" className="flex items-center gap-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                                <input type="hidden" name="intent" value="updateSendAsReplyTo" />
+                                <input type="hidden" name="id" value={addr.id} />
+                                <label htmlFor={`reply-to-${addr.id}`} className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Reply-To:</label>
+                                <input
+                                  id={`reply-to-${addr.id}`}
+                                  type="email"
+                                  name="replyToAddress"
+                                  defaultValue={addr.replyToAddress || ""}
+                                  placeholder="inbound@yourdomain.com (uses default if empty)"
+                                  className="flex-1 px-2 py-1 text-xs border border-gray-200 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                                />
+                                <button
+                                  type="submit"
+                                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                  disabled={emailAddressFetcher.state === "submitting"}
+                                >
+                                  Save
+                                </button>
+                              </emailAddressFetcher.Form>
                             </div>
                           ))}
                         </div>
@@ -1434,7 +1493,8 @@ export default function Settings() {
                             flag.key === 'events_access_all' ||
                             flag.key === 'events_nav_visible' ||
                             flag.key === 'pdf_auto_download' ||
-                            flag.key === 'quote_rejection_reason_required'
+                            flag.key === 'quote_rejection_reason_required' ||
+                            flag.key === 'email_auto_assign_replied'
                           )
                           .sort((a: FeatureFlag, b: FeatureFlag) =>
                             a.key.localeCompare(b.key)

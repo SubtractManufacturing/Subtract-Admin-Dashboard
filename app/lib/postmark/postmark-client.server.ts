@@ -2,7 +2,7 @@ import { ServerClient } from "postmark";
 import { LinkTrackingOptions } from "postmark/dist/client/models/message/SupportingTypes";
 import { render } from "@react-email/render";
 import { QuoteEmail } from "~/emails/QuoteEmail";
-import { createEmail, getOrCreateThreadId } from "~/lib/emails";
+import { createEmail, getOrCreateThreadId, getEmailById } from "~/lib/emails";
 import { randomUUID } from "crypto";
 
 // Environment variables
@@ -44,14 +44,24 @@ function getPostmarkClient(): ServerClient {
 }
 
 /**
- * Get the reply-to address from developer settings
+ * Get the reply-to address - first checks per-address config, then falls back to global default
  */
-async function getReplyToAddress(): Promise<string | null> {
+async function getReplyToAddress(fromAddress?: string): Promise<string | null> {
   try {
+    // If a from address is provided, check if it has a per-address reply-to
+    if (fromAddress) {
+      const { getSendAsAddressByEmail } = await import("~/lib/emailSendAsAddresses");
+      const sendAsConfig = await getSendAsAddressByEmail(fromAddress);
+      if (sendAsConfig?.replyToAddress) {
+        return sendAsConfig.replyToAddress;
+      }
+    }
+    
+    // Fall back to global default reply-to
     const { getEmailReplyToAddress } = await import("~/lib/developerSettings");
     return await getEmailReplyToAddress();
   } catch (error) {
-    console.warn("Could not load reply-to from developerSettings:", error);
+    console.warn("Could not load reply-to address:", error);
     return null;
   }
 }
@@ -110,8 +120,8 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     // Generate Message-ID for threading (RFC 2822 format)
     const messageId = `<${Date.now()}-${randomUUID()}@${EMAIL_DOMAIN}>`;
 
-    // Get reply-to address for inbound routing
-    const replyTo = await getReplyToAddress();
+    // Get reply-to address for inbound routing (checks per-address config, then global default)
+    const replyTo = await getReplyToAddress(from);
     
     // Get BCC address for Gmail mirroring (if enabled via feature flag)
     const bccAddress = await getOutboundBccAddress();
@@ -220,6 +230,189 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     return {
       success: false,
       error: err?.message || "Failed to send email",
+      errorCode: err?.statusCode,
+    };
+  }
+}
+
+// ============================================
+// Reply Function with Proper Threading Headers
+// ============================================
+
+interface SendReplyOptions {
+  replyToEmailId: number; // Database ID of the email being replied to
+  from: string;
+  body: string;
+  // Optional: override the recipient (defaults to original sender)
+  to?: string;
+}
+
+/**
+ * Send a reply to an existing email with proper RFC 2822 threading headers.
+ * This ensures the reply is properly threaded in Gmail, Outlook, Apple Mail, etc.
+ *
+ * RFC 2822 Threading Headers:
+ * - Message-ID: Unique identifier for this reply
+ * - In-Reply-To: The Message-ID of the direct parent email
+ * - References: Space-separated chain of ALL ancestor Message-IDs
+ */
+export async function sendReply(options: SendReplyOptions): Promise<SendEmailResult> {
+  const { replyToEmailId, from, body, to: overrideTo } = options;
+
+  // Fetch the parent email to get threading context
+  const parentEmail = await getEmailById(replyToEmailId);
+  if (!parentEmail) {
+    return {
+      success: false,
+      error: `Email with ID ${replyToEmailId} not found`,
+    };
+  }
+
+  // Determine the recipient:
+  // - For replies to inbound emails: reply to the sender
+  // - For replies to outbound emails: reply to the original recipient
+  const to = overrideTo || (
+    parentEmail.direction === "inbound"
+      ? parentEmail.fromAddress
+      : parentEmail.toAddresses?.[0]
+  );
+
+  if (!to) {
+    return {
+      success: false,
+      error: "Could not determine recipient for reply",
+    };
+  }
+
+  // Build subject with "Re:" prefix if not already present
+  const subject = parentEmail.subject.startsWith("Re:")
+    ? parentEmail.subject
+    : `Re: ${parentEmail.subject}`;
+
+  try {
+    const client = getPostmarkClient();
+
+    // Plain text replies - no HTML template
+    // This makes emails feel more personal and human
+    // (HTML templates are reserved for specific tasks like sending quotes)
+
+    // Generate new Message-ID for this reply (RFC 2822 format)
+    const messageId = `<${Date.now()}-${randomUUID()}@${EMAIL_DOMAIN}>`;
+
+    // Build In-Reply-To header (parent's Message-ID)
+    const inReplyTo = parentEmail.messageId || undefined;
+
+    // Build References header (chain of all ancestor Message-IDs)
+    // RFC 2822: References should contain all ancestor Message-IDs
+    let references: string | undefined;
+    if (parentEmail.references && parentEmail.messageId) {
+      // Append parent's Message-ID to existing references chain
+      references = `${parentEmail.references} ${parentEmail.messageId}`;
+    } else if (parentEmail.messageId) {
+      // Start new references chain with parent's Message-ID
+      references = parentEmail.messageId;
+    }
+
+    // Inherit thread ID from parent (maintains our internal threading)
+    const threadId = parentEmail.threadId;
+
+    // Get reply-to address for inbound routing (checks per-address config, then global default)
+    const replyToAddress = await getReplyToAddress(from);
+
+    // Get BCC address for Gmail mirroring (if enabled)
+    const bccAddress = await getOutboundBccAddress();
+
+    // Build Postmark metadata (inherit from parent + add new)
+    const metadata: Record<string, string> = {
+      threadId,
+    };
+    if (parentEmail.quoteId) metadata.quoteId = String(parentEmail.quoteId);
+    if (parentEmail.orderId) metadata.orderId = String(parentEmail.orderId);
+    if (parentEmail.customerId) metadata.customerId = String(parentEmail.customerId);
+    if (parentEmail.vendorId) metadata.vendorId = String(parentEmail.vendorId);
+
+    console.log(`Sending reply via Postmark: to=${to}, from=${from}, subject=${subject}`);
+    console.log(`Threading: inReplyTo=${inReplyTo}, threadId=${threadId}`);
+
+    // Build headers for cross-client threading
+    const headers: { Name: string; Value: string }[] = [
+      { Name: "Message-ID", Value: messageId },
+    ];
+    if (inReplyTo) {
+      headers.push({ Name: "In-Reply-To", Value: inReplyTo });
+    }
+    if (references) {
+      headers.push({ Name: "References", Value: references });
+    }
+
+    // Send email via Postmark - plain text only for human-like replies
+    const result = await client.sendEmail({
+      From: from,
+      To: to,
+      Bcc: bccAddress || undefined,
+      Subject: subject,
+      TextBody: body, // Plain text only - feels more personal
+      ReplyTo: replyToAddress || undefined,
+      MessageStream: POSTMARK_MESSAGE_STREAM,
+      Headers: headers,
+      Metadata: metadata,
+      TrackOpens: false, // Disable tracking for plain text human emails
+    });
+
+    console.log(`Reply sent successfully. Postmark MessageID: ${result.MessageID}`);
+
+    // Store reply in database (plain text only, no HTML)
+    await createEmail({
+      postmarkMessageId: result.MessageID,
+      postmarkMessageStreamId: POSTMARK_MESSAGE_STREAM,
+      threadId,
+      direction: "outbound",
+      status: "sent",
+      fromAddress: from,
+      toAddresses: [to],
+      bccAddresses: bccAddress ? [bccAddress] : [],
+      replyTo: replyToAddress || undefined,
+      subject,
+      textBody: body,
+      htmlBody: null, // Plain text reply - no HTML
+      messageId,
+      inReplyTo: inReplyTo || null,
+      references: references || null,
+      quoteId: parentEmail.quoteId,
+      orderId: parentEmail.orderId,
+      customerId: parentEmail.customerId,
+      vendorId: parentEmail.vendorId,
+      metadata: { postmark: metadata },
+      gmailMirrored: !!bccAddress,
+      sentAt: new Date(),
+    });
+
+    return {
+      success: true,
+      messageId: result.MessageID,
+      threadId,
+    };
+  } catch (error: unknown) {
+    // Handle Postmark Error 422 - Unverified sender
+    const err = error as { statusCode?: number; ErrorCode?: number; message?: string };
+    if (err?.statusCode === 422 || err?.ErrorCode === 422) {
+      const errorMessage =
+        `Email address '${from}' is not verified in Postmark. ` +
+        `Please add it as a Sender Signature in the Postmark dashboard: ` +
+        `https://account.postmarkapp.com/servers/`;
+
+      console.error("Postmark Sender Verification Error:", errorMessage);
+      return {
+        success: false,
+        error: errorMessage,
+        errorCode: 422,
+      };
+    }
+
+    console.error("Failed to send reply via Postmark:", error);
+    return {
+      success: false,
+      error: err?.message || "Failed to send reply",
       errorCode: err?.statusCode,
     };
   }

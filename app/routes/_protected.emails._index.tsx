@@ -4,42 +4,118 @@ import {
   LoaderFunctionArgs,
   ActionFunctionArgs,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getEmails, getEmailById, getEmailAttachments } from "~/lib/emails";
+import { 
+  getEmailThreads, 
+  getThreadCount, 
+  getThreadById, 
+  getCategoryCounts, 
+  getEmailAttachments,
+  markThreadAsRead,
+  markThreadAsImportant,
+  markThreadAsReadByUser,
+  markThreadAsUnreadByUser,
+  assignUsersToThread,
+  unassignUserFromThread,
+  archiveThread,
+  getAllUsers,
+  autoAssignThreadToUser,
+  getEmailById,
+} from "~/lib/emails";
 import { getActiveSendAsAddresses } from "~/lib/emailSendAsAddresses";
+import { sendReply } from "~/lib/postmark/postmark-client.server";
+import { isAutoAssignRepliedEmailsEnabled } from "~/lib/featureFlags";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
+import { EmailLayout, ThreadListPanel, ThreadPreviewPanel } from "~/components/email";
+import type { ThreadSummary } from "~/lib/emails";
 import type { Email, EmailAttachment } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { headers, user } = await requireAuth(request);
 
   const url = new URL(request.url);
-  const direction = url.searchParams.get("direction") as
-    | "inbound"
-    | "outbound"
-    | null;
+  const category = url.searchParams.get("category");
   const page = parseInt(url.searchParams.get("page") || "1");
+  const selectedThreadId = url.searchParams.get("thread");
+  const assignedToMe = url.searchParams.get("assignedToMe") === "true";
+  const unreadOnly = url.searchParams.get("status") === "unread";
   const limit = 25;
   const offset = (page - 1) * limit;
 
-  // Fetch emails
-  const emails = await getEmails({
-    direction: direction || undefined,
+  // Determine direction filter based on category
+  let direction: "inbound" | "outbound" | undefined;
+  if (category === "sent") {
+    direction = "outbound";
+  }
+
+  // Fetch email threads (grouped by threadId) with currentUserId for read tracking
+  const threads = await getEmailThreads({
+    direction,
+    currentUserId: user?.id,
+    assignedToMe,
+    unreadOnly,
     limit,
     offset,
   });
 
+  // Get thread count for pagination
+  const totalThreads = await getThreadCount({
+    direction,
+    currentUserId: user?.id,
+    assignedToMe,
+    unreadOnly,
+  });
+
+  // Get category counts for sidebar badges
+  const categoryCounts = await getCategoryCounts(user?.id);
+
   // Get send-as addresses for compose
   const sendAsAddresses = await getActiveSendAsAddresses();
 
+  // Get all users for assignment dropdown
+  const allUsers = await getAllUsers();
+
+  // If a thread is selected, load its details and auto-mark as read
+  let selectedThread: ThreadSummary | null = null;
+  let selectedThreadEmails: Array<{ email: Email; attachments: EmailAttachment[] }> = [];
+  
+  if (selectedThreadId) {
+    const threadData = await getThreadById(selectedThreadId, user?.id);
+    if (threadData) {
+      selectedThread = threadData.thread;
+      // Load attachments for each email
+      selectedThreadEmails = await Promise.all(
+        threadData.emails.map(async (email) => {
+          const attachments = await getEmailAttachments(email.id);
+          return { email, attachments };
+        })
+      );
+      
+      // Auto-mark thread as read when user opens it in preview
+      if (user?.id) {
+        await markThreadAsReadByUser(selectedThreadId, user.id);
+        // Update the selectedThread to reflect the new read status
+        selectedThread = { ...selectedThread, isReadByCurrentUser: true };
+      }
+    }
+  }
+
   return withAuthHeaders(
     json({
-      emails,
+      threads,
       sendAsAddresses,
+      allUsers,
+      currentUserId: user?.id,
       currentPage: page,
-      direction,
+      category,
+      totalThreads,
+      hasMore: threads.length === limit,
+      categoryCounts,
+      selectedThread,
+      selectedThreadEmails,
+      selectedThreadId,
     }),
     headers
   );
@@ -50,6 +126,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  // Send email
   if (intent === "sendEmail") {
     const from = formData.get("from") as string;
     const to = formData.get("to") as string;
@@ -91,29 +168,292 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  if (intent === "getEmailDetail") {
-    const emailId = formData.get("emailId") as string;
-    if (!emailId) {
+  // Send reply to existing email thread
+  if (intent === "sendReply") {
+    const { user } = await requireAuth(request);
+    const replyToEmailId = formData.get("replyToEmailId") as string;
+    const from = formData.get("from") as string;
+    const body = formData.get("body") as string;
+    const to = formData.get("to") as string | null;
+
+    if (!replyToEmailId || !from || !body) {
       return withAuthHeaders(
-        json({ error: "Missing email ID" }, { status: 400 }),
+        json({ error: "Missing required fields" }, { status: 400 }),
         headers
       );
     }
 
-    const email = await getEmailById(parseInt(emailId));
-    if (!email) {
+    try {
+      const result = await sendReply({
+        replyToEmailId: parseInt(replyToEmailId),
+        from,
+        body,
+        to: to || undefined,
+      });
+
+      if (result.success) {
+        // Auto-assign the thread to the user who replied (if feature enabled and not already assigned)
+        if (user?.id) {
+          const autoAssignEnabled = await isAutoAssignRepliedEmailsEnabled();
+          if (autoAssignEnabled) {
+            // Get the thread ID from the reply-to email
+            const replyToEmail = await getEmailById(parseInt(replyToEmailId));
+            if (replyToEmail?.threadId) {
+              await autoAssignThreadToUser(replyToEmail.threadId, user.id);
+            }
+          }
+        }
+        
+        return withAuthHeaders(json({ success: true }), headers);
+      } else {
+        return withAuthHeaders(
+          json({ error: result.error }, { status: 400 }),
+          headers
+        );
+      }
+    } catch (error) {
+      console.error("Failed to send reply:", error);
       return withAuthHeaders(
-        json({ error: "Email not found" }, { status: 404 }),
+        json({ error: "Failed to send reply" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as read/unread (team-wide - legacy)
+  if (intent === "markRead") {
+    const threadId = formData.get("threadId") as string;
+    const isRead = formData.get("isRead") === "true";
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
         headers
       );
     }
 
-    const attachments = await getEmailAttachments(email.id);
+    try {
+      const thread = await markThreadAsRead(threadId, isRead);
+      
+      if (!thread) {
+        return withAuthHeaders(
+          json({ error: "Thread not found" }, { status: 404 }),
+          headers
+        );
+      }
 
-    return withAuthHeaders(
-      json({ email, attachments }),
-      headers
-    );
+      return withAuthHeaders(
+        json({ success: true, thread }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as read:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as read by current user (per-user tracking)
+  if (intent === "markAsReadByMe") {
+    const { user } = await requireAuth(request);
+    const threadId = formData.get("threadId") as string;
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    if (!user?.id) {
+      return withAuthHeaders(
+        json({ error: "User not authenticated" }, { status: 401 }),
+        headers
+      );
+    }
+
+    try {
+      await markThreadAsReadByUser(threadId, user.id);
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as read by user:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as unread by current user (per-user tracking)
+  if (intent === "markAsUnreadByMe") {
+    const { user } = await requireAuth(request);
+    const threadId = formData.get("threadId") as string;
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    if (!user?.id) {
+      return withAuthHeaders(
+        json({ error: "User not authenticated" }, { status: 401 }),
+        headers
+      );
+    }
+
+    try {
+      await markThreadAsUnreadByUser(threadId, user.id);
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as unread by user:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Mark thread as important/starred
+  if (intent === "markImportant") {
+    const threadId = formData.get("threadId") as string;
+    const isImportant = formData.get("isImportant") === "true";
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const thread = await markThreadAsImportant(threadId, isImportant);
+      
+      if (!thread) {
+        return withAuthHeaders(
+          json({ error: "Thread not found" }, { status: 404 }),
+          headers
+        );
+      }
+
+      return withAuthHeaders(
+        json({ success: true, thread }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to mark thread as important:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Assign multiple users to thread
+  if (intent === "assignUsers") {
+    const { user } = await requireAuth(request);
+    const threadId = formData.get("threadId") as string;
+    const userIdsJson = formData.get("userIds") as string;
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    if (!user?.id) {
+      return withAuthHeaders(
+        json({ error: "User not authenticated" }, { status: 401 }),
+        headers
+      );
+    }
+
+    try {
+      const userIds = JSON.parse(userIdsJson) as string[];
+      await assignUsersToThread(threadId, userIds, user.id);
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to assign users to thread:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Unassign a single user from thread
+  if (intent === "unassignUser") {
+    const threadId = formData.get("threadId") as string;
+    const userId = formData.get("userId") as string;
+
+    if (!threadId || !userId) {
+      return withAuthHeaders(
+        json({ error: "threadId and userId are required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      await unassignUserFromThread(threadId, userId);
+      return withAuthHeaders(
+        json({ success: true }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to unassign user from thread:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
+  }
+
+  // Archive/unarchive thread
+  if (intent === "archiveThread") {
+    const threadId = formData.get("threadId") as string;
+    const isArchived = formData.get("isArchived") !== "false"; // Default to true
+
+    if (!threadId) {
+      return withAuthHeaders(
+        json({ error: "threadId is required" }, { status: 400 }),
+        headers
+      );
+    }
+
+    try {
+      const thread = await archiveThread(threadId, isArchived);
+      
+      if (!thread) {
+        return withAuthHeaders(
+          json({ error: "Thread not found" }, { status: 404 }),
+          headers
+        );
+      }
+
+      return withAuthHeaders(
+        json({ success: true, thread }),
+        headers
+      );
+    } catch (error) {
+      console.error("Failed to archive thread:", error);
+      return withAuthHeaders(
+        json({ error: "Failed to update thread" }, { status: 500 }),
+        headers
+      );
+    }
   }
 
   return withAuthHeaders(
@@ -122,336 +462,100 @@ export async function action({ request }: ActionFunctionArgs) {
   );
 }
 
-// Format relative time
-function formatRelativeTime(date: Date | string | null): string {
-  if (!date) return "";
-  const d = typeof date === "string" ? new Date(date) : date;
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-
-  const minutes = Math.floor(diff / (1000 * 60));
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days}d ago`;
-
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-}
-
-// Truncate text with ellipsis
-function truncate(text: string | null, length: number): string {
-  if (!text) return "";
-  if (text.length <= length) return text;
-  return text.slice(0, length) + "...";
-}
-
 export default function EmailsPage() {
-  const { emails, sendAsAddresses, currentPage, direction } =
-    useLoaderData<typeof loader>();
+  const {
+    threads,
+    sendAsAddresses,
+    allUsers,
+    currentUserId,
+    currentPage,
+    hasMore,
+    totalThreads,
+    selectedThread,
+    selectedThreadEmails,
+    selectedThreadId,
+  } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const fetcher = useFetcher<{ email?: Email; attachments?: EmailAttachment[] }>();
-
-  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
-  const [selectedAttachments, setSelectedAttachments] = useState<
-    EmailAttachment[]
-  >([]);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isComposeModalOpen, setIsComposeModalOpen] = useState(false);
+  const revalidator = useRevalidator();
 
-  // Handle email selection
-  const handleEmailClick = useCallback(
-    (email: Email) => {
-      setSelectedEmail(email);
-      setIsDetailModalOpen(true);
-
-      // Fetch email details
-      fetcher.submit(
-        { intent: "getEmailDetail", emailId: email.id.toString() },
-        { method: "post" }
-      );
-    },
-    [fetcher]
-  );
-
-  // Update selected email when fetcher returns
+  // Poll for new emails every 15 seconds
   useEffect(() => {
-    if (fetcher.data?.email) {
-      setSelectedEmail(fetcher.data.email as unknown as Email);
-      setSelectedAttachments((fetcher.data.attachments || []) as unknown as EmailAttachment[]);
-    }
-  }, [fetcher.data]);
+    const pollInterval = setInterval(() => {
+      // Only poll if we're not already loading and the tab is visible
+      if (revalidator.state === "idle" && document.visibilityState === "visible") {
+        revalidator.revalidate();
+      }
+    }, 15000); // 15 seconds
 
-  // Filter change
-  const handleFilterChange = (newDirection: string | null) => {
-    const params = new URLSearchParams(searchParams);
-    if (newDirection) {
-      params.set("direction", newDirection);
-    } else {
-      params.delete("direction");
+    return () => clearInterval(pollInterval);
+  }, [revalidator]);
+
+  // Check for compose param in URL to auto-open modal
+  useEffect(() => {
+    const shouldCompose = searchParams.get("compose") === "true";
+    if (shouldCompose) {
+      setIsComposeModalOpen(true);
+      // Remove the compose param from URL
+      const params = new URLSearchParams(searchParams);
+      params.delete("compose");
+      setSearchParams(params, { replace: true });
     }
-    params.set("page", "1");
+  }, [searchParams, setSearchParams]);
+
+  // Handle thread selection
+  const handleThreadSelect = useCallback((threadId: string | null) => {
+    const params = new URLSearchParams(searchParams);
+    if (threadId) {
+      params.set("thread", threadId);
+    } else {
+      params.delete("thread");
+    }
     setSearchParams(params);
-  };
+  }, [searchParams, setSearchParams]);
+
+  // Handle close thread (deselect)
+  const handleCloseThread = useCallback(() => {
+    const params = new URLSearchParams(searchParams);
+    params.delete("thread");
+    setSearchParams(params);
+  }, [searchParams, setSearchParams]);
 
   return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-          Emails
-        </h1>
-        <Button variant="primary" onClick={() => setIsComposeModalOpen(true)}>
-          Compose
-        </Button>
-      </div>
-
-      {/* Filters */}
-      <div className="flex gap-2 mb-4">
-        <button
-          onClick={() => handleFilterChange(null)}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            !direction
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-          }`}
-        >
-          All
-        </button>
-        <button
-          onClick={() => handleFilterChange("inbound")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            direction === "inbound"
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-          }`}
-        >
-          Inbox
-        </button>
-        <button
-          onClick={() => handleFilterChange("outbound")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            direction === "outbound"
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
-          }`}
-        >
-          Sent
-        </button>
-      </div>
-
-      {/* Email List */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-        {emails.length === 0 ? (
-          <div className="p-8 text-center text-gray-500 dark:text-gray-400">
-            No emails found
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-200 dark:divide-gray-700">
-            {emails.map((email: Email) => (
-              <div
-                key={email.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleEmailClick(email)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    handleEmailClick(email);
-                  }
-                }}
-                className="flex items-start gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors"
-              >
-                {/* Direction indicator */}
-                <div className="flex-shrink-0 mt-1">
-                  {email.direction === "inbound" ? (
-                    <div className="w-2 h-2 rounded-full bg-blue-500" title="Inbound" />
-                  ) : (
-                    <div className="w-2 h-2 rounded-full bg-green-500" title="Sent" />
-                  )}
-                </div>
-
-                {/* Email content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 min-w-0">
-                      {/* From/To */}
-                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                        {email.direction === "inbound"
-                          ? email.fromName || email.fromAddress
-                          : `To: ${email.toAddresses?.[0] || "Unknown"}`}
-                      </p>
-                      {/* Subject */}
-                      <p className="text-sm text-gray-900 dark:text-gray-100 truncate">
-                        {email.subject}
-                      </p>
-                      {/* Preview */}
-                      <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
-                        {truncate(email.textBody, 100)}
-                      </p>
-                    </div>
-
-                    {/* Timestamp */}
-                    <span className="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400 ml-4">
-                      {formatRelativeTime(email.sentAt)}
-                    </span>
-                  </div>
-
-                  {/* Entity badges */}
-                  <div className="flex gap-2 mt-1">
-                    {email.quoteId && (
-                      <span className="text-xs px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded">
-                        Quote #{email.quoteId}
-                      </span>
-                    )}
-                    {email.orderId && (
-                      <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
-                        Order #{email.orderId}
-                      </span>
-                    )}
-                    {email.customerId && (
-                      <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded">
-                        Customer #{email.customerId}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Pagination */}
-      {emails.length > 0 && (
-        <div className="flex justify-center gap-2 mt-4">
-          <Button
-            variant="secondary"
-            disabled={currentPage <= 1}
-            onClick={() => {
-              const params = new URLSearchParams(searchParams);
-              params.set("page", String(currentPage - 1));
-              setSearchParams(params);
-            }}
-          >
-            Previous
-          </Button>
-          <span className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">
-            Page {currentPage}
-          </span>
-          <Button
-            variant="secondary"
-            disabled={emails.length < 25}
-            onClick={() => {
-              const params = new URLSearchParams(searchParams);
-              params.set("page", String(currentPage + 1));
-              setSearchParams(params);
-            }}
-          >
-            Next
-          </Button>
-        </div>
-      )}
-
-      {/* Email Detail Modal */}
-      <Modal
-        isOpen={isDetailModalOpen}
-        onClose={() => setIsDetailModalOpen(false)}
-        title={selectedEmail?.subject || "Email"}
-      >
-        {selectedEmail && (
-          <div className="space-y-4">
-            {/* Header info */}
-            <div className="border-b border-gray-200 dark:border-gray-700 pb-4">
-              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-                <span className="text-gray-500 dark:text-gray-400">From:</span>
-                <span className="text-gray-900 dark:text-white">
-                  {selectedEmail.fromName
-                    ? `${selectedEmail.fromName} <${selectedEmail.fromAddress}>`
-                    : selectedEmail.fromAddress}
-                </span>
-
-                <span className="text-gray-500 dark:text-gray-400">To:</span>
-                <span className="text-gray-900 dark:text-white">
-                  {selectedEmail.toAddresses?.join(", ")}
-                </span>
-
-                <span className="text-gray-500 dark:text-gray-400">Date:</span>
-                <span className="text-gray-900 dark:text-white">
-                  {selectedEmail.sentAt
-                    ? new Date(selectedEmail.sentAt).toLocaleString()
-                    : "Unknown"}
-                </span>
-              </div>
-            </div>
-
-            {/* Body */}
-            <div className="prose dark:prose-invert max-w-none">
-              {selectedEmail.htmlBody ? (
-                <div
-                  dangerouslySetInnerHTML={{ __html: selectedEmail.htmlBody }}
-                  className="text-sm"
-                />
-              ) : (
-                <pre className="whitespace-pre-wrap text-sm font-sans">
-                  {selectedEmail.textBody}
-                </pre>
-              )}
-            </div>
-
-            {/* Attachments */}
-            {selectedAttachments.length > 0 && (
-              <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-                <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">
-                  Attachments ({selectedAttachments.length})
-                </h4>
-                <div className="space-y-2">
-                  {selectedAttachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      className="flex items-center gap-2 text-sm p-2 bg-gray-50 dark:bg-gray-700/50 rounded"
-                    >
-                      <svg
-                        className="w-4 h-4 text-gray-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                        />
-                      </svg>
-                      <span className="text-gray-700 dark:text-gray-300">
-                        {attachment.filename}
-                      </span>
-                      <span className="text-gray-400 text-xs">
-                        ({Math.round((attachment.contentLength || 0) / 1024)} KB)
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
-
+    <EmailLayout
+      threadList={
+        <ThreadListPanel
+          threads={threads}
+          selectedThreadId={selectedThreadId}
+          onThreadSelect={handleThreadSelect}
+          currentPage={currentPage}
+          hasMore={hasMore}
+          totalThreads={totalThreads}
+          currentUserId={currentUserId}
+        />
+      }
+      threadPreview={
+        selectedThread && selectedThreadEmails.length > 0 ? (
+          <ThreadPreviewPanel
+            thread={selectedThread}
+            emailsWithAttachments={selectedThreadEmails}
+            sendAsAddresses={sendAsAddresses}
+            allUsers={allUsers}
+            currentUserId={currentUserId}
+            onClose={handleCloseThread}
+          />
+        ) : undefined
+      }
+      selectedThreadId={selectedThreadId}
+      onThreadSelect={handleThreadSelect}
+    >
       {/* Compose Modal */}
       <ComposeEmailModal
         isOpen={isComposeModalOpen}
         onClose={() => setIsComposeModalOpen(false)}
         sendAsAddresses={sendAsAddresses}
       />
-    </div>
+    </EmailLayout>
   );
 }
 
@@ -511,7 +615,7 @@ function ComposeEmailModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Compose Email">
+    <Modal isOpen={isOpen} onClose={onClose} title="Compose Email" size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         {isSuccess && (
           <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg text-green-800 dark:text-green-200 text-sm">
@@ -599,8 +703,8 @@ function ComposeEmailModal({
             id="email-body"
             value={formData.body}
             onChange={(e) => setFormData({ ...formData, body: e.target.value })}
-            rows={8}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            rows={10}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none"
             placeholder="Type your message here..."
             required
             disabled={isSubmitting}
@@ -618,7 +722,38 @@ function ComposeEmailModal({
             Cancel
           </Button>
           <Button type="submit" variant="primary" disabled={isSubmitting}>
-            {isSubmitting ? "Sending..." : "Send Email"}
+            {isSubmitting ? (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                Sending...
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                  />
+                </svg>
+                Send Email
+              </span>
+            )}
           </Button>
         </div>
       </form>

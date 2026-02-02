@@ -33,7 +33,8 @@ export async function getAllSendAsAddresses() {
 export async function addSendAsAddress(
   email: string,
   label: string,
-  createdBy?: string
+  createdBy?: string,
+  replyToAddress?: string | null
 ) {
   // If this is the first address, make it the default
   const existingAddresses = await db.select().from(emailSendAsAddresses);
@@ -44,6 +45,7 @@ export async function addSendAsAddress(
     .values({
       email: email.toLowerCase().trim(),
       label: label.trim(),
+      replyToAddress: replyToAddress?.trim() || null,
       isDefault,
       isActive: true,
       createdBy,
@@ -58,7 +60,7 @@ export async function addSendAsAddress(
  */
 export async function updateSendAsAddress(
   id: number,
-  updates: { email?: string; label?: string; isActive?: boolean }
+  updates: { email?: string; label?: string; isActive?: boolean; replyToAddress?: string | null }
 ) {
   const updateData: Partial<NewEmailSendAsAddress> = {
     updatedAt: new Date(),
@@ -72,6 +74,9 @@ export async function updateSendAsAddress(
   }
   if (updates.isActive !== undefined) {
     updateData.isActive = updates.isActive;
+  }
+  if (updates.replyToAddress !== undefined) {
+    updateData.replyToAddress = updates.replyToAddress?.trim() || null;
   }
 
   const [updated] = await db
@@ -145,5 +150,18 @@ export async function sendAsAddressExists(email: string) {
     .limit(1);
 
   return !!existing;
+}
+
+/**
+ * Get a Send As address by email
+ */
+export async function getSendAsAddressByEmail(email: string) {
+  const [address] = await db
+    .select()
+    .from(emailSendAsAddresses)
+    .where(eq(emailSendAsAddresses.email, email.toLowerCase().trim()))
+    .limit(1);
+
+  return address || null;
 }
 

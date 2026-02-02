@@ -1,20 +1,23 @@
 import { LoaderFunctionArgs, ActionFunctionArgs, json, redirect } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
+import { Outlet, useLoaderData, useNavigate } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { createServerClient } from "~/lib/supabase";
 import { getAppConfig } from "~/lib/config.server";
 import { shouldShowEventsInNav, shouldShowVersionInHeader, shouldShowEmailsInNav } from "~/lib/featureFlags";
+import { getCategoryCounts } from "~/lib/emails";
 import Sidebar from "~/components/Sidebar";
 import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
+import { useCallback } from "react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
   
-  const [showEventsLink, showVersionInHeader, showEmailsLink] = await Promise.all([
+  const [showEventsLink, showVersionInHeader, showEmailsLink, emailCategoryCounts] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
     shouldShowEmailsInNav(),
+    getCategoryCounts(user?.id),
   ]);
   
   return withAuthHeaders(
@@ -25,6 +28,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       showEventsLink,
       showVersionInHeader,
       showEmailsLink,
+      emailCategoryCounts,
     }),
     headers
   );
@@ -40,8 +44,14 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 function ProtectedLayoutContent() {
-  const { user, userDetails, appConfig, showEventsLink, showVersionInHeader, showEmailsLink } = useLoaderData<typeof loader>();
+  const { user, userDetails, appConfig, showEventsLink, showVersionInHeader, showEmailsLink, emailCategoryCounts } = useLoaderData<typeof loader>();
   const { isExpanded } = useSidebar();
+  const navigate = useNavigate();
+  
+  // Handle compose email - navigate to emails page with compose param
+  const handleComposeEmail = useCallback(() => {
+    navigate("/emails?compose=true");
+  }, [navigate]);
   
   return (
     <div className="flex min-h-screen">
@@ -53,6 +63,8 @@ function ProtectedLayoutContent() {
         showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
         showEmailsLink={showEmailsLink}
+        emailCategoryCounts={emailCategoryCounts}
+        onComposeEmail={handleComposeEmail}
       />
       <main className={`flex-1 transition-all duration-300 ${isExpanded ? "ml-64" : "ml-20"}`}>
         <Outlet />
