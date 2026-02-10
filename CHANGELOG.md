@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.0...v1.3.1) (2026-02-10)
+
+
+### Bug Fixes
+
+* add duplicating quotes/orders and fix orphaned quote part bug ([0a55307](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/0a55307a50c341c244c9aee4c052a3af04f0d131))
+
 ## [1.3.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.2.1...v1.3.0) (2026-01-31)
 
 
