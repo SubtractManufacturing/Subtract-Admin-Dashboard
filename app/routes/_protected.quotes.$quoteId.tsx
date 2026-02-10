@@ -20,6 +20,7 @@ import {
   archiveQuote,
   restoreQuote,
   convertQuoteToOrder,
+  duplicateQuote,
 } from "~/lib/quotes";
 import type { QuoteEventContext } from "~/lib/quotes";
 import { getCustomer, getCustomers } from "~/lib/customers";
@@ -952,6 +953,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/quotes/${quoteId}`);
       }
 
+      case "duplicateQuote": {
+        const result = await duplicateQuote(quote.id, eventContext);
+        if (result.success && result.quoteNumber) {
+          return redirect(`/quotes/${result.quoteId}`);
+        }
+        return json(
+          { error: result.error || "Failed to duplicate quote" },
+          { status: 400 }
+        );
+      }
+
       case "updateLineItem": {
         // Auto-convert RFQ to Draft when editing starts
         await autoConvertRFQToDraft();
@@ -1804,6 +1816,16 @@ export default function QuoteDetail() {
     }
   };
 
+  const handleDuplicateQuote = () => {
+    if (
+      confirm(
+        "Create a duplicate of this quote? A new quote with a fresh quote number will be created."
+      )
+    ) {
+      fetcher.submit({ intent: "duplicateQuote" }, { method: "post" });
+    }
+  };
+
   const handleSendQuote = () => {
     if (
       confirm(
@@ -2194,6 +2216,7 @@ export default function QuoteDetail() {
                     excludeRef={actionsButtonRef}
                     quoteStatus={quote.status}
                     onReviseQuote={handleReviseQuote}
+                    onDuplicate={handleDuplicateQuote}
                     onCalculatePricing={
                       canAccessPriceCalculator
                         ? handleOpenCalculator

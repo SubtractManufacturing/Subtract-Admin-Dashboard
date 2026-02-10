@@ -4,6 +4,7 @@ interface OrderActionsDropdownProps {
   isOpen: boolean;
   onClose: () => void;
   excludeRef?: React.RefObject<HTMLElement>;
+  onDuplicate?: () => void;
   onGenerateInvoice?: () => void;
   onGeneratePO?: () => void;
   onManageVendor?: () => void;
@@ -15,6 +16,7 @@ export default function OrderActionsDropdown({
   isOpen,
   onClose,
   excludeRef,
+  onDuplicate,
   onGenerateInvoice,
   onGeneratePO,
   onManageVendor,
@@ -127,6 +129,33 @@ export default function OrderActionsDropdown({
           },
         ]
       : []),
+    ...(onDuplicate
+      ? [
+          {
+            icon: (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            ),
+            label: "Duplicate",
+            onClick: () => {
+              onDuplicate();
+              onClose();
+            },
+            disabled: false,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -134,7 +163,7 @@ export default function OrderActionsDropdown({
       ref={dropdownRef}
       className="absolute right-0 mt-2 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-4 z-50 transition-colors duration-150"
     >
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3 w-[216px]">
         {actionButtons.map((action, index) => {
           const isDisabled = "disabled" in action && action.disabled;
           const isPOButton = action.label === "PO";

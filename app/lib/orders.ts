@@ -2,7 +2,7 @@ import { db } from "./db/index.js"
 import { orders, customers, vendors, orderLineItems } from "./db/schema.js"
 import { eq, desc, ne } from 'drizzle-orm'
 import type { Customer, Vendor, OrderLineItem } from "./db/schema.js"
-import { getNextOrderNumber } from "./number-generator.js"
+import { getNextOrderNumber, generateUniqueOrderNumber } from "./number-generator.js"
 import { getOrderAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
 
@@ -545,5 +545,114 @@ export async function getOrderByNumberWithAttachments(orderNumber: string) {
   return {
     ...order,
     attachments
+  }
+}
+
+export async function duplicateOrder(
+  orderId: number,
+  eventContext?: OrderEventContext
+): Promise<{
+  success: boolean;
+  orderId?: number;
+  orderNumber?: string;
+  error?: string;
+}> {
+  try {
+    const order = await getOrder(orderId);
+    if (!order) {
+      return { success: false, error: "Order not found" };
+    }
+
+    // Fetch line items for the source order
+    const sourceLineItems = await db
+      .select()
+      .from(orderLineItems)
+      .where(eq(orderLineItems.orderId, orderId));
+
+    // Generate a unique order number before the transaction
+    const newOrderNumber = await generateUniqueOrderNumber();
+
+    const result = await db.transaction(async (tx) => {
+      // Create the new order record
+      const [newOrder] = await tx
+        .insert(orders)
+        .values({
+          orderNumber: newOrderNumber,
+          customerId: order.customerId,
+          vendorId: order.vendorId,
+          status: "Pending",
+          totalPrice: order.totalPrice,
+          vendorPay: order.vendorPay,
+          leadTime: order.leadTime,
+          // Reset/clear fields
+          quoteId: null,
+          sourceQuoteId: null,
+          shipDate: null,
+          notes: null,
+        })
+        .returning();
+
+      // Duplicate order line items
+      if (sourceLineItems.length > 0) {
+        await tx.insert(orderLineItems).values(
+          sourceLineItems.map((item) => ({
+            orderId: newOrder.id,
+            partId: item.partId,
+            name: item.name,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            // Exclude notes
+            notes: null,
+          }))
+        );
+      }
+
+      return { orderId: newOrder.id, orderNumber: newOrder.orderNumber };
+    });
+
+    // Log duplication event on source order
+    await createEvent({
+      entityType: "order",
+      entityId: orderId.toString(),
+      eventType: "order_duplicated",
+      eventCategory: "system",
+      title: "Order Duplicated",
+      description: `Order ${order.orderNumber} was duplicated as ${result.orderNumber}`,
+      metadata: {
+        sourceOrderId: orderId,
+        sourceOrderNumber: order.orderNumber,
+        newOrderId: result.orderId,
+        newOrderNumber: result.orderNumber,
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    });
+
+    // Log creation event on new order
+    await createEvent({
+      entityType: "order",
+      entityId: result.orderId.toString(),
+      eventType: "order_created",
+      eventCategory: "system",
+      title: "Order Created (Duplicate)",
+      description: `Duplicated from order ${order.orderNumber}`,
+      metadata: {
+        sourceOrderId: orderId,
+        sourceOrderNumber: order.orderNumber,
+        newOrderNumber: result.orderNumber,
+      },
+      userId: eventContext?.userId,
+      userEmail: eventContext?.userEmail,
+    });
+
+    return {
+      success: true,
+      orderId: result.orderId,
+      orderNumber: result.orderNumber,
+    };
+  } catch (error) {
+    console.error("Error duplicating order:", error);
+    return { success: false, error: "Failed to duplicate order" };
   }
 }
