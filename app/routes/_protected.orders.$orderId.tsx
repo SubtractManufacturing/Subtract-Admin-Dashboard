@@ -11,6 +11,7 @@ import {
   getOrderByNumberWithAttachments,
   updateOrder,
   restoreOrder,
+  duplicateOrder,
   type OrderEventContext,
 } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
@@ -640,6 +641,22 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         await restoreOrder(order.id, orderEventContext);
         return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "duplicateOrder": {
+        const dupEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const dupResult = await duplicateOrder(order.id, dupEventContext);
+        if (dupResult.success && dupResult.orderNumber) {
+          return redirect(`/orders/${dupResult.orderNumber}`);
+        }
+        return json(
+          { error: dupResult.error || "Failed to duplicate order" },
+          { status: 400 }
+        );
       }
 
       case "updatePartAttributes": {
@@ -1533,6 +1550,19 @@ export default function OrderDetails() {
     setManageVendorModalOpen(true);
   };
 
+  const handleDuplicateOrder = () => {
+    if (
+      confirm(
+        "Create a duplicate of this order? A new order with a fresh order number will be created."
+      )
+    ) {
+      lineItemFetcher.submit(
+        { intent: "duplicateOrder" },
+        { method: "post" }
+      );
+    }
+  };
+
   const handleManageVendorSubmit = () => {
     const formData = new FormData();
     formData.append("intent", "updateVendor");
@@ -1829,6 +1859,7 @@ export default function OrderDetails() {
                 isOpen={isActionsDropdownOpen}
                 onClose={() => setIsActionsDropdownOpen(false)}
                 excludeRef={actionsButtonRef}
+                onDuplicate={handleDuplicateOrder}
                 onGenerateInvoice={handleGenerateInvoice}
                 onGeneratePO={handleGeneratePO}
                 onManageVendor={handleManageVendor}

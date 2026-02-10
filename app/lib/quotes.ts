@@ -1028,6 +1028,303 @@ export async function convertQuoteToOrder(
   }
 }
 
+export async function duplicateQuote(
+  quoteId: number,
+  context?: QuoteEventContext
+): Promise<{
+  success: boolean;
+  quoteId?: number;
+  quoteNumber?: string;
+  error?: string;
+}> {
+  try {
+    const quote = await getQuote(quoteId);
+    if (!quote) {
+      return { success: false, error: "Quote not found" };
+    }
+
+    // Generate a new quote number before the transaction
+    const newQuoteNumber = await getNextQuoteNumber();
+
+    const result = await db.transaction(async (tx) => {
+      // Create the new quote record
+      const [newQuote] = await tx
+        .insert(quotes)
+        .values({
+          quoteNumber: newQuoteNumber,
+          customerId: quote.customerId,
+          vendorId: quote.vendorId,
+          status: "RFQ",
+          expirationDays: quote.expirationDays,
+          subtotal: quote.subtotal,
+          total: quote.total,
+          createdById: context?.userId || quote.createdById,
+          // Reset all date and status fields
+          validUntil: null,
+          sentAt: null,
+          acceptedAt: null,
+          expiredAt: null,
+          archivedAt: null,
+          convertedToOrderId: null,
+          rejectionReason: null,
+          isArchived: false,
+        })
+        .returning();
+
+      // Map old quote part IDs to new quote part IDs for line item linking
+      const partIdMap = new Map<string, string>();
+
+      // Duplicate quote parts
+      if (quote.parts && quote.parts.length > 0) {
+        for (const sourcePart of quote.parts) {
+          const [newPart] = await tx
+            .insert(quoteParts)
+            .values({
+              quoteId: newQuote.id,
+              partNumber: sourcePart.partNumber,
+              partName: sourcePart.partName,
+              description: sourcePart.description,
+              material: sourcePart.material,
+              finish: sourcePart.finish,
+              tolerance: sourcePart.tolerance,
+              specifications: sourcePart.specifications,
+              // URLs will be updated after copying files
+              thumbnailUrl: null,
+              partFileUrl: null,
+              partMeshUrl: null,
+              conversionStatus: sourcePart.conversionStatus || "pending",
+              meshConversionError: sourcePart.meshConversionError,
+              meshConversionJobId: null,
+              meshConversionStartedAt: null,
+              meshConversionCompletedAt: null,
+            })
+            .returning();
+
+          partIdMap.set(sourcePart.id, newPart.id);
+
+          // Helper to extract S3 key from URL or path
+          const extractS3Key = (urlOrPath: string): string | null => {
+            if (!urlOrPath) return null;
+            if (urlOrPath.startsWith("http")) {
+              const quotePartsIdx = urlOrPath.indexOf("quote-parts/");
+              if (quotePartsIdx >= 0) {
+                return urlOrPath.substring(quotePartsIdx);
+              }
+              return null;
+            }
+            if (urlOrPath.startsWith("quote-parts/")) {
+              return urlOrPath;
+            }
+            return urlOrPath;
+          };
+
+          // Copy CAD source file
+          let newPartFileUrl: string | null = null;
+          if (sourcePart.partFileUrl) {
+            try {
+              const sourceKey = extractS3Key(sourcePart.partFileUrl);
+              if (sourceKey) {
+                const fileName = sourceKey.split("/").pop() || "cad-file";
+                const destKey = `quote-parts/${newPart.id}/source/${fileName}`;
+                await copyFile(sourceKey, destKey);
+                newPartFileUrl = destKey;
+              }
+            } catch (copyError) {
+              console.warn(
+                `Failed to copy CAD file for part ${sourcePart.partName}:`,
+                copyError
+              );
+              newPartFileUrl = sourcePart.partFileUrl;
+            }
+          }
+
+          // Copy mesh file
+          let newPartMeshUrl: string | null = null;
+          if (sourcePart.partMeshUrl) {
+            try {
+              const sourceKey = extractS3Key(sourcePart.partMeshUrl);
+              if (sourceKey) {
+                const fileName = sourceKey.split("/").pop() || "mesh.glb";
+                const destKey = `quote-parts/${newPart.id}/mesh/${fileName}`;
+                await copyFile(sourceKey, destKey);
+                newPartMeshUrl = destKey;
+              }
+            } catch (copyError) {
+              console.warn(
+                `Failed to copy mesh file for part ${sourcePart.partName}:`,
+                copyError
+              );
+              newPartMeshUrl = sourcePart.partMeshUrl;
+            }
+          }
+
+          // Copy thumbnail
+          let newThumbnailUrl: string | null = null;
+          if (sourcePart.thumbnailUrl) {
+            try {
+              const sourceKey = extractS3Key(sourcePart.thumbnailUrl);
+              if (sourceKey) {
+                const fileName =
+                  sourceKey.split("/").pop() || "thumbnail.png";
+                const destKey = `quote-parts/${newPart.id}/thumbnails/${fileName}`;
+                await copyFile(sourceKey, destKey);
+                newThumbnailUrl = destKey;
+              }
+            } catch (copyError) {
+              console.warn(
+                `Failed to copy thumbnail for part ${sourcePart.partName}:`,
+                copyError
+              );
+              newThumbnailUrl = sourcePart.thumbnailUrl;
+            }
+          }
+
+          // Update the new part with copied file URLs
+          await tx
+            .update(quoteParts)
+            .set({
+              partFileUrl: newPartFileUrl,
+              partMeshUrl: newPartMeshUrl,
+              thumbnailUrl: newThumbnailUrl,
+              updatedAt: new Date(),
+            })
+            .where(eq(quoteParts.id, newPart.id));
+
+          // Copy CAD version history
+          const sourceVersions = await tx
+            .select()
+            .from(cadFileVersions)
+            .where(
+              and(
+                eq(cadFileVersions.entityType, "quote_part"),
+                eq(cadFileVersions.entityId, sourcePart.id)
+              )
+            );
+
+          if (sourceVersions.length > 0) {
+            for (const version of sourceVersions) {
+              try {
+                const sourceKey = version.s3Key;
+                const fileName =
+                  sourceKey.split("/").pop() || version.fileName;
+                const destKey = `quote-parts/${newPart.id}/source/v${version.version}/${fileName}`;
+                await copyFile(sourceKey, destKey);
+
+                await tx.insert(cadFileVersions).values({
+                  entityType: "quote_part",
+                  entityId: newPart.id,
+                  version: version.version,
+                  isCurrentVersion: version.isCurrentVersion,
+                  s3Key: destKey,
+                  fileName: version.fileName,
+                  fileSize: version.fileSize,
+                  contentType: version.contentType,
+                  uploadedBy: version.uploadedBy,
+                  uploadedByEmail: version.uploadedByEmail,
+                  notes: version.notes,
+                });
+              } catch (versionCopyError) {
+                console.warn(
+                  `Failed to copy version ${version.version} for part ${sourcePart.partName}:`,
+                  versionCopyError
+                );
+              }
+            }
+          }
+
+          // Copy part drawings
+          const sourceDrawings = await tx
+            .select({
+              attachmentId: quotePartDrawings.attachmentId,
+              version: quotePartDrawings.version,
+            })
+            .from(quotePartDrawings)
+            .where(eq(quotePartDrawings.quotePartId, sourcePart.id));
+
+          if (sourceDrawings.length > 0) {
+            await tx.insert(quotePartDrawings).values(
+              sourceDrawings.map((drawing) => ({
+                quotePartId: newPart.id,
+                attachmentId: drawing.attachmentId,
+                version: drawing.version,
+              }))
+            );
+          }
+        }
+      }
+
+      // Duplicate line items
+      if (quote.lineItems && quote.lineItems.length > 0) {
+        for (const item of quote.lineItems) {
+          const newQuotePartId = item.quotePartId
+            ? partIdMap.get(item.quotePartId) || null
+            : null;
+
+          await tx.insert(quoteLineItems).values({
+            quoteId: newQuote.id,
+            quotePartId: newQuotePartId,
+            name: item.name,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice: item.totalPrice,
+            leadTimeDays: item.leadTimeDays,
+            description: item.description,
+            // Exclude notes
+            notes: null,
+            sortOrder: item.sortOrder,
+          });
+        }
+      }
+
+      return { quoteId: newQuote.id, quoteNumber: newQuote.quoteNumber };
+    });
+
+    // Log duplication event on source quote
+    await createEvent({
+      entityType: "quote",
+      entityId: quoteId.toString(),
+      eventType: "quote_duplicated",
+      eventCategory: "system",
+      title: "Quote Duplicated",
+      description: `Quote ${quote.quoteNumber} was duplicated as ${result.quoteNumber}`,
+      metadata: {
+        sourceQuoteId: quoteId,
+        sourceQuoteNumber: quote.quoteNumber,
+        newQuoteId: result.quoteId,
+        newQuoteNumber: result.quoteNumber,
+      },
+      userId: context?.userId,
+      userEmail: context?.userEmail,
+    });
+
+    // Log creation event on new quote
+    await createEvent({
+      entityType: "quote",
+      entityId: result.quoteId.toString(),
+      eventType: "quote_created",
+      eventCategory: "system",
+      title: "Quote Created (Duplicate)",
+      description: `Duplicated from quote ${quote.quoteNumber}`,
+      metadata: {
+        sourceQuoteId: quoteId,
+        sourceQuoteNumber: quote.quoteNumber,
+        newQuoteNumber: result.quoteNumber,
+      },
+      userId: context?.userId,
+      userEmail: context?.userEmail,
+    });
+
+    return {
+      success: true,
+      quoteId: result.quoteId,
+      quoteNumber: result.quoteNumber,
+    };
+  } catch (error) {
+    console.error("Error duplicating quote:", error);
+    return { success: false, error: "Failed to duplicate quote" };
+  }
+}
+
 export async function calculateQuoteTotals(quoteId: number): Promise<{
   subtotal: number;
   total: number;
@@ -1599,11 +1896,13 @@ export async function updateQuoteLineItem(
 
 export async function deleteQuoteLineItem(
   itemId: number,
-  context?: QuoteEventContext
+  context?: QuoteEventContext,
+  tx?: Parameters<Parameters<typeof db.transaction>[0]>[0]
 ): Promise<boolean> {
+  const queryClient = tx || db;
   try {
     // Get item info before deletion
-    const [item] = await db
+    const [item] = await queryClient
       .select()
       .from(quoteLineItems)
       .where(eq(quoteLineItems.id, itemId));
@@ -1613,7 +1912,7 @@ export async function deleteQuoteLineItem(
     }
 
     // Delete the item
-    await db.delete(quoteLineItems).where(eq(quoteLineItems.id, itemId));
+    await queryClient.delete(quoteLineItems).where(eq(quoteLineItems.id, itemId));
 
     // Recalculate quote totals
     await calculateQuoteTotals(item.quoteId);
@@ -1621,7 +1920,7 @@ export async function deleteQuoteLineItem(
     // Get part name if applicable
     let partName = "Unknown Part";
     if (item.quotePartId) {
-      const [quotePart] = await db
+      const [quotePart] = await queryClient
         .select()
         .from(quoteParts)
         .where(eq(quoteParts.id, item.quotePartId))

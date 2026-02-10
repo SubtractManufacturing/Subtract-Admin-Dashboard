@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useFetcher } from "@remix-run/react";
 
 interface User {
@@ -65,7 +65,10 @@ export function AssignmentDropdown({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fetcher = useFetcher();
 
-  const assignedUserIds = new Set(assignedUsers.map((u) => u.userId));
+  const assignedUserIds = useMemo(
+    () => new Set(assignedUsers.map((u) => u.userId)),
+    [assignedUsers]
+  );
 
   // Close dropdown when clicking outside
   useEffect(() => {

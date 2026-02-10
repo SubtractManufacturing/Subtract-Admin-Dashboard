@@ -20,6 +20,7 @@ import {
   archiveQuote,
   restoreQuote,
   convertQuoteToOrder,
+  duplicateQuote,
 } from "~/lib/quotes";
 import type { QuoteEventContext } from "~/lib/quotes";
 import { getCustomer, getCustomers } from "~/lib/customers";
@@ -63,7 +64,7 @@ import {
   quotes,
   quotePartDrawings,
 } from "~/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -952,6 +953,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/quotes/${quoteId}`);
       }
 
+      case "duplicateQuote": {
+        const result = await duplicateQuote(quote.id, eventContext);
+        if (result.success && result.quoteNumber) {
+          return redirect(`/quotes/${result.quoteId}`);
+        }
+        return json(
+          { error: result.error || "Failed to duplicate quote" },
+          { status: 400 }
+        );
+      }
+
       case "updateLineItem": {
         // Auto-convert RFQ to Draft when editing starts
         await autoConvertRFQToDraft();
@@ -1160,6 +1172,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
           let quotePart = null;
           const filesToDelete: string[] = [];
+          const drawingAttachmentIds: string[] = [];
 
           // If there's an associated quote part, get its details first
           if (quotePartId) {
@@ -1200,18 +1213,72 @@ export async function action({ request, params }: ActionFunctionArgs) {
               if (quotePart.thumbnailUrl) {
                 filesToDelete.push(quotePart.thumbnailUrl);
               }
+
+              // Get quote part drawings and their attachment S3 keys
+              const drawingsData = await db
+                .select({
+                  drawing: quotePartDrawings,
+                  attachment: attachments,
+                })
+                .from(quotePartDrawings)
+                .innerJoin(
+                  attachments,
+                  eq(quotePartDrawings.attachmentId, attachments.id)
+                )
+                .where(eq(quotePartDrawings.quotePartId, quotePartId));
+
+              // Collect drawing S3 files and attachment IDs for deletion
+              for (const { attachment } of drawingsData) {
+                if (attachment.s3Key) {
+                  filesToDelete.push(attachment.s3Key);
+                }
+                if (attachment.thumbnailS3Key) {
+                  filesToDelete.push(attachment.thumbnailS3Key);
+                }
+                drawingAttachmentIds.push(attachment.id);
+              }
             }
           }
 
           // Step 1: Delete database records in transaction (atomic operation)
+          // Order: drawings → attachments → line item → quote part
+          // (respects foreign key constraints)
           await db.transaction(async (tx) => {
-            const { deleteQuoteLineItem } = await import("~/lib/quotes");
-            await deleteQuoteLineItem(parseInt(lineItemId), eventContext);
-
-            // Delete quote part from database if it exists
             if (quotePart && quotePartId) {
               const { quoteParts } = await import("~/lib/db/schema");
-              await tx.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
+
+              // Delete quote part drawings (FK to both quote_parts and attachments)
+              await tx
+                .delete(quotePartDrawings)
+                .where(eq(quotePartDrawings.quotePartId, quotePartId));
+
+              // Delete attachment records for drawings
+              if (drawingAttachmentIds.length > 0) {
+                await tx
+                  .delete(attachments)
+                  .where(inArray(attachments.id, drawingAttachmentIds));
+              }
+
+              // Delete the line item (FK to quote_parts via quotePartId)
+              const { deleteQuoteLineItem } = await import("~/lib/quotes");
+              await deleteQuoteLineItem(
+                parseInt(lineItemId),
+                eventContext,
+                tx
+              );
+
+              // Delete the quote part last (referenced by drawings and line item)
+              await tx
+                .delete(quoteParts)
+                .where(eq(quoteParts.id, quotePartId));
+            } else {
+              // No associated part - just delete the line item
+              const { deleteQuoteLineItem } = await import("~/lib/quotes");
+              await deleteQuoteLineItem(
+                parseInt(lineItemId),
+                eventContext,
+                tx
+              );
             }
           });
 
@@ -1804,6 +1871,16 @@ export default function QuoteDetail() {
     }
   };
 
+  const handleDuplicateQuote = () => {
+    if (
+      confirm(
+        "Create a duplicate of this quote? A new quote with a fresh quote number will be created."
+      )
+    ) {
+      fetcher.submit({ intent: "duplicateQuote" }, { method: "post" });
+    }
+  };
+
   const handleSendQuote = () => {
     if (
       confirm(
@@ -2194,6 +2271,7 @@ export default function QuoteDetail() {
                     excludeRef={actionsButtonRef}
                     quoteStatus={quote.status}
                     onReviseQuote={handleReviseQuote}
+                    onDuplicate={handleDuplicateQuote}
                     onCalculatePricing={
                       canAccessPriceCalculator
                         ? handleOpenCalculator
