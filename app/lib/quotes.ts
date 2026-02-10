@@ -1896,11 +1896,13 @@ export async function updateQuoteLineItem(
 
 export async function deleteQuoteLineItem(
   itemId: number,
-  context?: QuoteEventContext
+  context?: QuoteEventContext,
+  tx?: Parameters<Parameters<typeof db.transaction>[0]>[0]
 ): Promise<boolean> {
+  const queryClient = tx || db;
   try {
     // Get item info before deletion
-    const [item] = await db
+    const [item] = await queryClient
       .select()
       .from(quoteLineItems)
       .where(eq(quoteLineItems.id, itemId));
@@ -1910,7 +1912,7 @@ export async function deleteQuoteLineItem(
     }
 
     // Delete the item
-    await db.delete(quoteLineItems).where(eq(quoteLineItems.id, itemId));
+    await queryClient.delete(quoteLineItems).where(eq(quoteLineItems.id, itemId));
 
     // Recalculate quote totals
     await calculateQuoteTotals(item.quoteId);
@@ -1918,7 +1920,7 @@ export async function deleteQuoteLineItem(
     // Get part name if applicable
     let partName = "Unknown Part";
     if (item.quotePartId) {
-      const [quotePart] = await db
+      const [quotePart] = await queryClient
         .select()
         .from(quoteParts)
         .where(eq(quoteParts.id, item.quotePartId))

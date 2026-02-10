@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useFetcher } from "@remix-run/react";
 import type { Email } from "~/lib/db/schema";
 import Button from "~/components/shared/Button";
@@ -26,7 +26,7 @@ export function ReplyComposer({
   // Determine the default "From" address
   // If the original was sent TO one of our addresses, use that address
   // Otherwise, use the default
-  const getDefaultFromAddress = (): string => {
+  const getDefaultFromAddress = useCallback((): string => {
     if (replyToEmail.direction === "inbound") {
       // For inbound emails, check if it was sent to one of our addresses
       const toAddress = replyToEmail.toAddresses?.[0]?.toLowerCase();
@@ -48,10 +48,10 @@ export function ReplyComposer({
     }
     // Fallback to first available address
     return sendAsAddresses[0]?.email || "";
-  };
+  }, [replyToEmail, sendAsAddresses]);
 
   // Determine the recipient
-  const getRecipient = (): string => {
+  const getRecipient = useCallback((): string => {
     if (replyToEmail.direction === "inbound") {
       // Reply to the sender
       return replyToEmail.fromAddress;
@@ -59,7 +59,7 @@ export function ReplyComposer({
       // Reply to the original recipient
       return replyToEmail.toAddresses?.[0] || "";
     }
-  };
+  }, [replyToEmail]);
 
   const [formData, setFormData] = useState({
     from: getDefaultFromAddress(),
@@ -89,7 +89,7 @@ export function ReplyComposer({
       to: getRecipient(),
       body: "",
     });
-  }, [replyToEmail.id]);
+  }, [replyToEmail.id, getDefaultFromAddress, getRecipient]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
