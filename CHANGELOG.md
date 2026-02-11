@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.1...v1.3.2) (2026-02-11)
+
+
+### Bug Fixes
+
+* ui bug resolving prod version to "vvX.X.X" instead of "vX.X.X" ([022a4e2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/022a4e236006d889bc79cb220d84e10ee44b8b54))
+
 ## [1.3.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.0...v1.3.1) (2026-02-10)
 
 
