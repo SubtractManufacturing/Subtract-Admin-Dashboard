@@ -509,17 +509,10 @@ export async function handleBatchConversion(action: string, partIds?: string[]) 
       };
     }
 
-    case "get-stats": {
-      return {
-        success: true,
-        stats: await getConversionStats(),
-      };
-    }
-
     default:
       return {
         success: false,
-        error: "Invalid action. Use 'convert-selected', 'convert-pending', or 'get-stats'"
+        error: "Invalid action. Use 'convert-selected' or 'convert-pending'"
       };
   }
 }
