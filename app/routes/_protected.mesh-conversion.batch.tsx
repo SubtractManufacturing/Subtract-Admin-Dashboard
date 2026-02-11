@@ -1,12 +1,36 @@
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
-import { handleBatchConversion } from "~/lib/mesh-converter.server";
+import { getConversionStats, handleBatchConversion } from "~/lib/mesh-converter.server";
 import { isConversionEnabled } from "~/lib/conversion-service.server";
 
+/**
+ * GET - Returns conversion statistics
+ */
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAuth(request);
+
+  if (!isConversionEnabled()) {
+    return json({
+      error: "Mesh conversion service is not configured",
+      serviceAvailable: false
+    }, { status: 503 });
+  }
+
+  try {
+    const stats = await getConversionStats();
+    return json({ stats, serviceAvailable: true });
+  } catch (error) {
+    console.error("Error fetching conversion stats:", error);
+    return json({ error: "Failed to fetch conversion stats" }, { status: 500 });
+  }
+}
+
+/**
+ * POST - Handles batch conversion mutations (convert-selected, convert-pending)
+ */
 export async function action({ request }: ActionFunctionArgs) {
   await requireAuth(request);
 
-  // Check if conversion is enabled
   if (!isConversionEnabled()) {
     return json({
       error: "Mesh conversion service is not configured",
@@ -20,6 +44,13 @@ export async function action({ request }: ActionFunctionArgs) {
   if (typeof action !== "string") {
     return json({
       error: "Action is required"
+    }, { status: 400 });
+  }
+
+  // Only handle write operations
+  if (action !== "convert-selected" && action !== "convert-pending") {
+    return json({
+      error: "Invalid action. Use 'convert-selected' or 'convert-pending'"
     }, { status: 400 });
   }
 

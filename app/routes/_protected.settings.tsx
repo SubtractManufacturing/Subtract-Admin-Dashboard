@@ -1,5 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { json, LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import {
+  json,
+  LoaderFunctionArgs,
+  ActionFunctionArgs,
+  unstable_parseMultipartFormData,
+  unstable_createMemoryUploadHandler,
+} from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
@@ -13,7 +19,7 @@ import {
   isFeatureEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
-import { getBananaModelUrls, getReconciliationTaskConfig } from "~/lib/developerSettings";
+import { getBananaModelUrls, setBananaModelUrls, getReconciliationTaskConfig } from "~/lib/developerSettings";
 import {
   getAllSendAsAddresses,
   addSendAsAddress,
@@ -114,6 +120,209 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const { user, userDetails } = await requireAuth(request);
   const { supabase, headers } = createServerClient(request);
+
+  // Handle banana model upload (multipart form data)
+  // MUST come before request.formData() which consumes the body
+  if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+    const uploadHandler = unstable_createMemoryUploadHandler({
+      maxPartSize: 50 * 1024 * 1024, // 50MB for CAD files
+    });
+
+    const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+    const intent = formData.get("intent");
+
+    if (intent === "uploadBananaModel" && userDetails.role === "Dev") {
+      const file = formData.get("file") as File;
+
+      if (!file) {
+        return withAuthHeaders(
+          json({ error: "No file provided" }, { status: 400 }),
+          headers
+        );
+      }
+
+      try {
+        const {
+          detectFileFormat,
+          getRecommendedOutputFormat,
+          validateFileSize,
+          isConversionEnabled,
+          submitConversion,
+          pollForCompletion,
+          downloadConversionResult,
+        } = await import("~/lib/conversion-service.server");
+
+        const { uploadFile, uploadToS3 } = await import("~/lib/s3.server");
+
+        // Validate file type
+        const format = detectFileFormat(file.name);
+        if (format !== "brep") {
+          return withAuthHeaders(
+            json({
+              error: "Invalid file format. Please upload a STEP (.step, .stp) or IGES (.iges, .igs) file"
+            }, { status: 400 }),
+            headers
+          );
+        }
+
+        // Convert File to Buffer
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // Validate file size
+        const sizeCheck = validateFileSize(buffer.length);
+        if (!sizeCheck.valid) {
+          return withAuthHeaders(
+            json({ error: sizeCheck.message }, { status: 400 }),
+            headers
+          );
+        }
+
+        // Update status to uploading
+        await setBananaModelUrls({ conversionStatus: "uploading" }, user.email);
+
+        // Upload CAD file to S3
+        const timestamp = Date.now();
+        const sanitizedFileName = file.name.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9._-]/g, "");
+        const cadKey = `developer/banana/source/${timestamp}-${sanitizedFileName}`;
+
+        await uploadFile({
+          key: cadKey,
+          buffer,
+          contentType: "application/octet-stream",
+          fileName: sanitizedFileName,
+        });
+
+        // Save CAD URL
+        await setBananaModelUrls({
+          cadUrl: cadKey,
+          conversionStatus: "converting"
+        }, user.email);
+
+        // Check if conversion service is available
+        if (!isConversionEnabled()) {
+          await setBananaModelUrls({ conversionStatus: "conversion_unavailable" }, user.email);
+          return withAuthHeaders(
+            json({
+              success: true,
+              cadUrl: cadKey,
+              message: "CAD file uploaded, but conversion service is not available"
+            }),
+            headers
+          );
+        }
+
+        // Submit for conversion
+        const conversionOptions = {
+          output_format: getRecommendedOutputFormat(),
+          deflection: 0.1,
+          angular_deflection: 0.5,
+          async_processing: true,
+        };
+
+        const conversionJob = await submitConversion(buffer, sanitizedFileName, conversionOptions);
+
+        if (!conversionJob) {
+          await setBananaModelUrls({ conversionStatus: "conversion_failed" }, user.email);
+          return withAuthHeaders(
+            json({
+              success: false,
+              error: "Failed to submit file for conversion"
+            }, { status: 500 }),
+            headers
+          );
+        }
+
+        // Poll for completion
+        const completedJob = await pollForCompletion(conversionJob.job_id);
+
+        if (!completedJob || completedJob.status === "failed") {
+          const error = completedJob?.error || "Conversion failed";
+          await setBananaModelUrls({ conversionStatus: "conversion_failed" }, user.email);
+          return withAuthHeaders(
+            json({
+              success: false,
+              error: `Conversion failed: ${error}`
+            }, { status: 500 }),
+            headers
+          );
+        }
+
+        // Download converted mesh
+        const result = await downloadConversionResult(conversionJob.job_id);
+
+        if (!result) {
+          await setBananaModelUrls({ conversionStatus: "conversion_failed" }, user.email);
+          return withAuthHeaders(
+            json({
+              success: false,
+              error: "Failed to download converted mesh"
+            }, { status: 500 }),
+            headers
+          );
+        }
+
+        // Upload mesh to S3
+        const sanitizedMeshFilename = result.filename
+          .replace(/\s+/g, "-")
+          .replace(/[^a-zA-Z0-9._-]/g, "");
+        const meshKey = `developer/banana/mesh/${timestamp}-${sanitizedMeshFilename}`;
+
+        const meshContentType = result.filename.endsWith(".glb")
+          ? "model/gltf-binary"
+          : result.filename.endsWith(".gltf")
+          ? "model/gltf+json"
+          : "application/octet-stream";
+
+        const meshUrl = await uploadToS3(result.buffer, meshKey, meshContentType);
+
+        if (!meshUrl) {
+          await setBananaModelUrls({ conversionStatus: "upload_failed" }, user.email);
+          return withAuthHeaders(
+            json({
+              success: false,
+              error: "Failed to upload converted mesh"
+            }, { status: 500 }),
+            headers
+          );
+        }
+
+        // Save mesh URL
+        await setBananaModelUrls({
+          meshUrl: meshKey,
+          conversionStatus: "completed"
+        }, user.email);
+
+        return withAuthHeaders(
+          json({
+            success: true,
+            cadUrl: cadKey,
+            meshUrl: meshKey,
+            message: "Banana model uploaded and converted successfully"
+          }),
+          headers
+        );
+
+      } catch (error) {
+        console.error("Error uploading banana model:", error);
+        await setBananaModelUrls({ conversionStatus: "error" }, user?.email);
+        return withAuthHeaders(
+          json({
+            error: error instanceof Error ? error.message : "Failed to upload banana model"
+          }, { status: 500 }),
+          headers
+        );
+      }
+    }
+
+    // Unrecognized multipart intent
+    return withAuthHeaders(
+      json({ error: "Invalid multipart intent" }, { status: 400 }),
+      headers
+    );
+  }
+
+  // Regular form data handling (existing logic)
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -632,52 +841,43 @@ function BananaModelUploadSection({
   bananaModelStatus: { cadUrl: string | null; meshUrl: string | null; conversionStatus: string | null } | null;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{ success?: boolean; error?: string; message?: string } | null>(null);
-  const revalidator = useRevalidator();
+  const fetcher = useFetcher<{ success?: boolean; error?: string; message?: string }>();
+
+  // Loading state from fetcher
+  const isUploading = fetcher.state !== "idle";
+
+  // Result from fetcher data
+  const uploadResult = fetcher.data;
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      setUploadResult(null);
     }
   };
 
-  const handleUpload = async () => {
+  const handleUpload = () => {
     if (!selectedFile) return;
 
-    setIsUploading(true);
-    setUploadResult(null);
+    const formData = new FormData();
+    formData.append("intent", "uploadBananaModel");
+    formData.append("file", selectedFile);
 
-    try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-
-      const response = await fetch("/api/banana-model", {
-        method: "POST",
-        body: formData,
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        setUploadResult({ success: true, message: result.message || "Banana model uploaded successfully!" });
-        setSelectedFile(null);
-        // Clear file input
-        const fileInput = document.getElementById("banana-file-input") as HTMLInputElement;
-        if (fileInput) fileInput.value = "";
-        // Revalidate to update status
-        revalidator.revalidate();
-      } else {
-        setUploadResult({ success: false, error: result.error || "Upload failed" });
-      }
-    } catch (error) {
-      setUploadResult({ success: false, error: error instanceof Error ? error.message : "Upload failed" });
-    } finally {
-      setIsUploading(false);
-    }
+    // Uses Remix fetcher - automatic JSON parsing, revalidation, loading states
+    fetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
   };
+
+  // Clear file input on successful upload
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      setSelectedFile(null);
+      const fileInput = document.getElementById("banana-file-input") as HTMLInputElement;
+      if (fileInput) fileInput.value = "";
+    }
+  }, [fetcher.data]);
 
   const getStatusDisplay = () => {
     if (!bananaModelStatus) return null;

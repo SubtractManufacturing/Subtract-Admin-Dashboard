@@ -69,13 +69,8 @@ export function BatchMeshConversion({
   };
 
   const handleGetStats = () => {
-    const formData = new FormData();
-    formData.append("action", "get-stats");
-
-    fetcher.submit(formData, {
-      method: "post",
-      action: "/mesh-conversion/batch",
-    });
+    // Uses GET via loader for read-only stats
+    fetcher.load("/mesh-conversion/batch");
   };
 
   // Update state when fetcher returns data
