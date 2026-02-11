@@ -581,7 +581,7 @@ export default function Sidebar({
               {/* Version info */}
               {showVersion && version && (
                 <div className="border-t border-gray-200 dark:border-slate-700 mt-1 px-4 py-2">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">v{version}</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{version}</span>
                 </div>
               )}
             </div>
