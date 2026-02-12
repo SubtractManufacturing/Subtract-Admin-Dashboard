@@ -1860,8 +1860,23 @@ export default function QuoteDetail() {
   }, [hasConvertingParts, pollCount, revalidator]);
 
   // Update optimistic line items when the actual data changes
+  // Sort so part line items (quotePartId != null) appear before additional services,
+  // and items within each group are stable by id
   useEffect(() => {
-    setOptimisticLineItems(quote.lineItems as LineItem[] | undefined);
+    const items = quote.lineItems as LineItem[] | undefined;
+    if (items) {
+      const sorted = [...items].sort((a, b) => {
+        // Part items first (non-null quotePartId), additional services last
+        const aHasPart = a.quotePartId ? 0 : 1;
+        const bHasPart = b.quotePartId ? 0 : 1;
+        if (aHasPart !== bHasPart) return aHasPart - bHasPart;
+        // Within each group, stable by id (creation order)
+        return a.id - b.id;
+      });
+      setOptimisticLineItems(sorted);
+    } else {
+      setOptimisticLineItems(undefined);
+    }
     setOptimisticTotal(quote.total || "0.00");
   }, [quote.lineItems, quote.total]);
 
