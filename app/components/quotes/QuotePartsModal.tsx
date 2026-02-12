@@ -74,6 +74,7 @@ export function QuotePartsModal({
     {},
   );
   const lastAttributeFetcherData = useRef<unknown>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
   const hasDragged = useRef(false);
   const drawingInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>(
@@ -140,6 +141,13 @@ export function QuotePartsModal({
     editingAttributeField,
     onClose,
   ]);
+
+  // Focus the edit input when entering edit mode
+  useEffect(() => {
+    if (editingAttributeField && editInputRef.current) {
+      editInputRef.current.focus();
+    }
+  }, [editingAttributeField]);
 
   // Monitor upload fetcher state
   useEffect(() => {
@@ -774,7 +782,7 @@ export function QuotePartsModal({
                                 }}
                                 className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="e.g., Aluminum 6061"
-                                autoFocus
+                                ref={editInputRef}
                               />
                               <button
                                 onClick={() =>
@@ -844,7 +852,7 @@ export function QuotePartsModal({
                                 }}
                                 className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="e.g., ±0.005"
-                                autoFocus
+                                ref={editInputRef}
                               />
                               <button
                                 onClick={() =>
@@ -914,7 +922,7 @@ export function QuotePartsModal({
                                 }}
                                 className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="e.g., Anodized, Powder Coated"
-                                autoFocus
+                                ref={editInputRef}
                               />
                               <button
                                 onClick={() =>
