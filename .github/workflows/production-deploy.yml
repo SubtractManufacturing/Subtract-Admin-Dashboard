@@ -29,8 +29,10 @@ jobs:
       - name: Get version from release tag
         id: version
         run: |
-          # Release tag is like "v1.2.0"
-          echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          # Release tag is like "v1.2.0" - strip the "v" prefix if present
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"  # Remove leading "v" if present
+          echo "tag=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

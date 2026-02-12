@@ -29,7 +29,7 @@ import {
   partDrawings,
   cadFileVersions,
 } from "./db/schema.js";
-import { eq, desc, and, lte, isNull, sql } from "drizzle-orm";
+import { eq, desc, asc, and, lte, isNull, sql } from "drizzle-orm";
 import type {
   Customer,
   Vendor,
@@ -141,7 +141,8 @@ export async function getQuotes(
       .from(quoteParts)
       .where(
         sql`${quoteParts.quoteId} IN ${sql.raw(`(${quoteIds.join(",")})`)}`
-      );
+      )
+      .orderBy(asc(quoteParts.createdAt));
 
     // Group line items and parts by quote ID
     const lineItemsByQuote = new Map<number, typeof allLineItems>();
@@ -206,7 +207,7 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
         .from(quoteLineItems)
         .where(eq(quoteLineItems.quoteId, quote.id))
         .orderBy(quoteLineItems.sortOrder),
-      db.select().from(quoteParts).where(eq(quoteParts.quoteId, quote.id)),
+      db.select().from(quoteParts).where(eq(quoteParts.quoteId, quote.id)).orderBy(asc(quoteParts.createdAt)),
     ]);
 
     return {
@@ -1652,6 +1653,7 @@ export async function updateQuotePart(
     description: string;
     material: string;
     finish: string;
+    tolerance: string;
     specifications: Record<string, unknown>;
   }>,
   context?: QuoteEventContext
