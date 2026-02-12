@@ -1380,6 +1380,126 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "updateQuotePartAttributes": {
+        const quotePartId = formData.get("quotePartId") as string;
+        const material = formData.get("material") as string;
+        const tolerance = formData.get("tolerance") as string;
+        const finish = formData.get("finish") as string;
+
+        if (!quotePartId) {
+          return json(
+            { error: "Quote part ID is required" },
+            { status: 400 }
+          );
+        }
+
+        // Get current quote part to retrieve old values for comparison
+        const { quoteParts } = await import("~/lib/db/schema");
+        const [currentQuotePart] = await db
+          .select()
+          .from(quoteParts)
+          .where(eq(quoteParts.id, quotePartId))
+          .limit(1);
+
+        if (!currentQuotePart) {
+          return json({ error: "Quote part not found" }, { status: 404 });
+        }
+
+        // Normalize values (treat empty string as null)
+        const normalizeMaterial = material?.trim() || null;
+        const normalizeTolerance = tolerance?.trim() || null;
+        const normalizeFinish = finish?.trim() || null;
+
+        // Update the quote part in the database
+        await db
+          .update(quoteParts)
+          .set({
+            material: normalizeMaterial,
+            tolerance: normalizeTolerance,
+            finish: normalizeFinish,
+            updatedAt: new Date(),
+          })
+          .where(eq(quoteParts.id, quotePartId));
+
+        // Create individual events only for changed attributes
+        // Material change event
+        if (normalizeMaterial !== currentQuotePart.material) {
+          await createEvent({
+            entityType: "quote",
+            entityId: quote.id.toString(),
+            eventType: "quote_part_material_changed",
+            eventCategory: "manufacturing",
+            title: "Quote Part Material Changed",
+            description: `${currentQuotePart.partName || "Part"} changed to ${
+              normalizeMaterial || "no material"
+            }`,
+            metadata: {
+              partName: currentQuotePart.partName,
+              quotePartId,
+              quoteId: quote.id,
+              quoteNumber: quote.quoteNumber,
+              oldValue: currentQuotePart.material,
+              newValue: normalizeMaterial,
+              field: "material",
+            },
+            userId: eventContext.userId,
+            userEmail: eventContext.userEmail,
+          });
+        }
+
+        // Tolerance change event
+        if (normalizeTolerance !== currentQuotePart.tolerance) {
+          await createEvent({
+            entityType: "quote",
+            entityId: quote.id.toString(),
+            eventType: "quote_part_tolerance_changed",
+            eventCategory: "manufacturing",
+            title: "Quote Part Tolerance Changed",
+            description: `${currentQuotePart.partName || "Part"} changed to ${
+              normalizeTolerance || "no tolerance"
+            }`,
+            metadata: {
+              partName: currentQuotePart.partName,
+              quotePartId,
+              quoteId: quote.id,
+              quoteNumber: quote.quoteNumber,
+              oldValue: currentQuotePart.tolerance,
+              newValue: normalizeTolerance,
+              field: "tolerance",
+            },
+            userId: eventContext.userId,
+            userEmail: eventContext.userEmail,
+          });
+        }
+
+        // Finish change event
+        if (normalizeFinish !== currentQuotePart.finish) {
+          await createEvent({
+            entityType: "quote",
+            entityId: quote.id.toString(),
+            eventType: "quote_part_finish_changed",
+            eventCategory: "manufacturing",
+            title: "Quote Part Finish Changed",
+            description: `${currentQuotePart.partName || "Part"} changed to ${
+              normalizeFinish || "no finish"
+            }`,
+            metadata: {
+              partName: currentQuotePart.partName,
+              quotePartId,
+              quoteId: quote.id,
+              quoteNumber: quote.quoteNumber,
+              oldValue: currentQuotePart.finish,
+              newValue: normalizeFinish,
+              field: "finish",
+            },
+            userId: eventContext.userId,
+            userEmail: eventContext.userEmail,
+          });
+        }
+
+        return json({ success: true });
+      }
+
       case "savePriceCalculation": {
         // Auto-convert RFQ to Draft when editing starts
         await autoConvertRFQToDraft();
