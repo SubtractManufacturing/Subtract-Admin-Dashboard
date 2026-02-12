@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.2...v1.3.3) (2026-02-12)
+
+
+### Bug Fixes
+
+* add quote part attributes ([1fb6dbc](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/1fb6dbca92eaa4dbad145eed06c0cb1c73b1d821))
+
 ## [1.3.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.1...v1.3.2) (2026-02-11)
 
 
