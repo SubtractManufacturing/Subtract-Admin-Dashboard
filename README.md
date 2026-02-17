@@ -75,7 +75,7 @@ All branches should follow this structure: `[prefix]/[issue-id]-[brief-descripti
 1. **Include GitHub issue ID** for traceability
 2. **Use kebab-case** for readability
 3. **Keep it short but descriptive**
-4. **Optional scope** for multi-module repos (e.g., `api`, `ui`)
+   Example: "#85-hotfix-thisbug"
 
 #### Examples
 
