@@ -1,10 +1,19 @@
 import { db } from "./db/index.js"
-import { orders, customers, vendors, orderLineItems } from "./db/schema.js"
+import {
+  orders,
+  customers,
+  vendors,
+  orderLineItems,
+  orderAttachments,
+  attachments,
+} from "./db/schema.js"
 import { eq, desc, ne } from 'drizzle-orm'
 import type { Customer, Vendor, OrderLineItem } from "./db/schema.js"
 import { getNextOrderNumber, generateUniqueOrderNumber } from "./number-generator.js"
 import { getOrderAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
+import { isFeatureEnabled, FEATURE_FLAGS } from "./featureFlags.js"
+import { copyFile } from "./s3.server.js"
 
 export type OrderWithRelations = {
   id: number
@@ -571,6 +580,9 @@ export async function duplicateOrder(
 
     // Generate a unique order number before the transaction
     const newOrderNumber = await generateUniqueOrderNumber();
+    const includeAttachments = await isFeatureEnabled(
+      FEATURE_FLAGS.DUPLICATE_INCLUDE_ATTACHMENTS
+    );
 
     const result = await db.transaction(async (tx) => {
       // Create the new order record
@@ -606,6 +618,62 @@ export async function duplicateOrder(
             notes: null,
           }))
         );
+      }
+
+      // Duplicate order-level attachments when feature flag is enabled
+      if (includeAttachments) {
+        const sourceOrderAttachments = await tx
+          .select({
+            attachment: attachments,
+          })
+          .from(orderAttachments)
+          .innerJoin(
+            attachments,
+            eq(orderAttachments.attachmentId, attachments.id)
+          )
+          .where(eq(orderAttachments.orderId, orderId));
+
+        for (const { attachment } of sourceOrderAttachments) {
+          try {
+            const sourceKey = attachment.s3Key;
+            const fileName =
+              sourceKey.split("/").pop() || attachment.fileName;
+            const destKey = `orders/${newOrder.id}/attachments/${fileName}`;
+            await copyFile(sourceKey, destKey);
+
+            let newThumbnailS3Key: string | null = null;
+            if (attachment.thumbnailS3Key) {
+              const thumbSourceKey = attachment.thumbnailS3Key;
+              const thumbFileName =
+                thumbSourceKey.split("/").pop() || "thumbnail.png";
+              const thumbDestKey = `orders/${newOrder.id}/attachments/${thumbFileName}`;
+              await copyFile(thumbSourceKey, thumbDestKey);
+              newThumbnailS3Key = thumbDestKey;
+            }
+
+            const [newAttachment] = await tx
+              .insert(attachments)
+              .values({
+                s3Bucket: attachment.s3Bucket,
+                s3Key: destKey,
+                fileName: attachment.fileName,
+                contentType: attachment.contentType,
+                fileSize: attachment.fileSize,
+                thumbnailS3Key: newThumbnailS3Key,
+              })
+              .returning();
+
+            await tx.insert(orderAttachments).values({
+              orderId: newOrder.id,
+              attachmentId: newAttachment.id,
+            });
+          } catch (orderAttachmentCopyError) {
+            console.warn(
+              "Failed to copy order attachment:",
+              orderAttachmentCopyError
+            );
+          }
+        }
       }
 
       return { orderId: newOrder.id, orderNumber: newOrder.orderNumber };

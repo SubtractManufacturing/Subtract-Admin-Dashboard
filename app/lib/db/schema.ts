@@ -245,7 +245,7 @@ export const quotePartDrawings = pgTable(
   {
     quotePartId: uuid("quote_part_id")
       .notNull()
-      .references(() => quoteParts.id),
+      .references(() => quoteParts.id, { onDelete: "cascade" }),
     attachmentId: uuid("attachment_id")
       .notNull()
       .references(() => attachments.id),
@@ -317,7 +317,9 @@ export const quoteLineItems = pgTable("quote_line_items", {
   quoteId: integer("quote_id")
     .notNull()
     .references(() => quotes.id),
-  quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
+  quotePartId: uuid("quote_part_id").references(() => quoteParts.id, {
+    onDelete: "cascade",
+  }),
   name: text("name"),
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
@@ -593,7 +595,9 @@ export const quotePriceCalculations = pgTable(
       .notNull()
       .references(() => quotes.id),
     quoteLineItemId: integer("quote_line_item_id"),
-    quotePartId: uuid("quote_part_id").references(() => quoteParts.id),
+    quotePartId: uuid("quote_part_id").references(() => quoteParts.id, {
+      onDelete: "cascade",
+    }),
 
     // Base inputs
     toolpathGrandTotal: numeric("toolpath_grand_total", {

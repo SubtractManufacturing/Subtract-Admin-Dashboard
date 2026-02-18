@@ -63,8 +63,13 @@ import {
   attachments,
   quotes,
   quotePartDrawings,
+  quoteParts,
+  quoteLineItems,
+  quotePriceCalculations,
+  cadFileVersions,
+  type QuotePart,
 } from "~/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, and, or } from "drizzle-orm";
 
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -1163,58 +1168,66 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         try {
-          // Helper function to sanitize S3 keys (same as upload logic)
-          const sanitizeS3Key = (key: string): string => {
-            return key
-              .replace(/\s+/g, "-") // Replace spaces with hyphens
-              .replace(/[^a-zA-Z0-9._/-]/g, ""); // Remove any other special characters except slashes
+          // Extract S3 key from full URL or bare key (handles Supabase, S3, and raw keys)
+          const extractS3Key = (urlOrKey: string): string | null => {
+            if (!urlOrKey?.trim()) return null;
+            const s = urlOrKey.trim();
+            if (s.startsWith("quote-parts/")) return s;
+            // Supabase storage URL: .../storage/v1/s3/{bucket}/{key}
+            if (s.includes("/storage/v1/s3/")) {
+              const match = s.split("/storage/v1/s3/")[1];
+              if (match) {
+                const afterBucket = match.replace(/^[^/]+\//, "");
+                return afterBucket || null;
+              }
+            }
+            // Full S3-style URL: .../bucket/key or .../quote-parts/...
+            if (s.includes("/quote-parts/")) {
+              const idx = s.indexOf("quote-parts/");
+              return s.slice(idx);
+            }
+            if (s.includes("quote-parts/")) {
+              const parts = s.split("/");
+              const i = parts.findIndex((p) => p === "quote-parts");
+              if (i >= 0) return parts.slice(i).join("/");
+            }
+            return s;
           };
 
-          let quotePart = null;
+          let quotePart: QuotePart | null = null;
           const filesToDelete: string[] = [];
           const drawingAttachmentIds: string[] = [];
 
-          // If there's an associated quote part, get its details first
-          if (quotePartId) {
-            const { quoteParts } = await import("~/lib/db/schema");
+          // Get line item for event logging and quoteId
+          const [lineItemRow] = await db
+            .select()
+            .from(quoteLineItems)
+            .where(eq(quoteLineItems.id, parseInt(lineItemId)))
+            .limit(1);
+          if (!lineItemRow) {
+            return json({ error: "Line item not found" }, { status: 404 });
+          }
 
-            // Get the quote part details to find S3 files
+          // If there's an associated quote part, get its details and collect S3 keys
+          if (quotePartId) {
             const [part] = await db
               .select()
               .from(quoteParts)
               .where(eq(quoteParts.id, quotePartId))
               .limit(1);
 
-            quotePart = part;
+            quotePart = part ?? null;
 
-            // Collect all S3 file keys to delete
             if (quotePart) {
-              // Add source file (sanitize the key)
-              if (quotePart.partFileUrl) {
-                filesToDelete.push(sanitizeS3Key(quotePart.partFileUrl));
-              }
+              const keyFile = extractS3Key(quotePart.partFileUrl ?? "");
+              if (keyFile) filesToDelete.push(keyFile);
 
-              // Add mesh file
-              if (quotePart.partMeshUrl) {
-                const meshUrl = quotePart.partMeshUrl;
-                if (meshUrl.includes("quote-parts/")) {
-                  const urlParts = meshUrl.split("/");
-                  const quotePartsIndex = urlParts.findIndex(
-                    (p) => p === "quote-parts"
-                  );
-                  if (quotePartsIndex >= 0) {
-                    const meshKey = urlParts.slice(quotePartsIndex).join("/");
-                    filesToDelete.push(meshKey);
-                  }
-                }
-              }
+              const keyMesh = extractS3Key(quotePart.partMeshUrl ?? "");
+              if (keyMesh) filesToDelete.push(keyMesh);
 
-              // Add thumbnail file
-              if (quotePart.thumbnailUrl) {
-                filesToDelete.push(quotePart.thumbnailUrl);
-              }
+              const keyThumb = extractS3Key(quotePart.thumbnailUrl ?? "");
+              if (keyThumb) filesToDelete.push(keyThumb);
 
-              // Get quote part drawings and their attachment S3 keys
               const drawingsData = await db
                 .select({
                   drawing: quotePartDrawings,
@@ -1227,81 +1240,114 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 )
                 .where(eq(quotePartDrawings.quotePartId, quotePartId));
 
-              // Collect drawing S3 files and attachment IDs for deletion
               for (const { attachment } of drawingsData) {
-                if (attachment.s3Key) {
-                  filesToDelete.push(attachment.s3Key);
-                }
-                if (attachment.thumbnailS3Key) {
+                if (attachment.s3Key) filesToDelete.push(attachment.s3Key);
+                if (attachment.thumbnailS3Key)
                   filesToDelete.push(attachment.thumbnailS3Key);
-                }
                 drawingAttachmentIds.push(attachment.id);
+              }
+
+              // CAD file versions for this quote part
+              const cadVersions = await db
+                .select({ s3Key: cadFileVersions.s3Key })
+                .from(cadFileVersions)
+                .where(
+                  and(
+                    eq(cadFileVersions.entityType, "quote_part"),
+                    eq(cadFileVersions.entityId, quotePartId)
+                  )
+                );
+              for (const v of cadVersions) {
+                if (v.s3Key) filesToDelete.push(v.s3Key);
               }
             }
           }
 
-          // Step 1: Delete database records in transaction (atomic operation)
-          // Order: drawings → attachments → line item → quote part
-          // (respects foreign key constraints)
+          // Delete database records in transaction (explicit order for FK and S3 key collection)
           await db.transaction(async (tx) => {
             if (quotePart && quotePartId) {
-              const { quoteParts } = await import("~/lib/db/schema");
-
-              // Delete quote part drawings (FK to both quote_parts and attachments)
               await tx
                 .delete(quotePartDrawings)
                 .where(eq(quotePartDrawings.quotePartId, quotePartId));
 
-              // Delete attachment records for drawings
               if (drawingAttachmentIds.length > 0) {
                 await tx
                   .delete(attachments)
                   .where(inArray(attachments.id, drawingAttachmentIds));
               }
 
-              // Delete the line item (FK to quote_parts via quotePartId)
-              const { deleteQuoteLineItem } = await import("~/lib/quotes");
-              await deleteQuoteLineItem(
-                parseInt(lineItemId),
-                eventContext,
-                tx
-              );
+              await tx
+                .delete(cadFileVersions)
+                .where(
+                  and(
+                    eq(cadFileVersions.entityType, "quote_part"),
+                    eq(cadFileVersions.entityId, quotePartId)
+                  )
+                );
 
-              // Delete the quote part last (referenced by drawings and line item)
+              await tx
+                .delete(quotePriceCalculations)
+                .where(
+                  or(
+                    eq(quotePriceCalculations.quotePartId, quotePartId),
+                    eq(quotePriceCalculations.quoteLineItemId, parseInt(lineItemId))
+                  )
+                );
+
+              await tx
+                .delete(quoteLineItems)
+                .where(eq(quoteLineItems.id, parseInt(lineItemId)));
+
               await tx
                 .delete(quoteParts)
                 .where(eq(quoteParts.id, quotePartId));
             } else {
-              // No associated part - just delete the line item
-              const { deleteQuoteLineItem } = await import("~/lib/quotes");
-              await deleteQuoteLineItem(
-                parseInt(lineItemId),
-                eventContext,
-                tx
-              );
+              await tx
+                .delete(quotePriceCalculations)
+                .where(
+                  eq(quotePriceCalculations.quoteLineItemId, parseInt(lineItemId))
+                );
+              await tx
+                .delete(quoteLineItems)
+                .where(eq(quoteLineItems.id, parseInt(lineItemId)));
             }
           });
 
-          // Step 2: Delete S3 files AFTER successful database operations
-          // If this fails, files become orphaned but database is consistent
           for (const fileKey of filesToDelete) {
             try {
               await deleteFile(fileKey);
             } catch (error: unknown) {
-              // Log but don't fail - database is already consistent
               const err = error as { Code?: string; name?: string };
               if (err?.Code === "NoSuchKey" || err?.name === "NoSuchKey") {
-                // Ignore if file doesn't exist
+                // ignore
               } else {
                 console.error(`Error deleting S3 file ${fileKey}:`, error);
-                // TODO: Add to cleanup queue for retry
               }
             }
           }
 
-          // Recalculate quote totals
           const { calculateQuoteTotals } = await import("~/lib/quotes");
           await calculateQuoteTotals(quote.id);
+
+          let partName = "Unknown Part";
+          if (quotePart?.partName) partName = quotePart.partName;
+
+          await createEvent({
+            entityType: "quote",
+            entityId: quote.id.toString(),
+            eventType: "quote_line_item_deleted",
+            eventCategory: "financial",
+            title: "Line Item Deleted",
+            description: `Deleted ${partName}`,
+            metadata: {
+              lineItemId: parseInt(lineItemId),
+              partName,
+              quantity: lineItemRow.quantity,
+              totalPrice: parseFloat(lineItemRow.totalPrice || "0").toFixed(2),
+            },
+            userId: eventContext?.userId,
+            userEmail: eventContext?.userEmail,
+          });
 
           return redirect(`/quotes/${quoteId}`);
         } catch (error) {
