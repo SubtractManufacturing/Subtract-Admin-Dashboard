@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.4](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.3...v1.3.4) (2026-02-18)
+
+
+### Bug Fixes
+
+* quote duplication hotffix ([6244126](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/6244126e1d27078477d634dbda6216a447b46c0e))
+
 ## [1.3.3](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.2...v1.3.3) (2026-02-12)
 
 
