@@ -81,7 +81,7 @@
     "glob": "^10.5.0",
     "@remix-run/router": "^1.23.2",
     "qs": "^6.14.1",
-    "fast-xml-parser": "^5.3.4",
+    "fast-xml-parser": "^5.3.6",
     "axios": "^1.13.5"
   },
   "engines": {
