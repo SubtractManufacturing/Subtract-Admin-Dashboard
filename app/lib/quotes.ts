@@ -861,23 +861,63 @@ export async function convertQuoteToOrder(
               }
             }
 
-            // Migrate quote part drawings to the new customer part
+            // Migrate quote part drawings to the new customer part with independent attachments
             const quotePartDrawingRecords = await tx
               .select({
-                attachmentId: quotePartDrawings.attachmentId,
-                version: quotePartDrawings.version,
+                drawing: quotePartDrawings,
+                attachment: attachments,
               })
               .from(quotePartDrawings)
+              .innerJoin(
+                attachments,
+                eq(quotePartDrawings.attachmentId, attachments.id)
+              )
               .where(eq(quotePartDrawings.quotePartId, quotePart.id));
 
             if (quotePartDrawingRecords.length > 0) {
-              await tx.insert(partDrawings).values(
-                quotePartDrawingRecords.map((record) => ({
-                  partId: customerPart.id,
-                  attachmentId: record.attachmentId,
-                  version: record.version,
-                }))
-              );
+              for (const record of quotePartDrawingRecords) {
+                try {
+                  const sourceKey = record.attachment.s3Key;
+                  const fileName =
+                    sourceKey.split("/").pop() ||
+                    record.attachment.fileName;
+                  const destKey = `parts/${customerPart.id}/drawings/${fileName}`;
+                  await copyFile(sourceKey, destKey);
+
+                  let newThumbnailS3Key: string | null = null;
+                  if (record.attachment.thumbnailS3Key) {
+                    const thumbSourceKey = record.attachment.thumbnailS3Key;
+                    const thumbFileName =
+                      thumbSourceKey.split("/").pop() || "thumbnail.png";
+                    const thumbDestKey = `parts/${customerPart.id}/thumbnails/${thumbFileName}`;
+                    await copyFile(thumbSourceKey, thumbDestKey);
+                    newThumbnailS3Key = thumbDestKey;
+                  }
+
+                  const [newAttachment] = await tx
+                    .insert(attachments)
+                    .values({
+                      s3Bucket: record.attachment.s3Bucket,
+                      s3Key: destKey,
+                      fileName: record.attachment.fileName,
+                      contentType: record.attachment.contentType,
+                      fileSize: record.attachment.fileSize,
+                      thumbnailS3Key: newThumbnailS3Key,
+                    })
+                    .returning();
+
+                  await tx.insert(partDrawings).values({
+                    partId: customerPart.id,
+                    attachmentId: newAttachment.id,
+                    version: record.drawing.version,
+                  });
+                } catch (drawingCopyError) {
+                  console.warn(
+                    `Failed to copy drawing for part ${quotePart.partName} during conversion:`,
+                    drawingCopyError
+                  );
+                }
+              }
             }
 
             // Find the corresponding line item for this quote part

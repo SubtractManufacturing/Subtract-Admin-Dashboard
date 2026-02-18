@@ -67,6 +67,7 @@ import {
   quoteLineItems,
   quotePriceCalculations,
   cadFileVersions,
+  partDrawings,
   type QuotePart,
 } from "~/lib/db/schema";
 import { eq, inArray, and, or } from "drizzle-orm";
@@ -1271,9 +1272,22 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 .where(eq(quotePartDrawings.quotePartId, quotePartId));
 
               if (drawingAttachmentIds.length > 0) {
-                await tx
-                  .delete(attachments)
-                  .where(inArray(attachments.id, drawingAttachmentIds));
+                // Only delete attachments not still referenced by part_drawings (from converted orders)
+                const referencedByParts = await tx
+                  .select({ attachmentId: partDrawings.attachmentId })
+                  .from(partDrawings)
+                  .where(inArray(partDrawings.attachmentId, drawingAttachmentIds));
+                const referencedIds = new Set(
+                  referencedByParts.map((r) => r.attachmentId)
+                );
+                const safeToDelete = drawingAttachmentIds.filter(
+                  (id) => !referencedIds.has(id)
+                );
+                if (safeToDelete.length > 0) {
+                  await tx
+                    .delete(attachments)
+                    .where(inArray(attachments.id, safeToDelete));
+                }
               }
 
               await tx
