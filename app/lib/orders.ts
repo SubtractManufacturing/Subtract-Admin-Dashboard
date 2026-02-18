@@ -679,7 +679,11 @@ export async function duplicateOrder(
       return { orderId: newOrder.id, orderNumber: newOrder.orderNumber };
     });
 
-    // Log duplication event on source order
+    // Only create event log entries after duplication has fully succeeded
+    if (!result?.orderId || !result?.orderNumber) {
+      return { success: false, error: "Failed to duplicate order" };
+    }
+
     await createEvent({
       entityType: "order",
       entityId: orderId.toString(),
@@ -697,7 +701,6 @@ export async function duplicateOrder(
       userEmail: eventContext?.userEmail,
     });
 
-    // Log creation event on new order
     await createEvent({
       entityType: "order",
       entityId: result.orderId.toString(),

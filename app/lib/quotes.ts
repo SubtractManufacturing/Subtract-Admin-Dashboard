@@ -1377,7 +1377,11 @@ export async function duplicateQuote(
       return { quoteId: newQuote.id, quoteNumber: newQuote.quoteNumber };
     });
 
-    // Log duplication event on source quote
+    // Only create event log entries after duplication has fully succeeded
+    if (!result?.quoteId || !result?.quoteNumber) {
+      return { success: false, error: "Failed to duplicate quote" };
+    }
+
     await createEvent({
       entityType: "quote",
       entityId: quoteId.toString(),
@@ -1395,7 +1399,6 @@ export async function duplicateQuote(
       userEmail: context?.userEmail,
     });
 
-    // Log creation event on new quote
     await createEvent({
       entityType: "quote",
       entityId: result.quoteId.toString(),
