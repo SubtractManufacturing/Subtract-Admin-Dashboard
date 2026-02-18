@@ -43,6 +43,7 @@ import {
   generateUniqueOrderNumber,
 } from "./number-generator.js";
 import { createEvent } from "./events.js";
+import { isFeatureEnabled, FEATURE_FLAGS } from "./featureFlags.js";
 import { uploadFile, copyFile } from "./s3.server.js";
 import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js";
 import { generatePdfThumbnail, isPdfFile } from "./pdf-thumbnail.server.js";
@@ -860,23 +861,63 @@ export async function convertQuoteToOrder(
               }
             }
 
-            // Migrate quote part drawings to the new customer part
+            // Migrate quote part drawings to the new customer part with independent attachments
             const quotePartDrawingRecords = await tx
               .select({
-                attachmentId: quotePartDrawings.attachmentId,
-                version: quotePartDrawings.version,
+                drawing: quotePartDrawings,
+                attachment: attachments,
               })
               .from(quotePartDrawings)
+              .innerJoin(
+                attachments,
+                eq(quotePartDrawings.attachmentId, attachments.id)
+              )
               .where(eq(quotePartDrawings.quotePartId, quotePart.id));
 
             if (quotePartDrawingRecords.length > 0) {
-              await tx.insert(partDrawings).values(
-                quotePartDrawingRecords.map((record) => ({
-                  partId: customerPart.id,
-                  attachmentId: record.attachmentId,
-                  version: record.version,
-                }))
-              );
+              for (const record of quotePartDrawingRecords) {
+                try {
+                  const sourceKey = record.attachment.s3Key;
+                  const fileName =
+                    sourceKey.split("/").pop() ||
+                    record.attachment.fileName;
+                  const destKey = `parts/${customerPart.id}/drawings/${fileName}`;
+                  await copyFile(sourceKey, destKey);
+
+                  let newThumbnailS3Key: string | null = null;
+                  if (record.attachment.thumbnailS3Key) {
+                    const thumbSourceKey = record.attachment.thumbnailS3Key;
+                    const thumbFileName =
+                      thumbSourceKey.split("/").pop() || "thumbnail.png";
+                    const thumbDestKey = `parts/${customerPart.id}/thumbnails/${thumbFileName}`;
+                    await copyFile(thumbSourceKey, thumbDestKey);
+                    newThumbnailS3Key = thumbDestKey;
+                  }
+
+                  const [newAttachment] = await tx
+                    .insert(attachments)
+                    .values({
+                      s3Bucket: record.attachment.s3Bucket,
+                      s3Key: destKey,
+                      fileName: record.attachment.fileName,
+                      contentType: record.attachment.contentType,
+                      fileSize: record.attachment.fileSize,
+                      thumbnailS3Key: newThumbnailS3Key,
+                    })
+                    .returning();
+
+                  await tx.insert(partDrawings).values({
+                    partId: customerPart.id,
+                    attachmentId: newAttachment.id,
+                    version: record.drawing.version,
+                  });
+                } catch (drawingCopyError) {
+                  console.warn(
+                    `Failed to copy drawing for part ${quotePart.partName} during conversion:`,
+                    drawingCopyError
+                  );
+                }
+              }
             }
 
             // Find the corresponding line item for this quote part
@@ -1046,6 +1087,9 @@ export async function duplicateQuote(
 
     // Generate a new quote number before the transaction
     const newQuoteNumber = await getNextQuoteNumber();
+    const includeAttachments = await isFeatureEnabled(
+      FEATURE_FLAGS.DUPLICATE_INCLUDE_ATTACHMENTS
+    );
 
     const result = await db.transaction(async (tx) => {
       // Create the new quote record
@@ -1135,7 +1179,7 @@ export async function duplicateQuote(
                 `Failed to copy CAD file for part ${sourcePart.partName}:`,
                 copyError
               );
-              newPartFileUrl = sourcePart.partFileUrl;
+              newPartFileUrl = null;
             }
           }
 
@@ -1155,7 +1199,7 @@ export async function duplicateQuote(
                 `Failed to copy mesh file for part ${sourcePart.partName}:`,
                 copyError
               );
-              newPartMeshUrl = sourcePart.partMeshUrl;
+              newPartMeshUrl = null;
             }
           }
 
@@ -1176,7 +1220,7 @@ export async function duplicateQuote(
                 `Failed to copy thumbnail for part ${sourcePart.partName}:`,
                 copyError
               );
-              newThumbnailUrl = sourcePart.thumbnailUrl;
+              newThumbnailUrl = null;
             }
           }
 
@@ -1233,23 +1277,60 @@ export async function duplicateQuote(
             }
           }
 
-          // Copy part drawings
-          const sourceDrawings = await tx
+          // Copy part drawings with independent attachment records (no shared refs)
+          const sourceDrawingsWithAttachments = await tx
             .select({
-              attachmentId: quotePartDrawings.attachmentId,
-              version: quotePartDrawings.version,
+              drawing: quotePartDrawings,
+              attachment: attachments,
             })
             .from(quotePartDrawings)
+            .innerJoin(
+              attachments,
+              eq(quotePartDrawings.attachmentId, attachments.id)
+            )
             .where(eq(quotePartDrawings.quotePartId, sourcePart.id));
 
-          if (sourceDrawings.length > 0) {
-            await tx.insert(quotePartDrawings).values(
-              sourceDrawings.map((drawing) => ({
+          for (const { drawing, attachment } of sourceDrawingsWithAttachments) {
+            try {
+              const sourceKey = attachment.s3Key;
+              const fileName =
+                sourceKey.split("/").pop() || attachment.fileName;
+              const destKey = `quote-parts/${newPart.id}/drawings/${fileName}`;
+              await copyFile(sourceKey, destKey);
+
+              let newThumbnailS3Key: string | null = null;
+              if (attachment.thumbnailS3Key) {
+                const thumbSourceKey = attachment.thumbnailS3Key;
+                const thumbFileName =
+                  thumbSourceKey.split("/").pop() || "thumbnail.png";
+                const thumbDestKey = `quote-parts/${newPart.id}/drawings/${thumbFileName}`;
+                await copyFile(thumbSourceKey, thumbDestKey);
+                newThumbnailS3Key = thumbDestKey;
+              }
+
+              const [newAttachment] = await tx
+                .insert(attachments)
+                .values({
+                  s3Bucket: attachment.s3Bucket,
+                  s3Key: destKey,
+                  fileName: attachment.fileName,
+                  contentType: attachment.contentType,
+                  fileSize: attachment.fileSize,
+                  thumbnailS3Key: newThumbnailS3Key,
+                })
+                .returning();
+
+              await tx.insert(quotePartDrawings).values({
                 quotePartId: newPart.id,
-                attachmentId: drawing.attachmentId,
+                attachmentId: newAttachment.id,
                 version: drawing.version,
-              }))
-            );
+              });
+            } catch (drawingCopyError) {
+              console.warn(
+                `Failed to copy drawing for part ${sourcePart.partName}:`,
+                drawingCopyError
+              );
+            }
           }
         }
       }
@@ -1277,10 +1358,70 @@ export async function duplicateQuote(
         }
       }
 
+      // Duplicate quote-level attachments when feature flag is enabled
+      if (includeAttachments) {
+        const sourceQuoteAttachments = await tx
+          .select({
+            attachment: attachments,
+          })
+          .from(quoteAttachments)
+          .innerJoin(
+            attachments,
+            eq(quoteAttachments.attachmentId, attachments.id)
+          )
+          .where(eq(quoteAttachments.quoteId, quoteId));
+
+        for (const { attachment } of sourceQuoteAttachments) {
+          try {
+            const sourceKey = attachment.s3Key;
+            const fileName =
+              sourceKey.split("/").pop() || attachment.fileName;
+            const destKey = `quotes/${newQuote.id}/attachments/${fileName}`;
+            await copyFile(sourceKey, destKey);
+
+            let newThumbnailS3Key: string | null = null;
+            if (attachment.thumbnailS3Key) {
+              const thumbSourceKey = attachment.thumbnailS3Key;
+              const thumbFileName =
+                thumbSourceKey.split("/").pop() || "thumbnail.png";
+              const thumbDestKey = `quotes/${newQuote.id}/attachments/${thumbFileName}`;
+              await copyFile(thumbSourceKey, thumbDestKey);
+              newThumbnailS3Key = thumbDestKey;
+            }
+
+            const [newAttachment] = await tx
+              .insert(attachments)
+              .values({
+                s3Bucket: attachment.s3Bucket,
+                s3Key: destKey,
+                fileName: attachment.fileName,
+                contentType: attachment.contentType,
+                fileSize: attachment.fileSize,
+                thumbnailS3Key: newThumbnailS3Key,
+              })
+              .returning();
+
+            await tx.insert(quoteAttachments).values({
+              quoteId: newQuote.id,
+              attachmentId: newAttachment.id,
+            });
+          } catch (quoteAttachmentCopyError) {
+            console.warn(
+              "Failed to copy quote attachment:",
+              quoteAttachmentCopyError
+            );
+          }
+        }
+      }
+
       return { quoteId: newQuote.id, quoteNumber: newQuote.quoteNumber };
     });
 
-    // Log duplication event on source quote
+    // Only create event log entries after duplication has fully succeeded
+    if (!result?.quoteId || !result?.quoteNumber) {
+      return { success: false, error: "Failed to duplicate quote" };
+    }
+
     await createEvent({
       entityType: "quote",
       entityId: quoteId.toString(),
@@ -1298,7 +1439,6 @@ export async function duplicateQuote(
       userEmail: context?.userEmail,
     });
 
-    // Log creation event on new quote
     await createEvent({
       entityType: "quote",
       entityId: result.quoteId.toString(),
@@ -1954,6 +2094,9 @@ export async function deleteQuoteLineItem(
     return true;
   } catch (error) {
     console.error("Error deleting quote line item:", error);
+    if (tx) {
+      throw error;
+    }
     return false;
   }
 }

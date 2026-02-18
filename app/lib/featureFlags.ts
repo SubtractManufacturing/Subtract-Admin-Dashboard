@@ -21,6 +21,7 @@ export const FEATURE_FLAGS = {
   EMAIL_OUTBOUND_BCC_ENABLED: "email_outbound_bcc_enabled",
   EMAIL_INBOUND_FORWARD_ENABLED: "email_inbound_forward_enabled",
   EMAIL_AUTO_ASSIGN_REPLIED: "email_auto_assign_replied",
+  DUPLICATE_INCLUDE_ATTACHMENTS: "duplicate_include_attachments",
 } as const;
 
 // Default feature flags with their metadata
@@ -126,6 +127,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     name: "Auto-Assign Replied Emails",
     description: "Automatically assign unassigned email threads to the user who replies to them",
     enabled: true,
+  },
+  {
+    key: FEATURE_FLAGS.DUPLICATE_INCLUDE_ATTACHMENTS,
+    name: "Include Attachments When Duplicating Quotes/Orders",
+    description: "When duplicating a quote or order, copy quote-level or order-level attachments to the duplicate (when disabled, attachments are not copied)",
+    enabled: false,
   },
 ];
 

@@ -43,6 +43,13 @@
       "when": 1770006626208,
       "tag": "0005_careless_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771387227624,
+      "tag": "0006_zippy_lockjaw",
+      "breakpoints": true
     }
   ]
 }
