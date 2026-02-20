@@ -35,6 +35,12 @@ module.exports = {
         "plugin:react-hooks/recommended",
         "plugin:jsx-a11y/recommended",
       ],
+      rules: {
+        // Disabled: eslint-plugin-jsx-a11y uses minimatch v3 internals that
+        // crash with the minimatch v10 override required by Trivy CVE-2026-26996.
+        // Re-enable once the plugin ships a compatible release.
+        "jsx-a11y/label-has-associated-control": "off",
+      },
       settings: {
         react: {
           version: "detect",
