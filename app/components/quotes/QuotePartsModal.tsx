@@ -3,6 +3,7 @@ import { useFetcher } from "@remix-run/react";
 import { Part3DViewer } from "~/components/shared/Part3DViewer";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import FileViewerModal from "~/components/shared/FileViewerModal";
+import { useDownload } from "~/hooks/useDownload";
 import { isViewableFile, getFileType } from "~/lib/file-utils";
 
 interface QuotePart {
@@ -23,7 +24,6 @@ interface QuotePart {
     fileName: string;
     contentType: string | null;
     fileSize: number | null;
-    signedUrl: string;
   }>;
 }
 
@@ -52,6 +52,7 @@ export function QuotePartsModal({
   const deleteFetcher = useFetcher();
   const uploadFetcher = useFetcher();
   const attributeFetcher = useFetcher();
+  const { download } = useDownload();
   const modalRef = useRef<HTMLDivElement>(null);
   const [selectedPart, setSelectedPart] = useState<QuotePart | null>(null);
   const [isPart3DModalOpen, setIsPart3DModalOpen] = useState(false);
@@ -245,7 +246,7 @@ export function QuotePartsModal({
   };
 
   const handleViewDrawing = (drawing: {
-    signedUrl: string;
+    id: string;
     fileName: string;
     contentType: string | null;
     fileSize: number | null;
@@ -254,7 +255,7 @@ export function QuotePartsModal({
 
     if (isViewableFile(drawing.fileName)) {
       setSelectedFile({
-        url: drawing.signedUrl,
+        url: `/download/attachment/${drawing.id}?inline`,
         type: fileTypeInfo.type,
         fileName: drawing.fileName,
         contentType: drawing.contentType || undefined,
@@ -262,8 +263,8 @@ export function QuotePartsModal({
       });
       setIsFileViewerOpen(true);
     } else {
-      // Download non-viewable files
-      window.open(drawing.signedUrl, "_blank");
+      // Download non-viewable files via unified download route
+      download(`/download/attachment/${drawing.id}`, drawing.fileName);
     }
   };
 
@@ -385,7 +386,7 @@ export function QuotePartsModal({
           if (e.target === e.currentTarget) onClose();
         }}
         onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
+          if (e.key === "Escape" && !editingAttributeField) onClose();
         }}
         role="presentation"
       >
@@ -563,10 +564,7 @@ export function QuotePartsModal({
                                     </button>
                                     <button
                                       onClick={() => {
-                                        window.open(
-                                          drawing.signedUrl,
-                                          "_blank",
-                                        );
+                                        download(`/download/attachment/${drawing.id}`, drawing.fileName);
                                         setShowDrawingsMenu(null);
                                       }}
                                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/50 rounded transition-colors"

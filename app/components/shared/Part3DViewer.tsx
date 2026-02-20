@@ -8,6 +8,7 @@ import {
   Center,
 } from "@react-three/drei";
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
+import { useDownload } from "~/hooks/useDownload";
 import { useTheme } from "~/contexts/ThemeContext";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -547,6 +548,7 @@ export function Part3DViewer({
   const [showBanana, setShowBanana] = useState(initialShowBanana);
   const [partBoundingBox, setPartBoundingBox] =
     useState<PartBoundingBox | null>(null);
+  const { download: triggerDownload } = useDownload();
   const { theme } = useTheme();
   const isLightMode = theme === "light";
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -578,7 +580,7 @@ export function Part3DViewer({
           modelUrl.includes("supabase"))
       ) {
         try {
-          const response = await fetch(`/parts/${partId}/mesh`);
+          const response = await fetch(`/download/mesh/${partId}`);
           if (response.ok) {
             const data = await response.json();
             setSignedModelUrl(data.url);
@@ -754,19 +756,19 @@ export function Part3DViewer({
   };
 
   const handleDownload = () => {
-    // Use appropriate route based on whether it's a quote part or regular part
+    // Use unified download route based on whether it's a quote part or regular part
     if (quotePartId && solidModelUrl) {
-      window.open(`/quote-parts/${quotePartId}/file`, "_blank");
+      triggerDownload(`/download/quote-part/${quotePartId}`);
       return;
     } else if (partId && solidModelUrl) {
-      window.open(`/parts/${partId}/file`, "_blank");
+      triggerDownload(`/download/part/${partId}`);
       return;
     }
 
-    // Otherwise, fall back to the mesh URL
+    // Otherwise, fall back to the mesh URL (direct presigned URL)
     const downloadUrl = signedModelUrl || modelUrl;
     if (downloadUrl) {
-      window.open(downloadUrl, "_blank");
+      triggerDownload(downloadUrl);
     }
   };
 

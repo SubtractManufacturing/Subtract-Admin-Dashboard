@@ -1,4 +1,4 @@
-import puppeteer from "puppeteer";
+import { launch } from "puppeteer";
 
 export interface GeneratePdfOptions {
   html: string;
@@ -13,7 +13,7 @@ export async function generatePdf(
   let browser = null;
 
   try {
-    const launchOptions: Parameters<typeof puppeteer.launch>[0] = {
+    const launchOptions: Parameters<typeof launch>[0] = {
       headless: true,
       args: [
         "--no-sandbox",
@@ -29,7 +29,7 @@ export async function generatePdf(
       launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     }
 
-    browser = await puppeteer.launch(launchOptions);
+    browser = await launch(launchOptions);
 
     const page = await browser.newPage();
 
