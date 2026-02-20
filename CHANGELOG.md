@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.5...v1.3.6) (2026-02-20)
+
+
+### Bug Fixes
+
+* attachment duplication feature flag ui ([18420af](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/18420affe879754df0203470eb6d6164c14c587e))
+
 ## [1.3.5](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.4...v1.3.5) (2026-02-20)
 
 
