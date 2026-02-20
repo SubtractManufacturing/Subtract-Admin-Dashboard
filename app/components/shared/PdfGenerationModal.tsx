@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, type ReactNode } from "react";
 import { useRevalidator } from "@remix-run/react";
 import Modal from "~/components/shared/Modal";
+import { useDownload } from "~/hooks/useDownload";
 
 /**
  * Converts an image URL to a base64 data URI in the browser
@@ -68,6 +69,7 @@ export default function PdfGenerationModal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const revalidator = useRevalidator();
+  const { download } = useDownload();
 
   useEffect(() => {
     if (!isOpen) {
@@ -186,21 +188,12 @@ export default function PdfGenerationModal({
 
       // Only auto-download if feature flag is enabled
       if (autoDownload) {
-        // Open PDF in new tab
-        const a = document.createElement("a");
-        a.style.display = "none";
-        a.href = data.downloadUrl;
-        a.target = "_blank"; // Open in new tab
-        a.rel = "noopener noreferrer"; // Security best practice
-        // Note: removed download attribute so browser opens PDF instead of downloading
-        document.body.appendChild(a);
-
-        a.click();
-
-        // Clean up element
-        setTimeout(() => {
-          document.body.removeChild(a);
-        }, 100);
+        // Extract filename from the URL path and decode any percent-encoding
+        const urlPath = new URL(data.downloadUrl).pathname;
+        const fallbackFilename = decodeURIComponent(
+          urlPath.split("/").pop() || "document.pdf"
+        );
+        await download(data.downloadUrl, fallbackFilename);
       }
 
       // Show refreshing state

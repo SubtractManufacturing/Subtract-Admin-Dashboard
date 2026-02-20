@@ -174,11 +174,15 @@ function createDownloadResponse(
   contentType: string,
   inline = false
 ): Response {
+  // Use a literal quoted filename. The simple filename= parameter accepts
+  // spaces and most characters when quoted — do not percent-encode it here.
+  // Only escape embedded double-quotes to keep the header well-formed.
+  const safeFilename = filename.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const disposition = inline
-    ? `inline; filename="${encodeRFC5987(filename)}"`
-    : `attachment; filename="${encodeRFC5987(filename)}"`;
+    ? `inline; filename="${safeFilename}"`
+    : `attachment; filename="${safeFilename}"`;
 
-  return new Response(buffer, {
+  return new Response(new Uint8Array(buffer), {
     status: 200,
     headers: {
       "Content-Type": contentType,
@@ -187,15 +191,6 @@ function createDownloadResponse(
       "Cache-Control": "private, no-cache",
     },
   });
-}
-
-/**
- * RFC 5987 encoding for filenames with special / international characters.
- */
-function encodeRFC5987(filename: string): string {
-  return encodeURIComponent(filename)
-    .replace(/['()]/g, escape)
-    .replace(/\*/g, "%2A");
 }
 
 /**

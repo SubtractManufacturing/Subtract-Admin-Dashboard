@@ -45,17 +45,17 @@ export function createServerClient(request: Request) {
     supabaseAnonKey,
     {
       cookies: {
-        get(key) {
+        get(key: string) {
           // Return null for auth cookies if session expired
           if (sessionExpired && key.startsWith('sb-')) {
             return null;
           }
           return cookies[key];
         },
-        set(key, value, options) {
+        set(key: string, value: string, options: Parameters<typeof serialize>[2]) {
           headers.append('Set-Cookie', serialize(key, value, options));
         },
-        remove(key, options) {
+        remove(key: string, options: Parameters<typeof serialize>[2]) {
           headers.append('Set-Cookie', serialize(key, '', options));
         },
       },

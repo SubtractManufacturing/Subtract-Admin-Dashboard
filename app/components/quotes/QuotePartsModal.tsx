@@ -386,7 +386,7 @@ export function QuotePartsModal({
           if (e.target === e.currentTarget) onClose();
         }}
         onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
+          if (e.key === "Escape" && !editingAttributeField) onClose();
         }}
         role="presentation"
       >

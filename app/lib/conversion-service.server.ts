@@ -122,7 +122,7 @@ export async function submitConversion(
     if (file instanceof File) {
       formData.append("file", file);
     } else if (file instanceof Buffer) {
-      const blob = new Blob([file]);
+      const blob = new Blob([new Uint8Array(file)]);
       formData.append("file", blob, filename);
     } else if (file instanceof Blob) {
       formData.append("file", file, filename);
