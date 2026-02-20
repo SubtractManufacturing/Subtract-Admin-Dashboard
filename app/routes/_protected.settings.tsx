@@ -1690,6 +1690,7 @@ export default function Settings() {
                       <div>
                         {localFeatureFlags
                           ?.filter((flag: FeatureFlag) =>
+                            flag.key === 'duplicate_include_attachments' ||
                             flag.key === 'events_access_all' ||
                             flag.key === 'events_nav_visible' ||
                             flag.key === 'pdf_auto_download' ||
