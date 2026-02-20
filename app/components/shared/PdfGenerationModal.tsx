@@ -188,12 +188,9 @@ export default function PdfGenerationModal({
 
       // Only auto-download if feature flag is enabled
       if (autoDownload) {
-        // Extract filename from the URL path and decode any percent-encoding
-        const urlPath = new URL(data.downloadUrl).pathname;
-        const fallbackFilename = decodeURIComponent(
-          urlPath.split("/").pop() || "document.pdf"
-        );
-        await download(data.downloadUrl, fallbackFilename);
+        // Use the filename the server already knows — avoids any URL parsing
+        const filename = (data.filename as string | undefined) || "document.pdf";
+        await download(data.downloadUrl, filename);
       }
 
       // Show refreshing state
