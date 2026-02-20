@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.5](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.4...v1.3.5) (2026-02-20)
+
+
+### Bug Fixes
+
+* refactor individual download routes into one unified proxy download route ([fbc9cdb](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/fbc9cdb1a225b22c1442a42bc807d11843bf516e))
+
 ## [1.3.4](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.3...v1.3.4) (2026-02-18)
 
 
