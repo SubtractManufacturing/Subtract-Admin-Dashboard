@@ -16,7 +16,6 @@ import { downloadQuoteFiles } from "~/lib/downloadQuoteFiles";
  *   /download/part/{partId}             – Part CAD file
  *   /download/quote-part/{quotePartId}  – Quote part CAD file
  *   /download/quote/{quoteId}           – Quote bundle ZIP
- *   /download/s3/{...s3Key}             – Direct S3 key download
  *   /download/mesh/{partId}             – Part mesh URL (JSON)
  *
  * Query parameters:
@@ -50,8 +49,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       return handleQuotePartDownload(id);
     case "quote":
       return handleQuoteBundleDownload(id);
-    case "s3":
-      return handleS3Download(id, inline);
     case "mesh":
       return handleMeshUrl(id);
     default:
@@ -137,17 +134,13 @@ async function handleQuotePartDownload(quotePartId: string) {
 }
 
 async function handleQuoteBundleDownload(quoteId: string) {
-  const { buffer, filename } = await downloadQuoteFiles(parseInt(quoteId));
+  const id = parseInt(quoteId, 10);
+  if (isNaN(id)) {
+    throw new Response("Invalid quote ID", { status: 400 });
+  }
+  const { buffer, filename } = await downloadQuoteFiles(id);
 
   return createDownloadResponse(buffer, filename, "application/zip");
-}
-
-async function handleS3Download(s3Key: string, inline = false) {
-  const buffer = await downloadFromS3(s3Key);
-  const filename = s3Key.split("/").pop() || "download";
-  const contentType = inline ? getMimeType(filename) : "application/octet-stream";
-
-  return createDownloadResponse(buffer, filename, contentType, inline);
 }
 
 async function handleMeshUrl(partId: string) {

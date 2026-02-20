@@ -2,37 +2,12 @@ import { db } from "./db";
 import { quotes, quoteParts, quotePartDrawings, attachments } from "./db/schema";
 import { eq } from "drizzle-orm";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getS3Client } from "./s3.server";
+import { getS3Client, extractS3Key } from "./s3.server";
 import archiver from "archiver";
 
 interface FileToZip {
   buffer: Buffer;
   path: string;
-}
-
-/**
- * Extract S3 key from a URL or return the string as-is if it's already a key
- */
-function extractS3Key(urlOrKey: string): string {
-  // If it's already a key (doesn't start with http), return as-is
-  if (!urlOrKey.startsWith('http')) {
-    return urlOrKey;
-  }
-
-  // Extract key from URL
-  const S3_BUCKET = process.env.S3_BUCKET || 'subtract-attachments';
-
-  if (urlOrKey.includes(S3_BUCKET)) {
-    // URL contains bucket name, extract key after it
-    const parts = urlOrKey.split(`${S3_BUCKET}/`);
-    return parts[1] || urlOrKey;
-  } else {
-    // Assume the URL is just the key or a partial path
-    const urlParts = urlOrKey.split('/');
-    // Remove protocol and domain if present
-    const startIdx = urlParts.findIndex(part => part.includes('quote-parts') || part.includes('orders'));
-    return startIdx >= 0 ? urlParts.slice(startIdx).join('/') : urlOrKey;
-  }
 }
 
 export async function downloadQuoteFiles(quoteId: number) {
