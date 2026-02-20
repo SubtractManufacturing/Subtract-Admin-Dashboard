@@ -1,6 +1,7 @@
 import { Part3DViewer } from "~/components/shared/Part3DViewer";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useFetcher } from "@remix-run/react";
+import { useDownload } from "~/hooks/useDownload";
 
 interface CadVersion {
   id: string;
@@ -78,6 +79,7 @@ export function Part3DViewerModal({
 
   const revisionFetcher = useFetcher();
   const restoreFetcher = useFetcher();
+  const { download } = useDownload();
 
   // Track the last processed fetcher data to prevent infinite loops
   const lastProcessedRevisionData = useRef<unknown>(null);
@@ -268,7 +270,7 @@ export function Part3DViewerModal({
 
   const handleDownloadVersion = (version: CadVersion) => {
     if (version.downloadUrl) {
-      window.open(version.downloadUrl, "_blank");
+      download(version.downloadUrl, version.fileName);
     }
   };
 

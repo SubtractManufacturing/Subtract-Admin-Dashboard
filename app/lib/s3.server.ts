@@ -211,55 +211,58 @@ export async function uploadToS3(
 }
 
 /**
- * Download a file from S3
+ * Extract S3 key from a URL or return as-is if already a key.
+ * Handles presigned URLs, full S3 URLs, and plain keys.
  */
-export async function downloadFromS3(url: string): Promise<Buffer | null> {
+export function extractS3Key(urlOrKey: string): string {
+  // If it doesn't start with http, it's already a key
+  if (!urlOrKey.startsWith('http')) return urlOrKey;
+
   try {
-    // Extract key from URL
-    let key: string;
-    
-    if (url.includes(S3_BUCKET)) {
-      // URL contains bucket name, extract key after it
-      const parts = url.split(`${S3_BUCKET}/`);
-      key = parts[1] || '';
-    } else {
-      // Assume the URL is just the key or a partial path
-      const urlParts = url.split('/');
-      // Remove protocol and domain if present
-      const startIdx = urlParts.findIndex(part => part.includes('orders') || part.includes('parts'));
-      key = startIdx >= 0 ? urlParts.slice(startIdx).join('/') : url;
+    const url = new URL(urlOrKey);
+    const pathParts = url.pathname.split('/');
+
+    // Remove leading empty string from split
+    const cleanParts = pathParts.filter(Boolean);
+
+    // If path contains bucket name, skip it
+    if (cleanParts[0] === S3_BUCKET) {
+      return cleanParts.slice(1).join('/');
     }
 
-    if (!key) {
-      console.error('Could not extract S3 key from URL:', url);
-      return null;
+    return cleanParts.join('/');
+  } catch {
+    // If URL parsing fails, try legacy bucket-split approach
+    if (urlOrKey.includes(`${S3_BUCKET}/`)) {
+      const parts = urlOrKey.split(`${S3_BUCKET}/`);
+      return parts[1] || urlOrKey;
     }
-
-    const command = new GetObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: key,
-    });
-
-    const response = await getS3Client().send(command);
-    
-    if (!response.Body) {
-      return null;
-    }
-
-    // Convert stream to buffer
-    const chunks: Uint8Array[] = [];
-    const reader = response.Body.transformToWebStream().getReader();
-    
-    let done = false;
-    while (!done) {
-      const result = await reader.read();
-      done = result.done;
-      if (result.value) chunks.push(result.value);
-    }
-
-    return Buffer.concat(chunks);
-  } catch (error) {
-    console.error('Error downloading from S3:', error);
-    return null;
+    return urlOrKey;
   }
+}
+
+/**
+ * Download a file from S3 and return as Buffer.
+ * Accepts either an S3 key or a full URL (key is extracted automatically).
+ */
+export async function downloadFromS3(keyOrUrl: string): Promise<Buffer> {
+  const key = extractS3Key(keyOrUrl);
+
+  if (!key) {
+    throw new Error(`Could not extract S3 key from: ${keyOrUrl}`);
+  }
+
+  const command = new GetObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+  });
+
+  const response = await getS3Client().send(command);
+
+  if (!response.Body) {
+    throw new Error(`No content returned for S3 key: ${key}`);
+  }
+
+  const bytes = await response.Body.transformToByteArray();
+  return Buffer.from(bytes);
 }

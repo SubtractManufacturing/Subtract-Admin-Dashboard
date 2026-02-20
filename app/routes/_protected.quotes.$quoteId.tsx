@@ -87,6 +87,7 @@ import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal
 import SendEmailModal from "~/components/quotes/SendEmailModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import { useDownload } from "~/hooks/useDownload";
 import { tableStyles } from "~/utils/tw-styles";
 import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import {
@@ -190,46 +191,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         )
         .where(eq(quotePartDrawings.quotePartId, part.id));
 
-      const drawings = await Promise.all(
-        drawingRecords
-          .filter((record) => record.attachment !== null)
-          .map(async (record) => {
-            const attachment = record.attachment!;
-            try {
-              const signedUrl = await getDownloadUrl(attachment.s3Key, 3600);
-
-              // Generate thumbnail signed URL if available
-              let thumbnailSignedUrl: string | null = null;
-              if (attachment.thumbnailS3Key) {
-                try {
-                  thumbnailSignedUrl = await getDownloadUrl(
-                    attachment.thumbnailS3Key,
-                    3600
-                  );
-                } catch {
-                  // Thumbnail URL generation failed, will fall back to icon
-                }
-              }
-
-              return {
-                id: attachment.id,
-                fileName: attachment.fileName,
-                contentType: attachment.contentType,
-                fileSize: attachment.fileSize,
-                signedUrl,
-                thumbnailSignedUrl,
-              };
-            } catch (error) {
-              console.error(
-                "Error getting signed URL for drawing",
-                attachment.id,
-                ":",
-                error
-              );
-              return null;
-            }
-          })
-      );
+      // Drawings are served via the unified download route — no presigned URLs needed
+      const drawings = drawingRecords
+        .filter((record) => record.attachment !== null)
+        .map((record) => {
+          const attachment = record.attachment!;
+          return {
+            id: attachment.id,
+            fileName: attachment.fileName,
+            contentType: attachment.contentType,
+            fileSize: attachment.fileSize,
+          };
+        });
 
       return {
         ...part,
@@ -263,13 +236,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         attachment !== null
     );
 
-  // Generate download URLs for attachments
-  const attachmentsWithUrls = await Promise.all(
-    attachmentList.map(async (attachment) => ({
-      ...attachment,
-      downloadUrl: await getDownloadUrl(attachment.s3Key),
-    }))
-  );
+  // Attachments are served via the unified download route — no presigned URLs needed
+  const attachmentsWithUrls = attachmentList;
 
   // Get feature flags and events
   const [
@@ -1856,7 +1824,12 @@ export default function QuoteDetail() {
     success?: boolean;
     error?: string;
   }>();
-  const [isDownloading, setIsDownloading] = useState(false);
+  const { download, isDownloading } = useDownload({
+    onError: (err) => {
+      console.error("Download error:", err);
+      alert("Failed to download files. Please try again.");
+    },
+  });
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
@@ -2003,7 +1976,6 @@ export default function QuoteDetail() {
   );
 
   const handleViewFile = (attachment: {
-    downloadUrl: string;
     fileName: string;
     id: string;
     contentType?: string;
@@ -2011,7 +1983,7 @@ export default function QuoteDetail() {
   }) => {
     if (isViewableFile(attachment.fileName)) {
       setSelectedFile({
-        url: attachment.downloadUrl,
+        url: `/download/attachment/${attachment.id}?inline`,
         type: getFileType(attachment.fileName).type,
         fileName: attachment.fileName,
         contentType: attachment.contentType,
@@ -2019,8 +1991,8 @@ export default function QuoteDetail() {
       });
       setIsFileViewerOpen(true);
     } else {
-      // Download non-viewable files
-      window.open(attachment.downloadUrl, "_blank");
+      // Download non-viewable files via unified download route
+      download(`/download/attachment/${attachment.id}`, attachment.fileName);
     }
   };
 
@@ -2174,45 +2146,11 @@ export default function QuoteDetail() {
     setIsCalculatorOpen(true);
   };
 
-  const handleDownloadFiles = async () => {
-    setIsDownloading(true);
-
-    try {
-      const downloadUrl = `/quotes/${quote.id}/download`;
-      const response = await fetch(downloadUrl);
-
-      if (!response.ok) {
-        throw new Error("Failed to download files");
-      }
-
-      // Get the blob from the response
-      const blob = await response.blob();
-
-      // Get filename from Content-Disposition header or use default
-      const contentDisposition = response.headers.get("Content-Disposition");
-      let filename = `Quote-${quote.quoteNumber}-Files.zip`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-
-      // Create a download link and trigger it
-      const blobUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(blobUrl);
-      document.body.removeChild(a);
-    } catch (error) {
-      console.error("Download error:", error);
-      alert("Failed to download files. Please try again.");
-    } finally {
-      setIsDownloading(false);
-    }
+  const handleDownloadFiles = () => {
+    download(
+      `/download/quote/${quote.id}`,
+      `Quote-${quote.quoteNumber}-Files.zip`
+    );
   };
 
   const handleSaveCalculation = (calculationData: Record<string, unknown>) => {
@@ -3686,7 +3624,6 @@ export default function QuoteDetail() {
                       fileName: string;
                       fileSize?: number;
                       contentType?: string;
-                      downloadUrl?: string;
                     }) => (
                       <div
                         key={attachment.id}
@@ -3699,35 +3636,16 @@ export default function QuoteDetail() {
                       }
                     `}
                         onClick={
-                          isViewableFile(attachment.fileName) &&
-                          attachment.downloadUrl
-                            ? () =>
-                                handleViewFile(
-                                  attachment as {
-                                    downloadUrl: string;
-                                    fileName: string;
-                                    id: string;
-                                    contentType?: string;
-                                    fileSize?: number;
-                                  }
-                                )
+                          isViewableFile(attachment.fileName)
+                            ? () => handleViewFile(attachment)
                             : undefined
                         }
                         onKeyDown={
-                          isViewableFile(attachment.fileName) &&
-                          attachment.downloadUrl
+                          isViewableFile(attachment.fileName)
                             ? (e) => {
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
-                                  handleViewFile(
-                                    attachment as {
-                                      downloadUrl: string;
-                                      fileName: string;
-                                      id: string;
-                                      contentType?: string;
-                                      fileSize?: number;
-                                    }
-                                  );
+                                  handleViewFile(attachment);
                                 }
                               }
                             : undefined
@@ -3767,7 +3685,10 @@ export default function QuoteDetail() {
                           {!isViewableFile(attachment.fileName) && (
                             <Button
                               onClick={() =>
-                                window.open(attachment.downloadUrl, "_blank")
+                                download(
+                                  `/download/attachment/${attachment.id}`,
+                                  attachment.fileName
+                                )
                               }
                               variant="secondary"
                               size="sm"
