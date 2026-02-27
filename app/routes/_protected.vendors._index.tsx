@@ -10,8 +10,9 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
+import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle"
 import { InputField, TextareaField, PhoneInputField } from "~/components/shared/FormField"
-import { tableStyles } from "~/utils/tw-styles"
+import { listCardStyles, tableStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
@@ -98,6 +99,7 @@ export default function Vendors() {
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [vendorType, setVendorType] = useState<"business" | "individual">("business")
+  const [view, setView] = useViewToggle("vendors-view")
 
   const filteredVendors = vendors.filter((vendor: Vendor) =>
     vendor.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -150,13 +152,18 @@ export default function Vendors() {
         onSearch={setSearchQuery}
       />
         
-      <div className="px-10 py-8">
-        <div className="flex justify-between items-center mb-5">
+      <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
+        <div className="flex justify-between items-center mb-5 gap-3">
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">Vendors ({filteredVendors.length})</h2>
-          <Button onClick={handleAdd}>Add Vendor</Button>
+          <div className="flex items-center gap-3">
+            <ViewToggle view={view} onChange={setView} />
+            <Button onClick={handleAdd}>Add Vendor</Button>
+          </div>
         </div>
 
-        <table className={tableStyles.container}>
+        {view === "list" ? (
+          <div className="overflow-x-auto">
+            <table className={tableStyles.container}>
           <thead className={tableStyles.header}>
             <tr>
               <th className={tableStyles.headerCell}>ID</th>
@@ -214,13 +221,13 @@ export default function Vendors() {
                         e.stopPropagation()
                         handleEdit(vendor)
                       }}
-                      className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                      className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
                       title="Quick Edit"
                     >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
-                        width="16"
-                        height="16"
+                        width="18"
+                        height="18"
                         fill="currentColor"
                         viewBox="0 0 16 16"
                       >
@@ -232,13 +239,13 @@ export default function Vendors() {
                         e.stopPropagation()
                         handleDelete(vendor)
                       }}
-                      className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                      className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
                       title="Archive"
                     >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
-                        width="16"
-                        height="16"
+                        width="18"
+                        height="18"
                         fill="currentColor"
                         viewBox="0 0 16 16"
                       >
@@ -250,7 +257,65 @@ export default function Vendors() {
               </tr>
             ))}
           </tbody>
-        </table>
+            </table>
+          </div>
+        ) : (
+          <div className={listCardStyles.grid}>
+            {filteredVendors.map((vendor: Vendor) => (
+              <div key={vendor.id} className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}>
+                <Link to={`/vendors/${vendor.id}`} className="no-underline">
+                  <div className={listCardStyles.header}>
+                    <div className={listCardStyles.title}>{vendor.displayName}</div>
+                  </div>
+                  <div className={listCardStyles.sectionGrid}>
+                    <div>
+                      <div className={listCardStyles.label}>Company</div>
+                      <div className={listCardStyles.value}>{vendor.companyName || "--"}</div>
+                    </div>
+                    <div>
+                      <div className={listCardStyles.label}>Contact</div>
+                      <div className={listCardStyles.value}>{vendor.contactName || "--"}</div>
+                    </div>
+                    <div>
+                      <div className={listCardStyles.label}>Email</div>
+                      <div className={listCardStyles.value}>{vendor.email || "--"}</div>
+                    </div>
+                    <div>
+                      <div className={listCardStyles.label}>Phone</div>
+                      <div className={listCardStyles.value}>{vendor.phone || "--"}</div>
+                    </div>
+                  </div>
+                </Link>
+                <div className={listCardStyles.actionRow}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleEdit(vendor)
+                    }}
+                    className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                    title="Quick Edit"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                      <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDelete(vendor)
+                    }}
+                    className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                    title="Archive"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                      <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {filteredVendors.length === 0 && (
           <div className={tableStyles.emptyState}>

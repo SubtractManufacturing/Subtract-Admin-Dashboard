@@ -34,6 +34,18 @@ export const cardStyles = {
   content: "font-semibold text-gray-500 dark:text-gray-400 transition-colors duration-150"
 }
 
+export const listCardStyles = {
+  grid: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4",
+  card: "bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 border border-gray-200 dark:border-gray-700 transition-colors duration-150",
+  clickableCard: "cursor-pointer hover:shadow-lg",
+  header: "flex items-start justify-between gap-3 mb-3",
+  title: "text-lg font-semibold text-gray-900 dark:text-gray-100",
+  sectionGrid: "grid grid-cols-2 gap-3",
+  label: "text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide",
+  value: "text-sm text-gray-900 dark:text-gray-100 mt-0.5",
+  actionRow: "flex items-center gap-2 mt-4 pt-3 border-t border-gray-200 dark:border-gray-700"
+}
+
 export const modalStyles = {
   overlay: "fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 transition-colors duration-150",
   content: "bg-white dark:bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 transition-colors duration-150",
@@ -61,6 +73,7 @@ export const styles = {
   table: tableStyles,
   status: statusStyles,
   card: cardStyles,
+  listCard: listCardStyles,
   modal: modalStyles,
   form: formStyles,
   button: buttonStyles

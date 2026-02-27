@@ -18,9 +18,9 @@ export default function SearchHeader({ breadcrumbs, onSearch }: SearchHeaderProp
     : breadcrumbs;
 
   return (
-    <div className="flex justify-between items-center px-10 py-2.5">
+    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 px-4 sm:px-6 lg:px-10 py-2.5">
       <Breadcrumbs items={breadcrumbItems} />
-      <div className="max-w-md flex-shrink-0">
+      <div className="w-full sm:w-auto sm:max-w-md flex-shrink-0">
         <Form className="bg-white dark:bg-gray-800 border border-gray-400 dark:border-gray-600 rounded flex items-center px-4 py-2 shadow-sm transition-colors duration-150" method="get">
           <svg
             className="text-gray-500 dark:text-gray-400 mr-2.5 transition-colors duration-150"

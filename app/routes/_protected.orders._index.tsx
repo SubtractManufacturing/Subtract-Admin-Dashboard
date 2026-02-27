@@ -23,8 +23,9 @@ import { getNextOrderNumber } from "~/lib/number-generator";
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
+import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle";
 import { InputField, SelectField } from "~/components/shared/FormField";
-import { tableStyles, statusStyles } from "~/utils/tw-styles";
+import { listCardStyles, tableStyles, statusStyles } from "~/utils/tw-styles";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -189,6 +190,7 @@ export default function Orders() {
   const [newOrderNumber, setNewOrderNumber] = useState("");
   const [isReassigningOrderNumber, setIsReassigningOrderNumber] = useState(false);
   const [reassignError, setReassignError] = useState("");
+  const [view, setView] = useViewToggle("orders-view");
 
   // Handle fetcher response
   useEffect(() => {
@@ -376,15 +378,20 @@ export default function Orders() {
         onSearch={setSearchQuery}
       />
 
-      <div className="px-10 py-8">
-          <div className="flex justify-between items-center mb-5">
-            <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
-              Orders ({filteredOrders.length})
-            </h2>
+      <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
+        <div className="flex justify-between items-center mb-5 gap-3">
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
+            Orders ({filteredOrders.length})
+          </h2>
+          <div className="flex items-center gap-3">
+            <ViewToggle view={view} onChange={setView} />
             <Button onClick={handleAdd}>Add Order</Button>
           </div>
+        </div>
 
-          <table className={tableStyles.container}>
+        {view === "list" ? (
+          <div className="overflow-x-auto">
+            <table className={tableStyles.container}>
             <thead className={tableStyles.header}>
               <tr>
                 <th className={tableStyles.headerCell}>Order #</th>
@@ -483,13 +490,13 @@ export default function Orders() {
                           e.stopPropagation();
                           handleEdit(order);
                         }}
-                        className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                        className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
                         title="Quick Edit"
                       >
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
-                          width="16"
-                          height="16"
+                          width="18"
+                          height="18"
                           fill="currentColor"
                           viewBox="0 0 16 16"
                         >
@@ -501,13 +508,13 @@ export default function Orders() {
                           e.stopPropagation();
                           handleDelete(order.id);
                         }}
-                        className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                        className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
                         title="Archive"
                       >
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
-                          width="16"
-                          height="16"
+                          width="18"
+                          height="18"
                           fill="currentColor"
                           viewBox="0 0 16 16"
                         >
@@ -519,8 +526,80 @@ export default function Orders() {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        ) : (
+          <div className={listCardStyles.grid}>
+            {filteredOrders.map((order: OrderWithRelations) => (
+              <div
+                key={order.id}
+                className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}
+                onClick={() => navigate(`/orders/${order.orderNumber}`)}
+              >
+                <div className={listCardStyles.header}>
+                  <div className={listCardStyles.title}>{order.orderNumber}</div>
+                  <div className={`${statusStyles.base} ${getStatusStyle(order.status)} text-sm`}>
+                    {getStatusDisplay(order.status)}
+                  </div>
+                </div>
+                <div className={listCardStyles.sectionGrid}>
+                  <div>
+                    <div className={listCardStyles.label}>Customer</div>
+                    <div className={listCardStyles.value}>{order.customer?.displayName || "--"}</div>
+                  </div>
+                  <div>
+                    <div className={listCardStyles.label}>Vendor</div>
+                    <div className={listCardStyles.value}>{order.vendor?.displayName || "--"}</div>
+                  </div>
+                  <div>
+                    <div className={listCardStyles.label}>Total</div>
+                    <div className={listCardStyles.value}>
+                      {formatCurrency(
+                        order.lineItems
+                          ?.reduce(
+                            (sum, item) => sum + item.quantity * parseFloat(item.unitPrice || "0"),
+                            0
+                          )
+                          .toString() || "0"
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={listCardStyles.label}>Ship Date</div>
+                    <div className={listCardStyles.value}>{formatDate(order.shipDate)}</div>
+                  </div>
+                </div>
+                <div className={listCardStyles.actionRow}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEdit(order);
+                    }}
+                    className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                    title="Quick Edit"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                      <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(order.id);
+                    }}
+                    className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                    title="Archive"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+                      <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <Modal
         isOpen={modalOpen}
@@ -567,8 +646,8 @@ export default function Orders() {
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
-                    width="16"
-                    height="16"
+                    width="18"
+                    height="18"
                     fill="currentColor"
                     viewBox="0 0 16 16"
                   >
@@ -649,7 +728,7 @@ export default function Orders() {
                   type="button"
                   onClick={handleGenerateOrderNumber}
                   disabled={fetcher.state === "submitting"}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Generate order number"
                 >
                   <svg

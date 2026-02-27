@@ -6,6 +6,7 @@ import { getAppConfig } from "~/lib/config.server";
 import { shouldShowEventsInNav, shouldShowVersionInHeader, shouldShowEmailsInNav } from "~/lib/featureFlags";
 import { getCategoryCounts } from "~/lib/emails";
 import Sidebar from "~/components/Sidebar";
+import MobileHeader from "~/components/MobileHeader";
 import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
 import { useCallback } from "react";
 
@@ -66,7 +67,8 @@ function ProtectedLayoutContent() {
         emailCategoryCounts={emailCategoryCounts}
         onComposeEmail={handleComposeEmail}
       />
-      <main className={`flex-1 transition-all duration-300 ${isExpanded ? "ml-64" : "ml-20"}`}>
+      <main className={`flex-1 transition-all duration-300 ml-0 ${isExpanded ? "md:ml-64" : "md:ml-20"}`}>
+        <MobileHeader />
         <Outlet />
       </main>
     </div>

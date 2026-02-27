@@ -6,6 +6,8 @@ interface SidebarContextType {
   isExpanded: boolean;
   toggleSidebar: () => void;
   setIsExpanded: (expanded: boolean) => void;
+  isMobileOpen: boolean;
+  setMobileOpen: (open: boolean) => void;
 }
 
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
@@ -16,6 +18,7 @@ interface SidebarProviderProps {
 
 export function SidebarProvider({ children }: SidebarProviderProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isMobileOpen, setMobileOpen] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
   // Initialize sidebar state from localStorage
@@ -42,6 +45,8 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     isExpanded,
     toggleSidebar,
     setIsExpanded,
+    isMobileOpen,
+    setMobileOpen,
   };
 
   return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>;

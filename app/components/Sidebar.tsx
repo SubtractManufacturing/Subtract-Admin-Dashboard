@@ -51,8 +51,9 @@ export default function Sidebar({
   emailCategoryCounts,
   onComposeEmail,
 }: SidebarProps) {
-  const { isExpanded, toggleSidebar } = useSidebar();
+  const { isExpanded, toggleSidebar, isMobileOpen, setMobileOpen } = useSidebar();
   const location = useLocation();
+  const showLabels = isExpanded || isMobileOpen;
   const { theme, toggleTheme } = useTheme();
   const logoutFetcher = useFetcher();
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
@@ -62,6 +63,10 @@ export default function Sidebar({
 
   // Auto-expand emails dropdown when on email pages
   const isOnEmailPage = location.pathname.startsWith("/emails");
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname, setMobileOpen]);
+
   useEffect(() => {
     if (isOnEmailPage) {
       setIsEmailsExpanded(true);
@@ -277,21 +282,28 @@ export default function Sidebar({
   };
 
   return (
-    <aside
-      className={`fixed left-0 top-0 h-screen bg-gray-800 dark:bg-slate-950 dark:border-r dark:border-slate-800 text-white flex flex-col transition-all duration-300 z-40 overflow-x-hidden ${
-        isExpanded ? "w-64" : "w-20"
-      }`}
-    >
+    <>
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+      <aside
+        className={`fixed left-0 top-0 h-screen bg-gray-800 dark:bg-slate-950 dark:border-r dark:border-slate-800 text-white flex flex-col transition-all duration-300 z-50 overflow-x-hidden w-[80vw] max-w-xs ${
+          isMobileOpen ? "translate-x-0" : "-translate-x-full"
+        } md:translate-x-0 ${isExpanded ? "md:w-64" : "md:w-20"}`}
+      >
       {/* Header with toggle button */}
       <div className="flex items-center justify-between px-4 py-4 border-b border-gray-700 dark:border-slate-800 flex-shrink-0">
-        {isExpanded && (
+        {showLabels && (
           <Link to="/" className="text-white no-underline hover:opacity-80 flex-1 min-w-0">
             <h1 className="text-lg font-semibold truncate">Subtract</h1>
           </Link>
         )}
         <button
           onClick={toggleSidebar}
-          className="p-2 rounded hover:bg-white/10 dark:hover:bg-slate-800 transition-colors flex-shrink-0"
+          className="p-2 rounded hover:bg-white/10 dark:hover:bg-slate-800 transition-colors flex-shrink-0 hidden md:block"
           aria-label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
         >
           <svg
@@ -323,7 +335,7 @@ export default function Sidebar({
                   }`}
                 >
                   <span className="flex-shrink-0">{item.icon}</span>
-                  {isExpanded ? (
+                  {showLabels ? (
                     <span className="font-medium truncate">{item.label}</span>
                   ) : (
                     <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 dark:bg-slate-800 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-lg">
@@ -356,7 +368,7 @@ export default function Sidebar({
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                       </svg>
                     </span>
-                    {isExpanded ? (
+                    {showLabels ? (
                       <span className="font-medium truncate">Emails</span>
                     ) : (
                       <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 dark:bg-slate-800 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-lg">
@@ -365,7 +377,7 @@ export default function Sidebar({
                     )}
                   </Link>
                   {/* Dropdown toggle button - inside the same box */}
-                  {isExpanded && (
+                  {showLabels && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -391,7 +403,7 @@ export default function Sidebar({
                 </div>
 
                 {/* Email sub-items dropdown */}
-                {isExpanded && isEmailsExpanded && (
+                {showLabels && isEmailsExpanded && (
                   <div className="mt-1 ml-4 space-y-0.5">
                     {/* Compose button - styled as CTA with distinct color */}
                     {onComposeEmail && (
@@ -460,7 +472,7 @@ export default function Sidebar({
                   }`}
                 >
                   <span className="flex-shrink-0">{item.icon}</span>
-                  {isExpanded ? (
+                  {showLabels ? (
                     <span className="font-medium truncate">{item.label}</span>
                   ) : (
                     <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 dark:bg-slate-800 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-lg">
@@ -480,9 +492,9 @@ export default function Sidebar({
         <div className="relative">
           <button
             ref={accountButtonRef}
-            onClick={() => isExpanded && setIsAccountMenuOpen(!isAccountMenuOpen)}
+            onClick={() => showLabels && setIsAccountMenuOpen(!isAccountMenuOpen)}
             className={`group relative flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors text-left ${
-              isExpanded 
+              showLabels 
                 ? "hover:bg-white/10 dark:hover:bg-slate-800 cursor-pointer" 
                 : "cursor-default"
             }`}
@@ -490,7 +502,7 @@ export default function Sidebar({
             <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold text-sm overflow-hidden flex-shrink-0">
               {userInitials || "U"}
             </div>
-            {isExpanded ? (
+            {showLabels ? (
               <>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white truncate">{userName || "User"}</p>
@@ -513,7 +525,7 @@ export default function Sidebar({
           </button>
 
           {/* Account dropdown menu */}
-          {isAccountMenuOpen && isExpanded && (
+          {isAccountMenuOpen && showLabels && (
             <div
               ref={accountMenuRef}
               className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 py-1 z-50"
@@ -588,6 +600,7 @@ export default function Sidebar({
           )}
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
