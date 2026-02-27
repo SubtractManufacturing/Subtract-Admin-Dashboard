@@ -13,7 +13,7 @@ import {
   useRouteError,
   isRouteErrorResponse,
 } from "@remix-run/react";
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   getQuote,
   updateQuote,
@@ -74,12 +74,14 @@ import { eq, inArray, and, or } from "drizzle-orm";
 
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
+import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import Modal from "~/components/shared/Modal";
 import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
-import { QuotePartsModal } from "~/components/quotes/QuotePartsModal";
-import AddQuoteLineItemModal from "~/components/quotes/AddQuoteLineItemModal";
+import { AddLineItemModal } from "~/components/shared/AddLineItemModal";
+import { LineItemsSection } from "~/components/shared/LineItemsSection";
+import { IconButton } from "~/components/shared/IconButton";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
@@ -88,12 +90,16 @@ import SendEmailModal from "~/components/quotes/SendEmailModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { useDownload } from "~/hooks/useDownload";
-import { tableStyles } from "~/utils/tw-styles";
-import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
 import {
   createPriceCalculation,
   getLatestCalculationsForQuote,
 } from "~/lib/quotePriceCalculations";
+import {
+  normalizeQuoteLineItems,
+  type NormalizedDrawing,
+  type NormalizedLineItem,
+  type NormalizedPart,
+} from "~/components/shared/line-items/types";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -1759,18 +1765,9 @@ export default function QuoteDetail() {
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
-  const [selectedFile, setSelectedFile] = useState<{
-    url: string;
-    type: string;
-    fileName: string;
-    contentType?: string;
-    fileSize?: number;
-  } | null>(null);
-  const [isFileViewerOpen, setIsFileViewerOpen] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [pollCount, setPollCount] = useState(0);
-  const [isPartsModalOpen, setIsPartsModalOpen] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -1790,11 +1787,6 @@ export default function QuoteDetail() {
     notes: string | null;
   };
 
-  const [editingLineItem, setEditingLineItem] = useState<{
-    id: number;
-    field: "quantity" | "unitPrice" | "totalPrice" | "description" | "notes";
-    value: string;
-  } | null>(null);
   const [optimisticLineItems, setOptimisticLineItems] = useState<
     LineItem[] | undefined
   >(quote.lineItems as LineItem[] | undefined);
@@ -1809,9 +1801,13 @@ export default function QuoteDetail() {
       ? new Date(quote.validUntil).toISOString().split("T")[0]
       : ""
   );
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const editInputRef = useRef<HTMLInputElement>(null);
   const lineItemFetcher = useFetcher();
+  const drawingFetcher = useFetcher();
+  const [selectedDrawing, setSelectedDrawing] = useState<{
+    drawing: NormalizedDrawing;
+    quotePartId: string;
+  } | null>(null);
+  const [drawingModalOpen, setDrawingModalOpen] = useState(false);
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
@@ -1927,6 +1923,41 @@ export default function QuoteDetail() {
     }
   }, [optimisticLineItems]);
 
+  const normalizedLineItems = useMemo(
+    () =>
+      normalizeQuoteLineItems(
+        (optimisticLineItems || []) as Array<{
+          id: number;
+          quotePartId: string | null;
+          name: string | null;
+          description: string | null;
+          notes: string | null;
+          quantity: number;
+          unitPrice: string;
+          totalPrice: string;
+        }>,
+        (quote.parts || []) as Array<{
+          id: string;
+          partName: string;
+          material: string | null;
+          tolerance: string | null;
+          finish: string | null;
+          conversionStatus: string | null;
+          partFileUrl?: string | null;
+          signedFileUrl?: string;
+          signedMeshUrl?: string;
+          signedThumbnailUrl?: string;
+          drawings?: Array<{
+            id: string;
+            fileName: string;
+            contentType: string | null;
+            fileSize: number | null;
+          }>;
+        }>
+      ),
+    [optimisticLineItems, quote.parts]
+  );
+
   // Track if we've handled the last fetcher response to prevent re-triggering
   const [lastHandledFetcherData, setLastHandledFetcherData] =
     useState<unknown>(null);
@@ -1958,52 +1989,6 @@ export default function QuoteDetail() {
     revalidator,
     lastHandledFetcherData,
   ]);
-
-  const handleFileUpload = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-
-      const formData = new FormData();
-      formData.append("file", file);
-
-      fetcher.submit(formData, {
-        method: "post",
-        encType: "multipart/form-data",
-      });
-    },
-    [fetcher]
-  );
-
-  const handleViewFile = (attachment: {
-    fileName: string;
-    id: string;
-    contentType?: string;
-    fileSize?: number;
-  }) => {
-    if (isViewableFile(attachment.fileName)) {
-      setSelectedFile({
-        url: `/download/attachment/${attachment.id}?inline`,
-        type: getFileType(attachment.fileName).type,
-        fileName: attachment.fileName,
-        contentType: attachment.contentType,
-        fileSize: attachment.fileSize,
-      });
-      setIsFileViewerOpen(true);
-    } else {
-      // Download non-viewable files via unified download route
-      download(`/download/attachment/${attachment.id}`, attachment.fileName);
-    }
-  };
-
-  const handleDeleteAttachment = (attachmentId: string) => {
-    if (confirm("Are you sure you want to delete this attachment?")) {
-      fetcher.submit(
-        { intent: "deleteAttachment", attachmentId },
-        { method: "post" }
-      );
-    }
-  };
 
   const handleView3DModel = (part: {
     id: string;
@@ -2187,129 +2172,106 @@ export default function QuoteDetail() {
     }
   };
 
-  const startEditingLineItem = (
-    itemId: number,
-    field: "quantity" | "unitPrice" | "totalPrice" | "description" | "notes",
-    currentValue: string | number | null
-  ) => {
-    const value =
-      field === "notes" || field === "description"
-        ? (currentValue || "").toString()
-        : field === "quantity"
-        ? currentValue?.toString() || ""
-        : currentValue?.toString().replace(/[^0-9.]/g, "") || "";
-    setEditingLineItem({ id: itemId, field, value });
-    setTimeout(() => {
-      if (editInputRef.current) {
-        editInputRef.current.focus();
-        if (field !== "notes" && field !== "description") {
-          editInputRef.current.select();
-        }
-      }
-    }, 0);
-  };
+  const handleSaveLineItemField = useCallback(
+    (
+      lineItemId: number,
+      field: "description" | "notes" | "quantity" | "unitPrice" | "totalPrice",
+      value: string
+    ) => {
+      const currentItem = optimisticLineItems?.find((item) => item.id === lineItemId);
+      if (!currentItem) return;
 
-  const cancelEditingLineItem = () => {
-    setEditingLineItem(null);
-  };
-
-  const saveLineItemEdit = () => {
-    if (!editingLineItem) return;
-
-    // Find the current item
-    const currentItem = optimisticLineItems?.find(
-      (item) => item.id === editingLineItem.id
-    );
-    if (!currentItem) return;
-
-    // Validate and calculate related values
-    const updatedItem: Partial<LineItem> = {};
-
-    if (editingLineItem.field === "description") {
-      // Update description (no validation needed)
-      updatedItem.description = editingLineItem.value || null;
-    } else if (editingLineItem.field === "notes") {
-      // Update notes (no validation needed)
-      updatedItem.notes = editingLineItem.value || null;
-    } else if (editingLineItem.field === "quantity") {
-      const qty = parseInt(editingLineItem.value);
-      if (isNaN(qty) || qty <= 0) {
-        alert("Please enter a valid quantity");
-        return;
-      }
-
-      // Update quantity and recalculate total based on unit price
-      updatedItem.quantity = qty;
-      const unitPrice = parseFloat(currentItem.unitPrice);
-      if (!isNaN(unitPrice)) {
+      const updatedItem: Partial<LineItem> = {};
+      if (field === "description") updatedItem.description = value || null;
+      if (field === "notes") updatedItem.notes = value || null;
+      if (field === "quantity") {
+        const qty = parseInt(value, 10);
+        if (Number.isNaN(qty) || qty <= 0) return;
+        updatedItem.quantity = qty;
+        const unitPrice = parseFloat(currentItem.unitPrice || "0");
         updatedItem.totalPrice = (qty * unitPrice).toFixed(2);
       }
-    } else if (editingLineItem.field === "unitPrice") {
-      const unitPrice = parseFloat(editingLineItem.value);
-      if (isNaN(unitPrice) || unitPrice < 0) {
-        alert("Please enter a valid price");
-        return;
+      if (field === "unitPrice") {
+        const unitPrice = parseFloat(value);
+        if (Number.isNaN(unitPrice) || unitPrice < 0) return;
+        updatedItem.unitPrice = unitPrice.toFixed(2);
+        updatedItem.totalPrice = (currentItem.quantity * unitPrice).toFixed(2);
+      }
+      if (field === "totalPrice") {
+        const totalPrice = parseFloat(value);
+        if (Number.isNaN(totalPrice) || totalPrice < 0) return;
+        updatedItem.totalPrice = totalPrice.toFixed(2);
+        if (currentItem.quantity > 0) {
+          updatedItem.unitPrice = (totalPrice / currentItem.quantity).toFixed(2);
+        }
       }
 
-      // Update unit price and recalculate total based on quantity
-      updatedItem.unitPrice = unitPrice.toFixed(2);
-      updatedItem.totalPrice = (currentItem.quantity * unitPrice).toFixed(2);
-    } else if (editingLineItem.field === "totalPrice") {
-      const totalPrice = parseFloat(editingLineItem.value);
-      if (isNaN(totalPrice) || totalPrice < 0) {
-        alert("Please enter a valid price");
-        return;
-      }
+      setOptimisticLineItems((prevItems) =>
+        prevItems?.map((item) =>
+          item.id === lineItemId ? { ...item, ...updatedItem } : item
+        )
+      );
 
-      // Update total price and recalculate unit price based on quantity
-      updatedItem.totalPrice = totalPrice.toFixed(2);
-      if (currentItem.quantity > 0) {
-        updatedItem.unitPrice = (totalPrice / currentItem.quantity).toFixed(2);
-      }
-    }
+      const formData = new FormData();
+      formData.append("intent", "updateLineItem");
+      formData.append("lineItemId", lineItemId.toString());
+      if (updatedItem.description !== undefined)
+        formData.append("description", updatedItem.description || "");
+      if (updatedItem.notes !== undefined)
+        formData.append("notes", updatedItem.notes || "");
+      if (updatedItem.quantity !== undefined)
+        formData.append("quantity", updatedItem.quantity.toString());
+      if (updatedItem.unitPrice !== undefined)
+        formData.append("unitPrice", updatedItem.unitPrice);
+      if (updatedItem.totalPrice !== undefined)
+        formData.append("totalPrice", updatedItem.totalPrice);
+      lineItemFetcher.submit(formData, { method: "post" });
+    },
+    [lineItemFetcher, optimisticLineItems]
+  );
 
-    // Optimistically update the line items with all calculated values
-    setOptimisticLineItems((prevItems) =>
-      prevItems?.map((item) =>
-        item.id === editingLineItem.id ? { ...item, ...updatedItem } : item
-      )
-    );
+  const handleSaveQuotePartAttribute = useCallback(
+    (partId: string, field: "material" | "tolerance" | "finish", value: string) => {
+      const part = quote.parts?.find((p: { id: string }) => p.id === partId);
+      if (!part) return;
+      const formData = new FormData();
+      formData.append("intent", "updateQuotePartAttributes");
+      formData.append("quotePartId", partId);
+      formData.append("material", field === "material" ? value : part.material || "");
+      formData.append("tolerance", field === "tolerance" ? value : part.tolerance || "");
+      formData.append("finish", field === "finish" ? value : part.finish || "");
+      fetcher.submit(formData, { method: "post" });
+    },
+    [fetcher, quote.parts]
+  );
 
-    // Submit all updated values to the backend
-    const formData = new FormData();
-    formData.append("intent", "updateLineItem");
-    formData.append("lineItemId", editingLineItem.id.toString());
+  const handleQuoteDrawingUpload = useCallback(
+    (partId: string, files: FileList) => {
+      const formData = new FormData();
+      formData.append("intent", "addDrawingToExistingPart");
+      formData.append("quotePartId", partId);
+      Array.from(files).forEach((file, index) => {
+        formData.append(`drawing_${index}`, file);
+      });
+      formData.append("drawingCount", files.length.toString());
+      drawingFetcher.submit(formData, {
+        method: "post",
+        encType: "multipart/form-data",
+      });
+    },
+    [drawingFetcher]
+  );
 
-    // Send all updated fields to the backend
-    if (updatedItem.description !== undefined) {
-      formData.append("description", updatedItem.description || "");
-    }
-    if (updatedItem.notes !== undefined) {
-      formData.append("notes", updatedItem.notes || "");
-    }
-    if (updatedItem.quantity !== undefined) {
-      formData.append("quantity", updatedItem.quantity.toString());
-    }
-    if (updatedItem.unitPrice !== undefined) {
-      formData.append("unitPrice", updatedItem.unitPrice);
-    }
-    if (updatedItem.totalPrice !== undefined) {
-      formData.append("totalPrice", updatedItem.totalPrice);
-    }
-
-    lineItemFetcher.submit(formData, { method: "post" });
-    setEditingLineItem(null);
-  };
-
-  const handleLineItemKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      saveLineItemEdit();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      cancelEditingLineItem();
-    }
-  };
+  const handleQuoteDrawingDelete = useCallback(
+    (drawingId: string, quotePartId: string) => {
+      const formData = new FormData();
+      formData.append("intent", "deleteDrawing");
+      formData.append("drawingId", drawingId);
+      formData.append("quotePartId", quotePartId);
+      fetcher.submit(formData, { method: "post" });
+    },
+    [fetcher]
+  );
 
   // Format currency
   const formatCurrency = (amount: string | null) => {
@@ -3176,549 +3138,57 @@ export default function QuoteDetail() {
             </div>
           </div>
 
-          {/* Line Items Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                Line Items
-              </h3>
-              <div className="flex gap-2">
-                {quote.parts && quote.parts.length > 0 && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => setIsPartsModalOpen(true)}
-                  >
-                    View Parts ({quote.parts.length})
-                  </Button>
-                )}
-                {!isQuoteLocked && (
-                  <Button size="sm" onClick={handleAddLineItem}>
-                    Add Line Item
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="p-6">
-              {optimisticLineItems && optimisticLineItems.length > 0 ? (
-                <table className={tableStyles.container}>
-                  <thead className={tableStyles.header}>
-                    <tr>
-                      <th className={tableStyles.headerCell}>Name</th>
-                      <th className={tableStyles.headerCell}>Description</th>
-                      <th className={tableStyles.headerCell}>Notes</th>
-                      <th className={tableStyles.headerCell}>Quantity</th>
-                      <th className={tableStyles.headerCell}>Unit Price</th>
-                      <th className={tableStyles.headerCell}>Total Price</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {optimisticLineItems.map((item) => {
-                      const part = quote.parts?.find(
-                        (p: {
-                          id: string;
-                          partName: string;
-                          signedThumbnailUrl?: string;
-                          thumbnailUrl?: string | null;
-                          conversionStatus?: string | null;
-                          partFileUrl?: string | null;
-                        }) => p.id === item.quotePartId
-                      );
-
-                      // Show spinner if:
-                      // 1. Conversion is in progress
-                      // 2. Conversion completed but thumbnail not generated yet
-                      // 3. Thumbnail exists but signed URL not loaded yet
-                      const isProcessing =
-                        part &&
-                        (part.conversionStatus === "in_progress" ||
-                          part.conversionStatus === "queued" ||
-                          part.conversionStatus === "pending" ||
-                          (part.conversionStatus === "completed" &&
-                            !part.thumbnailUrl) ||
-                          (part.thumbnailUrl && !part.signedThumbnailUrl) ||
-                          (part.partFileUrl && !part.conversionStatus));
-
-                      return (
-                        <tr
-                          key={item.id}
-                          className={`${tableStyles.row} group`}
-                        >
-                          <td className={tableStyles.cell}>
-                            <div className="flex items-center gap-3">
-                              {part && (
-                                <>
-                                  {part.signedThumbnailUrl ? (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        handleView3DModel(
-                                          part as {
-                                            id: string;
-                                            partName: string;
-                                            signedMeshUrl?: string;
-                                            signedFileUrl?: string;
-                                            signedThumbnailUrl?: string;
-                                          }
-                                        )
-                                      }
-                                      className="p-0 border-0 bg-transparent cursor-pointer"
-                                      title="Click to view 3D model"
-                                    >
-                                      <img
-                                        src={part.signedThumbnailUrl}
-                                        alt={part.partName}
-                                        className="w-12 h-12 object-cover rounded bg-gray-100 dark:bg-gray-800 flex-shrink-0 hover:opacity-80 transition-opacity"
-                                      />
-                                    </button>
-                                  ) : (
-                                    <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded flex items-center justify-center flex-shrink-0 relative">
-                                      {isProcessing ? (
-                                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-                                      ) : (
-                                        <svg
-                                          className="w-6 h-6 text-gray-400"
-                                          fill="none"
-                                          stroke="currentColor"
-                                          viewBox="0 0 24 24"
-                                        >
-                                          <path
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                            strokeWidth={2}
-                                            d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                                          />
-                                        </svg>
-                                      )}
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              <span>
-                                {part?.partName ||
-                                  item.name ||
-                                  item.description ||
-                                  "Line Item"}
-                              </span>
-                            </div>
-                          </td>
-                          <td
-                            className={`${tableStyles.cell} ${
-                              !isQuoteLocked
-                                ? "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                : ""
-                            }`}
-                            onClick={() =>
-                              !isQuoteLocked &&
-                              startEditingLineItem(
-                                item.id,
-                                "description",
-                                item.description
-                              )
-                            }
-                          >
-                            {editingLineItem?.id === item.id &&
-                            editingLineItem?.field === "description" ? (
-                              <textarea
-                                className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white resize-none"
-                                value={editingLineItem.value}
-                                onChange={(e) =>
-                                  setEditingLineItem({
-                                    ...editingLineItem,
-                                    value: e.target.value,
-                                  })
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" && e.ctrlKey) {
-                                    e.preventDefault();
-                                    saveLineItemEdit();
-                                  } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    cancelEditingLineItem();
-                                  }
-                                }}
-                                onBlur={saveLineItemEdit}
-                                onClick={(e) => e.stopPropagation()}
-                                rows={2}
-                                placeholder="Add description... (Ctrl+Enter to save, Esc to cancel)"
-                              />
-                            ) : (
-                              <span
-                                className="block truncate max-w-xs"
-                                title={item.description || ""}
-                              >
-                                {item.description || "—"}
-                              </span>
-                            )}
-                          </td>
-                          <td
-                            className={`${tableStyles.cell} ${
-                              !isQuoteLocked
-                                ? "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                : ""
-                            }`}
-                            onClick={() =>
-                              !isQuoteLocked &&
-                              startEditingLineItem(item.id, "notes", item.notes)
-                            }
-                          >
-                            {editingLineItem?.id === item.id &&
-                            editingLineItem?.field === "notes" ? (
-                              <textarea
-                                className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white resize-none"
-                                value={editingLineItem.value}
-                                onChange={(e) =>
-                                  setEditingLineItem({
-                                    ...editingLineItem,
-                                    value: e.target.value,
-                                  })
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" && e.ctrlKey) {
-                                    e.preventDefault();
-                                    saveLineItemEdit();
-                                  } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    cancelEditingLineItem();
-                                  }
-                                }}
-                                onBlur={saveLineItemEdit}
-                                onClick={(e) => e.stopPropagation()}
-                                rows={2}
-                                placeholder="Add notes... (Ctrl+Enter to save, Esc to cancel)"
-                              />
-                            ) : (
-                              <span
-                                className="block truncate max-w-xs"
-                                title={item.notes || ""}
-                              >
-                                {item.notes || "—"}
-                              </span>
-                            )}
-                          </td>
-                          <td
-                            className={`${tableStyles.cell} ${
-                              !isQuoteLocked
-                                ? "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                : ""
-                            }`}
-                            onClick={() =>
-                              !isQuoteLocked &&
-                              startEditingLineItem(
-                                item.id,
-                                "quantity",
-                                item.quantity
-                              )
-                            }
-                          >
-                            {editingLineItem?.id === item.id &&
-                            editingLineItem?.field === "quantity" ? (
-                              <input
-                                ref={editInputRef}
-                                type="number"
-                                className="w-20 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
-                                value={editingLineItem.value}
-                                onChange={(e) =>
-                                  setEditingLineItem({
-                                    ...editingLineItem,
-                                    value: e.target.value,
-                                  })
-                                }
-                                onKeyDown={handleLineItemKeyDown}
-                                onBlur={cancelEditingLineItem}
-                                onClick={(e) => e.stopPropagation()}
-                                min="1"
-                              />
-                            ) : (
-                              item.quantity
-                            )}
-                          </td>
-                          <td
-                            className={`${tableStyles.cell} ${
-                              !isQuoteLocked
-                                ? "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                : ""
-                            }`}
-                            onClick={() =>
-                              !isQuoteLocked &&
-                              startEditingLineItem(
-                                item.id,
-                                "unitPrice",
-                                item.unitPrice
-                              )
-                            }
-                          >
-                            {editingLineItem?.id === item.id &&
-                            editingLineItem?.field === "unitPrice" ? (
-                              <div className="flex items-center">
-                                <span className="mr-1">$</span>
-                                <input
-                                  ref={editInputRef}
-                                  type="text"
-                                  className="w-24 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
-                                  value={editingLineItem.value}
-                                  onChange={(e) =>
-                                    setEditingLineItem({
-                                      ...editingLineItem,
-                                      value: e.target.value,
-                                    })
-                                  }
-                                  onKeyDown={handleLineItemKeyDown}
-                                  onBlur={cancelEditingLineItem}
-                                  onClick={(e) => e.stopPropagation()}
-                                />
-                              </div>
-                            ) : (
-                              `$${item.unitPrice}`
-                            )}
-                          </td>
-                          <td
-                            className={`${tableStyles.cell} ${
-                              !isQuoteLocked
-                                ? "cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                                : ""
-                            }`}
-                            onClick={() =>
-                              !isQuoteLocked &&
-                              startEditingLineItem(
-                                item.id,
-                                "totalPrice",
-                                item.totalPrice
-                              )
-                            }
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center">
-                                {editingLineItem?.id === item.id &&
-                                editingLineItem?.field === "totalPrice" ? (
-                                  <>
-                                    <span className="mr-1">$</span>
-                                    <input
-                                      ref={editInputRef}
-                                      type="text"
-                                      className="w-24 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
-                                      value={editingLineItem.value}
-                                      onChange={(e) =>
-                                        setEditingLineItem({
-                                          ...editingLineItem,
-                                          value: e.target.value,
-                                        })
-                                      }
-                                      onKeyDown={handleLineItemKeyDown}
-                                      onBlur={cancelEditingLineItem}
-                                      onClick={(e) => e.stopPropagation()}
-                                    />
-                                  </>
-                                ) : (
-                                  `$${item.totalPrice}`
-                                )}
-                              </div>
-                              {!isQuoteLocked && (
-                                <div className="flex items-center gap-2">
-                                  {part && canAccessPriceCalculator && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenCalculatorForPart(part.id);
-                                        // Remove focus after click
-                                        (e.target as HTMLButtonElement).blur();
-                                      }}
-                                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all outline-none focus:outline-none"
-                                      title="Calculate price for this part"
-                                    >
-                                      <svg
-                                        className="w-4 h-4"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        viewBox="0 0 24 24"
-                                      >
-                                        <path
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                          strokeWidth={2}
-                                          d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-                                        />
-                                      </svg>
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteLineItem(item.id, part?.id);
-                                      // Remove focus after click
-                                      (e.target as HTMLButtonElement).blur();
-                                    }}
-                                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus:outline-none"
-                                    title="Delete line item"
-                                  >
-                                    <svg
-                                      className="w-4 h-4"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      viewBox="0 0 24 24"
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                                      />
-                                    </svg>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="px-4 py-3 text-right font-bold text-gray-700 dark:text-gray-300"
-                      >
-                        Total: ${optimisticTotal}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
-                  No line items added yet.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Attachments Section */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                Attachments
-              </h3>
-              <div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  onChange={handleFileUpload}
-                  className="hidden"
+          <LineItemsSection
+            items={normalizedLineItems}
+            entityType="quote"
+            readOnly={isQuoteLocked}
+            subtotal={formatCurrency(optimisticTotal)}
+            onAdd={handleAddLineItem}
+            onDelete={handleDeleteLineItem}
+            onSaveField={handleSaveLineItemField}
+            onSaveAttribute={handleSaveQuotePartAttribute}
+            onDrawingUpload={handleQuoteDrawingUpload}
+            onDrawingDelete={handleQuoteDrawingDelete}
+            onView3DModel={(part: NormalizedPart) => {
+              handleView3DModel({
+                id: part.id,
+                partName: part.partName || "Part",
+                signedMeshUrl: part.modelUrl,
+                signedFileUrl: part.solidModelUrl,
+                signedThumbnailUrl: part.thumbnailUrl,
+                partFileUrl: part.cadFileUrl,
+              });
+            }}
+            onViewDrawing={(drawing: NormalizedDrawing, quotePartId: string) => {
+              setSelectedDrawing({ drawing, quotePartId });
+              setDrawingModalOpen(true);
+            }}
+            rowExtraActions={(item: NormalizedLineItem) =>
+              item.part && canAccessPriceCalculator ? (
+                <IconButton
+                  icon={
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                      />
+                    </svg>
+                  }
+                  title="Price Calculator"
+                  onClick={() => handleOpenCalculatorForPart(item.part!.id)}
                 />
-                {!isQuoteLocked && (
-                  <Button
-                    onClick={() => fileInputRef.current?.click()}
-                    size="sm"
-                  >
-                    Upload File
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="p-6">
-              {attachments && attachments.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {attachments.map(
-                    (attachment: {
-                      id: string;
-                      fileName: string;
-                      fileSize?: number;
-                      contentType?: string;
-                    }) => (
-                      <div
-                        key={attachment.id}
-                        className={`
-                      relative p-4 rounded-lg border-2 border-gray-200 dark:border-gray-600 transition-all
-                      ${
-                        isViewableFile(attachment.fileName)
-                          ? "bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:outline-none"
-                          : "bg-gray-50 dark:bg-gray-700"
-                      }
-                    `}
-                        onClick={
-                          isViewableFile(attachment.fileName)
-                            ? () => handleViewFile(attachment)
-                            : undefined
-                        }
-                        onKeyDown={
-                          isViewableFile(attachment.fileName)
-                            ? (e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  handleViewFile(attachment);
-                                }
-                              }
-                            : undefined
-                        }
-                        role={
-                          isViewableFile(attachment.fileName)
-                            ? "button"
-                            : undefined
-                        }
-                        tabIndex={
-                          isViewableFile(attachment.fileName) ? 0 : undefined
-                        }
-                      >
-                        <div className="flex-1 pointer-events-none">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                              {attachment.fileName}
-                            </p>
-                            {isViewableFile(attachment.fileName) && (
-                              <span className="text-xs bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
-                                {getFileType(
-                                  attachment.fileName
-                                ).type.toUpperCase()}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            {formatFileSize(attachment.fileSize || 0)}
-                          </p>
-                        </div>
-                        <div
-                          className="absolute top-4 right-4 flex gap-2 pointer-events-auto"
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => e.stopPropagation()}
-                          role="presentation"
-                        >
-                          {!isViewableFile(attachment.fileName) && (
-                            <Button
-                              onClick={() =>
-                                download(
-                                  `/download/attachment/${attachment.id}`,
-                                  attachment.fileName
-                                )
-                              }
-                              variant="secondary"
-                              size="sm"
-                            >
-                              Download
-                            </Button>
-                          )}
-                          {!isQuoteLocked && (
-                            <Button
-                              onClick={() =>
-                                handleDeleteAttachment(attachment.id)
-                              }
-                              variant="danger"
-                              size="sm"
-                            >
-                              Delete
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  )}
-                </div>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
-                  No attachments uploaded yet.
-                </p>
-              )}
-            </div>
-          </div>
+              ) : null
+            }
+          />
+
+          <AttachmentsSection
+            attachments={attachments || []}
+            entityType="quote"
+            entityId={quote.id}
+            readOnly={isQuoteLocked}
+          />
 
           {/* Notes and Event Log Section - Side by Side */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -3761,28 +3231,27 @@ export default function QuoteDetail() {
         </div>
       </div>
 
-      {/* File Viewer Modal */}
-      {selectedFile && (
+      {selectedDrawing && (
         <FileViewerModal
-          isOpen={isFileViewerOpen}
+          isOpen={drawingModalOpen}
           onClose={() => {
-            setIsFileViewerOpen(false);
-            setSelectedFile(null);
+            setDrawingModalOpen(false);
+            setSelectedDrawing(null);
           }}
-          fileUrl={selectedFile.url}
-          fileName={selectedFile.fileName}
-          contentType={selectedFile.contentType}
-          fileSize={selectedFile.fileSize}
-        />
-      )}
-
-      {/* Quote Parts Modal */}
-      {quote.parts && quote.parts.length > 0 && (
-        <QuotePartsModal
-          isOpen={isPartsModalOpen}
-          onClose={() => setIsPartsModalOpen(false)}
-          parts={quote.parts}
-          quoteId={quote.id}
+          fileUrl={selectedDrawing.drawing.signedUrl}
+          fileName={selectedDrawing.drawing.fileName}
+          contentType={selectedDrawing.drawing.contentType || undefined}
+          fileSize={selectedDrawing.drawing.fileSize || undefined}
+          onDelete={
+            isQuoteLocked
+              ? undefined
+              : () =>
+                  handleQuoteDrawingDelete(
+                    selectedDrawing.drawing.id,
+                    selectedDrawing.quotePartId
+                  )
+          }
+          isDeleting={fetcher.state === "submitting"}
         />
       )}
 
@@ -3849,10 +3318,12 @@ export default function QuoteDetail() {
       )}
 
       {/* Add Line Item Modal */}
-      <AddQuoteLineItemModal
+      <AddLineItemModal
         isOpen={isAddLineItemModalOpen}
         onClose={() => setIsAddLineItemModalOpen(false)}
         onSubmit={handleAddLineItemSubmit}
+        context="quote"
+        customerId={quote.customerId}
       />
 
       {canAccessPriceCalculator && (

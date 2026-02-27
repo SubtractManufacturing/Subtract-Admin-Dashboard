@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node"
-import { useLoaderData, useFetcher, Link } from "@remix-run/react"
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
@@ -11,8 +11,9 @@ import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
 import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle"
+import { DataTable } from "~/components/shared/DataTable"
 import { InputField, TextareaField, PhoneInputField } from "~/components/shared/FormField"
-import { listCardStyles, tableStyles } from "~/utils/tw-styles"
+import { listCardStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
@@ -95,6 +96,7 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function Vendors() {
   const { vendors } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
+  const navigate = useNavigate()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -107,11 +109,6 @@ export default function Vendors() {
     vendor.contactName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     vendor.email?.toLowerCase().includes(searchQuery.toLowerCase())
   )
-
-  const handleEdit = (vendor: Vendor) => {
-    setEditingVendor(vendor)
-    setIsModalOpen(true)
-  }
 
   const handleAdd = () => {
     setEditingVendor(null)
@@ -142,6 +139,22 @@ export default function Vendors() {
     })
   }
 
+  const archiveIcon = (
+    <svg
+      className="w-[18px] h-[18px]"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  )
+
   return (
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader 
@@ -161,167 +174,91 @@ export default function Vendors() {
           </div>
         </div>
 
-        {view === "list" ? (
-          <div className="overflow-x-auto">
-            <table className={tableStyles.container}>
-          <thead className={tableStyles.header}>
-            <tr>
-              <th className={tableStyles.headerCell}>ID</th>
-              <th className={tableStyles.headerCell}>Display Name</th>
-              <th className={tableStyles.headerCell}>Company</th>
-              <th className={tableStyles.headerCell}>Contact</th>
-              <th className={tableStyles.headerCell}>Email</th>
-              <th className={tableStyles.headerCell}>Phone</th>
-              <th className={tableStyles.headerCell}>Created</th>
-              <th className={tableStyles.headerCell}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredVendors.map((vendor: Vendor) => (
-              <tr key={vendor.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
-                <td className={tableStyles.cell}>
-                  <Link to={`/vendors/${vendor.id}`} className="block">
-                    {vendor.id}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/vendors/${vendor.id}`} className="block">
-                    {vendor.displayName}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/vendors/${vendor.id}`} className="block">
-                    {vendor.companyName || '--'}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/vendors/${vendor.id}`} className="block">
-                    {vendor.contactName || '--'}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/vendors/${vendor.id}`} className="block">
-                    {vendor.email || '--'}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/vendors/${vendor.id}`} className="block">
-                    {vendor.phone || '--'}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/vendors/${vendor.id}`} className="block">
-                    {formatDate(vendor.createdAt)}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleEdit(vendor)
-                      }}
-                      className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
-                      title="Quick Edit"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="18"
-                        height="18"
-                        fill="currentColor"
-                        viewBox="0 0 16 16"
-                      >
-                        <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
-                      </svg>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleDelete(vendor)
-                      }}
-                      className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
-                      title="Archive"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="18"
-                        height="18"
-                        fill="currentColor"
-                        viewBox="0 0 16 16"
-                      >
-                        <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
-                      </svg>
-                    </button>
+        <DataTable<Vendor>
+          data={filteredVendors}
+          viewMode={view}
+          getRowKey={(vendor) => vendor.id}
+          onRowClick={(vendor) => navigate(`/vendors/${vendor.id}`)}
+          emptyMessage={
+            searchQuery
+              ? "No vendors found matching your search."
+              : "No vendors found. Add one to get started."
+          }
+          columns={[
+            {
+              key: "id",
+              header: "ID",
+              render: (vendor) => vendor.id,
+            },
+            {
+              key: "displayName",
+              header: "Display Name",
+              render: (vendor) => vendor.displayName,
+            },
+            {
+              key: "company",
+              header: "Company",
+              render: (vendor) => vendor.companyName || "--",
+            },
+            {
+              key: "contact",
+              header: "Contact",
+              render: (vendor) => vendor.contactName || "--",
+            },
+            {
+              key: "email",
+              header: "Email",
+              render: (vendor) => vendor.email || "--",
+            },
+            {
+              key: "phone",
+              header: "Phone",
+              render: (vendor) => vendor.phone || "--",
+            },
+            {
+              key: "created",
+              header: "Created",
+              render: (vendor) => formatDate(vendor.createdAt),
+            },
+          ]}
+          rowActions={[
+            {
+              label: "Archive",
+              icon: archiveIcon,
+              variant: "danger",
+              onClick: (vendor) => handleDelete(vendor),
+            },
+          ]}
+          cardRender={(vendor) => (
+            <>
+              <div className={listCardStyles.header}>
+                <div className={listCardStyles.title}>{vendor.displayName}</div>
+              </div>
+              <div className={listCardStyles.sectionGrid}>
+                <div>
+                  <div className={listCardStyles.label}>Company</div>
+                  <div className={listCardStyles.value}>
+                    {vendor.companyName || "--"}
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className={listCardStyles.grid}>
-            {filteredVendors.map((vendor: Vendor) => (
-              <div key={vendor.id} className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}>
-                <Link to={`/vendors/${vendor.id}`} className="no-underline">
-                  <div className={listCardStyles.header}>
-                    <div className={listCardStyles.title}>{vendor.displayName}</div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Contact</div>
+                  <div className={listCardStyles.value}>
+                    {vendor.contactName || "--"}
                   </div>
-                  <div className={listCardStyles.sectionGrid}>
-                    <div>
-                      <div className={listCardStyles.label}>Company</div>
-                      <div className={listCardStyles.value}>{vendor.companyName || "--"}</div>
-                    </div>
-                    <div>
-                      <div className={listCardStyles.label}>Contact</div>
-                      <div className={listCardStyles.value}>{vendor.contactName || "--"}</div>
-                    </div>
-                    <div>
-                      <div className={listCardStyles.label}>Email</div>
-                      <div className={listCardStyles.value}>{vendor.email || "--"}</div>
-                    </div>
-                    <div>
-                      <div className={listCardStyles.label}>Phone</div>
-                      <div className={listCardStyles.value}>{vendor.phone || "--"}</div>
-                    </div>
-                  </div>
-                </Link>
-                <div className={listCardStyles.actionRow}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleEdit(vendor)
-                    }}
-                    className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
-                    title="Quick Edit"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDelete(vendor)
-                    }}
-                    className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
-                    title="Archive"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
-                    </svg>
-                  </button>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Email</div>
+                  <div className={listCardStyles.value}>{vendor.email || "--"}</div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Phone</div>
+                  <div className={listCardStyles.value}>{vendor.phone || "--"}</div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-
-        {filteredVendors.length === 0 && (
-          <div className={tableStyles.emptyState}>
-            {searchQuery ? 'No vendors found matching your search.' : 'No vendors found. Add one to get started.'}
-          </div>
-        )}
+            </>
+          )}
+        />
       </div>
 
       <Modal

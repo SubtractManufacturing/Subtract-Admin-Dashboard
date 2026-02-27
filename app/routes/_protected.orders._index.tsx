@@ -24,8 +24,9 @@ import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
 import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle";
+import { DataTable } from "~/components/shared/DataTable";
 import { InputField, SelectField } from "~/components/shared/FormField";
-import { listCardStyles, tableStyles, statusStyles } from "~/utils/tw-styles";
+import { listCardStyles, statusStyles } from "~/utils/tw-styles";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -246,21 +247,6 @@ export default function Orders() {
     setModalOpen(true);
   };
 
-  const handleEdit = (order: OrderWithRelations) => {
-    setEditingOrder(order);
-    setOrderNumber(order.orderNumber);
-    setOrderNumberError("");
-    // vendorPay now stores a dollar amount - calculate percentage for UI
-    const vendorPayAmount = parseFloat(order.vendorPay || "0");
-    const orderTotal = parseFloat(order.totalPrice || "0");
-    const percentage = orderTotal > 0 ? (vendorPayAmount / orderTotal) * 100 : 70;
-    setVendorPayPercentage(percentage);
-    setNewOrderNumber("");
-    setIsReassigningOrderNumber(false);
-    setReassignError("");
-    setModalOpen(true);
-  };
-
   const handleGenerateOrderNumber = () => {
     fetcher.submit({ intent: "generateOrderNumber" }, { method: "POST" });
   };
@@ -371,6 +357,22 @@ export default function Orders() {
     }
   };
 
+  const archiveIcon = (
+    <svg
+      className="w-[18px] h-[18px]"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  );
+
   return (
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader
@@ -389,216 +391,157 @@ export default function Orders() {
           </div>
         </div>
 
-        {view === "list" ? (
-          <div className="overflow-x-auto">
-            <table className={tableStyles.container}>
-            <thead className={tableStyles.header}>
-              <tr>
-                <th className={tableStyles.headerCell}>Order #</th>
-                <th className={tableStyles.headerCell}>Customer</th>
-                <th className={tableStyles.headerCell}>Vendor</th>
-                <th className={tableStyles.headerCell}>Status</th>
-                <th className={tableStyles.headerCell}>Total Price</th>
-                <th className={tableStyles.headerCell}>Vendor Pay</th>
-                <th className={tableStyles.headerCell}>Ship Date</th>
-                <th className={tableStyles.headerCell}>Date Created</th>
-                <th className={tableStyles.headerCell}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredOrders.map((order: OrderWithRelations) => (
-                <tr
-                  key={order.id}
-                  className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
-                  onClick={() => navigate(`/orders/${order.orderNumber}`)}
-                >
-                  <td className={tableStyles.cell}>{order.orderNumber}</td>
-                  <td className={tableStyles.cell}>
-                    {order.customer?.id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/customers/${order.customer!.id}`);
-                        }}
-                        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
-                      >
-                        {order.customer.displayName}
-                      </button>
-                    ) : (
-                      <span>{order.customer?.displayName || "--"}</span>
-                    )}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    {order.vendor?.id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/vendors/${order.vendor!.id}`);
-                        }}
-                        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
-                      >
-                        {order.vendor.displayName}
-                      </button>
-                    ) : (
-                      <span>{order.vendor?.displayName || "--"}</span>
-                    )}
-                  </td>
-                  <td
-                    className={`${tableStyles.cell} ${
-                      statusStyles.base
-                    } ${getStatusStyle(order.status)}`}
+        <DataTable<OrderWithRelations>
+          data={filteredOrders}
+          viewMode={view}
+          getRowKey={(order) => order.id}
+          onRowClick={(order) => navigate(`/orders/${order.orderNumber}`)}
+          emptyMessage="No orders found."
+          columns={[
+            {
+              key: "orderNumber",
+              header: "Order #",
+              render: (order) => order.orderNumber,
+            },
+            {
+              key: "customer",
+              header: "Customer",
+              render: (order) =>
+                order.customer?.id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/customers/${order.customer!.id}`);
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                   >
-                    {getStatusDisplay(order.status)}
-                  </td>
-                  <td className={tableStyles.cell}>
+                    {order.customer.displayName}
+                  </button>
+                ) : (
+                  <span>{order.customer?.displayName || "--"}</span>
+                ),
+            },
+            {
+              key: "vendor",
+              header: "Vendor",
+              render: (order) =>
+                order.vendor?.id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/vendors/${order.vendor!.id}`);
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                  >
+                    {order.vendor.displayName}
+                  </button>
+                ) : (
+                  <span>{order.vendor?.displayName || "--"}</span>
+                ),
+            },
+            {
+              key: "status",
+              header: "Status",
+              render: (order) => (
+                <span className={`${statusStyles.base} ${getStatusStyle(order.status)}`}>
+                  {getStatusDisplay(order.status)}
+                </span>
+              ),
+            },
+            {
+              key: "total",
+              header: "Total Price",
+              render: (order) =>
+                formatCurrency(
+                  order.lineItems
+                    ?.reduce(
+                      (sum, item) =>
+                        sum + item.quantity * parseFloat(item.unitPrice || "0"),
+                      0
+                    )
+                    .toString() || "0"
+                ),
+            },
+            {
+              key: "vendorPay",
+              header: "Vendor Pay",
+              render: (order) => {
+                const vendorPayAmount = parseFloat(order.vendorPay || "0");
+                const total = parseFloat(order.totalPrice || "0");
+                const percentage = total > 0 ? (vendorPayAmount / total) * 100 : 0;
+
+                if (vendorPayAmount > 0) {
+                  return `${formatCurrency(vendorPayAmount.toString())} (${percentage.toFixed(1)}%)`;
+                }
+                return "--";
+              },
+            },
+            {
+              key: "shipDate",
+              header: "Ship Date",
+              render: (order) => formatDate(order.shipDate),
+            },
+            {
+              key: "createdAt",
+              header: "Date Created",
+              render: (order) => formatDate(order.createdAt),
+            },
+          ]}
+          rowActions={[
+            {
+              label: "Archive",
+              icon: archiveIcon,
+              variant: "danger",
+              onClick: (order) => handleDelete(order.id),
+            },
+          ]}
+          cardRender={(order) => (
+            <>
+              <div className={listCardStyles.header}>
+                <div className={listCardStyles.title}>{order.orderNumber}</div>
+                <div
+                  className={`${statusStyles.base} ${getStatusStyle(order.status)} text-sm`}
+                >
+                  {getStatusDisplay(order.status)}
+                </div>
+              </div>
+              <div className={listCardStyles.sectionGrid}>
+                <div>
+                  <div className={listCardStyles.label}>Customer</div>
+                  <div className={listCardStyles.value}>
+                    {order.customer?.displayName || "--"}
+                  </div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Vendor</div>
+                  <div className={listCardStyles.value}>
+                    {order.vendor?.displayName || "--"}
+                  </div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Total</div>
+                  <div className={listCardStyles.value}>
                     {formatCurrency(
                       order.lineItems
                         ?.reduce(
                           (sum, item) =>
-                            sum +
-                            item.quantity * parseFloat(item.unitPrice || "0"),
+                            sum + item.quantity * parseFloat(item.unitPrice || "0"),
                           0
                         )
                         .toString() || "0"
                     )}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    {(() => {
-                      // vendorPay is now stored as a dollar amount
-                      const vendorPayAmount = parseFloat(order.vendorPay || "0");
-                      const total = parseFloat(order.totalPrice || "0");
-                      const percentage = total > 0 ? (vendorPayAmount / total) * 100 : 0;
-
-                      if (vendorPayAmount > 0) {
-                        return `${formatCurrency(
-                          vendorPayAmount.toString()
-                        )} (${percentage.toFixed(1)}%)`;
-                      }
-                      return "--";
-                    })()}
-                  </td>
-                  <td className={tableStyles.cell}>
+                  </div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Ship Date</div>
+                  <div className={listCardStyles.value}>
                     {formatDate(order.shipDate)}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    {formatDate(order.createdAt)}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEdit(order);
-                        }}
-                        className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
-                        title="Quick Edit"
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="18"
-                          height="18"
-                          fill="currentColor"
-                          viewBox="0 0 16 16"
-                        >
-                          <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(order.id);
-                        }}
-                        className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
-                        title="Archive"
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="18"
-                          height="18"
-                          fill="currentColor"
-                          viewBox="0 0 16 16"
-                        >
-                          <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z" />
-                        </svg>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className={listCardStyles.grid}>
-            {filteredOrders.map((order: OrderWithRelations) => (
-              <div
-                key={order.id}
-                className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}
-                onClick={() => navigate(`/orders/${order.orderNumber}`)}
-              >
-                <div className={listCardStyles.header}>
-                  <div className={listCardStyles.title}>{order.orderNumber}</div>
-                  <div className={`${statusStyles.base} ${getStatusStyle(order.status)} text-sm`}>
-                    {getStatusDisplay(order.status)}
                   </div>
-                </div>
-                <div className={listCardStyles.sectionGrid}>
-                  <div>
-                    <div className={listCardStyles.label}>Customer</div>
-                    <div className={listCardStyles.value}>{order.customer?.displayName || "--"}</div>
-                  </div>
-                  <div>
-                    <div className={listCardStyles.label}>Vendor</div>
-                    <div className={listCardStyles.value}>{order.vendor?.displayName || "--"}</div>
-                  </div>
-                  <div>
-                    <div className={listCardStyles.label}>Total</div>
-                    <div className={listCardStyles.value}>
-                      {formatCurrency(
-                        order.lineItems
-                          ?.reduce(
-                            (sum, item) => sum + item.quantity * parseFloat(item.unitPrice || "0"),
-                            0
-                          )
-                          .toString() || "0"
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className={listCardStyles.label}>Ship Date</div>
-                    <div className={listCardStyles.value}>{formatDate(order.shipDate)}</div>
-                  </div>
-                </div>
-                <div className={listCardStyles.actionRow}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEdit(order);
-                    }}
-                    className="p-2.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
-                    title="Quick Edit"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(order.id);
-                    }}
-                    className="p-2.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
-                    title="Archive"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z" />
-                    </svg>
-                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </>
+          )}
+        />
       </div>
 
       <Modal
