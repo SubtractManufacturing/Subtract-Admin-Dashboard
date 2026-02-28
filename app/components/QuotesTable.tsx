@@ -106,8 +106,11 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
           {quotes.map((quote) => (
             <div
               key={quote.id}
+              role="button"
+              tabIndex={0}
               className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}
               onClick={() => navigate(`/quotes/${quote.id}`)}
+              onKeyDown={(e) => e.key === "Enter" && navigate(`/quotes/${quote.id}`)}
             >
               <div className={listCardStyles.header}>
                 <div className={listCardStyles.title}>{quote.quote_number}</div>

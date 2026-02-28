@@ -157,8 +157,11 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
           {orders.map((order) => (
             <div
               key={order.id}
+              role="button"
+              tabIndex={0}
               className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}
               onClick={() => navigate(`/orders/${order.order_number}`)}
+              onKeyDown={(e) => e.key === "Enter" && navigate(`/orders/${order.order_number}`)}
             >
               <div className={listCardStyles.header}>
                 <div className={listCardStyles.title}>{order.order_number}</div>

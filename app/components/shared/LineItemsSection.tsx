@@ -43,6 +43,7 @@ export function LineItemsSection({
   onSaveField,
   onSaveAttribute,
   onDrawingUpload,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onDrawingDelete,
   drawingUploadingPartId,
   onView3DModel,

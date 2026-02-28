@@ -72,7 +72,7 @@ import { db } from "~/lib/db";
 import { parts, attachments, partDrawings } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 import type { Vendor } from "~/lib/db/schema";
-import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { EventTimeline } from "~/components/EventTimeline";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
