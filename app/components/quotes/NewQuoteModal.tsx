@@ -165,28 +165,6 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     });
   };
 
-  const handleToleranceInput = (index: number, value: string) => {
-    // Remove ± symbol from the value for processing
-    const cleanValue = value.replace(/±/g, "");
-
-    // Check if the clean value contains any non-numeric characters (excluding decimal point, minus, and spaces)
-    const hasText = /[^0-9.\-\s]/.test(cleanValue);
-
-    if (hasText) {
-      // If it contains text, don't add the ± symbol
-      updatePartConfig(index, 'tolerances', cleanValue);
-    } else {
-      // If it's empty or only contains numbers/decimal/minus/spaces
-      if (cleanValue.trim() === "") {
-        // If empty, just show the ± symbol
-        updatePartConfig(index, 'tolerances', "±");
-      } else {
-        // If it contains numbers, add ± at the beginning
-        updatePartConfig(index, 'tolerances', "±" + cleanValue);
-      }
-    }
-  };
-
   const togglePartExpanded = (index: number) => {
     setPartConfigs(prev => {
       const updated = [...prev];

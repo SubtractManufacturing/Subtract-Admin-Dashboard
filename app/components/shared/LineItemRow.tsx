@@ -82,7 +82,6 @@ export function LineItemRow({
   onView3DModel,
   onViewDrawing,
   onDrawingUpload,
-  onDrawingDelete,
   isDrawingUploading,
   extraActions,
 }: LineItemRowProps) {
