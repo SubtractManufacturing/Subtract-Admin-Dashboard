@@ -22,6 +22,7 @@ export function useViewToggle(storageKey: string) {
     setIsInitialized(true);
   }, [storageKey]);
 
+  // On mobile we always show card view; ignore view changes (toggle is hidden so this is rarely called).
   const setAndPersistView = (nextView: ViewMode) => {
     if (!isSmallScreen) {
       setDesktopView(nextView);

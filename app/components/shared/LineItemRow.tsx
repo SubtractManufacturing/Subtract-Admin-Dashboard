@@ -82,6 +82,7 @@ export function LineItemRow({
   onView3DModel,
   onViewDrawing,
   onDrawingUpload,
+  onDrawingDelete,
   isDrawingUploading,
   extraActions,
 }: LineItemRowProps) {
@@ -234,20 +235,20 @@ export function LineItemRow({
                     onClick={() => drawingInputRef.current?.click()}
                     className={`${
                       showSpecs ? "h-20 w-20" : "h-10 w-10"
-                    } border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-800 flex items-center justify-center group flex-shrink-0`}
+                    } border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-800 flex items-center justify-center group flex-shrink-0 overflow-visible`}
                     title="Upload drawing"
                     type="button"
                   >
                     <svg
-                      className={`${showSpecs ? "w-5 h-5" : "w-4 h-4"} text-gray-400 group-hover:text-blue-500`}
+                      className={`${showSpecs ? "w-5 h-5" : "w-4 h-4"} text-gray-400 group-hover:text-blue-500 flex-shrink-0`}
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
+                      strokeWidth={2}
                     >
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        strokeWidth={2}
                         d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                       />
                     </svg>
@@ -437,85 +438,133 @@ export function LineItemRow({
             colSpan={totalColumns}
             className="px-6 py-3 border-t border-gray-200 dark:border-gray-700"
           >
-            <div className="grid grid-cols-3 gap-6">
-              {(["material", "tolerance", "finish"] as const).map((field) => {
-                const value = part[field] || "";
-                const isEditingAttribute =
-                  editingAttribute?.partId === part.id &&
-                  editingAttribute?.field === field;
-                return (
-                  <div key={field} className="flex flex-col">
-                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
-                      {field === "finish" ? "Finishing" : field}
-                    </span>
-                    {isEditingAttribute ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={editingAttributeValue}
-                          onChange={(e) =>
-                            onChangeAttributeEdit(
-                              field === "tolerance"
-                                ? formatToleranceValue(e.target.value)
-                                : e.target.value
-                            )
-                          }
-                          onFocus={() => {
-                            if (field === "tolerance") {
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-6">
+                {(["material", "tolerance", "finish"] as const).map((field) => {
+                  const value = part[field] || "";
+                  const isEditingAttribute =
+                    editingAttribute?.partId === part.id &&
+                    editingAttribute?.field === field;
+                  return (
+                    <div key={field} className="flex flex-col">
+                      <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1 uppercase tracking-wide">
+                        {field === "finish" ? "Finishing" : field}
+                      </span>
+                      {isEditingAttribute ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editingAttributeValue}
+                            onChange={(e) =>
                               onChangeAttributeEdit(
-                                initToleranceOnFocus(editingAttributeValue)
-                              );
+                                field === "tolerance"
+                                  ? formatToleranceValue(e.target.value)
+                                  : e.target.value
+                              )
                             }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              onSaveAttributeEdit();
-                            } else if (e.key === "Escape") {
-                              onCancelAttributeEdit();
-                            }
-                          }}
-                          className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                          placeholder={field === "tolerance" ? "e.g., ±0.005" : field}
-                        />
+                            onFocus={() => {
+                              if (field === "tolerance") {
+                                onChangeAttributeEdit(
+                                  initToleranceOnFocus(editingAttributeValue)
+                                );
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                onSaveAttributeEdit();
+                              } else if (e.key === "Escape") {
+                                onCancelAttributeEdit();
+                              }
+                            }}
+                            className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                            placeholder={field === "tolerance" ? "e.g., ±0.005" : field}
+                          />
+                          <button
+                            onClick={onSaveAttributeEdit}
+                            className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
+                            type="button"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={onCancelAttributeEdit}
+                            className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
+                            type="button"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
                         <button
-                          onClick={onSaveAttributeEdit}
-                          className="p-1 text-green-600 hover:text-green-700 dark:text-green-400"
                           type="button"
+                          onClick={() => {
+                            if (readOnly) return;
+                            onStartAttributeEdit(part.id, field, value);
+                          }}
+                          className={`text-left px-2 py-1 rounded ${
+                            readOnly ? "" : "hover:bg-gray-100 dark:hover:bg-gray-700"
+                          }`}
                         >
-                          Save
+                          <span className="text-sm text-gray-900 dark:text-gray-100">
+                            {value || (
+                              <span className="text-gray-400 dark:text-gray-500 italic">
+                                Click to add
+                              </span>
+                            )}
+                          </span>
                         </button>
-                        <button
-                          onClick={onCancelAttributeEdit}
-                          className="p-1 text-red-600 hover:text-red-700 dark:text-red-400"
-                          type="button"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (readOnly) return;
-                          onStartAttributeEdit(part.id, field, value);
-                        }}
-                        className={`text-left px-2 py-1 rounded ${
-                          readOnly ? "" : "hover:bg-gray-100 dark:hover:bg-gray-700"
-                        }`}
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {part.drawings.length > 0 && (
+                <div className="flex flex-col border-t border-gray-200 dark:border-gray-700 pt-3">
+                  <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2 uppercase tracking-wide">
+                    Drawings
+                  </span>
+                  <ul className="space-y-1.5">
+                    {part.drawings.map((drawing) => (
+                      <li
+                        key={drawing.id}
+                        className="flex items-center justify-between gap-2 py-1"
                       >
-                        <span className="text-sm text-gray-900 dark:text-gray-100">
-                          {value || (
-                            <span className="text-gray-400 dark:text-gray-500 italic">
-                              Click to add
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+                        <button
+                          type="button"
+                          onClick={() => onViewDrawing(drawing, part.id)}
+                          className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate min-w-0 text-left"
+                        >
+                          {drawing.fileName}
+                        </button>
+                        {!readOnly && onDrawingDelete && (
+                          <IconButton
+                            icon={
+                              <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                />
+                              </svg>
+                            }
+                            variant="danger"
+                            title="Delete drawing"
+                            aria-label={`Delete ${drawing.fileName}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Delete "${drawing.fileName}"?`)) {
+                                onDrawingDelete(drawing.id, part.id);
+                              }
+                            }}
+                          />
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </td>
         </tr>
