@@ -1,26 +1,12 @@
 import { db } from "./db";
 import { developerSettings } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { eq, notInArray } from "drizzle-orm";
 
 // Developer settings keys as constants
 export const DEV_SETTINGS = {
   BANANA_CAD_URL: "banana_cad_url",
   BANANA_MESH_URL: "banana_mesh_url",
   BANANA_CONVERSION_STATUS: "banana_conversion_status",
-  EMAIL_REPLY_TO_ADDRESS: "email_reply_to_address",
-  EMAIL_OUTBOUND_BCC_ADDRESS: "email_outbound_bcc_address",
-  EMAIL_INBOUND_FORWARD_ADDRESS: "email_inbound_forward_address",
-  
-  // Reconciliation settings
-  // Postmark reconciliation
-  RECONCILIATION_POSTMARK_ENABLED: "reconciliation_postmark_enabled",
-  RECONCILIATION_POSTMARK_CRON: "reconciliation_postmark_cron",
-  RECONCILIATION_POSTMARK_WINDOW_HOURS: "reconciliation_postmark_window_hours",
-  
-  // Future: Stripe reconciliation
-  // RECONCILIATION_STRIPE_ENABLED: "reconciliation_stripe_enabled",
-  // RECONCILIATION_STRIPE_CRON: "reconciliation_stripe_cron",
-  // RECONCILIATION_STRIPE_WINDOW_HOURS: "reconciliation_stripe_window_hours",
 } as const;
 
 /**
@@ -128,149 +114,18 @@ export async function setBananaModelUrls(
   }
 }
 
-/**
- * Get the email reply-to address for Postmark inbound routing
- */
-export async function getEmailReplyToAddress(): Promise<string | null> {
-  return getDeveloperSetting(DEV_SETTINGS.EMAIL_REPLY_TO_ADDRESS);
-}
+export async function pruneStaleDeveloperSettings(): Promise<string[]> {
+  const validKeys = Object.values(DEV_SETTINGS);
+  const stale = await db
+    .select({ key: developerSettings.key })
+    .from(developerSettings)
+    .where(notInArray(developerSettings.key, validKeys));
 
-/**
- * Set the email reply-to address for Postmark inbound routing
- */
-export async function setEmailReplyToAddress(
-  address: string | null,
-  updatedBy?: string
-): Promise<boolean> {
-  return setDeveloperSetting(DEV_SETTINGS.EMAIL_REPLY_TO_ADDRESS, address, updatedBy);
-}
+  if (stale.length === 0) return [];
 
-/**
- * Get the outbound BCC address for Gmail mirroring (sent emails)
- */
-export async function getEmailOutboundBccAddress(): Promise<string | null> {
-  return getDeveloperSetting(DEV_SETTINGS.EMAIL_OUTBOUND_BCC_ADDRESS);
-}
-
-/**
- * Set the outbound BCC address for Gmail mirroring (sent emails)
- */
-export async function setEmailOutboundBccAddress(
-  address: string | null,
-  updatedBy?: string
-): Promise<boolean> {
-  return setDeveloperSetting(DEV_SETTINGS.EMAIL_OUTBOUND_BCC_ADDRESS, address, updatedBy);
-}
-
-/**
- * Get the inbound forward address for Gmail mirroring (received emails)
- */
-export async function getEmailInboundForwardAddress(): Promise<string | null> {
-  return getDeveloperSetting(DEV_SETTINGS.EMAIL_INBOUND_FORWARD_ADDRESS);
-}
-
-/**
- * Set the inbound forward address for Gmail mirroring (received emails)
- */
-export async function setEmailInboundForwardAddress(
-  address: string | null,
-  updatedBy?: string
-): Promise<boolean> {
-  return setDeveloperSetting(DEV_SETTINGS.EMAIL_INBOUND_FORWARD_ADDRESS, address, updatedBy);
-}
-
-// ============================================
-// Reconciliation Settings
-// ============================================
-
-/**
- * Reconciliation task configuration
- */
-export interface ReconciliationTaskConfig {
-  enabled: boolean;
-  cron: string;
-  windowHours: number;
-}
-
-/**
- * Get reconciliation configuration for a specific task
- */
-export async function getReconciliationTaskConfig(
-  taskId: string
-): Promise<ReconciliationTaskConfig> {
-  const [enabled, cron, windowHours] = await Promise.all([
-    getDeveloperSetting(`reconciliation_${taskId}_enabled`),
-    getDeveloperSetting(`reconciliation_${taskId}_cron`),
-    getDeveloperSetting(`reconciliation_${taskId}_window_hours`),
-  ]);
-
-  return {
-    enabled: enabled === "true",
-    cron: cron || "0 */6 * * *", // Default: every 6 hours
-    windowHours: windowHours ? parseInt(windowHours) : 72, // Default: 72 hours
-  };
-}
-
-/**
- * Set reconciliation configuration for a specific task
- */
-export async function setReconciliationTaskConfig(
-  taskId: string,
-  config: Partial<ReconciliationTaskConfig>,
-  updatedBy?: string
-): Promise<boolean> {
-  try {
-    const updates: Promise<boolean>[] = [];
-
-    if (config.enabled !== undefined) {
-      updates.push(
-        setDeveloperSetting(
-          `reconciliation_${taskId}_enabled`,
-          config.enabled ? "true" : "false",
-          updatedBy
-        )
-      );
-    }
-    if (config.cron !== undefined) {
-      updates.push(
-        setDeveloperSetting(
-          `reconciliation_${taskId}_cron`,
-          config.cron,
-          updatedBy
-        )
-      );
-    }
-    if (config.windowHours !== undefined) {
-      updates.push(
-        setDeveloperSetting(
-          `reconciliation_${taskId}_window_hours`,
-          String(config.windowHours),
-          updatedBy
-        )
-      );
-    }
-
-    const results = await Promise.all(updates);
-    return results.every(Boolean);
-  } catch (error) {
-    console.error(`Error setting reconciliation config for ${taskId}:`, error);
-    return false;
+  const staleKeys = stale.map(r => r.key);
+  for (const key of staleKeys) {
+    await db.delete(developerSettings).where(eq(developerSettings.key, key));
   }
-}
-
-/**
- * Get Postmark reconciliation configuration
- */
-export async function getPostmarkReconciliationConfig(): Promise<ReconciliationTaskConfig> {
-  return getReconciliationTaskConfig("postmark");
-}
-
-/**
- * Set Postmark reconciliation configuration
- */
-export async function setPostmarkReconciliationConfig(
-  config: Partial<ReconciliationTaskConfig>,
-  updatedBy?: string
-): Promise<boolean> {
-  return setReconciliationTaskConfig("postmark", config, updatedBy);
+  return staleKeys;
 }

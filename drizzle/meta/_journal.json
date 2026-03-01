@@ -50,6 +50,13 @@
       "when": 1771387227624,
       "tag": "0006_zippy_lockjaw",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1772341784713,
+      "tag": "0007_smart_warlock",
+      "breakpoints": true
     }
   ]
 }

@@ -30,7 +30,9 @@ import { getNextQuoteNumber } from "~/lib/number-generator";
 
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
-import { tableStyles, statusStyles } from "~/utils/tw-styles";
+import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle";
+import { DataTable } from "~/components/shared/DataTable";
+import { listCardStyles, statusStyles } from "~/utils/tw-styles";
 import NewQuoteModal from "~/components/quotes/NewQuoteModal";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -144,6 +146,7 @@ export default function QuotesIndex() {
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [showAllQuotes, setShowAllQuotes] = useState(false);
+  const [view, setView] = useViewToggle("quotes-view");
 
   // Handle archive success
   useEffect(() => {
@@ -230,6 +233,22 @@ export default function QuotesIndex() {
     });
   };
 
+  const archiveIcon = (
+    <svg
+      className="w-[18px] h-[18px]"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  );
+
   return (
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader
@@ -237,148 +256,173 @@ export default function QuotesIndex() {
         onSearch={setSearchQuery}
       />
 
-      <div className="px-10 py-8">
-          <div className="flex justify-between items-end mb-5">
-            <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
-              Quotes ({filteredQuotes.length})
-            </h2>
+      <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
+        <div className="flex flex-wrap justify-between items-end mb-5 gap-3">
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
+            Quotes ({filteredQuotes.length})
+          </h2>
 
-            <div className="flex gap-3 items-center">
-              {/* Filters */}
-              <select
-                id="status-filter"
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+          <div className="flex flex-wrap gap-3 items-center justify-end">
+            <ViewToggle view={view} onChange={setView} />
+            <select
+              id="status-filter"
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+            >
+              <option value="all">-Status-</option>
+              <option value="RFQ">RFQ</option>
+              <option value="Draft">Draft</option>
+              <option value="Sent">Sent</option>
+              <option value="Accepted">Accepted</option>
+              <option value="Rejected">Rejected</option>
+              <option value="Dropped">Dropped</option>
+              <option value="Expired">Expired</option>
+            </select>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="show-all-quotes"
+                checked={showAllQuotes}
+                onChange={(e) => setShowAllQuotes(e.target.checked)}
+                className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:bg-gray-700"
+              />
+              <label
+                htmlFor="show-all-quotes"
+                className="text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap"
               >
-                <option value="all">-Status-</option>
-                <option value="RFQ">RFQ</option>
-                <option value="Draft">Draft</option>
-                <option value="Sent">Sent</option>
-                <option value="Accepted">Accepted</option>
-                <option value="Rejected">Rejected</option>
-                <option value="Dropped">Dropped</option>
-                <option value="Expired">Expired</option>
-              </select>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="show-all-quotes"
-                  checked={showAllQuotes}
-                  onChange={(e) => setShowAllQuotes(e.target.checked)}
-                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:bg-gray-700"
-                />
-                <label
-                  htmlFor="show-all-quotes"
-                  className="text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap"
-                >
-                  Show all
-                </label>
-              </div>
-
-              <Button onClick={() => setShowNewQuoteModal(true)}>
-                New Quote
-              </Button>
+                Show all
+              </label>
             </div>
-          </div>
 
-          <table className={tableStyles.container}>
-            <thead className={tableStyles.header}>
-              <tr>
-                <th className={tableStyles.headerCell}>Quote #</th>
-                <th className={tableStyles.headerCell}>Customer</th>
-                <th className={tableStyles.headerCell}>Vendor</th>
-                <th className={tableStyles.headerCell}>Status</th>
-                <th className={tableStyles.headerCell}>Total</th>
-                <th className={tableStyles.headerCell}>Valid Until</th>
-                <th className={tableStyles.headerCell}>Created</th>
-                <th className={tableStyles.headerCell}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredQuotes.map((quote: QuoteWithRelations) => (
-                <tr
-                  key={quote.id}
-                  className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
-                  onClick={() => navigate(`/quotes/${quote.id}`)}
-                >
-                  <td className={tableStyles.cell}>{quote.quoteNumber}</td>
-                  <td className={tableStyles.cell}>
-                    {quote.customer?.id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/customers/${quote.customer!.id}`);
-                        }}
-                        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
-                      >
-                        {quote.customer.displayName}
-                      </button>
-                    ) : (
-                      <span>{quote.customer?.displayName || "--"}</span>
-                    )}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    {quote.vendor?.id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/vendors/${quote.vendor!.id}`);
-                        }}
-                        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
-                      >
-                        {quote.vendor.displayName}
-                      </button>
-                    ) : (
-                      <span>{quote.vendor?.displayName || "--"}</span>
-                    )}
-                  </td>
-                  <td
-                    className={`${tableStyles.cell} ${
-                      statusStyles.base
-                    } ${getStatusStyle(quote.status)}`}
-                  >
-                    {quote.status}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    {formatCurrency(quote.total)}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    {formatDate(quote.validUntil)}
-                  </td>
-                  <td className={tableStyles.cell}>
-                    {formatDate(quote.createdAt)}
-                  </td>
-                  <td className={`${tableStyles.cell} text-right`}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleArchiveQuote(quote.id);
-                      }}
-                      className="p-1.5 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors duration-150"
-                      title="Delete"
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                        />
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            <Button onClick={() => setShowNewQuoteModal(true)}>
+              New Quote
+            </Button>
+          </div>
         </div>
+
+        <DataTable<QuoteWithRelations>
+          data={filteredQuotes}
+          viewMode={view}
+          getRowKey={(quote) => quote.id}
+          onRowClick={(quote) => navigate(`/quotes/${quote.id}`)}
+          emptyMessage="No quotes found."
+          columns={[
+            {
+              key: "quoteNumber",
+              header: "Quote #",
+              render: (quote) => quote.quoteNumber,
+            },
+            {
+              key: "customer",
+              header: "Customer",
+              render: (quote) =>
+                quote.customer?.id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/customers/${quote.customer!.id}`);
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                  >
+                    {quote.customer.displayName}
+                  </button>
+                ) : (
+                  <span>{quote.customer?.displayName || "--"}</span>
+                ),
+            },
+            {
+              key: "vendor",
+              header: "Vendor",
+              render: (quote) =>
+                quote.vendor?.id ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/vendors/${quote.vendor!.id}`);
+                    }}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                  >
+                    {quote.vendor.displayName}
+                  </button>
+                ) : (
+                  <span>{quote.vendor?.displayName || "--"}</span>
+                ),
+            },
+            {
+              key: "status",
+              header: "Status",
+              render: (quote) => (
+                <span className={`${statusStyles.base} ${getStatusStyle(quote.status)}`}>
+                  {quote.status}
+                </span>
+              ),
+            },
+            {
+              key: "total",
+              header: "Total",
+              render: (quote) => formatCurrency(quote.total),
+            },
+            {
+              key: "validUntil",
+              header: "Valid Until",
+              render: (quote) => formatDate(quote.validUntil),
+            },
+            {
+              key: "createdAt",
+              header: "Created",
+              render: (quote) => formatDate(quote.createdAt),
+            },
+          ]}
+          rowActions={[
+            {
+              label: "Archive",
+              icon: archiveIcon,
+              variant: "danger",
+              onClick: (quote) => handleArchiveQuote(quote.id),
+            },
+          ]}
+          cardRender={(quote) => (
+            <>
+              <div className={listCardStyles.header}>
+                <div className={listCardStyles.title}>{quote.quoteNumber}</div>
+                <div
+                  className={`${statusStyles.base} ${getStatusStyle(quote.status)} text-sm`}
+                >
+                  {quote.status}
+                </div>
+              </div>
+              <div className={listCardStyles.sectionGrid}>
+                <div>
+                  <div className={listCardStyles.label}>Customer</div>
+                  <div className={listCardStyles.value}>
+                    {quote.customer?.displayName || "--"}
+                  </div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Vendor</div>
+                  <div className={listCardStyles.value}>
+                    {quote.vendor?.displayName || "--"}
+                  </div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Total</div>
+                  <div className={listCardStyles.value}>
+                    {formatCurrency(quote.total)}
+                  </div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Valid Until</div>
+                  <div className={listCardStyles.value}>
+                    {formatDate(quote.validUntil)}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        />
+      </div>
 
       {/* New Quote Modal */}
       <NewQuoteModal

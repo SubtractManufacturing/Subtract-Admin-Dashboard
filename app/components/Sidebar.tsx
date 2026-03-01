@@ -11,17 +11,6 @@ interface SidebarProps {
   showVersion?: boolean;
   showEventsLink?: boolean;
   showQuotesLink?: boolean;
-  showEmailsLink?: boolean;
-  emailCategoryCounts?: {
-    inbox: number;
-    orders: number;
-    quotes: number;
-    assignedToMe: number;
-    important: number;
-    sent: number;
-    archived: number;
-  };
-  onComposeEmail?: () => void;
 }
 
 interface NavItem {
@@ -29,14 +18,6 @@ interface NavItem {
   label: string;
   icon: React.ReactNode;
   show?: boolean;
-}
-
-interface EmailSubItem {
-  id: string;
-  label: string;
-  param: string | null;
-  countKey?: "inbox" | "orders" | "quotes" | "assignedToMe" | "important" | "sent" | "archived";
-  icon: React.ReactNode;
 }
 
 export default function Sidebar({
@@ -47,26 +28,19 @@ export default function Sidebar({
   showVersion,
   showEventsLink = true,
   showQuotesLink = true,
-  showEmailsLink = true,
-  emailCategoryCounts,
-  onComposeEmail,
 }: SidebarProps) {
-  const { isExpanded, toggleSidebar } = useSidebar();
+  const { isExpanded, toggleSidebar, isMobileOpen, setMobileOpen } = useSidebar();
   const location = useLocation();
+  const showLabels = isExpanded || isMobileOpen;
   const { theme, toggleTheme } = useTheme();
   const logoutFetcher = useFetcher();
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
-  const [isEmailsExpanded, setIsEmailsExpanded] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Auto-expand emails dropdown when on email pages
-  const isOnEmailPage = location.pathname.startsWith("/emails");
   useEffect(() => {
-    if (isOnEmailPage) {
-      setIsEmailsExpanded(true);
-    }
-  }, [isOnEmailPage]);
+    setMobileOpen(false);
+  }, [location.pathname, setMobileOpen]);
 
   // Close account menu when clicking outside
   useEffect(() => {
@@ -96,108 +70,7 @@ export default function Sidebar({
     }
   }, [isExpanded]);
 
-  // Email sub-items for the dropdown
-  // Note: "sent" has no countKey (no badge), "important" removed entirely
-  const emailSubItems: EmailSubItem[] = [
-    {
-      id: "inbox",
-      label: "Inbox",
-      param: null,
-      countKey: "inbox",
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-        </svg>
-      ),
-    },
-    {
-      id: "orders",
-      label: "Orders",
-      param: "orders",
-      countKey: "orders",
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-        </svg>
-      ),
-    },
-    {
-      id: "quotes",
-      label: "Quotes",
-      param: "quotes",
-      countKey: "quotes",
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      ),
-    },
-    {
-      id: "assigned",
-      label: "Assigned to Me",
-      param: "assigned",
-      countKey: "assignedToMe",
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-        </svg>
-      ),
-    },
-    {
-      id: "sent",
-      label: "Sent",
-      param: "sent",
-      // No countKey - sent emails don't need a badge
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-        </svg>
-      ),
-    },
-    {
-      id: "archived",
-      label: "Archive",
-      param: "archived",
-      countKey: "archived",
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-        </svg>
-      ),
-    },
-  ];
-
-  // Build email sub-item URL
-  const buildEmailUrl = (param: string | null) => {
-    if (param === null) {
-      return "/emails";
-    }
-    // Special case for "assigned" - use assignedToMe param
-    if (param === "assigned") {
-      return "/emails?assignedToMe=true";
-    }
-    return `/emails?category=${param}`;
-  };
-
-  // Check if email sub-item is active
-  const isEmailSubItemActive = (param: string | null) => {
-    if (!isOnEmailPage) return false;
-    const searchParams = new URLSearchParams(location.search);
-    const currentCategory = searchParams.get("category");
-    const assignedToMe = searchParams.get("assignedToMe");
-    
-    if (param === null) {
-      return (currentCategory === null || currentCategory === "") && !assignedToMe;
-    }
-    // Special case for "assigned"
-    if (param === "assigned") {
-      return assignedToMe === "true";
-    }
-    return currentCategory === param;
-  };
-
-  // Nav items before emails
-  const navItemsBeforeEmails: NavItem[] = [
+  const navItems: NavItem[] = [
     {
       to: "/",
       label: "Dashboard",
@@ -253,10 +126,6 @@ export default function Sidebar({
         </svg>
       ),
     },
-  ];
-
-  // Nav items after emails
-  const navItemsAfterEmails: NavItem[] = [
     {
       to: "/events",
       label: "Events",
@@ -277,21 +146,31 @@ export default function Sidebar({
   };
 
   return (
-    <aside
-      className={`fixed left-0 top-0 h-screen bg-gray-800 dark:bg-slate-950 dark:border-r dark:border-slate-800 text-white flex flex-col transition-all duration-300 z-40 overflow-x-hidden ${
-        isExpanded ? "w-64" : "w-20"
-      }`}
-    >
+    <>
+      {isMobileOpen && (
+        <div
+          role="button"
+          tabIndex={0}
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setMobileOpen(false)}
+          onKeyDown={(e) => e.key === "Enter" && setMobileOpen(false)}
+        />
+      )}
+      <aside
+        className={`fixed left-0 top-0 h-screen bg-gray-800 dark:bg-slate-950 dark:border-r dark:border-slate-800 text-white flex flex-col transition-all duration-300 z-50 overflow-x-hidden w-[80vw] max-w-xs ${
+          isMobileOpen ? "translate-x-0" : "-translate-x-full"
+        } md:translate-x-0 ${isExpanded ? "md:w-64" : "md:w-20"}`}
+      >
       {/* Header with toggle button */}
       <div className="flex items-center justify-between px-4 py-4 border-b border-gray-700 dark:border-slate-800 flex-shrink-0">
-        {isExpanded && (
+        {showLabels && (
           <Link to="/" className="text-white no-underline hover:opacity-80 flex-1 min-w-0">
             <h1 className="text-lg font-semibold truncate">Subtract</h1>
           </Link>
         )}
         <button
           onClick={toggleSidebar}
-          className="p-2 rounded hover:bg-white/10 dark:hover:bg-slate-800 transition-colors flex-shrink-0"
+          className="p-2 rounded hover:bg-white/10 dark:hover:bg-slate-800 transition-colors flex-shrink-0 hidden md:block"
           aria-label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
         >
           <svg
@@ -308,8 +187,7 @@ export default function Sidebar({
       {/* Navigation links */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 scrollbar-hide">
         <ul className="space-y-1 px-3">
-          {/* Nav items before emails */}
-          {navItemsBeforeEmails.map((item) => {
+          {navItems.map((item) => {
             if (item.show === false) return null;
             const isActive = isActiveRoute(item.to);
             return (
@@ -323,144 +201,7 @@ export default function Sidebar({
                   }`}
                 >
                   <span className="flex-shrink-0">{item.icon}</span>
-                  {isExpanded ? (
-                    <span className="font-medium truncate">{item.label}</span>
-                  ) : (
-                    <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 dark:bg-slate-800 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-lg">
-                      {item.label}
-                    </span>
-                  )}
-                </Link>
-              </li>
-            );
-          })}
-
-          {/* Emails with expandable dropdown */}
-          {showEmailsLink && (
-            <li>
-              <div className="relative">
-                {/* Main Emails link with dropdown toggle */}
-                <div
-                  className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                    isOnEmailPage
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-300 hover:bg-white/10 dark:hover:bg-slate-800"
-                  }`}
-                >
-                  <Link
-                    to="/emails"
-                    className="flex items-center gap-3 flex-1 no-underline text-inherit"
-                  >
-                    <span className="flex-shrink-0">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                      </svg>
-                    </span>
-                    {isExpanded ? (
-                      <span className="font-medium truncate">Emails</span>
-                    ) : (
-                      <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 dark:bg-slate-800 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-lg">
-                        Emails
-                      </span>
-                    )}
-                  </Link>
-                  {/* Dropdown toggle button - inside the same box */}
-                  {isExpanded && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsEmailsExpanded(!isEmailsExpanded);
-                      }}
-                      className={`p-1 rounded transition-colors ${
-                        isOnEmailPage
-                          ? "text-white/80 hover:text-white hover:bg-white/20"
-                          : "text-gray-400 hover:text-white hover:bg-white/10"
-                      }`}
-                      aria-label={isEmailsExpanded ? "Collapse email options" : "Expand email options"}
-                    >
-                      <svg
-                        className={`w-4 h-4 transition-transform duration-200 ${isEmailsExpanded ? "rotate-180" : ""}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-
-                {/* Email sub-items dropdown */}
-                {isExpanded && isEmailsExpanded && (
-                  <div className="mt-1 ml-4 space-y-0.5">
-                    {/* Compose button - styled as CTA with distinct color */}
-                    {onComposeEmail && (
-                      <div className="pb-2 mb-1 border-b border-gray-700 dark:border-slate-700">
-                        <button
-                          onClick={onComposeEmail}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 rounded-md transition-colors"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                          </svg>
-                          <span>Compose</span>
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Email category sub-items */}
-                    {emailSubItems.map((subItem) => {
-                      const isSubActive = isEmailSubItemActive(subItem.param);
-                      const count = subItem.countKey && emailCategoryCounts 
-                        ? emailCategoryCounts[subItem.countKey] 
-                        : 0;
-                      
-                      return (
-                        <Link
-                          key={subItem.id}
-                          to={buildEmailUrl(subItem.param)}
-                          className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors no-underline ${
-                            isSubActive
-                              ? "bg-blue-500/30 text-white font-medium"
-                              : "text-gray-400 hover:text-white hover:bg-white/10"
-                          }`}
-                        >
-                          <span className="flex-shrink-0">{subItem.icon}</span>
-                          <span className="flex-1 truncate">{subItem.label}</span>
-                          {count > 0 && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                              isSubActive 
-                                ? "bg-blue-500 text-white" 
-                                : "bg-gray-600 text-gray-300"
-                            }`}>
-                              {count > 99 ? "99+" : count}
-                            </span>
-                          )}
-                        </Link>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </li>
-          )}
-
-          {/* Nav items after emails */}
-          {navItemsAfterEmails.map((item) => {
-            if (item.show === false) return null;
-            const isActive = isActiveRoute(item.to);
-            return (
-              <li key={item.to}>
-                <Link
-                  to={item.to}
-                  className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors no-underline ${
-                    isActive
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-300 hover:bg-white/10 dark:hover:bg-slate-800"
-                  }`}
-                >
-                  <span className="flex-shrink-0">{item.icon}</span>
-                  {isExpanded ? (
+                  {showLabels ? (
                     <span className="font-medium truncate">{item.label}</span>
                   ) : (
                     <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 dark:bg-slate-800 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-lg">
@@ -480,9 +221,9 @@ export default function Sidebar({
         <div className="relative">
           <button
             ref={accountButtonRef}
-            onClick={() => isExpanded && setIsAccountMenuOpen(!isAccountMenuOpen)}
+            onClick={() => showLabels && setIsAccountMenuOpen(!isAccountMenuOpen)}
             className={`group relative flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors text-left ${
-              isExpanded 
+              showLabels 
                 ? "hover:bg-white/10 dark:hover:bg-slate-800 cursor-pointer" 
                 : "cursor-default"
             }`}
@@ -490,7 +231,7 @@ export default function Sidebar({
             <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold text-sm overflow-hidden flex-shrink-0">
               {userInitials || "U"}
             </div>
-            {isExpanded ? (
+            {showLabels ? (
               <>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white truncate">{userName || "User"}</p>
@@ -513,7 +254,7 @@ export default function Sidebar({
           </button>
 
           {/* Account dropdown menu */}
-          {isAccountMenuOpen && isExpanded && (
+          {isAccountMenuOpen && showLabels && (
             <div
               ref={accountMenuRef}
               className="absolute bottom-full left-0 right-0 mb-2 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 py-1 z-50"
@@ -588,6 +329,7 @@ export default function Sidebar({
           )}
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

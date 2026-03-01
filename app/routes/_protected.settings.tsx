@@ -18,17 +18,10 @@ import {
   initializeFeatureFlags,
   isFeatureEnabled,
   FEATURE_FLAGS,
+  pruneStaleFeatureFlags,
 } from "~/lib/featureFlags";
-import { getBananaModelUrls, setBananaModelUrls, getReconciliationTaskConfig } from "~/lib/developerSettings";
-import {
-  getAllSendAsAddresses,
-  addSendAsAddress,
-  deleteSendAsAddress,
-  setDefaultSendAsAddress,
-  sendAsAddressExists,
-} from "~/lib/emailSendAsAddresses";
-import { ReconciliationTaskRegistry } from "~/lib/reconciliation/types";
-import type { FeatureFlag, EmailSendAsAddress } from "~/lib/db/schema";
+import { getBananaModelUrls, setBananaModelUrls, pruneStaleDeveloperSettings } from "~/lib/developerSettings";
+import type { FeatureFlag } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -57,46 +50,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? await getBananaModelUrls()
       : null;
 
-  // Get email integration status and addresses for Admin/Dev users
-  const emailIntegrationEnabled =
-    (userDetails.role === "Admin" || userDetails.role === "Dev")
-      ? await isFeatureEnabled(FEATURE_FLAGS.EMAIL_SEND_DEV)
-      : false;
-  const emailSendAsAddresses =
-    emailIntegrationEnabled ? await getAllSendAsAddresses() : [];
-  
-  // Get email configuration (for Postmark)
-  const { 
-    getEmailReplyToAddress, 
-    getEmailOutboundBccAddress,
-    getEmailInboundForwardAddress 
-  } = await import("~/lib/developerSettings");
-  
-  const emailReplyToAddress =
-    emailIntegrationEnabled ? await getEmailReplyToAddress() : null;
-  const emailOutboundBccAddress =
-    emailIntegrationEnabled ? await getEmailOutboundBccAddress() : null;
-  const emailInboundForwardAddress =
-    emailIntegrationEnabled ? await getEmailInboundForwardAddress() : null;
-
-  // Get reconciliation tasks config for Dev users
-  const reconciliationTasks =
-    userDetails.role === "Dev"
-      ? await Promise.all(
-          ReconciliationTaskRegistry.getAll().map(async (task) => {
-            const config = await getReconciliationTaskConfig(task.id);
-            return {
-              id: task.id,
-              name: task.name,
-              description: task.description,
-              enabled: config.enabled,
-              cron: config.cron,
-              windowHours: config.windowHours,
-            };
-          })
-        )
-      : [];
-
   return withAuthHeaders(
     json({
       user,
@@ -106,12 +59,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       featureFlags,
       bananaForScaleEnabled,
       bananaModelStatus,
-      emailIntegrationEnabled,
-      emailSendAsAddresses,
-      emailReplyToAddress,
-      emailOutboundBccAddress,
-      emailInboundForwardAddress,
-      reconciliationTasks,
     }),
     headers
   );
@@ -468,306 +415,28 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  // Email "Send As" address management (Dev only)
-  if (intent === "addEmailSendAs" && userDetails.role === "Dev") {
-    const email = formData.get("email") as string;
-    const label = formData.get("label") as string;
-
-    if (!email || !label) {
-      return withAuthHeaders(
-        json({ error: "Email and label are required" }, { status: 400 }),
-        headers
-      );
-    }
-
-    // Validate email format
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return withAuthHeaders(
-        json({ error: "Invalid email format" }, { status: 400 }),
-        headers
-      );
-    }
-
-    // Check if address already exists in our database
-    const exists = await sendAsAddressExists(email);
-    if (exists) {
-      return withAuthHeaders(
-        json({ error: "This email address already exists" }, { status: 400 }),
-        headers
-      );
-    }
-
-    // Validate that the address is properly formatted for Postmark
+  if (intent === "pruneStaleData" && userDetails.role === "Dev") {
     try {
-      const { validateSenderAddress } = await import(
-        "~/lib/postmark/postmark-client.server"
-      );
-      const validation = validateSenderAddress(email);
+      const [prunedFlags, prunedSettings] = await Promise.all([
+        pruneStaleFeatureFlags(),
+        pruneStaleDeveloperSettings(),
+      ]);
 
-      if (!validation.valid) {
-        return withAuthHeaders(
-          json({
-            error: validation.warning || "Invalid email address format",
-          }, { status: 400 }),
-          headers
-        );
-      }
-      // Log a reminder about Postmark Sender Signatures
-      if (validation.warning) {
-        console.log("Postmark reminder:", validation.warning);
-      }
-    } catch (validationError) {
-      // If validation fails, still allow adding but warn
-      console.error("Email validation failed:", validationError);
-      // Continue without blocking - the address might still work
-    }
-
-    try {
-      await addSendAsAddress(email, label, user.id);
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
+      const removed = [...prunedFlags, ...prunedSettings];
       return withAuthHeaders(
-        json({ error: "Failed to add email address" }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  if (intent === "deleteEmailSendAs" && userDetails.role === "Dev") {
-    const id = formData.get("id") as string;
-
-    if (!id) {
-      return withAuthHeaders(
-        json({ error: "Address ID is required" }, { status: 400 }),
-        headers
-      );
-    }
-
-    try {
-      const result = await deleteSendAsAddress(parseInt(id));
-      if (!result.success) {
-        return withAuthHeaders(
-          json({ error: result.error }, { status: 400 }),
-          headers
-        );
-      }
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
-      return withAuthHeaders(
-        json({ error: "Failed to delete email address" }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  // Update email reply-to address (for Postmark inbound routing)
-  if (intent === "updateEmailReplyTo" && userDetails.role === "Dev") {
-    const replyToAddress = formData.get("replyToAddress") as string;
-
-    try {
-      // Basic email validation
-      if (replyToAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyToAddress)) {
-        return withAuthHeaders(
-          json({ error: "Invalid email address format" }, { status: 400 }),
-          headers
-        );
-      }
-
-      const { setEmailReplyToAddress } = await import("~/lib/developerSettings");
-      await setEmailReplyToAddress(replyToAddress || null, user.id);
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
-      return withAuthHeaders(
-        json({ error: "Failed to update reply-to address" }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  // Update outbound BCC address (Gmail mirroring for sent emails)
-  if (intent === "updateOutboundBcc" && userDetails.role === "Dev") {
-    const bccAddress = formData.get("bccAddress") as string;
-
-    try {
-      // Basic email validation
-      if (bccAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bccAddress)) {
-        return withAuthHeaders(
-          json({ error: "Invalid email address format" }, { status: 400 }),
-          headers
-        );
-      }
-
-      const { setEmailOutboundBccAddress } = await import("~/lib/developerSettings");
-      await setEmailOutboundBccAddress(bccAddress || null, user.id);
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
-      return withAuthHeaders(
-        json({ error: "Failed to update outbound BCC address" }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  // Update inbound forward address (Gmail mirroring for received emails)
-  if (intent === "updateInboundForward" && userDetails.role === "Dev") {
-    const forwardAddress = formData.get("forwardAddress") as string;
-
-    try {
-      // Basic email validation
-      if (forwardAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forwardAddress)) {
-        return withAuthHeaders(
-          json({ error: "Invalid email address format" }, { status: 400 }),
-          headers
-        );
-      }
-
-      const { setEmailInboundForwardAddress } = await import("~/lib/developerSettings");
-      await setEmailInboundForwardAddress(forwardAddress || null, user.id);
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
-      return withAuthHeaders(
-        json({ error: "Failed to update inbound forward address" }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  if (intent === "setDefaultEmailSendAs" && userDetails.role === "Dev") {
-    const id = formData.get("id") as string;
-
-    if (!id) {
-      return withAuthHeaders(
-        json({ error: "Address ID is required" }, { status: 400 }),
-        headers
-      );
-    }
-
-    try {
-      await setDefaultSendAsAddress(parseInt(id));
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
-      return withAuthHeaders(
-        json({ error: "Failed to set default address" }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  // Update Reply-To for a specific Send As address
-  if (intent === "updateSendAsReplyTo" && userDetails.role === "Dev") {
-    const id = formData.get("id") as string;
-    const replyToAddress = formData.get("replyToAddress") as string;
-
-    if (!id) {
-      return withAuthHeaders(
-        json({ error: "Address ID is required" }, { status: 400 }),
-        headers
-      );
-    }
-
-    // Basic email validation (allow empty to clear)
-    if (replyToAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyToAddress)) {
-      return withAuthHeaders(
-        json({ error: "Invalid email address format" }, { status: 400 }),
-        headers
-      );
-    }
-
-    try {
-      const { updateSendAsAddress } = await import("~/lib/emailSendAsAddresses");
-      await updateSendAsAddress(parseInt(id), {
-        replyToAddress: replyToAddress || null,
-      });
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
-      return withAuthHeaders(
-        json({ error: "Failed to update reply-to address" }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  // Update reconciliation task settings
-  if (intent === "updateReconciliationTask" && userDetails.role === "Dev") {
-    const taskId = formData.get("taskId") as string;
-    const enabled = formData.get("enabled") === "true";
-    const cronSchedule = formData.get("cron") as string;
-    const windowHours = formData.get("windowHours") as string;
-
-    if (!taskId) {
-      return withAuthHeaders(
-        json({ error: "Task ID is required" }, { status: 400 }),
-        headers
-      );
-    }
-
-    // Validate cron syntax
-    const cron = await import("node-cron");
-    if (cronSchedule && !cron.validate(cronSchedule)) {
-      return withAuthHeaders(
-        json({ error: "Invalid cron syntax. Use format like '0 */6 * * *'" }, { status: 400 }),
-        headers
-      );
-    }
-
-    try {
-      // Save settings
-      const { setReconciliationTaskConfig } = await import("~/lib/developerSettings");
-      await setReconciliationTaskConfig(
-        taskId,
-        {
-          enabled,
-          cron: cronSchedule,
-          windowHours: parseInt(windowHours) || 72,
-        },
-        user.id
-      );
-
-      // Restart scheduler with new config
-      const { ReconciliationScheduler } = await import("~/lib/reconciliation/scheduler.server");
-      await ReconciliationScheduler.getInstance().restartTask(taskId);
-
-      return withAuthHeaders(json({ success: true }), headers);
-    } catch (error) {
-      return withAuthHeaders(
-        json({ 
-          error: `Failed to update settings: ${error instanceof Error ? error.message : "Unknown error"}` 
-        }, { status: 500 }),
-        headers
-      );
-    }
-  }
-
-  // Trigger manual reconciliation
-  if (intent === "triggerReconciliation" && userDetails.role === "Dev") {
-    const taskId = formData.get("taskId") as string;
-
-    if (!taskId) {
-      return withAuthHeaders(
-        json({ error: "Task ID is required" }, { status: 400 }),
-        headers
-      );
-    }
-
-    try {
-      const { ReconciliationScheduler } = await import("~/lib/reconciliation/scheduler.server");
-      
-      // Execute task asynchronously (don't wait for completion)
-      ReconciliationScheduler.getInstance()
-        .executeTask(taskId, "manual", user.id)
-        .catch((error) => {
-          console.error(`Manual reconciliation failed for ${taskId}:`, error);
-        });
-
-      return withAuthHeaders(
-        json({ success: true, message: "Reconciliation started" }),
+        json({
+          success: true,
+          pruneResult: {
+            flags: prunedFlags,
+            settings: prunedSettings,
+            total: removed.length,
+          },
+        }),
         headers
       );
     } catch (error) {
       return withAuthHeaders(
-        json({ 
-          error: `Failed to trigger reconciliation: ${error instanceof Error ? error.message : "Unknown error"}` 
-        }, { status: 500 }),
+        json({ error: "Failed to prune stale data" }, { status: 500 }),
         headers
       );
     }
@@ -784,7 +453,6 @@ type Tab =
   | "security"
   | "notifications"
   | "preferences"
-  | "email"
   | "admin"
   | "developer";
 
@@ -842,35 +510,8 @@ function BananaModelUploadSection({
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fetcher = useFetcher<{ success?: boolean; error?: string; message?: string }>();
-
-  // Loading state from fetcher
   const isUploading = fetcher.state !== "idle";
 
-  // Result from fetcher data
-  const uploadResult = fetcher.data;
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-    }
-  };
-
-  const handleUpload = () => {
-    if (!selectedFile) return;
-
-    const formData = new FormData();
-    formData.append("intent", "uploadBananaModel");
-    formData.append("file", selectedFile);
-
-    // Uses Remix fetcher - automatic JSON parsing, revalidation, loading states
-    fetcher.submit(formData, {
-      method: "post",
-      encType: "multipart/form-data",
-    });
-  };
-
-  // Clear file input on successful upload
   useEffect(() => {
     if (fetcher.data?.success) {
       setSelectedFile(null);
@@ -879,133 +520,83 @@ function BananaModelUploadSection({
     }
   }, [fetcher.data]);
 
-  const getStatusDisplay = () => {
-    if (!bananaModelStatus) return null;
-    
-    const { conversionStatus, meshUrl } = bananaModelStatus;
-    
-    if (meshUrl && conversionStatus === "completed") {
-      return (
-        <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-          </svg>
-          <span className="text-sm">Banana model ready</span>
-        </div>
-      );
-    }
-    
-    if (conversionStatus === "converting" || conversionStatus === "uploading") {
-      return (
-        <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
-          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-          <span className="text-sm">
-            {conversionStatus === "converting" ? "Converting..." : "Uploading..."}
-          </span>
-        </div>
-      );
-    }
-    
-    if (conversionStatus === "conversion_failed" || conversionStatus === "error") {
-      return (
-        <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
-          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-          </svg>
-          <span className="text-sm">Conversion failed - try again</span>
-        </div>
-      );
-    }
-    
-    return (
-      <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
-        <span className="text-sm">No banana model uploaded</span>
-      </div>
-    );
+  const handleUpload = () => {
+    if (!selectedFile) return;
+    const formData = new FormData();
+    formData.append("intent", "uploadBananaModel");
+    formData.append("file", selectedFile);
+    fetcher.submit(formData, { method: "post", encType: "multipart/form-data" });
   };
 
+  const status = bananaModelStatus?.conversionStatus;
+  const hasModel = bananaModelStatus?.meshUrl && status === "completed";
+  const isBusy = status === "converting" || status === "uploading";
+  const hasFailed = status === "conversion_failed" || status === "error";
+
   return (
-    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
-      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2 flex items-center gap-2">
-        <span>🍌</span>
-        Banana for Scale Settings
-      </h4>
-      <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
-        Upload a banana CAD model (STEP file) to use as a scale reference in 3D part viewers.
-      </p>
-
-      {/* Current Status */}
-      <div className="bg-white dark:bg-gray-800 rounded p-3 mb-4">
-        <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-600 dark:text-gray-400">Current Status:</span>
-          {getStatusDisplay()}
+    <div className="flex items-center gap-3 py-2 px-3">
+      <span className="text-base">🍌</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-900 dark:text-white font-medium">Banana for Scale</span>
+          {hasModel && <span className="text-xs text-green-600 dark:text-green-400">Ready</span>}
+          {isBusy && <span className="text-xs text-yellow-600 dark:text-yellow-400">{status === "converting" ? "Converting..." : "Uploading..."}</span>}
+          {hasFailed && <span className="text-xs text-red-600 dark:text-red-400">Failed</span>}
+          {!hasModel && !isBusy && !hasFailed && <span className="text-xs text-gray-400">No model</span>}
         </div>
-      </div>
-
-      {/* Upload Section */}
-      <div className="space-y-3">
-        <div className="flex items-start gap-3">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">
-              Upload Banana Model
-            </p>
-            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
-              Select a STEP file (.step, .stp) of a banana to use for scale reference
-            </p>
-            
-            <div className="flex items-center gap-2">
-              <input
-                id="banana-file-input"
-                type="file"
-                accept=".step,.stp,.iges,.igs"
-                onChange={handleFileSelect}
-                className="block w-full text-sm text-gray-500 dark:text-gray-400
-                  file:mr-4 file:py-1.5 file:px-3
-                  file:rounded file:border-0
-                  file:text-sm file:font-medium
-                  file:bg-blue-50 dark:file:bg-blue-900/30 file:text-blue-700 dark:file:text-blue-300
-                  hover:file:bg-blue-100 dark:hover:file:bg-blue-900/50
-                  file:cursor-pointer"
-              />
-            </div>
-            
-            {selectedFile && (
-              <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
-              </p>
-            )}
-          </div>
-        </div>
-
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          onClick={handleUpload}
-          disabled={!selectedFile || isUploading}
-        >
-          {isUploading ? "Uploading & Converting..." : "Upload & Convert"}
-        </Button>
-
-        {/* Result Messages */}
-        {uploadResult && (
-          <div className={`mt-3 p-3 rounded ${
-            uploadResult.success
-              ? "bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700"
-              : "bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700"
-          }`}>
-            <p className={`text-sm font-medium ${
-              uploadResult.success
-                ? "text-green-800 dark:text-green-200"
-                : "text-red-800 dark:text-red-200"
-            }`}>
-              {uploadResult.success ? uploadResult.message : uploadResult.error}
-            </p>
-          </div>
+        {selectedFile && (
+          <p className="text-xs text-gray-500 truncate">{selectedFile.name}</p>
+        )}
+        {fetcher.data && "error" in fetcher.data && (
+          <p className="text-xs text-red-600 dark:text-red-400">{fetcher.data.error}</p>
         )}
       </div>
+      <input
+        id="banana-file-input"
+        type="file"
+        accept=".step,.stp,.iges,.igs"
+        onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+        className="hidden"
+      />
+      <label
+        htmlFor="banana-file-input"
+        className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer whitespace-nowrap"
+      >
+        Choose file
+      </label>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={handleUpload}
+        disabled={!selectedFile || isUploading}
+      >
+        {isUploading ? "Converting..." : "Upload"}
+      </Button>
     </div>
   );
+}
+
+function PruneResultMessage({ data, state }: { data: unknown; state: string }) {
+  if (state !== "idle" || !data || typeof data !== "object") return null;
+
+  if ("error" in data) {
+    return <span className="text-xs text-red-600 dark:text-red-400">{(data as { error: string }).error}</span>;
+  }
+
+  if ("pruneResult" in data) {
+    const { total, flags, settings } = (data as { pruneResult: { total: number; flags: string[]; settings: string[] } }).pruneResult;
+    if (total === 0) {
+      return <span className="text-xs text-gray-500 dark:text-gray-400">Nothing to prune</span>;
+    }
+    return (
+      <span className="text-xs text-gray-500 dark:text-gray-400">
+        Removed {total}: {[...flags, ...settings].join(", ")}
+      </span>
+    );
+  }
+
+  return null;
 }
 
 export default function Settings() {
@@ -1017,26 +608,13 @@ export default function Settings() {
     featureFlags: initialFeatureFlags,
     bananaForScaleEnabled,
     bananaModelStatus,
-    emailIntegrationEnabled,
-    emailSendAsAddresses,
-    emailReplyToAddress,
-    emailOutboundBccAddress,
-    emailInboundForwardAddress,
-    reconciliationTasks,
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
   const passwordResetFetcher = useFetcher<typeof action>();
   const featureFlagsFetcher = useFetcher<typeof action>();
-  const emailAddressFetcher = useFetcher<typeof action>();
-  const emailReplyToFetcher = useFetcher<typeof action>();
-  const emailOutboundBccFetcher = useFetcher<typeof action>();
-  const emailInboundForwardFetcher = useFetcher<typeof action>();
-  const reconciliationFetcher = useFetcher<typeof action>();
+  const pruneFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
-
-  // State for adding new email address
-  const [newEmailAddress, setNewEmailAddress] = useState({ email: "", label: "" });
 
   // Local state for feature flags
   const [localFeatureFlags, setLocalFeatureFlags] = useState(
@@ -1058,20 +636,6 @@ export default function Settings() {
       revalidator.revalidate();
     }
   }, [fetcher.data, revalidator]);
-
-  // Revalidate after email address changes - only when transitioning from submitting to idle with success
-  useEffect(() => {
-    if (
-      emailAddressFetcher.state === "idle" &&
-      emailAddressFetcher.data &&
-      "success" in emailAddressFetcher.data
-    ) {
-      setNewEmailAddress({ email: "", label: "" });
-      // Only revalidate once by clearing the fetcher data reference check
-      revalidator.revalidate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [emailAddressFetcher.state]); // Intentionally only depend on state to prevent multiple revalidations
 
   // Handle successful feature flags save
   useEffect(() => {
@@ -1128,11 +692,6 @@ export default function Settings() {
   ];
 
   const tabs = [...baseTabs];
-
-  // Add Email tab for Admin/Dev users when email integration is enabled
-  if (emailIntegrationEnabled && (userDetails?.role === "Admin" || userDetails?.role === "Dev")) {
-    tabs.push({ id: "email", label: "Email" });
-  }
 
   // Add Admin tab for Admin and Dev users
   if (userDetails?.role === "Admin" || userDetails?.role === "Dev") {
@@ -1316,310 +875,6 @@ export default function Settings() {
               </div>
             )}
 
-            {activeTab === "email" &&
-              emailIntegrationEnabled &&
-              (userDetails?.role === "Admin" || userDetails?.role === "Dev") && (
-                <div className="max-w-2xl">
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-6">
-                    Email Settings
-                  </h3>
-
-                  <div className="space-y-6">
-                    {/* Send As Addresses */}
-                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
-                        &quot;Send As&quot; Addresses
-                      </h4>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                        Configure email addresses that can be used to send emails from quotes.
-                        Addresses are validated against Gmail&apos;s &quot;Send mail as&quot; settings before being added.
-                      </p>
-
-                      {/* Existing addresses list */}
-                      {emailSendAsAddresses && emailSendAsAddresses.length > 0 ? (
-                        <div className="space-y-3 mb-4">
-                          {emailSendAsAddresses.map((addr: EmailSendAsAddress) => (
-                            <div
-                              key={addr.id}
-                              className="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
-                            >
-                              {/* Address header row */}
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-3">
-                                  {addr.isDefault && (
-                                    <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
-                                      Default
-                                    </span>
-                                  )}
-                                  <div>
-                                    <span className="font-medium text-gray-900 dark:text-white">
-                                      {addr.label}
-                                    </span>
-                                    <span className="text-gray-500 dark:text-gray-400 ml-2 text-sm">
-                                      &lt;{addr.email}&gt;
-                                    </span>
-                                  </div>
-                                  {!addr.isActive && (
-                                    <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded">
-                                      Inactive
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {!addr.isDefault && (
-                                    <emailAddressFetcher.Form method="post" className="inline">
-                                      <input type="hidden" name="intent" value="setDefaultEmailSendAs" />
-                                      <input type="hidden" name="id" value={addr.id} />
-                                      <button
-                                        type="submit"
-                                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                                        disabled={emailAddressFetcher.state === "submitting"}
-                                      >
-                                        Set Default
-                                      </button>
-                                    </emailAddressFetcher.Form>
-                                  )}
-                                  <emailAddressFetcher.Form method="post" className="inline">
-                                    <input type="hidden" name="intent" value="deleteEmailSendAs" />
-                                    <input type="hidden" name="id" value={addr.id} />
-                                    <button
-                                      type="submit"
-                                      className="text-xs text-red-600 dark:text-red-400 hover:underline"
-                                      disabled={emailAddressFetcher.state === "submitting"}
-                                    >
-                                      Remove
-                                    </button>
-                                  </emailAddressFetcher.Form>
-                                </div>
-                              </div>
-                              
-                              {/* Reply-To address for this Send As */}
-                              <emailAddressFetcher.Form method="post" className="flex items-center gap-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                                <input type="hidden" name="intent" value="updateSendAsReplyTo" />
-                                <input type="hidden" name="id" value={addr.id} />
-                                <label htmlFor={`reply-to-${addr.id}`} className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Reply-To:</label>
-                                <input
-                                  id={`reply-to-${addr.id}`}
-                                  type="email"
-                                  name="replyToAddress"
-                                  defaultValue={addr.replyToAddress || ""}
-                                  placeholder="inbound@yourdomain.com (uses default if empty)"
-                                  className="flex-1 px-2 py-1 text-xs border border-gray-200 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-                                />
-                                <button
-                                  type="submit"
-                                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                                  disabled={emailAddressFetcher.state === "submitting"}
-                                >
-                                  Save
-                                </button>
-                              </emailAddressFetcher.Form>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 italic">
-                          No email addresses configured. Add one below.
-                        </div>
-                      )}
-
-                      {/* Add new address form */}
-                      <div className="space-y-2">
-                        <emailAddressFetcher.Form method="post" className="flex flex-col sm:flex-row gap-2">
-                          <input type="hidden" name="intent" value="addEmailSendAs" />
-                          <div className="flex-1">
-                            <input
-                              type="text"
-                              name="label"
-                              placeholder="Display name (e.g., RFQ)"
-                              value={newEmailAddress.label}
-                              onChange={(e) => setNewEmailAddress((prev) => ({ ...prev, label: e.target.value }))}
-                              className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
-                              required
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <input
-                              type="email"
-                              name="email"
-                              placeholder="email@domain.com"
-                              value={newEmailAddress.email}
-                              onChange={(e) => setNewEmailAddress((prev) => ({ ...prev, email: e.target.value }))}
-                              className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
-                              required
-                            />
-                          </div>
-                          <Button
-                            type="submit"
-                            variant="secondary"
-                            size="sm"
-                            disabled={emailAddressFetcher.state === "submitting" || !newEmailAddress.email || !newEmailAddress.label}
-                          >
-                            {emailAddressFetcher.state === "submitting" ? "Validating..." : "Add Address"}
-                          </Button>
-                        </emailAddressFetcher.Form>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          The display name is shown in the dropdown when composing emails (e.g., &quot;RFQ&quot; or &quot;Sales&quot;).
-                        </p>
-                      </div>
-
-                      {emailAddressFetcher.data && "error" in emailAddressFetcher.data && (
-                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
-                          {emailAddressFetcher.data.error}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Reply-To Address Configuration */}
-                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
-                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
-                        Reply-To Address
-                      </h4>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                        Configure the reply-to address for outbound emails. This should be your Postmark inbound address
-                        (e.g., inbound@yourdomain.com) to ensure replies are captured via webhook.
-                      </p>
-
-                      <emailReplyToFetcher.Form method="post" className="space-y-3">
-                        <input type="hidden" name="intent" value="updateEmailReplyTo" />
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <input
-                            type="email"
-                            name="replyToAddress"
-                            defaultValue={emailReplyToAddress || ""}
-                            placeholder="inbound@yourdomain.com"
-                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
-                          />
-                          <Button
-                            type="submit"
-                            variant="secondary"
-                            size="sm"
-                            disabled={emailReplyToFetcher.state === "submitting"}
-                          >
-                            {emailReplyToFetcher.state === "submitting" ? "Saving..." : "Save"}
-                          </Button>
-                        </div>
-                      </emailReplyToFetcher.Form>
-
-                      {emailReplyToAddress && (
-                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                          Current: {emailReplyToAddress}
-                        </p>
-                      )}
-
-                      {emailReplyToFetcher.data && "error" in emailReplyToFetcher.data && (
-                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
-                          {emailReplyToFetcher.data.error}
-                        </p>
-                      )}
-                      {emailReplyToFetcher.data && "success" in emailReplyToFetcher.data && (
-                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                          Reply-to address saved successfully!
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Outbound BCC Address (Gmail Mirroring for Sent Emails) */}
-                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
-                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
-                        Outbound Email BCC (Gmail Mirroring)
-                      </h4>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                        BCC a copy of all outbound emails to this address so your team can see sent emails in Gmail.
-                        This requires the &quot;Enable Outbound Email BCC&quot; feature flag to be enabled.
-                      </p>
-
-                      <emailOutboundBccFetcher.Form method="post" className="space-y-3">
-                        <input type="hidden" name="intent" value="updateOutboundBcc" />
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <input
-                            type="email"
-                            name="bccAddress"
-                            defaultValue={emailOutboundBccAddress || ""}
-                            placeholder="archive@yourdomain.com"
-                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
-                          />
-                          <Button
-                            type="submit"
-                            variant="secondary"
-                            size="sm"
-                            disabled={emailOutboundBccFetcher.state === "submitting"}
-                          >
-                            {emailOutboundBccFetcher.state === "submitting" ? "Saving..." : "Save"}
-                          </Button>
-                        </div>
-                      </emailOutboundBccFetcher.Form>
-
-                      {emailOutboundBccAddress && (
-                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                          Current: {emailOutboundBccAddress}
-                        </p>
-                      )}
-
-                      {emailOutboundBccFetcher.data && "error" in emailOutboundBccFetcher.data && (
-                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
-                          {emailOutboundBccFetcher.data.error}
-                        </p>
-                      )}
-                      {emailOutboundBccFetcher.data && "success" in emailOutboundBccFetcher.data && (
-                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                          Outbound BCC address saved successfully!
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Inbound Forward Address (Gmail Mirroring for Received Emails) */}
-                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mt-4">
-                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2">
-                        Inbound Email Forwarding (Gmail Mirroring)
-                      </h4>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                        Forward inbound emails to this address so your team can see customer replies in Gmail.
-                        This requires the &quot;Enable Inbound Email Forwarding&quot; feature flag to be enabled.
-                      </p>
-
-                      <emailInboundForwardFetcher.Form method="post" className="space-y-3">
-                        <input type="hidden" name="intent" value="updateInboundForward" />
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <input
-                            type="email"
-                            name="forwardAddress"
-                            defaultValue={emailInboundForwardAddress || ""}
-                            placeholder="team@yourdomain.com"
-                            className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
-                          />
-                          <Button
-                            type="submit"
-                            variant="secondary"
-                            size="sm"
-                            disabled={emailInboundForwardFetcher.state === "submitting"}
-                          >
-                            {emailInboundForwardFetcher.state === "submitting" ? "Saving..." : "Save"}
-                          </Button>
-                        </div>
-                      </emailInboundForwardFetcher.Form>
-
-                      {emailInboundForwardAddress && (
-                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                          Current: {emailInboundForwardAddress}
-                        </p>
-                      )}
-
-                      {emailInboundForwardFetcher.data && "error" in emailInboundForwardFetcher.data && (
-                        <p className="text-sm text-red-600 dark:text-red-400 mt-2">
-                          {emailInboundForwardFetcher.data.error}
-                        </p>
-                      )}
-                      {emailInboundForwardFetcher.data && "success" in emailInboundForwardFetcher.data && (
-                        <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                          Inbound forward address saved successfully!
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
             {activeTab === "admin" &&
               (userDetails?.role === "Admin" ||
                 userDetails?.role === "Dev") && (
@@ -1694,8 +949,7 @@ export default function Settings() {
                             flag.key === 'events_access_all' ||
                             flag.key === 'events_nav_visible' ||
                             flag.key === 'pdf_auto_download' ||
-                            flag.key === 'quote_rejection_reason_required' ||
-                            flag.key === 'email_auto_assign_replied'
+                            flag.key === 'quote_rejection_reason_required'
                           )
                           .sort((a: FeatureFlag, b: FeatureFlag) =>
                             a.key.localeCompare(b.key)
@@ -1737,7 +991,6 @@ export default function Settings() {
                       {localFeatureFlags
                         ?.filter((flag: FeatureFlag) =>
                           flag.key === 'display_version_header' ||
-                          flag.key === 'email_send_dev' ||
                           flag.key === 'mesh_uploads_dev' ||
                           flag.key === 'mesh_uploads_all' ||
                           flag.key === 'price_calculator_dev' ||
@@ -1761,177 +1014,33 @@ export default function Settings() {
                     </div>
                   </div>
 
-                  {/* Banana for Scale Settings */}
+                  {/* Banana for Scale Model */}
                   {bananaForScaleEnabled && (
-                    <BananaModelUploadSection 
-                      bananaModelStatus={bananaModelStatus} 
-                    />
-                  )}
-
-                  {/* Reconciliation Settings */}
-                  {reconciliationTasks && reconciliationTasks.length > 0 && (
-                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-lg p-4">
-                      <h4 className="text-md font-medium text-gray-900 dark:text-white mb-2 flex items-center gap-2">
-                        <span>🔄</span>
-                        Data Reconciliation
-                      </h4>
-                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
-                        Configure scheduled reconciliation tasks to sync data with external services. 
-                        Reconciliation ensures local data stays in sync with the source of truth (e.g., Postmark APIs).
-                      </p>
-
-                      <div className="space-y-4">
-                        {reconciliationTasks.map((task: {
-                          id: string;
-                          name: string;
-                          description: string;
-                          enabled: boolean;
-                          cron: string;
-                          windowHours: number;
-                        }) => (
-                          <div 
-                            key={task.id} 
-                            className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700"
-                          >
-                            <div className="flex items-start justify-between mb-3">
-                              <div>
-                                <h5 className="text-sm font-medium text-gray-900 dark:text-white">
-                                  {task.name}
-                                </h5>
-                                <p className="text-xs text-gray-600 dark:text-gray-400">
-                                  {task.description}
-                                </p>
-                              </div>
-                              <span className={`text-xs px-2 py-1 rounded ${
-                                task.enabled 
-                                  ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300" 
-                                  : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
-                              }`}>
-                                {task.enabled ? "Enabled" : "Disabled"}
-                              </span>
-                            </div>
-
-                            <reconciliationFetcher.Form method="post" className="space-y-3">
-                              <input type="hidden" name="intent" value="updateReconciliationTask" />
-                              <input type="hidden" name="taskId" value={task.id} />
-                              
-                              <label className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  name="enabled"
-                                  value="true"
-                                  defaultChecked={task.enabled}
-                                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="text-sm text-gray-700 dark:text-gray-300">
-                                  Enable automatic reconciliation
-                                </span>
-                              </label>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div>
-                                  <label 
-                                    htmlFor={`cron-${task.id}`}
-                                    className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
-                                  >
-                                    Schedule (Cron Syntax)
-                                  </label>
-                                  <input
-                                    id={`cron-${task.id}`}
-                                    type="text"
-                                    name="cron"
-                                    defaultValue={task.cron}
-                                    placeholder="0 */6 * * *"
-                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500"
-                                  />
-                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    <a 
-                                      href="https://crontab.guru" 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
-                                      className="text-blue-600 dark:text-blue-400 hover:underline"
-                                    >
-                                      Cron syntax help
-                                    </a>
-                                    {" • Default: every 6 hours"}
-                                  </p>
-                                </div>
-
-                                <div>
-                                  <label 
-                                    htmlFor={`windowHours-${task.id}`}
-                                    className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
-                                  >
-                                    Lookback Window (hours)
-                                  </label>
-                                  <input
-                                    id={`windowHours-${task.id}`}
-                                    type="number"
-                                    name="windowHours"
-                                    defaultValue={task.windowHours}
-                                    min="1"
-                                    max="720"
-                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                                  />
-                                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    How far back to reconcile (default: 72h)
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-2 pt-2">
-                                <Button
-                                  type="submit"
-                                  variant="secondary"
-                                  size="sm"
-                                  disabled={reconciliationFetcher.state === "submitting"}
-                                >
-                                  {reconciliationFetcher.state === "submitting" 
-                                    ? "Saving..." 
-                                    : "Save Settings"}
-                                </Button>
-                              </div>
-                            </reconciliationFetcher.Form>
-
-                            {/* Manual Trigger */}
-                            <div className="mt-4 pt-3 border-t border-gray-200 dark:border-gray-700">
-                              <reconciliationFetcher.Form method="post" className="flex items-center gap-3">
-                                <input type="hidden" name="intent" value="triggerReconciliation" />
-                                <input type="hidden" name="taskId" value={task.id} />
-                                <Button
-                                  type="submit"
-                                  variant="primary"
-                                  size="sm"
-                                  disabled={reconciliationFetcher.state === "submitting"}
-                                >
-                                  Run Now
-                                </Button>
-                                <span className="text-xs text-gray-500 dark:text-gray-400">
-                                  Trigger manual reconciliation
-                                </span>
-                              </reconciliationFetcher.Form>
-                            </div>
-
-                            {/* Result messages */}
-                            {reconciliationFetcher.data && "success" in reconciliationFetcher.data && (
-                              <div className="mt-3 p-2 bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded text-sm text-green-700 dark:text-green-300">
-                                {reconciliationFetcher.data.message || "Settings saved successfully!"}
-                              </div>
-                            )}
-                            {reconciliationFetcher.data && "error" in reconciliationFetcher.data && (
-                              <div className="mt-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded text-sm text-red-700 dark:text-red-300">
-                                {reconciliationFetcher.data.error}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-4">
-                        Reconciliation runs in the background. Check the Events log for results.
-                      </p>
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg overflow-hidden">
+                      <BananaModelUploadSection bananaModelStatus={bananaModelStatus} />
                     </div>
                   )}
+
+                  {/* Data Maintenance */}
+                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center gap-3">
+                      <pruneFetcher.Form method="post">
+                        <input type="hidden" name="intent" value="pruneStaleData" />
+                        <Button
+                          type="submit"
+                          variant="secondary"
+                          size="sm"
+                          disabled={pruneFetcher.state === "submitting"}
+                        >
+                          {pruneFetcher.state === "submitting" ? "Pruning..." : "Prune stale data"}
+                        </Button>
+                      </pruneFetcher.Form>
+                      <PruneResultMessage data={pruneFetcher.data} state={pruneFetcher.state} />
+                    </div>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                      Removes feature_flags and developer_settings rows that no longer exist in code.
+                    </p>
+                  </div>
                 </div>
               </div>
             )}

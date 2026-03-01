@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import { useFetcher } from "@remix-run/react";
 import Modal from "~/components/shared/Modal";
 import Button from "~/components/shared/Button";
-import { InputField, TextareaField } from "~/components/shared/FormField";
+import { InputField } from "~/components/shared/FormField";
 import SearchableSelect from "~/components/shared/SearchableSelect";
+import { PartConfigForm } from "~/components/shared/PartConfigForm";
 import type { Customer } from "~/lib/customers";
 
 interface PartConfig {
@@ -30,7 +31,6 @@ type Step = "upload" | "configure" | "customer" | "review";
 export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }: NewQuoteModalProps) {
   const fetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const drawingInputRefs = useRef<{ [key: number]: HTMLInputElement }>({});
 
   const [currentStep, setCurrentStep] = useState<Step>("upload");
   const [partFiles, setPartFiles] = useState<File[]>([]);
@@ -157,57 +157,12 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     }
   };
 
-  const handleDrawingUpload = (partIndex: number, files: FileList | null) => {
-    if (!files) return;
-    const drawings = Array.from(files);
-    setPartConfigs(prev => {
-      const updated = [...prev];
-      updated[partIndex] = {
-        ...updated[partIndex],
-        drawings: [...(updated[partIndex].drawings || []), ...drawings]
-      };
-      return updated;
-    });
-  };
-
-  const removeDrawing = (partIndex: number, drawingIndex: number) => {
-    setPartConfigs(prev => {
-      const updated = [...prev];
-      const drawings = [...(updated[partIndex].drawings || [])];
-      drawings.splice(drawingIndex, 1);
-      updated[partIndex] = { ...updated[partIndex], drawings };
-      return updated;
-    });
-  };
-
   const updatePartConfig = (index: number, field: keyof PartConfig, value: string | number | File[] | boolean | undefined) => {
     setPartConfigs(prev => {
       const updated = [...prev];
       updated[index] = { ...updated[index], [field]: value };
       return updated;
     });
-  };
-
-  const handleToleranceInput = (index: number, value: string) => {
-    // Remove ± symbol from the value for processing
-    const cleanValue = value.replace(/±/g, "");
-
-    // Check if the clean value contains any non-numeric characters (excluding decimal point, minus, and spaces)
-    const hasText = /[^0-9.\-\s]/.test(cleanValue);
-
-    if (hasText) {
-      // If it contains text, don't add the ± symbol
-      updatePartConfig(index, 'tolerances', cleanValue);
-    } else {
-      // If it's empty or only contains numbers/decimal/minus/spaces
-      if (cleanValue.trim() === "") {
-        // If empty, just show the ± symbol
-        updatePartConfig(index, 'tolerances', "±");
-      } else {
-        // If it contains numbers, add ± at the beginning
-        updatePartConfig(index, 'tolerances', "±" + cleanValue);
-      }
-    }
   };
 
   const togglePartExpanded = (index: number) => {
@@ -484,78 +439,22 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 mt-4">
-                    <InputField
-                      label="Material"
-                      value={config.material || ""}
-                      onChange={(e) => updatePartConfig(index, "material", e.target.value)}
-                      placeholder="e.g., Aluminum 6061, Steel 316L"
-                    />
-
-                    <InputField
-                      label="Tolerances"
-                      value={config.tolerances || ""}
-                      onChange={(e) => handleToleranceInput(index, e.target.value)}
-                      onFocus={() => {
-                        // If field is empty when focused, add ± symbol
-                        if (!config.tolerances) {
-                          handleToleranceInput(index, "±");
-                        }
+                  <div className="mt-4">
+                    <PartConfigForm
+                      material={config.material || ""}
+                      tolerance={config.tolerances || ""}
+                      finish={config.surfaceFinish || ""}
+                      notes={config.notes || ""}
+                      onChange={(field, value) => {
+                        if (field === "material") updatePartConfig(index, "material", value);
+                        if (field === "tolerance") updatePartConfig(index, "tolerances", value);
+                        if (field === "finish") updatePartConfig(index, "surfaceFinish", value);
+                        if (field === "notes") updatePartConfig(index, "notes", value);
                       }}
-                      placeholder="e.g., ±0.005"
-                    />
-                  </div>
-
-                  <div className="mt-4">
-                    <InputField
-                      label="Surface Finish"
-                      value={config.surfaceFinish || ""}
-                      onChange={(e) => updatePartConfig(index, "surfaceFinish", e.target.value)}
-                      placeholder="e.g., As Machined, Anodized Black, Powder Coated"
-                    />
-                  </div>
-
-                  <div className="mt-4">
-                    <div className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Technical Drawings (Optional)
-                    </div>
-                    <div className="space-y-2">
-                      {config.drawings?.map((drawing, idx) => (
-                        <div key={idx} className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                          <span className="text-sm">{drawing.name}</span>
-                          <button
-                            onClick={() => removeDrawing(index, idx)}
-                            className="text-red-600 hover:text-red-800"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                      <input
-                        ref={(el) => { if (el) drawingInputRefs.current[index] = el; }}
-                        type="file"
-                        multiple
-                        accept=".pdf,.png,.jpg,.jpeg,.dwg,.dxf"
-                        onChange={(e) => handleDrawingUpload(index, e.target.files)}
-                        className="hidden"
-                      />
-                      <Button
-                        onClick={() => drawingInputRefs.current[index]?.click()}
-                        variant="secondary"
-                        size="sm"
-                      >
-                        Add Drawing
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <TextareaField
-                      label="Part Notes"
-                      value={config.notes || ""}
-                      onChange={(e) => updatePartConfig(index, "notes", e.target.value)}
-                      rows={3}
-                      placeholder="Any special requirements or notes for this part"
+                      drawings={config.drawings || []}
+                      onDrawingsChange={(files) =>
+                        updatePartConfig(index, "drawings", files)
+                      }
                     />
                   </div>
                 </div>

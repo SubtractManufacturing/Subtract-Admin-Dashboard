@@ -30,7 +30,7 @@ export default function StatCards({ stats }: StatCardsProps) {
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 px-10 py-8">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
       <Link to="/ActionItems" className="no-underline">
         <div
           className={`${cardStyles.container} cursor-pointer h-full flex flex-col`}

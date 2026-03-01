@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node"
-import { useLoaderData, useFetcher, Link } from "@remix-run/react"
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
@@ -10,8 +10,10 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
 import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
 import Modal from "~/components/shared/Modal"
+import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle"
+import { DataTable } from "~/components/shared/DataTable"
 import { InputField, PhoneInputField } from "~/components/shared/FormField"
-import { tableStyles } from "~/utils/tw-styles"
+import { listCardStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
@@ -85,21 +87,18 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function Customers() {
   const { customers } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
+  const navigate = useNavigate()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [customerType, setCustomerType] = useState<"business" | "individual">("business")
+  const [view, setView] = useViewToggle("customers-view")
 
   const filteredCustomers = customers.filter((customer: Customer) =>
     customer.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     customer.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     customer.phone?.includes(searchQuery)
   )
-
-  const handleEdit = (customer: Customer) => {
-    setEditingCustomer(customer)
-    setIsModalOpen(true)
-  }
 
   const handleAdd = () => {
     setEditingCustomer(null)
@@ -130,6 +129,22 @@ export default function Customers() {
     })
   }
 
+  const archiveIcon = (
+    <svg
+      className="w-[18px] h-[18px]"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  )
+
   return (
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader 
@@ -140,101 +155,84 @@ export default function Customers() {
         onSearch={setSearchQuery}
       />
         
-        <div className="px-10 py-8">
-        <div className="flex justify-between items-center mb-5">
+        <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
+        <div className="flex justify-between items-center mb-5 gap-3">
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">Customers ({filteredCustomers.length})</h2>
-          <Button onClick={handleAdd}>Add Customer</Button>
+          <div className="flex items-center gap-3">
+            <ViewToggle view={view} onChange={setView} />
+            <Button onClick={handleAdd}>Add Customer</Button>
+          </div>
         </div>
 
-        <table className={tableStyles.container}>
-          <thead className={tableStyles.header}>
-            <tr>
-              <th className={tableStyles.headerCell}>ID</th>
-              <th className={tableStyles.headerCell}>Name</th>
-              <th className={tableStyles.headerCell}>Email</th>
-              <th className={tableStyles.headerCell}>Phone</th>
-              <th className={tableStyles.headerCell}>Created</th>
-              <th className={tableStyles.headerCell}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredCustomers.map((customer: Customer) => (
-              <tr key={customer.id} className={`${tableStyles.row} cursor-pointer hover:bg-gray-50`}>
-                <td className={tableStyles.cell}>
-                  <Link to={`/customers/${customer.id}`} className="block">
-                    {customer.id}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/customers/${customer.id}`} className="block">
-                    {customer.displayName}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/customers/${customer.id}`} className="block">
-                    {customer.email || '--'}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/customers/${customer.id}`} className="block">
-                    {customer.phone || '--'}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <Link to={`/customers/${customer.id}`} className="block">
+        <DataTable<Customer>
+          data={filteredCustomers}
+          viewMode={view}
+          getRowKey={(customer) => customer.id}
+          onRowClick={(customer) => navigate(`/customers/${customer.id}`)}
+          emptyMessage={
+            searchQuery
+              ? "No customers found matching your search."
+              : "No customers found. Add one to get started."
+          }
+          columns={[
+            {
+              key: "id",
+              header: "ID",
+              render: (customer) => customer.id,
+            },
+            {
+              key: "name",
+              header: "Name",
+              render: (customer) => customer.displayName,
+            },
+            {
+              key: "email",
+              header: "Email",
+              render: (customer) => customer.email || "--",
+            },
+            {
+              key: "phone",
+              header: "Phone",
+              render: (customer) => customer.phone || "--",
+            },
+            {
+              key: "created",
+              header: "Created",
+              render: (customer) => formatDate(customer.createdAt),
+            },
+          ]}
+          rowActions={[
+            {
+              label: "Archive",
+              icon: archiveIcon,
+              variant: "danger",
+              onClick: (customer) => handleDelete(customer),
+            },
+          ]}
+          cardRender={(customer) => (
+            <>
+              <div className={listCardStyles.header}>
+                <div className={listCardStyles.title}>{customer.displayName}</div>
+              </div>
+              <div className={listCardStyles.sectionGrid}>
+                <div>
+                  <div className={listCardStyles.label}>Email</div>
+                  <div className={listCardStyles.value}>{customer.email || "--"}</div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Phone</div>
+                  <div className={listCardStyles.value}>{customer.phone || "--"}</div>
+                </div>
+                <div>
+                  <div className={listCardStyles.label}>Created</div>
+                  <div className={listCardStyles.value}>
                     {formatDate(customer.createdAt)}
-                  </Link>
-                </td>
-                <td className={tableStyles.cell}>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleEdit(customer)
-                      }}
-                      className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
-                      title="Quick Edit"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="16"
-                        height="16"
-                        fill="currentColor"
-                        viewBox="0 0 16 16"
-                      >
-                        <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
-                      </svg>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleDelete(customer)
-                      }}
-                      className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
-                      title="Archive"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="16"
-                        height="16"
-                        fill="currentColor"
-                        viewBox="0 0 16 16"
-                      >
-                        <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
-                      </svg>
-                    </button>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {filteredCustomers.length === 0 && (
-          <div className={tableStyles.emptyState}>
-            {searchQuery ? 'No customers found matching your search.' : 'No customers found. Add one to get started.'}
-          </div>
-        )}
+                </div>
+              </div>
+            </>
+          )}
+        />
       </div>
 
       <Modal

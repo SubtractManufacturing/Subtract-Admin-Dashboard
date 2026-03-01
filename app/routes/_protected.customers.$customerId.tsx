@@ -1,8 +1,8 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/react";
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext } from "~/lib/customers";
-import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type Attachment, type AttachmentEventContext } from "~/lib/attachments";
+import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
@@ -15,14 +15,12 @@ import Breadcrumbs from "~/components/Breadcrumbs";
 import Button from "~/components/shared/Button";
 import { InputField as FormField, PhoneInputField } from "~/components/shared/FormField";
 import { Notes } from "~/components/shared/Notes";
-import FileViewerModal from "~/components/shared/FileViewerModal";
-import { isViewableFile, getFileType, formatFileSize } from "~/lib/file-utils";
+import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import ToggleSlider from "~/components/shared/ToggleSlider";
 import PartsModal from "~/components/PartsModal";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { EventTimeline } from "~/components/EventTimeline";
-import { useDownload } from "~/hooks/useDownload";
 import { getEventsByEntity } from "~/lib/events";
 
 type CustomerOrder = {
@@ -697,13 +695,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
 export default function CustomerDetails() {
   const { customer, orders, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
-  const { download } = useDownload();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [isEditingBillingAddress, setIsEditingBillingAddress] = useState(false);
   const [isEditingShippingAddress, setIsEditingShippingAddress] = useState(false);
-  const [fileModalOpen, setFileModalOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<{ url: string; fileName: string; contentType?: string; fileSize?: number } | null>(null);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [partsModalOpen, setPartsModalOpen] = useState(false);
@@ -713,11 +708,7 @@ export default function CustomerDetails() {
   const [selected3DPart, setSelected3DPart] = useState<Part | null>(null);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
   const updateFetcher = useFetcher();
-  const uploadFetcher = useFetcher();
-  const deleteFetcher = useFetcher();
   const partsFetcher = useFetcher();
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Check if any parts are currently converting
   const hasConvertingParts = parts?.some(
@@ -925,40 +916,6 @@ export default function CustomerDetails() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isEditingInfo, isEditingContact, isEditingBillingAddress, isEditingShippingAddress, updateFetcher]);
 
-  const handleFileUpload = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const formData = new FormData();
-      formData.append("file", file);
-      
-      uploadFetcher.submit(formData, {
-        method: "post",
-        encType: "multipart/form-data",
-      });
-      
-      // Reset the file input
-      event.target.value = "";
-    }
-  };
-
-  const handleDeleteAttachment = (attachmentId: string) => {
-    if (confirm("Are you sure you want to delete this attachment?")) {
-      const formData = new FormData();
-      formData.append("intent", "deleteAttachment");
-      formData.append("attachmentId", attachmentId);
-      
-      deleteFetcher.submit(formData, {
-        method: "post",
-      });
-    }
-  };
-
   const handleAddPart = () => {
     setSelectedPart(null);
     setPartsMode("create");
@@ -1034,17 +991,6 @@ export default function CustomerDetails() {
     });
     
     setPartsModalOpen(false);
-  };
-
-  const handleViewFile = (attachment: { id: string; fileName: string; contentType: string; fileSize: number | null }) => {
-    const fileUrl = `/download/attachment/${attachment.id}?inline`;
-    setSelectedFile({ 
-      url: fileUrl, 
-      fileName: attachment.fileName,
-      contentType: attachment.contentType,
-      fileSize: attachment.fileSize || undefined
-    });
-    setFileModalOpen(true);
   };
 
   const formatCurrency = (amount: number) => {
@@ -1628,106 +1574,11 @@ export default function CustomerDetails() {
             />
           </div>
 
-          {/* Attachments Card */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Attachments</h3>
-              <Button size="sm" onClick={handleFileUpload}>Upload File</Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileChange}
-                style={{ display: 'none' }}
-                accept="*/*"
-              />
-            </div>
-            <div className="p-6">
-              {customer.attachments && customer.attachments.length > 0 ? (
-                <div className="space-y-3">
-                  {customer.attachments.map((attachment: Attachment) => (
-                    <div 
-                      key={attachment.id} 
-                      className={`
-                        flex items-center justify-between p-4 rounded-lg
-                        transition-all duration-300 ease-out
-                        ${isViewableFile(attachment.fileName, attachment.contentType) 
-                          ? 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer hover:scale-[1.02] hover:shadow-md focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:outline-none' 
-                          : 'bg-gray-50 dark:bg-gray-700'
-                        }
-                      `}
-                      onClick={isViewableFile(attachment.fileName, attachment.contentType) ? () => handleViewFile(attachment) : undefined}
-                      onKeyDown={isViewableFile(attachment.fileName, attachment.contentType) ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          handleViewFile(attachment);
-                        }
-                      } : undefined}
-                      role={isViewableFile(attachment.fileName, attachment.contentType) ? "button" : undefined}
-                      tabIndex={isViewableFile(attachment.fileName, attachment.contentType) ? 0 : undefined}
-                    >
-                      <div className="flex-1 pointer-events-none">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{attachment.fileName}</p>
-                          {isViewableFile(attachment.fileName, attachment.contentType) && (
-                            <span className="text-xs bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
-                              {getFileType(attachment.fileName, attachment.contentType).type.toUpperCase()}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {formatFileSize(attachment.fileSize || 0)} • Uploaded {formatDate(attachment.createdAt)}
-                        </p>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            download(`/download/attachment/${attachment.id}`, attachment.fileName);
-                          }}
-                          className="p-2 text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/50 rounded transition-colors"
-                          title="Download"
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="16"
-                            height="16"
-                            fill="currentColor"
-                            viewBox="0 0 16 16"
-                          >
-                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
-                          </svg>
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteAttachment(attachment.id);
-                          }}
-                          className="p-2 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/50 rounded transition-colors"
-                          title="Delete"
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="16"
-                            height="16"
-                            fill="currentColor"
-                            viewBox="0 0 16 16"
-                          >
-                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
-                            <path fillRule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
-                  No attachments uploaded yet.
-                </p>
-              )}
-            </div>
-          </div>
+          <AttachmentsSection
+            attachments={customer.attachments || []}
+            entityType="customer"
+            entityId={customer.id}
+          />
 
           {/* Parts Section */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
@@ -1774,7 +1625,7 @@ export default function CustomerDetails() {
                           (part.partFileUrl && !part.meshConversionStatus);
 
                         return (
-                          <tr key={part.id}>
+                          <tr key={part.id} className="group">
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center gap-3">
                                 {part.thumbnailUrl ? (
@@ -1836,35 +1687,23 @@ export default function CustomerDetails() {
                             {new Date(part.createdAt).toLocaleDateString()}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right">
-                            <div className="flex items-center justify-end space-x-2">
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
                                 onClick={() => handleEditPart(part)}
-                                className="p-1.5 text-white bg-blue-600 rounded hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors duration-150"
+                                className="p-2 rounded transition-colors duration-150 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50"
                                 title="Edit"
                               >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  width="16"
-                                  height="16"
-                                  fill="currentColor"
-                                  viewBox="0 0 16 16"
-                                >
-                                  <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
+                                <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                                 </svg>
                               </button>
                               <button
                                 onClick={() => handleDeletePart(part.id)}
-                                className="p-1.5 text-white bg-red-600 rounded hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 transition-colors duration-150"
+                                className="p-2 rounded transition-colors duration-150 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20"
                                 title="Delete"
                               >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  width="16"
-                                  height="16"
-                                  fill="currentColor"
-                                  viewBox="0 0 16 16"
-                                >
-                                  <path d="M12.643 15C13.979 15 15 13.845 15 12.5V5H1v7.5C1 13.845 2.021 15 3.357 15h9.286zM5.5 7h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1zM.8 1a.8.8 0 0 0-.8.8V3a.8.8 0 0 0 .8.8h14.4A.8.8 0 0 0 16 3V1.8a.8.8 0 0 0-.8-.8H.8z"/>
+                                <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                 </svg>
                               </button>
                             </div>
@@ -1885,21 +1724,6 @@ export default function CustomerDetails() {
         </div>
       </div>
 
-      {/* File Viewer Modal */}
-      {selectedFile && (
-        <FileViewerModal
-          isOpen={fileModalOpen}
-          onClose={() => {
-            setFileModalOpen(false);
-            setSelectedFile(null);
-          }}
-          fileUrl={selectedFile.url}
-          fileName={selectedFile.fileName}
-          contentType={selectedFile.contentType}
-          fileSize={selectedFile.fileSize}
-        />
-      )}
-      
       {/* Parts Modal */}
       <PartsModal
         isOpen={partsModalOpen}
