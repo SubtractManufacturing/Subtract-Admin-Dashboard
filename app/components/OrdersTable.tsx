@@ -161,7 +161,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
               tabIndex={0}
               className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}
               onClick={() => navigate(`/orders/${order.order_number}`)}
-              onKeyDown={(e) => e.key === "Enter" && navigate(`/orders/${order.order_number}`)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/orders/${order.order_number}`); } }}
             >
               <div className={listCardStyles.header}>
                 <div className={listCardStyles.title}>{order.order_number}</div>

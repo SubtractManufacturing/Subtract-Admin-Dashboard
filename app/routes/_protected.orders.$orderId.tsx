@@ -1225,6 +1225,46 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
 
+      case "regenerateMesh": {
+        const partId = formData.get("partId") as string;
+        if (!partId) {
+          return json({ error: "Part ID is required" }, { status: 400 });
+        }
+
+        const { triggerPartMeshConversion } = await import(
+          "~/lib/part-mesh-converter.server"
+        );
+
+        // Reset conversion status to pending
+        await db
+          .update(parts)
+          .set({
+            meshConversionStatus: "pending",
+            meshConversionError: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(parts.id, partId));
+
+        const currentPart = await getPart(partId);
+        if (!currentPart?.partFileUrl) {
+          return json(
+            { error: "No source file available for conversion" },
+            { status: 400 }
+          );
+        }
+
+        triggerPartMeshConversion(partId, currentPart.partFileUrl).catch(
+          (error) => {
+            console.error(
+              `Failed to regenerate mesh for part ${partId}:`,
+              error
+            );
+          }
+        );
+
+        return json({ success: true });
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -2447,6 +2487,19 @@ export default function OrderDetails() {
           onRevisionComplete={() => {
             revalidator.revalidate();
           }}
+          onRegenerateMesh={
+            selectedPart3D.partId
+              ? () => {
+                  const fd = new FormData();
+                  fd.append("intent", "regenerateMesh");
+                  fd.append("partId", selectedPart3D.partId!);
+                  lineItemFetcher.submit(fd, { method: "post" });
+                  setPart3DModalOpen(false);
+                  setSelectedPart3D(null);
+                  revalidator.revalidate();
+                }
+              : undefined
+          }
           autoGenerateThumbnail={true}
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
           bananaEnabled={bananaEnabled}

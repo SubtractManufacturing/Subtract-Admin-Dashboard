@@ -3,6 +3,21 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useFetcher } from "@remix-run/react";
 import { useDownload } from "~/hooks/useDownload";
 
+// Extensions supported by the mesh conversion pipeline (must match conversion-service.server.ts)
+const CONVERSION_SUPPORTED_EXTENSIONS = ["step", "stp", "iges", "igs", "brep"];
+
+function getCadFileExtension(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const cleanUrl = url.split("?")[0];
+  const filename = cleanUrl.split("/").pop() || "";
+  return filename.split(".").pop()?.toLowerCase() || null;
+}
+
+function isFormatConversionSupported(ext: string | null): boolean {
+  if (!ext) return true; // Unknown extension → don't suppress retry
+  return CONVERSION_SUPPORTED_EXTENSIONS.includes(ext);
+}
+
 interface CadVersion {
   id: string;
   version: number;
@@ -33,6 +48,7 @@ interface Part3DViewerModalProps {
   canRevise?: boolean;
   currentVersion?: number;
   onRevisionComplete?: () => void;
+  onRegenerateMesh?: () => void;
   /** Entity type for version control routes. Defaults to 'quote_part' for backwards compatibility. */
   entityType?: EntityType;
   /** Whether the banana for scale feature is enabled */
@@ -59,6 +75,7 @@ export function Part3DViewerModal({
   onRevisionComplete,
   entityType: propEntityType,
   bananaModelUrl,
+  onRegenerateMesh,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -611,26 +628,77 @@ export function Part3DViewerModal({
               bananaModelUrl={bananaModelUrl}
             />
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="48"
-                height="48"
-                fill="currentColor"
-                viewBox="0 0 16 16"
-                className="mb-4 text-gray-400 dark:text-gray-600"
-              >
-                <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zM4.5 7.5a.5.5 0 0 0 0 1h7a.5.5 0 0 0 0-1h-7z" />
-              </svg>
-              <p className="text-lg mb-1">No 3D preview available</p>
-              <p className="text-sm text-gray-400 dark:text-gray-500">
-                Mesh conversion may be in progress or failed
-              </p>
-              {hasCadFile && (
-                <p className="text-xs text-gray-400 dark:text-gray-600 mt-2">
-                  CAD file is available for download
-                </p>
-              )}
+            <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors gap-4">
+              {(() => {
+                const cadExt = getCadFileExtension(cadFileUrl);
+                const conversionSupported = isFormatConversionSupported(cadExt);
+                const extLabel = cadExt?.toUpperCase() ?? "This file format";
+                return (
+                  <>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="48"
+                      height="48"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      className="text-gray-400 dark:text-gray-600"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+                    </svg>
+                    <div className="text-center">
+                      {conversionSupported ? (
+                        <>
+                          <p className="text-lg font-medium mb-1">No 3D preview available</p>
+                          <p className="text-sm text-gray-400 dark:text-gray-500">
+                            Mesh conversion may have failed or not yet completed
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-lg font-medium mb-1">{extLabel} viewing is not available</p>
+                          <p className="text-sm text-gray-400 dark:text-gray-500">
+                            This file format is not supported for 3D preview
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {hasCadFile && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const url = quotePartId
+                              ? `/download/quote-part/${quotePartId}`
+                              : partId
+                              ? `/download/part/${partId}`
+                              : null;
+                            if (url) download(url, partName || "part");
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          Download CAD File
+                        </button>
+                      )}
+                      {conversionSupported && onRegenerateMesh && (
+                        <button
+                          type="button"
+                          onClick={onRegenerateMesh}
+                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-lg text-sm text-white transition-colors"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          Retry Conversion
+                        </button>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
         </div>

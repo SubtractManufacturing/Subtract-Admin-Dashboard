@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { featureFlags, type NewFeatureFlag } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { eq, notInArray } from "drizzle-orm";
 
 // Feature flag keys as constants
 export const FEATURE_FLAGS = {
@@ -17,10 +17,6 @@ export const FEATURE_FLAGS = {
   CAD_REVISIONS_ALL: "cad_revisions_all",
   BANANA_FOR_SCALE: "banana_for_scale",
   DISPLAY_VERSION_HEADER: "display_version_header",
-  EMAIL_SEND_DEV: "email_send_dev",
-  EMAIL_OUTBOUND_BCC_ENABLED: "email_outbound_bcc_enabled",
-  EMAIL_INBOUND_FORWARD_ENABLED: "email_inbound_forward_enabled",
-  EMAIL_AUTO_ASSIGN_REPLIED: "email_auto_assign_replied",
   DUPLICATE_INCLUDE_ATTACHMENTS: "duplicate_include_attachments",
 } as const;
 
@@ -103,30 +99,6 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     name: "Display Version in Header",
     description: "Show the application version number in the navigation header",
     enabled: false,
-  },
-  {
-    key: FEATURE_FLAGS.EMAIL_SEND_DEV,
-    name: "Enable Email Integration",
-    description: "Enable Postmark email integration for sending and receiving emails (Admin and Dev users)",
-    enabled: false,
-  },
-  {
-    key: FEATURE_FLAGS.EMAIL_OUTBOUND_BCC_ENABLED,
-    name: "Enable Outbound Email BCC (Gmail Mirroring)",
-    description: "BCC a copy of all outbound emails to an archive address for team visibility in Gmail",
-    enabled: false,
-  },
-  {
-    key: FEATURE_FLAGS.EMAIL_INBOUND_FORWARD_ENABLED,
-    name: "Enable Inbound Email Forwarding (Gmail Mirroring)",
-    description: "Forward inbound emails to a team inbox for visibility in Gmail",
-    enabled: false,
-  },
-  {
-    key: FEATURE_FLAGS.EMAIL_AUTO_ASSIGN_REPLIED,
-    name: "Auto-Assign Replied Emails",
-    description: "Automatically assign unassigned email threads to the user who replies to them",
-    enabled: true,
   },
   {
     key: FEATURE_FLAGS.DUPLICATE_INCLUDE_ATTACHMENTS,
@@ -279,39 +251,19 @@ export async function shouldShowVersionInHeader() {
   return isFeatureEnabled(FEATURE_FLAGS.DISPLAY_VERSION_HEADER);
 }
 
-export async function shouldShowEmailsInNav() {
-  // Check if email integration should be shown in navigation
-  const emailEnabled = await isFeatureEnabled(FEATURE_FLAGS.EMAIL_SEND_DEV);
-  return emailEnabled;
-}
+export async function pruneStaleFeatureFlags(): Promise<string[]> {
+  const validKeys = DEFAULT_FLAGS.map(f => f.key);
+  const stale = await db
+    .select({ key: featureFlags.key })
+    .from(featureFlags)
+    .where(notInArray(featureFlags.key, validKeys));
 
-export async function canUserSendEmail(userRole?: string | null) {
-  // Admin and Dev users can send emails when the feature flag is enabled
-  if (userRole === "Admin" || userRole === "Dev") {
-    const emailEnabled = await isFeatureEnabled(FEATURE_FLAGS.EMAIL_SEND_DEV);
-    return emailEnabled;
+  if (stale.length === 0) return [];
+
+  const staleKeys = stale.map(r => r.key);
+  for (const key of staleKeys) {
+    await db.delete(featureFlags).where(eq(featureFlags.key, key));
   }
-
-  return false;
+  return staleKeys;
 }
 
-/**
- * Check if outbound email BCC mirroring is enabled
- */
-export async function isOutboundBccEnabled(): Promise<boolean> {
-  return isFeatureEnabled(FEATURE_FLAGS.EMAIL_OUTBOUND_BCC_ENABLED);
-}
-
-/**
- * Check if inbound email forwarding is enabled
- */
-export async function isInboundForwardEnabled(): Promise<boolean> {
-  return isFeatureEnabled(FEATURE_FLAGS.EMAIL_INBOUND_FORWARD_ENABLED);
-}
-
-/**
- * Check if auto-assign for replied emails is enabled
- */
-export async function isAutoAssignRepliedEmailsEnabled(): Promise<boolean> {
-  return isFeatureEnabled(FEATURE_FLAGS.EMAIL_AUTO_ASSIGN_REPLIED);
-}

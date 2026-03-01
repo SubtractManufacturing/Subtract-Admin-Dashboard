@@ -4,6 +4,7 @@ import Button from "~/components/shared/Button";
 import { InputField, TextareaField } from "~/components/shared/FormField";
 import PartSelectionModal from "~/components/PartSelectionModal";
 import type { Part } from "~/lib/db/schema";
+import { formatToleranceValue, initToleranceOnFocus } from "~/utils/tolerance";
 
 interface AddLineItemModalProps {
   isOpen: boolean;
@@ -43,7 +44,6 @@ export function AddLineItemModal({
   const [material, setMaterial] = useState("");
   const [tolerance, setTolerance] = useState("");
   const [finish, setFinish] = useState("");
-  const [partNotes, setPartNotes] = useState("");
   const [drawings, setDrawings] = useState<File[]>([]);
   const drawingInputRef = useRef<HTMLInputElement>(null);
 
@@ -71,7 +71,6 @@ export function AddLineItemModal({
     setMaterial("");
     setTolerance("");
     setFinish("");
-    setPartNotes("");
     setDrawings([]);
   }, [isOpen]);
 
@@ -129,17 +128,21 @@ export function AddLineItemModal({
   const handleSelectPart = (part: Part) => {
     setSelectedPartId(part.id);
     setCadFile(null);
-    setName(part.partName || name);
-    setDescription(
-      [
-        part.material ? `Material: ${part.material}` : "",
-        part.tolerance ? `Tolerance: ${part.tolerance}` : "",
-        part.finishing ? `Finishing: ${part.finishing}` : "",
-        part.notes || "",
-      ]
-        .filter(Boolean)
-        .join("\n")
-    );
+    if (!name.trim()) {
+      setName(part.partName || "");
+    }
+    if (!description.trim()) {
+      setDescription(
+        [
+          part.material ? `Material: ${part.material}` : "",
+          part.tolerance ? `Tolerance: ${part.tolerance}` : "",
+          part.finishing ? `Finishing: ${part.finishing}` : "",
+          part.notes || "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
   };
 
   const removeCadFile = () => {
@@ -181,7 +184,6 @@ export function AddLineItemModal({
       formData.append("material", material);
       formData.append("tolerance", tolerance);
       formData.append("finish", finish);
-      formData.append("partNotes", partNotes);
       drawings.forEach((drawing, i) => {
         formData.append(`drawing_${i}`, drawing);
       });
@@ -356,7 +358,8 @@ export function AddLineItemModal({
                 <InputField
                   label="Tolerance"
                   value={tolerance}
-                  onChange={(e) => setTolerance(e.target.value)}
+                  onChange={(e) => setTolerance(formatToleranceValue(e.target.value))}
+                  onFocus={() => setTolerance(initToleranceOnFocus(tolerance))}
                   placeholder="e.g., ±0.005"
                 />
                 <InputField
@@ -449,15 +452,6 @@ export function AddLineItemModal({
                 rows={2}
                 placeholder="Any internal notes"
               />
-              {cadFile && (
-                <TextareaField
-                  label="Part Notes"
-                  value={partNotes}
-                  onChange={(e) => setPartNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Special requirements for this part"
-                />
-              )}
             </div>
           )}
 

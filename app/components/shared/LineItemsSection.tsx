@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Button from "~/components/shared/Button";
 import { LineItemRow, type LineItemEditableField } from "~/components/shared/LineItemRow";
 import { SectionCard } from "~/components/shared/SectionCard";
@@ -43,7 +43,6 @@ export function LineItemsSection({
   onSaveField,
   onSaveAttribute,
   onDrawingUpload,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onDrawingDelete,
   drawingUploadingPartId,
   onView3DModel,
@@ -63,8 +62,6 @@ export function LineItemsSection({
   const [editingAttributeValue, setEditingAttributeValue] = useState("");
 
   const showActions = !readOnly;
-
-  const sortedItems = useMemo(() => items, [items]);
 
   const saveEdit = () => {
     if (!editingField) return;
@@ -141,7 +138,7 @@ export function LineItemsSection({
 
   return (
     <SectionCard title="Line Items" actions={actions} contentClassName="p-6">
-      {sortedItems.length > 0 ? (
+      {items.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 table-fixed">
             <thead className="bg-gray-50 dark:bg-gray-700">
@@ -168,7 +165,7 @@ export function LineItemsSection({
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-              {sortedItems.map((item) => (
+              {items.map((item) => (
                 <LineItemRow
                   key={item.id}
                   item={item}
@@ -204,6 +201,7 @@ export function LineItemsSection({
                   onView3DModel={onView3DModel}
                   onViewDrawing={onViewDrawing}
                   onDrawingUpload={onDrawingUpload}
+                  onDrawingDelete={onDrawingDelete}
                   isDrawingUploading={drawingUploadingPartId === item.part?.id}
                   extraActions={rowExtraActions?.(item)}
                 />
@@ -212,7 +210,7 @@ export function LineItemsSection({
             <tfoot className="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <td
-                  colSpan={showActions ? 5 : 4}
+                  colSpan={5}
                   className="px-6 py-3 text-right text-sm font-medium text-gray-900 dark:text-gray-100"
                 >
                   Subtotal:

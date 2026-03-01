@@ -1,10 +1,11 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { IconButton } from "~/components/shared/IconButton";
 import type {
   NormalizedDrawing,
   NormalizedLineItem,
   NormalizedPart,
 } from "~/components/shared/line-items/types";
+import { formatToleranceValue, initToleranceOnFocus } from "~/utils/tolerance";
 
 export type LineItemEditableField =
   | "description"
@@ -43,6 +44,7 @@ interface LineItemRowProps {
   onView3DModel: (part: NormalizedPart) => void;
   onViewDrawing: (drawing: NormalizedDrawing, partId: string) => void;
   onDrawingUpload: (partId: string, files: FileList) => void;
+  onDrawingDelete?: (drawingId: string, partId: string) => void;
   isDrawingUploading?: boolean;
   extraActions?: ReactNode;
 }
@@ -80,9 +82,11 @@ export function LineItemRow({
   onView3DModel,
   onViewDrawing,
   onDrawingUpload,
+  onDrawingDelete,
   isDrawingUploading,
   extraActions,
 }: LineItemRowProps) {
+  const drawingInputRef = useRef<HTMLInputElement>(null);
   const part = item.part;
   const rowTotal = (item.quantity || 0) * parseFloat(item.unitPrice || "0");
   const totalColumns = showActions ? 7 : 6;
@@ -213,39 +217,43 @@ export function LineItemRow({
                   ></div>
                 </div>
               ) : (
-                <button
-                  onClick={() => {
-                    const input = document.createElement("input");
-                    input.type = "file";
-                    input.accept = ".pdf,.png,.jpg,.jpeg,.dwg,.dxf";
-                    input.multiple = true;
-                    input.onchange = (e) =>
-                      onDrawingUpload(
-                        part.id,
-                        (e.target as HTMLInputElement).files as FileList
-                      );
-                    input.click();
-                  }}
-                  className={`${
-                    showSpecs ? "h-20 w-20" : "h-10 w-10"
-                  } border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-800 flex items-center justify-center group flex-shrink-0`}
-                  title="Upload drawing"
-                  type="button"
-                >
-                  <svg
-                    className={`${showSpecs ? "w-5 h-5" : "w-4 h-4"} text-gray-400 group-hover:text-blue-500`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
+                <>
+                  <input
+                    ref={drawingInputRef}
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,.dwg,.dxf"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        onDrawingUpload(part.id, e.target.files);
+                      }
+                      e.target.value = "";
+                    }}
+                  />
+                  <button
+                    onClick={() => drawingInputRef.current?.click()}
+                    className={`${
+                      showSpecs ? "h-20 w-20" : "h-10 w-10"
+                    } border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-800 flex items-center justify-center group flex-shrink-0`}
+                    title="Upload drawing"
+                    type="button"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6"
-                    />
-                  </svg>
-                </button>
+                    <svg
+                      className={`${showSpecs ? "w-5 h-5" : "w-4 h-4"} text-gray-400 group-hover:text-blue-500`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                      />
+                    </svg>
+                  </button>
+                </>
               )
             ) : null}
 
@@ -446,7 +454,20 @@ export function LineItemRow({
                         <input
                           type="text"
                           value={editingAttributeValue}
-                          onChange={(e) => onChangeAttributeEdit(e.target.value)}
+                          onChange={(e) =>
+                            onChangeAttributeEdit(
+                              field === "tolerance"
+                                ? formatToleranceValue(e.target.value)
+                                : e.target.value
+                            )
+                          }
+                          onFocus={() => {
+                            if (field === "tolerance") {
+                              onChangeAttributeEdit(
+                                initToleranceOnFocus(editingAttributeValue)
+                              );
+                            }
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
@@ -456,7 +477,7 @@ export function LineItemRow({
                             }
                           }}
                           className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                          placeholder={field}
+                          placeholder={field === "tolerance" ? "e.g., ±0.005" : field}
                         />
                         <button
                           onClick={onSaveAttributeEdit}

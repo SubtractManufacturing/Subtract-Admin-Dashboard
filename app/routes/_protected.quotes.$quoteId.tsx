@@ -36,7 +36,6 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import {
   canUserAccessPriceCalculator,
   canUserUploadCadRevision,
-  canUserSendEmail,
   isFeatureEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
@@ -86,7 +85,6 @@ import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
-import SendEmailModal from "~/components/quotes/SendEmailModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { useDownload } from "~/hooks/useDownload";
@@ -197,18 +195,40 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         )
         .where(eq(quotePartDrawings.quotePartId, part.id));
 
-      // Drawings are served via the unified download route — no presigned URLs needed
-      const drawings = drawingRecords
-        .filter((record) => record.attachment !== null)
-        .map((record) => {
-          const attachment = record.attachment!;
-          return {
-            id: attachment.id,
-            fileName: attachment.fileName,
-            contentType: attachment.contentType,
-            fileSize: attachment.fileSize,
-          };
-        });
+      const drawings = await Promise.all(
+        drawingRecords
+          .filter((record) => record.attachment !== null)
+          .map(async (record) => {
+            const attachment = record.attachment!;
+            try {
+              const signedUrl = await getDownloadUrl(attachment.s3Key, 3600);
+
+              let thumbnailSignedUrl: string | null = null;
+              if (attachment.thumbnailS3Key) {
+                try {
+                  thumbnailSignedUrl = await getDownloadUrl(
+                    attachment.thumbnailS3Key,
+                    3600
+                  );
+                } catch {
+                  // Thumbnail URL generation failed, will fall back to icon
+                }
+              }
+
+              return {
+                id: attachment.id,
+                fileName: attachment.fileName,
+                contentType: attachment.contentType,
+                fileSize: attachment.fileSize,
+                signedUrl,
+                thumbnailSignedUrl,
+              };
+            } catch (error) {
+              console.error("Error generating signed URL for quote drawing:", error);
+              return null;
+            }
+          })
+      );
 
       return {
         ...part,
@@ -248,7 +268,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Get feature flags and events
   const [
     canAccessPriceCalculator,
-    canSendEmail,
     pdfAutoDownload,
     rejectionReasonRequired,
     events,
@@ -256,7 +275,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     bananaEnabled,
   ] = await Promise.all([
     canUserAccessPriceCalculator(userDetails?.role),
-    canUserSendEmail(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     isFeatureEnabled(FEATURE_FLAGS.QUOTE_REJECTION_REASON_REQUIRED),
     getEventsByEntity("quote", quote.id.toString(), 10),
@@ -281,13 +299,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch existing price calculations for the quote
   const priceCalculations = await getLatestCalculationsForQuote(quote.id);
 
-  // Get available "Send As" addresses for email (only if user can send emails)
-  let sendAsAddresses: { email: string; label: string }[] = [];
-  if (canSendEmail) {
-    const { getSendAsAddresses } = await import("~/lib/email/config");
-    sendAsAddresses = await getSendAsAddresses();
-  }
-
   return withAuthHeaders(
     json({
       quote: quoteWithSignedUrls,
@@ -301,8 +312,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       userDetails,
       priceCalculations,
       canAccessPriceCalculator,
-      canSendEmail,
-      sendAsAddresses,
       pdfAutoDownload,
       rejectionReasonRequired,
       events,
@@ -366,6 +375,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const quantity = formData.get("quantity") as string;
       const unitPrice = formData.get("unitPrice") as string;
       const file = formData.get("file") as File | null;
+      const material = (formData.get("material") as string) || null;
+      const tolerance = (formData.get("tolerance") as string) || null;
+      const finish = (formData.get("finish") as string) || null;
 
       if (!name || !quantity || !unitPrice) {
         return json({ error: "Missing required fields" }, { status: 400 });
@@ -407,13 +419,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
             fileName: sanitizedFileName,
           });
 
-          // Create quote part record
+          // Create quote part record with all specs from the modal
           const [newQuotePart] = await db
             .insert(quoteParts)
             .values({
               quoteId: quote.id,
               partNumber,
               partName: name,
+              description: description || null,
+              material,
+              tolerance,
+              finish,
               partFileUrl: uploadResult.key,
               conversionStatus: "pending",
             })
@@ -1657,80 +1673,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
 
-      case "sendEmail": {
-        // Check if user has permission to send emails
-        const canSendEmailFlag = await canUserSendEmail(userDetails?.role);
-        if (!canSendEmailFlag) {
-          return json(
-            { error: "You do not have permission to send emails" },
-            { status: 403 }
-          );
-        }
-
-        const from = formData.get("from") as string | null;
-        const to = formData.get("to") as string;
-        const subject = formData.get("subject") as string;
-        const body = formData.get("body") as string;
-
-        if (!from || !to || !subject || !body) {
-          return json(
-            { error: "Missing required fields: from, to, subject, and body" },
-            { status: 400 }
-          );
-        }
-
-        try {
-          const { sendEmail } = await import("~/lib/postmark/postmark-client.server");
-          const result = await sendEmail({
-            from,
-            to,
-            subject,
-            body,
-            quoteId: quote.id,
-            customerId: quote.customerId,
-          });
-
-          if (result.success) {
-            // Log the email send event
-            await createEvent({
-              entityType: "quote",
-              entityId: quote.id.toString(),
-              eventType: "email_sent",
-              eventCategory: "communication",
-              title: "Email Sent",
-              description: `Email sent to ${to}${from ? ` from ${from}` : ""}`,
-              metadata: {
-                from: from || undefined,
-                to,
-                subject,
-                messageId: result.messageId,
-                quoteNumber: quote.quoteNumber,
-              },
-              userId: eventContext.userId,
-              userEmail: eventContext.userEmail,
-            });
-
-            return json({ success: true, messageId: result.messageId });
-          } else {
-            return json(
-              { error: result.error || "Failed to send email" },
-              { status: 500 }
-            );
-          }
-        } catch (emailError) {
-          console.error("Email sending failed:", emailError);
-          return json(
-            {
-              error:
-                emailError instanceof Error
-                  ? emailError.message
-                  : "Failed to send email",
-            },
-            { status: 500 }
-          );
-        }
-      }
-
       default:
         return json({ error: "Invalid action" }, { status: 400 });
     }
@@ -1753,8 +1695,6 @@ export default function QuoteDetail() {
     userDetails,
     priceCalculations,
     canAccessPriceCalculator,
-    canSendEmail,
-    sendAsAddresses,
     pdfAutoDownload,
     rejectionReasonRequired,
     events,
@@ -1773,7 +1713,6 @@ export default function QuoteDetail() {
   const [rejectionReason, setRejectionReason] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
-  const [isSendEmailModalOpen, setIsSendEmailModalOpen] = useState(false);
   // Define the line item type
   type LineItem = {
     id: number;
@@ -3277,12 +3216,23 @@ export default function QuoteDetail() {
           cadFileUrl={selectedPart3D.cadFileUrl}
           canRevise={canRevise}
           onRevisionComplete={() => {
-            // Close the modal after revision - the mesh is being converted
-            // and the old modelUrl is no longer valid
             setPart3DModalOpen(false);
             setSelectedPart3D(null);
             revalidator.revalidate();
           }}
+          onRegenerateMesh={
+            selectedPart3D.quotePartId
+              ? () => {
+                  const fd = new FormData();
+                  fd.append("intent", "regenerateMesh");
+                  fd.append("partId", selectedPart3D.quotePartId!);
+                  fetcher.submit(fd, { method: "post" });
+                  setPart3DModalOpen(false);
+                  setSelectedPart3D(null);
+                  revalidator.revalidate();
+                }
+              : undefined
+          }
           bananaEnabled={bananaEnabled}
           bananaModelUrl={bananaModelUrl || undefined}
         />
@@ -3357,16 +3307,6 @@ export default function QuoteDetail() {
         parts={quote.parts || []}
         autoDownload={pdfAutoDownload}
       />
-
-      {canSendEmail && (
-        <SendEmailModal
-          isOpen={isSendEmailModalOpen}
-          onClose={() => setIsSendEmailModalOpen(false)}
-          quoteNumber={quote.quoteNumber}
-          customerEmail={customer?.email || undefined}
-          sendAsAddresses={sendAsAddresses}
-        />
-      )}
 
       <Modal
         isOpen={isRejectModalOpen}

@@ -469,7 +469,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                       notes={config.notes || ""}
                       onChange={(field, value) => {
                         if (field === "material") updatePartConfig(index, "material", value);
-                        if (field === "tolerance") handleToleranceInput(index, value);
+                        if (field === "tolerance") updatePartConfig(index, "tolerances", value);
                         if (field === "finish") updatePartConfig(index, "surfaceFinish", value);
                         if (field === "notes") updatePartConfig(index, "notes", value);
                       }}

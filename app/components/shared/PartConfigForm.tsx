@@ -1,6 +1,7 @@
 import { useRef, type ChangeEvent } from "react";
 import { InputField, TextareaField } from "~/components/shared/FormField";
 import Button from "~/components/shared/Button";
+import { formatToleranceValue, initToleranceOnFocus } from "~/utils/tolerance";
 
 interface PartConfigFormProps {
   material: string;
@@ -51,8 +52,9 @@ export function PartConfigForm({
         <InputField
           label="Tolerance"
           value={tolerance}
-          onChange={(e) => onChange("tolerance", e.target.value)}
-          placeholder="e.g., +/-0.005"
+          onChange={(e) => onChange("tolerance", formatToleranceValue(e.target.value))}
+          onFocus={() => onChange("tolerance", initToleranceOnFocus(tolerance))}
+          placeholder="e.g., ±0.005"
         />
       </div>
 
