@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
 import { customers, orders, vendors } from "./db/schema.js"
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, inArray } from 'drizzle-orm'
 import type { Customer } from "./db/schema.js"
 import { getCustomerAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
@@ -61,6 +61,19 @@ export async function getCustomer(id: number): Promise<Customer | null> {
     return result[0] || null
   } catch (error) {
     throw new Error(`Failed to get customer: ${error}`)
+  }
+}
+
+export async function getCustomersByIds(ids: number[]): Promise<Customer[]> {
+  if (ids.length === 0) return []
+  try {
+    return await db
+      .select()
+      .from(customers)
+      .where(inArray(customers.id, ids))
+  } catch (error) {
+    console.error("Error fetching customers by IDs:", error)
+    return []
   }
 }
 

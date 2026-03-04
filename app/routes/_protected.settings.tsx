@@ -7,6 +7,8 @@ import {
   unstable_createMemoryUploadHandler,
 } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useDownload } from "~/hooks/useDownload";
+import Modal from "~/components/shared/Modal";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
 import { createServerClient } from "~/lib/supabase";
@@ -22,6 +24,11 @@ import {
 } from "~/lib/featureFlags";
 import { getBananaModelUrls, setBananaModelUrls, pruneStaleDeveloperSettings } from "~/lib/developerSettings";
 import type { FeatureFlag } from "~/lib/db/schema";
+import { getCustomers } from "~/lib/customers";
+import { getVendors } from "~/lib/vendors";
+import type { BulkImportPreviewRow } from "~/lib/bulk-import";
+import type { Customer, CustomerInput } from "~/lib/customers";
+import type { Vendor, VendorInput } from "~/lib/vendors";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -50,6 +57,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? await getBananaModelUrls()
       : null;
 
+  // Bulk import/export: customers and vendors for Admin/Dev export UI
+  const bulkCustomers =
+    userDetails.role === "Admin" || userDetails.role === "Dev"
+      ? await getCustomers()
+      : [];
+  const bulkVendors =
+    userDetails.role === "Admin" || userDetails.role === "Dev"
+      ? await getVendors()
+      : [];
+
   return withAuthHeaders(
     json({
       user,
@@ -59,6 +76,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       featureFlags,
       bananaForScaleEnabled,
       bananaModelStatus,
+      bulkCustomers,
+      bulkVendors,
     }),
     headers
   );
@@ -262,6 +281,55 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
+    if (intent === "bulkImportParse" && (userDetails.role === "Admin" || userDetails.role === "Dev")) {
+      const file = formData.get("file") as File | null;
+      const entityType = formData.get("entityType") as string | null;
+      if (!file || !entityType || !["customers", "vendors"].includes(entityType)) {
+        return withAuthHeaders(
+          json({ error: "File and entity type (customers or vendors) are required" }, { status: 400 }),
+          headers
+        );
+      }
+      try {
+        const { createEvent } = await import("~/lib/events");
+        await createEvent({
+          entityType: "system",
+          entityId: "bulk_import",
+          eventType: "bulk_import_started",
+          eventCategory: "system",
+          title: "Bulk import started",
+          description: `Parsing ${entityType} import file`,
+          metadata: { entityType },
+          userId: user?.id,
+          userEmail: user?.email ?? userDetails.name ?? undefined,
+        });
+        const { parseImportFile, getImportPreview } = await import("~/lib/bulk-import");
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const { rows } = parseImportFile(buffer);
+        const preview = await getImportPreview(rows, entityType as "customers" | "vendors");
+        return withAuthHeaders(json({ preview, entityType }), headers);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Parse failed";
+        console.error("Bulk import parse error:", err);
+        const { createEvent } = await import("~/lib/events");
+        await createEvent({
+          entityType: "system",
+          entityId: "bulk_import",
+          eventType: "bulk_import_error",
+          eventCategory: "system",
+          title: "Bulk import failed",
+          description: errorMessage,
+          metadata: { entityType: entityType ?? "unknown", error: errorMessage },
+          userId: user?.id,
+          userEmail: user?.email ?? userDetails.name ?? undefined,
+        });
+        return withAuthHeaders(
+          json({ error: errorMessage }, { status: 400 }),
+          headers
+        );
+      }
+    }
+
     // Unrecognized multipart intent
     return withAuthHeaders(
       json({ error: "Invalid multipart intent" }, { status: 400 }),
@@ -442,6 +510,125 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  if (intent === "bulkImportConfirm" && (userDetails.role === "Admin" || userDetails.role === "Dev")) {
+    const entityType = formData.get("entityType") as string | null;
+    const rowsJson = formData.get("rows") as string | null;
+    const actionsJson = formData.get("actions") as string | null;
+    if (!entityType || !["customers", "vendors"].includes(entityType) || !rowsJson || !actionsJson) {
+      return withAuthHeaders(
+        json({ error: "entityType, rows, and actions are required" }, { status: 400 }),
+        headers
+      );
+    }
+    try {
+      const { createCustomer, updateCustomer } = await import("~/lib/customers");
+      const { createVendor, updateVendor } = await import("~/lib/vendors");
+      const { validateCustomerRow, validateVendorRow } = await import("~/lib/bulk-import");
+      const preview: BulkImportPreviewRow[] = JSON.parse(rowsJson);
+      const actions: Record<string, "create" | "override" | "modify" | "skip"> = JSON.parse(actionsJson);
+      const eventContext = {
+        userId: user?.id,
+        userEmail: user?.email ?? userDetails.name ?? undefined,
+      };
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+      const errors: { row: number; message: string }[] = [];
+      const validate = entityType === "customers" ? validateCustomerRow : validateVendorRow;
+
+      for (const row of preview) {
+        const actionKey = String(row.rowIndex);
+        const action = actions[actionKey] ?? (row.match === "new" ? "create" : "skip");
+
+        if (row.error) {
+          errors.push({ row: row.rowIndex, message: row.error });
+          continue;
+        }
+
+        if (row.match === "new") {
+          const validated = validate(row.data as Record<string, unknown>, row.rowIndex);
+          if (!validated.ok) {
+            errors.push({ row: row.rowIndex, message: validated.error });
+            continue;
+          }
+          try {
+            if (entityType === "customers") {
+              await createCustomer(validated.data as CustomerInput, eventContext);
+            } else {
+              await createVendor(validated.data as VendorInput, eventContext);
+            }
+            created++;
+          } catch (e) {
+            errors.push({
+              row: row.rowIndex,
+              message: e instanceof Error ? e.message : "Create failed",
+            });
+          }
+          continue;
+        }
+
+        if (action === "skip" || !row.existingId) {
+          skipped++;
+          continue;
+        }
+
+        const validated = validate(row.data as Record<string, unknown>, row.rowIndex);
+        if (!validated.ok) {
+          errors.push({ row: row.rowIndex, message: validated.error });
+          continue;
+        }
+
+        try {
+          const fullData = validated.data;
+          const updatePayload =
+            action === "modify"
+              ? (Object.fromEntries(
+                  Object.entries(fullData).filter(
+                    ([, v]) => v !== null && v !== undefined && v !== ""
+                  )
+                ) as Partial<CustomerInput> & Partial<VendorInput>)
+              : fullData;
+
+          if (entityType === "customers") {
+            await updateCustomer(row.existingId!, updatePayload as Partial<CustomerInput>, eventContext);
+          } else {
+            await updateVendor(row.existingId!, updatePayload as Partial<VendorInput>, eventContext);
+          }
+          updated++;
+        } catch (e) {
+          errors.push({
+            row: row.rowIndex,
+            message: e instanceof Error ? e.message : "Update failed",
+          });
+        }
+      }
+
+      return withAuthHeaders(
+        json({ created, updated, skipped, errors }),
+        headers
+      );
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Import failed";
+      console.error("Bulk import confirm error:", err);
+      const { createEvent } = await import("~/lib/events");
+      await createEvent({
+        entityType: "system",
+        entityId: "bulk_import",
+        eventType: "bulk_import_error",
+        eventCategory: "system",
+        title: "Bulk import failed",
+        description: errorMessage,
+        metadata: { entityType: entityType ?? "unknown", error: errorMessage },
+        userId: user?.id,
+        userEmail: user?.email ?? userDetails.name ?? undefined,
+      });
+      return withAuthHeaders(
+        json({ error: errorMessage }, { status: 400 }),
+        headers
+      );
+    }
+  }
+
   return withAuthHeaders(
     json({ error: "Invalid intent" }, { status: 400 }),
     headers
@@ -608,13 +795,25 @@ export default function Settings() {
     featureFlags: initialFeatureFlags,
     bananaForScaleEnabled,
     bananaModelStatus,
+    bulkCustomers = [],
+    bulkVendors = [],
   } = useLoaderData<typeof loader>();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const fetcher = useFetcher<typeof action>();
   const passwordResetFetcher = useFetcher<typeof action>();
   const featureFlagsFetcher = useFetcher<typeof action>();
   const pruneFetcher = useFetcher<typeof action>();
+  const importParseFetcher = useFetcher<typeof action>();
+  const importConfirmFetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
+  const { download: downloadFile, isDownloading } = useDownload();
+
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkMode, setBulkMode] = useState<"import" | "export">("export");
+  const [bulkEntity, setBulkEntity] = useState<"customers" | "vendors">("customers");
+  const [selectedExportIds, setSelectedExportIds] = useState<number[]>([]);
+  const [importPreview, setImportPreview] = useState<{ preview: BulkImportPreviewRow[]; entityType: "customers" | "vendors" } | null>(null);
+  const [importActions, setImportActions] = useState<Record<string, "create" | "override" | "modify" | "skip">>({});
 
   // Local state for feature flags
   const [localFeatureFlags, setLocalFeatureFlags] = useState(
@@ -636,6 +835,43 @@ export default function Settings() {
       revalidator.revalidate();
     }
   }, [fetcher.data, revalidator]);
+
+  // When import parse returns preview, store it and default per-row actions
+  useEffect(() => {
+    const data = importParseFetcher.data;
+    if (importParseFetcher.state !== "idle" || !data || typeof data !== "object" || "error" in data) return;
+    if ("preview" in data && Array.isArray((data as { preview: BulkImportPreviewRow[] }).preview)) {
+      const { preview, entityType } = data as { preview: BulkImportPreviewRow[]; entityType: "customers" | "vendors" };
+      setImportPreview({ preview, entityType });
+      const actions: Record<string, "create" | "override" | "modify" | "skip"> = {};
+      preview.forEach((row) => {
+        const key = String(row.rowIndex);
+        actions[key] = row.match === "new" ? "create" : "override";
+      });
+      setImportActions(actions);
+    }
+  }, [importParseFetcher.state, importParseFetcher.data]);
+
+  // After successful import confirm, clear preview and revalidate
+  useEffect(() => {
+    const data = importConfirmFetcher.data;
+    if (importConfirmFetcher.state !== "idle" || !data || typeof data !== "object") return;
+    if ("created" in data || "updated" in data || "skipped" in data) {
+      setImportPreview(null);
+      setImportActions({});
+      revalidator.revalidate();
+    }
+  }, [importConfirmFetcher.state, importConfirmFetcher.data, revalidator]);
+
+  // When switching entity in bulk modal, clear export selection
+  useEffect(() => {
+    setSelectedExportIds([]);
+  }, [bulkEntity]);
+
+  const bulkList = bulkEntity === "customers" ? bulkCustomers : bulkVendors;
+  const handleSelectAllExport = () => setSelectedExportIds(bulkList.map((e: Customer | Vendor) => e.id));
+  const handleDeselectAllExport = () => setSelectedExportIds([]);
+  const someSelected = selectedExportIds.length > 0;
 
   // Handle successful feature flags save
   useEffect(() => {
@@ -922,18 +1158,321 @@ export default function Settings() {
                       <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
                         Administrative functions and system management tools.
                       </p>
-                      <div className="space-y-2">
-                        <Button variant="secondary" size="sm" disabled className="mr-2">
-                          User Management (Coming Soon)
-                        </Button>
-                        <a href="/events" className="block mr-2">
-                          <Button variant="secondary" size="sm">System Logs</Button>
+                      <div className="flex flex-wrap gap-2">
+                        <a href="/events">
+                          <Button variant="secondary" size="sm">Event Logs</Button>
                         </a>
-                        <Button variant="secondary" size="sm" disabled className="mr-2">
-                          Backup & Restore (Coming Soon)
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setBulkModalOpen(true);
+                            setBulkMode("export");
+                            setBulkEntity("customers");
+                            setImportPreview(null);
+                            setImportActions({});
+                            setSelectedExportIds([]);
+                          }}
+                        >
+                          Bulk import/export
                         </Button>
                       </div>
                     </div>
+
+                    <Modal
+                      isOpen={bulkModalOpen}
+                      onClose={() => {
+                        setBulkModalOpen(false);
+                        setImportPreview(null);
+                        setImportActions({});
+                      }}
+                      title="Bulk import / export"
+                      size="xl"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 border-b border-gray-200 dark:border-gray-600 pb-4">
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 self-center">Action:</span>
+                            <button
+                              type="button"
+                              onClick={() => setBulkMode("export")}
+                              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                                bulkMode === "export"
+                                  ? "bg-blue-600 text-white dark:bg-blue-500"
+                                  : "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500"
+                              }`}
+                            >
+                              Export
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBulkMode("import")}
+                              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                                bulkMode === "import"
+                                  ? "bg-blue-600 text-white dark:bg-blue-500"
+                                  : "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500"
+                              }`}
+                            >
+                              Import
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 self-center">Entity:</span>
+                            <button
+                              type="button"
+                              onClick={() => setBulkEntity("customers")}
+                              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                                bulkEntity === "customers"
+                                  ? "bg-blue-600 text-white dark:bg-blue-500"
+                                  : "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500"
+                              }`}
+                            >
+                              Customers
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBulkEntity("vendors")}
+                              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                                bulkEntity === "vendors"
+                                  ? "bg-blue-600 text-white dark:bg-blue-500"
+                                  : "bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500"
+                              }`}
+                            >
+                              Vendors
+                            </button>
+                          </div>
+                        </div>
+
+                        {bulkMode === "export" && (
+                          <div className="space-y-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => downloadFile(
+                                  `/download/export-${bulkEntity}?ids=template&format=csv`,
+                                  `${bulkEntity}-template.csv`
+                                )}
+                                className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                Download template CSV
+                              </button>
+                              <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                                <button
+                                  type="button"
+                                  onClick={handleSelectAllExport}
+                                  className="hover:text-gray-900 dark:hover:text-gray-200 underline"
+                                >
+                                  Select all
+                                </button>
+                                <span aria-hidden>|</span>
+                                <button
+                                  type="button"
+                                  onClick={handleDeselectAllExport}
+                                  className="hover:text-gray-900 dark:hover:text-gray-200 underline"
+                                >
+                                  Deselect all
+                                </button>
+                                {someSelected && (
+                                  <span className="text-gray-500 dark:text-gray-400">
+                                    ({selectedExportIds.length} selected)
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="max-h-48 sm:max-h-56 overflow-y-auto rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/50">
+                              {bulkList.length === 0 ? (
+                                <p className="p-4 text-sm text-gray-500 dark:text-gray-400">No {bulkEntity} to export.</p>
+                              ) : (
+                                <ul className="divide-y divide-gray-200 dark:divide-gray-600">
+                                  {bulkList.map((item: Customer | Vendor) => (
+                                    <li key={item.id}>
+                                      <label className="flex items-center gap-2 p-2 sm:p-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedExportIds.includes(item.id)}
+                                          onChange={() =>
+                                            setSelectedExportIds((ids) =>
+                                              ids.includes(item.id) ? ids.filter((i) => i !== item.id) : [...ids, item.id]
+                                            )
+                                          }
+                                          className="rounded border-gray-300 dark:border-gray-500 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-900 dark:text-white truncate">{item.displayName}</span>
+                                        {item.companyName && (
+                                          <span className="text-xs text-gray-500 dark:text-gray-400 truncate hidden sm:inline">({item.companyName})</span>
+                                        )}
+                                        {item.email && (
+                                          <span className="text-xs text-gray-400 dark:text-gray-500 truncate ml-auto">{item.email}</span>
+                                        )}
+                                      </label>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-2 items-center">
+                              <select
+                                id="bulk-export-format"
+                                className="rounded border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-2 px-3"
+                              >
+                                <option value="csv">CSV</option>
+                                <option value="json">JSON</option>
+                              </select>
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                disabled={selectedExportIds.length === 0 || isDownloading}
+                                onClick={() => {
+                                  const format = (document.getElementById("bulk-export-format") as HTMLSelectElement)?.value || "csv";
+                                  const url = `/download/export-${bulkEntity}?ids=${selectedExportIds.join(",")}&format=${format}`;
+                                  downloadFile(url, `${bulkEntity}.${format}`);
+                                }}
+                              >
+                                {isDownloading ? "Downloading…" : `Export ${selectedExportIds.length} ${bulkEntity}`}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {bulkMode === "import" && (
+                          <div className="space-y-4">
+                            {!importPreview ? (
+                              <>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                  Upload a CSV or JSON file to import {bulkEntity}. You can use the template CSV from Export to get the correct columns.
+                                </p>
+                                <importParseFetcher.Form method="post" encType="multipart/form-data" className="space-y-3">
+                                  <input type="hidden" name="intent" value="bulkImportParse" />
+                                  <input type="hidden" name="entityType" value={bulkEntity} />
+                                  <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">File (CSV or JSON)</label>
+                                      <input
+                                        type="file"
+                                        name="file"
+                                        accept=".csv,.json"
+                                        className="block w-full text-sm text-gray-600 dark:text-gray-400 file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 dark:file:bg-blue-900/30 dark:file:text-blue-300 hover:file:bg-blue-100 dark:hover:file:bg-blue-900/50"
+                                        required
+                                      />
+                                    </div>
+                                    <Button
+                                      type="submit"
+                                      variant="primary"
+                                      size="sm"
+                                      disabled={importParseFetcher.state !== "idle"}
+                                    >
+                                      {importParseFetcher.state !== "idle" ? "Parsing…" : "Parse file"}
+                                    </Button>
+                                  </div>
+                                  {importParseFetcher.data && "error" in importParseFetcher.data && (
+                                    <p className="text-sm text-red-600 dark:text-red-400">
+                                      {(importParseFetcher.data as { error: string }).error}
+                                    </p>
+                                  )}
+                                </importParseFetcher.Form>
+                              </>
+                            ) : (
+                              <div className="space-y-3">
+                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                  {importPreview.preview.length} row(s) — set action per row, then confirm.
+                                </p>
+                                <div className="overflow-x-auto max-h-60 rounded border border-gray-200 dark:border-gray-600">
+                                  <table className="w-full text-sm min-w-[280px]">
+                                    <thead className="bg-gray-100 dark:bg-gray-700 sticky top-0">
+                                      <tr>
+                                        <th className="text-left p-2 text-gray-700 dark:text-gray-300">Row</th>
+                                        <th className="text-left p-2 text-gray-700 dark:text-gray-300">Display name</th>
+                                        <th className="text-left p-2 text-gray-700 dark:text-gray-300">Match</th>
+                                        <th className="text-left p-2 text-gray-700 dark:text-gray-300">Action</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {importPreview.preview.map((row) => (
+                                        <tr key={row.rowIndex} className="border-t border-gray-200 dark:border-gray-600">
+                                          <td className="p-2 text-gray-900 dark:text-white">{row.rowIndex + 1}</td>
+                                          <td className="p-2">
+                                            <span className="text-gray-900 dark:text-white">{String((row.data as Record<string, unknown>).displayName ?? "")}</span>
+                                            {row.error && (
+                                              <span className="block text-red-600 dark:text-red-400 text-xs">{row.error}</span>
+                                            )}
+                                          </td>
+                                          <td className="p-2">
+                                            <span className={row.match === "existing" ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"}>
+                                              {row.match}
+                                            </span>
+                                          </td>
+                                          <td className="p-2">
+                                            {row.match === "new" ? (
+                                              <span className="text-gray-500 dark:text-gray-400">Create</span>
+                                            ) : (
+                                              <select
+                                                value={importActions[String(row.rowIndex)] ?? "override"}
+                                                onChange={(e) =>
+                                                  setImportActions((prev) => ({
+                                                    ...prev,
+                                                    [String(row.rowIndex)]: e.target.value as "override" | "modify" | "skip",
+                                                  }))
+                                                }
+                                                className="rounded border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-1 px-2 w-full max-w-[120px]"
+                                              >
+                                                <option value="override">Override</option>
+                                                <option value="modify">Modify</option>
+                                                <option value="skip">Skip</option>
+                                              </select>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <importConfirmFetcher.Form method="post">
+                                    <input type="hidden" name="intent" value="bulkImportConfirm" />
+                                    <input type="hidden" name="entityType" value={importPreview.entityType} />
+                                    <input type="hidden" name="rows" value={JSON.stringify(importPreview.preview)} />
+                                    <input type="hidden" name="actions" value={JSON.stringify(importActions)} />
+                                    <Button
+                                      type="submit"
+                                      variant="primary"
+                                      size="sm"
+                                      disabled={importConfirmFetcher.state !== "idle"}
+                                    >
+                                      {importConfirmFetcher.state !== "idle" ? "Importing…" : "Confirm import"}
+                                    </Button>
+                                  </importConfirmFetcher.Form>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => {
+                                      setImportPreview(null);
+                                      setImportActions({});
+                                    }}
+                                  >
+                                    Back
+                                  </Button>
+                                </div>
+                                {importConfirmFetcher.data && "created" in importConfirmFetcher.data && (
+                                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                                    Created: {(importConfirmFetcher.data as { created: number }).created}, updated: {(importConfirmFetcher.data as { updated: number }).updated}, skipped: {(importConfirmFetcher.data as { skipped: number }).skipped}
+                                    {(importConfirmFetcher.data as { errors: { row: number; message: string }[] }).errors?.length > 0 && (
+                                      <span className="block text-red-600 dark:text-red-400 mt-1">
+                                        Errors: {(importConfirmFetcher.data as { errors: { row: number; message: string }[] }).errors.map((e) => `Row ${e.row + 1}: ${e.message}`).join("; ")}
+                                      </span>
+                                    )}
+                                  </p>
+                                )}
+                                {importConfirmFetcher.data && "error" in importConfirmFetcher.data && (
+                                  <p className="text-sm text-red-600 dark:text-red-400">
+                                    {(importConfirmFetcher.data as { error: string }).error}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </Modal>
 
                     <div>
                       <h4 className="text-md font-medium text-gray-900 dark:text-white mb-4">
