@@ -7,6 +7,20 @@ import { getPartWithAttachments, getPartMeshUrl } from "~/lib/parts";
 import { getQuotePartWithAttachments } from "~/lib/quoteParts";
 import { getOriginalFilename } from "~/lib/file-download.server";
 import { downloadQuoteFiles } from "~/lib/downloadQuoteFiles";
+import { getCustomersByIds } from "~/lib/customers";
+import { getVendorsByIds } from "~/lib/vendors";
+import {
+  toExportCustomer,
+  toExportVendor,
+  customersToCSV,
+  vendorsToCSV,
+  customersTemplateCSV,
+  vendorsTemplateCSV,
+  toExportJSON,
+  type ExportCustomer,
+  type ExportVendor,
+} from "~/lib/bulk-export";
+import { createEvent } from "~/lib/events";
 
 /**
  * Unified download resource route.
@@ -17,13 +31,15 @@ import { downloadQuoteFiles } from "~/lib/downloadQuoteFiles";
  *   /download/quote-part/{quotePartId}  – Quote part CAD file
  *   /download/quote/{quoteId}           – Quote bundle ZIP
  *   /download/mesh/{partId}             – Part mesh URL (JSON)
+ *   /download/export-customers         – Bulk export customers (query: ids, format) – Admin/Dev only
+ *   /download/export-vendors            – Bulk export vendors (query: ids, format) – Admin/Dev only
  *
  * Query parameters:
  *   ?inline  – Return with Content-Disposition: inline and the real content
  *              type so browsers can render the file (used by FileViewerModal).
  */
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  await requireAuth(request);
+  const { user, userDetails } = await requireAuth(request);
 
   const path = params["*"];
   if (!path) {
@@ -35,6 +51,61 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   const [type, ...rest] = path.split("/");
   const id = rest.join("/");
+
+  if (type === "export-customers" || type === "export-vendors") {
+    if (userDetails.role !== "Admin" && userDetails.role !== "Dev") {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const idsParam = url.searchParams.get("ids");
+    const format = url.searchParams.get("format") ?? "csv";
+    if (!idsParam || !["csv", "json"].includes(format)) {
+      return new Response("Missing or invalid ids or format (use ids=1,2,3&format=csv|json)", {
+        status: 400,
+      });
+    }
+    const isTemplate = idsParam.trim().toLowerCase() === "template";
+    if (isTemplate) {
+      if (format !== "csv") {
+        return new Response("Template is only available as CSV", { status: 400 });
+      }
+      const templateBody =
+        type === "export-customers" ? customersTemplateCSV() : vendorsTemplateCSV();
+      const templateFilename =
+        type === "export-customers"
+          ? "customers-template.csv"
+          : "vendors-template.csv";
+      const buffer = Buffer.from(templateBody, "utf-8");
+      return createDownloadResponse(buffer, templateFilename, "text/csv");
+    }
+    const ids = idsParam
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => !isNaN(n));
+    if (ids.length === 0) {
+      return new Response("No valid IDs provided", { status: 400 });
+    }
+    try {
+      if (type === "export-customers") {
+        return await handleExportCustomers(ids, format, user?.id, user?.email ?? userDetails.name ?? undefined);
+      }
+      return await handleExportVendors(ids, format, user?.id, user?.email ?? userDetails.name ?? undefined);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Export failed";
+      console.error("Bulk export error:", err);
+      await createEvent({
+        entityType: "system",
+        entityId: "bulk_export",
+        eventType: "bulk_export_error",
+        eventCategory: "system",
+        title: "Bulk export failed",
+        description: errorMessage,
+        metadata: { entityType: type, format, error: errorMessage, ids },
+        userId: user?.id,
+        userEmail: user?.email ?? userDetails.name ?? undefined,
+      });
+      return new Response(errorMessage, { status: 500 });
+    }
+  }
 
   if (!id) {
     throw new Response("Resource ID required", { status: 400 });
@@ -54,6 +125,98 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     default:
       throw new Response(`Unknown download type: ${type}`, { status: 400 });
   }
+}
+
+async function handleExportCustomers(
+  ids: number[],
+  format: string,
+  userId?: string,
+  userEmail?: string
+): Promise<Response> {
+  const entities = await getCustomersByIds(ids);
+  if (entities.length === 0) {
+    const msg = "No customers found for the given IDs";
+    console.error("Bulk export customers:", msg, { ids });
+    await createEvent({
+      entityType: "system",
+      entityId: "bulk_export",
+      eventType: "bulk_export_error",
+      eventCategory: "system",
+      title: "Bulk export failed",
+      description: msg,
+      metadata: { entityType: "customers", format, error: msg, ids },
+      userId,
+      userEmail,
+    });
+    return new Response(msg, { status: 404 });
+  }
+  await createEvent({
+    entityType: "system",
+    entityId: "bulk_export",
+    eventType: "bulk_export_started",
+    eventCategory: "system",
+    title: "Bulk export started",
+    description: `Exporting ${entities.length} customer(s) as ${format}`,
+    metadata: { entityType: "customers", format, count: entities.length, ids },
+    userId,
+    userEmail,
+  });
+  const exportData: ExportCustomer[] = entities.map((r) => toExportCustomer(r));
+  const filename = `customers-export-${new Date().toISOString().slice(0, 10)}.${format === "json" ? "json" : "csv"}`;
+  if (format === "json") {
+    const body = toExportJSON("customers", exportData);
+    const buffer = Buffer.from(body, "utf-8");
+    return createDownloadResponse(buffer, filename, "application/json");
+  }
+  const body = customersToCSV(exportData);
+  const buffer = Buffer.from(body, "utf-8");
+  return createDownloadResponse(buffer, filename, "text/csv");
+}
+
+async function handleExportVendors(
+  ids: number[],
+  format: string,
+  userId?: string,
+  userEmail?: string
+): Promise<Response> {
+  const entities = await getVendorsByIds(ids);
+  if (entities.length === 0) {
+    const msg = "No vendors found for the given IDs";
+    console.error("Bulk export vendors:", msg, { ids });
+    await createEvent({
+      entityType: "system",
+      entityId: "bulk_export",
+      eventType: "bulk_export_error",
+      eventCategory: "system",
+      title: "Bulk export failed",
+      description: msg,
+      metadata: { entityType: "vendors", format, error: msg, ids },
+      userId,
+      userEmail,
+    });
+    return new Response(msg, { status: 404 });
+  }
+  await createEvent({
+    entityType: "system",
+    entityId: "bulk_export",
+    eventType: "bulk_export_started",
+    eventCategory: "system",
+    title: "Bulk export started",
+    description: `Exporting ${entities.length} vendor(s) as ${format}`,
+    metadata: { entityType: "vendors", format, count: entities.length, ids },
+    userId,
+    userEmail,
+  });
+  const exportData: ExportVendor[] = entities.map((r) => toExportVendor(r));
+  const filename = `vendors-export-${new Date().toISOString().slice(0, 10)}.${format === "json" ? "json" : "csv"}`;
+  if (format === "json") {
+    const body = toExportJSON("vendors", exportData);
+    const buffer = Buffer.from(body, "utf-8");
+    return createDownloadResponse(buffer, filename, "application/json");
+  }
+  const body = vendorsToCSV(exportData);
+  const buffer = Buffer.from(body, "utf-8");
+  return createDownloadResponse(buffer, filename, "text/csv");
 }
 
 // ---------------------------------------------------------------------------

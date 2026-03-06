@@ -1778,10 +1778,11 @@ export default function QuoteDetail() {
     thumbnailUrl?: string;
   } | null>(null);
 
-  // Check if quote is in a locked state (sent or beyond)
-  const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
-    quote.status
-  );
+  // Granular locking for different sections
+  const areNotesLocked = ["Accepted", "Rejected", "Expired"].includes(quote.status);
+  const areAttachmentsLocked = ["Accepted", "Rejected", "Expired"].includes(quote.status);
+  const isPricingLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(quote.status);
+  const areDetailsLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(quote.status);
 
   // Check if any parts are currently converting
   const hasConvertingParts = quote.parts?.some(
@@ -2455,6 +2456,8 @@ export default function QuoteDetail() {
                     >
                       {quote.status === "Accepted"
                         ? "Accepted quotes are immutable."
+                        : quote.status === "Sent"
+                        ? "Sent quotes are locked from editing pricing and details. Notes and attachments can still be modified."
                         : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
                     </p>
                   </div>
@@ -2776,7 +2779,7 @@ export default function QuoteDetail() {
               <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
                 Customer
               </h3>
-              {!isQuoteLocked ? (
+              {!areDetailsLocked ? (
                 <div>
                   {editingCustomer ? (
                     <select
@@ -2870,7 +2873,7 @@ export default function QuoteDetail() {
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     Expiration Days
                   </p>
-                  {!isQuoteLocked ? (
+                  {!areDetailsLocked ? (
                     <div
                       className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1 -mx-2 transition-colors"
                       onClick={() => {
@@ -2979,7 +2982,7 @@ export default function QuoteDetail() {
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     Vendor
                   </p>
-                  {!isQuoteLocked ? (
+                  {!areDetailsLocked ? (
                     editingVendor ? (
                       <select
                         value={quote.vendorId?.toString() || ""}
@@ -3080,7 +3083,7 @@ export default function QuoteDetail() {
           <LineItemsSection
             items={normalizedLineItems}
             entityType="quote"
-            readOnly={isQuoteLocked}
+            readOnly={isPricingLocked}
             subtotal={formatCurrency(optimisticTotal)}
             onAdd={handleAddLineItem}
             onDelete={handleDeleteLineItem}
@@ -3126,7 +3129,7 @@ export default function QuoteDetail() {
             attachments={attachments || []}
             entityType="quote"
             entityId={quote.id}
-            readOnly={isQuoteLocked}
+            readOnly={areAttachmentsLocked}
           />
 
           {/* Notes and Event Log Section - Side by Side */}
@@ -3137,7 +3140,7 @@ export default function QuoteDetail() {
                 <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
                   Quote Notes
                 </h3>
-                {!isAddingNote && !isQuoteLocked && (
+                {!isAddingNote && !areNotesLocked && (
                   <Button size="sm" onClick={() => setIsAddingNote(true)}>
                     Add Note
                   </Button>
@@ -3154,7 +3157,7 @@ export default function QuoteDetail() {
                   onAddNoteClick={() => setIsAddingNote(false)}
                   isAddingNote={isAddingNote}
                   externalControl={true}
-                  readOnly={isQuoteLocked}
+                  readOnly={areNotesLocked}
                 />
               </div>
             </div>
@@ -3182,7 +3185,7 @@ export default function QuoteDetail() {
           contentType={selectedDrawing.drawing.contentType || undefined}
           fileSize={selectedDrawing.drawing.fileSize || undefined}
           onDelete={
-            isQuoteLocked
+            isPricingLocked
               ? undefined
               : () =>
                   handleQuoteDrawingDelete(

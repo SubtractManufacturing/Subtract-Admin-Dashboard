@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
 import { vendors, orders, customers } from "./db/schema.js"
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, inArray } from 'drizzle-orm'
 import type { Vendor } from "./db/schema.js"
 import { getVendorAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
@@ -64,6 +64,19 @@ export async function getVendor(id: number): Promise<Vendor | null> {
     return result[0] || null
   } catch (error) {
     throw new Error(`Failed to get vendor: ${error}`)
+  }
+}
+
+export async function getVendorsByIds(ids: number[]): Promise<Vendor[]> {
+  if (ids.length === 0) return []
+  try {
+    return await db
+      .select()
+      .from(vendors)
+      .where(inArray(vendors.id, ids))
+  } catch (error) {
+    console.error("Error fetching vendors by IDs:", error)
+    return []
   }
 }
 
