@@ -1778,17 +1778,11 @@ export default function QuoteDetail() {
     thumbnailUrl?: string;
   } | null>(null);
 
-  // Check if quote is in a locked state (sent or beyond)
-  const isQuoteLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
-    quote.status
-  );
-
   // Granular locking for different sections
   const areNotesLocked = ["Accepted", "Rejected", "Expired"].includes(quote.status);
   const areAttachmentsLocked = ["Accepted", "Rejected", "Expired"].includes(quote.status);
   const isPricingLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(quote.status);
   const areDetailsLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(quote.status);
-  const canReviseQuote = ["Sent", "Dropped", "Rejected", "Expired"].includes(quote.status);
 
   // Check if any parts are currently converting
   const hasConvertingParts = quote.parts?.some(
