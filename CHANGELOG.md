@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.7](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.6...v1.3.7) (2026-03-06)
+
+
+### Bug Fixes
+
+* add bulk export functionality and allow notes even when quotes are locked ([6da428a](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/6da428a15ba81908f696fb868fabdc44dcc4b52b))
+
 ## [1.3.6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.5...v1.3.6) (2026-03-01)
 
 
