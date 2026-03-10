@@ -40,12 +40,19 @@ export const orderStatusEnum = pgEnum("order_status", [
   "Archived",
 ]);
 export const userRoleEnum = pgEnum("user_role", ["User", "Admin", "Dev"]);
+export const userStatusEnum = pgEnum("user_status", [
+  "pending",
+  "active",
+  "disabled",
+]);
 
 export const users = pgTable("users", {
   id: text("id").primaryKey(), // Will match Supabase auth.users.id
   name: text("name"),
   email: text("email").notNull(),
   role: userRoleEnum("role").default("User").notNull(),
+  status: userStatusEnum("status").default("active").notNull(),
+  isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

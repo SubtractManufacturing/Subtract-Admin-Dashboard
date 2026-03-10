@@ -1,5 +1,6 @@
 import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
-import { Form, useActionData, useNavigation, useLoaderData } from "@remix-run/react";
+import { Form, useActionData, useNavigation, useLoaderData, useNavigate } from "@remix-run/react";
+import { useEffect } from "react";
 import { createServerClient } from "~/lib/supabase";
 import { withAuthHeaders } from "~/lib/auth.server";
 import { styles } from "~/utils/tw-styles";
@@ -102,7 +103,42 @@ export default function Login() {
   const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const isSubmitting = navigation.state === "submitting";
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    // #region agent log
+    fetch('http://127.0.0.1:7778/ingest/889b560c-9294-49a5-a4da-43cf8565d260',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2a4a0a'},body:JSON.stringify({sessionId:'2a4a0a',location:'login.tsx:useEffect',message:'Hash fragment detected',data:{hash:hash||'(empty)',hasAccessToken:hash?.includes('access_token'),hasError:hash?.includes('error')},timestamp:Date.now(),hypothesisId:'H2,H3,H5'})}).catch(()=>{});
+    // #endregion
+    if (!hash || !hash.includes("access_token")) return;
+
+    const params = new URLSearchParams(hash.substring(1));
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+    const type = params.get("type");
+
+    // #region agent log
+    fetch('http://127.0.0.1:7778/ingest/889b560c-9294-49a5-a4da-43cf8565d260',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2a4a0a'},body:JSON.stringify({sessionId:'2a4a0a',location:'login.tsx:useEffect:parsed',message:'Parsed hash params',data:{hasAccessToken:Boolean(accessToken),hasRefreshToken:Boolean(refreshToken),type:type},timestamp:Date.now(),hypothesisId:'H3,H5'})}).catch(()=>{});
+    // #endregion
+
+    if (accessToken && type === "invite") {
+      try {
+        sessionStorage.setItem(
+          "sb-invite-tokens",
+          JSON.stringify({ access_token: accessToken, refresh_token: refreshToken })
+        );
+        // #region agent log
+        fetch('http://127.0.0.1:7778/ingest/889b560c-9294-49a5-a4da-43cf8565d260',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2a4a0a'},body:JSON.stringify({sessionId:'2a4a0a',location:'login.tsx:useEffect:stored',message:'Tokens stored, navigating to setup-password',data:{storedOk:true},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+        // #endregion
+      } catch {
+        // sessionStorage unavailable — fall through to normal login
+        return;
+      }
+      window.history.replaceState(null, "", "/login");
+      navigate("/setup-password", { replace: true });
+    }
+  }, [navigate]);
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center">

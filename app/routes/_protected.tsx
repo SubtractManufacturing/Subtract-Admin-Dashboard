@@ -11,6 +11,7 @@ import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
+  const showUsersLink = userDetails.role === "Admin" || userDetails.role === "Dev";
   
   const [showEventsLink, showVersionInHeader] = await Promise.all([
     shouldShowEventsInNav(),
@@ -24,6 +25,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       appConfig,
       showEventsLink,
       showVersionInHeader,
+      showUsersLink,
     }),
     headers
   );
@@ -39,7 +41,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 function ProtectedLayoutContent() {
-  const { user, userDetails, appConfig, showEventsLink, showVersionInHeader } = useLoaderData<typeof loader>();
+  const { user, userDetails, appConfig, showEventsLink, showVersionInHeader, showUsersLink } = useLoaderData<typeof loader>();
   const { isExpanded } = useSidebar();
   
   return (
@@ -51,6 +53,7 @@ function ProtectedLayoutContent() {
         version={appConfig.version}
         showVersion={showVersionInHeader}
         showEventsLink={showEventsLink}
+        showUsersLink={showUsersLink}
       />
       <main className={`flex-1 transition-all duration-300 ml-0 ${isExpanded ? "md:ml-64" : "md:ml-20"}`}>
         <MobileHeader />
