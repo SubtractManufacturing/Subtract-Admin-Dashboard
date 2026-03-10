@@ -18,8 +18,13 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const accessToken = formData.get("access_token") as string;
   const refreshToken = formData.get("refresh_token") as string;
+  const name = ((formData.get("name") as string) || "").trim();
   const password = formData.get("password") as string;
   const confirmPassword = formData.get("confirm_password") as string;
+
+  if (!name) {
+    return json({ error: "Name is required." }, { status: 400 });
+  }
 
   if (!password || password.length < 8) {
     return json(
@@ -69,13 +74,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const { error: updateError } = await supabase.auth.updateUser({
     password,
+    data: { name },
   });
 
   if (updateError) {
     console.error("Password update error:", updateError.message);
     return withAuthHeaders(
       json(
-        { error: "Failed to set password. Please try again." },
+        { error: "Failed to set up account. Please try again." },
         { status: 500 }
       ),
       headers
@@ -97,9 +103,6 @@ export default function SetupPassword() {
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem("sb-invite-tokens");
-      // #region agent log
-      fetch('http://127.0.0.1:7778/ingest/889b560c-9294-49a5-a4da-43cf8565d260',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2a4a0a'},body:JSON.stringify({sessionId:'2a4a0a',location:'setup-password.tsx:useEffect',message:'Reading sessionStorage',data:{hasRaw:Boolean(raw),hasServerSession,rawLength:raw?.length||0},timestamp:Date.now(),hypothesisId:'H4'})}).catch(()=>{});
-      // #endregion
       if (!raw) {
         setExpired(!hasServerSession);
         setTokensReady(true);
@@ -153,11 +156,27 @@ export default function SetupPassword() {
           Welcome to Subtract
         </h2>
         <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-6">
-          Set a password to finish setting up your account.
+          Set up your account to get started.
         </p>
         <Form method="post" className="space-y-4">
           <input type="hidden" name="access_token" value={tokens?.access_token ?? ""} />
           <input type="hidden" name="refresh_token" value={tokens?.refresh_token ?? ""} />
+
+          <div>
+            <label htmlFor="name" className={formStyles.label}>
+              Full Name
+            </label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              required
+              autoComplete="name"
+              autoFocus
+              className={formStyles.input}
+              placeholder="Jane Doe"
+            />
+          </div>
 
           <div>
             <label htmlFor="password" className={formStyles.label}>
@@ -200,7 +219,7 @@ export default function SetupPassword() {
             disabled={isSubmitting}
             className={`${styles.button.primary} w-full`}
           >
-            {isSubmitting ? "Setting up..." : "Set Password & Continue"}
+            {isSubmitting ? "Setting up..." : "Create Account"}
           </button>
         </Form>
       </div>
