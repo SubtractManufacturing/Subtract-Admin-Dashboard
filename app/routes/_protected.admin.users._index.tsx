@@ -175,7 +175,7 @@ export default function UsersIndexRoute() {
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader
         breadcrumbs={[
-          { label: "Dashboard", href: "/" },
+          { label: "Admin", href: "/admin" },
           { label: "Users" },
         ]}
         onSearch={setSearchQuery}
@@ -196,7 +196,7 @@ export default function UsersIndexRoute() {
           data={filteredUsers}
           viewMode={view}
           getRowKey={(row) => row.id}
-          onRowClick={(row) => navigate(`/users/${row.id}`)}
+          onRowClick={(row) => navigate(`/admin/users/${row.id}`)}
           emptyMessage={
             searchQuery
               ? "No users found matching your search."

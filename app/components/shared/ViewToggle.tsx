@@ -64,7 +64,7 @@ export default function ViewToggle({ view, onChange }: ViewToggleProps) {
         onClick={() => onChange("list")}
         className={`p-2 transition-colors ${
           view === "list"
-            ? "bg-blue-600 text-white"
+            ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
             : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
         }`}
         title="List view"
@@ -79,7 +79,7 @@ export default function ViewToggle({ view, onChange }: ViewToggleProps) {
         onClick={() => onChange("card")}
         className={`p-2 transition-colors ${
           view === "card"
-            ? "bg-blue-600 text-white"
+            ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
             : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
         }`}
         title="Card view"

@@ -205,7 +205,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return withAuthHeaders(json({ success: true }), headers);
       case "deleteUser":
         await deleteUser(targetUserId, eventContext);
-        return withAuthHeaders(redirect("/users"), headers);
+        return withAuthHeaders(redirect("/admin/users"), headers);
       default:
         return withAuthHeaders(
           json({ error: "Invalid intent" }, { status: 400 }),
@@ -261,8 +261,8 @@ export default function UserDetailRoute() {
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader
         breadcrumbs={[
-          { label: "Dashboard", href: "/" },
-          { label: "Users", href: "/users" },
+          { label: "Admin", href: "/admin" },
+          { label: "Users", href: "/admin/users" },
           { label: targetUser.name || targetUser.email },
         ]}
       />
