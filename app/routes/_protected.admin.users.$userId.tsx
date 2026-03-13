@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import AdminPageHeader from "~/components/admin/PageHeader";
 import Button from "~/components/admin/Button";
 import Modal from "~/components/shared/Modal";
-import { SelectField } from "~/components/shared/FormField";
 import { EventTimeline } from "~/components/EventTimeline";
 import { formStyles } from "~/utils/tw-styles";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
@@ -307,12 +306,13 @@ export default function UserDetailRoute() {
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 h-full flex flex-col">
               <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Update Role</h4>
-              <div className="flex gap-3 items-end">
+              <div className="mt-auto grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
                 <div className="flex-1">
-                  <SelectField
-                    label="Role"
+                  <label className={formStyles.label}>Role</label>
+                  <select
+                    className={formStyles.select}
                     name="role"
                     value={selectedRole}
                     onChange={(e) => setSelectedRole(e.target.value as User["role"])}
@@ -323,10 +323,11 @@ export default function UserDetailRoute() {
                         {role}
                       </option>
                     ))}
-                  </SelectField>
+                  </select>
                 </div>
                 <Button
                   type="button"
+                  className="w-full sm:w-auto"
                   onClick={() => setModalIntent("updateRole")}
                   disabled={isManagedDisabled || selectedRole === targetUser.role}
                 >
@@ -335,13 +336,14 @@ export default function UserDetailRoute() {
               </div>
             </div>
 
-            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 h-full flex flex-col">
               <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Account Actions</h4>
-              <div className="flex flex-wrap gap-3">
+              <div className="mt-auto flex flex-wrap gap-3 items-end">
                 {targetUser.status === "disabled" ? (
                   <Button
                     type="button"
                     variant="secondary"
+                    className="w-full sm:w-auto"
                     onClick={() => setModalIntent("enableUser")}
                     disabled={isManagedDisabled}
                   >
@@ -351,6 +353,7 @@ export default function UserDetailRoute() {
                   <Button
                     type="button"
                     variant="secondary"
+                    className="w-full sm:w-auto"
                     onClick={() => setModalIntent("disableUser")}
                     disabled={isManagedDisabled}
                   >
@@ -360,6 +363,7 @@ export default function UserDetailRoute() {
                 <Button
                   type="button"
                   variant="danger"
+                  className="w-full sm:w-auto"
                   onClick={() => setModalIntent("deleteUser")}
                   disabled={isManagedDisabled}
                 >

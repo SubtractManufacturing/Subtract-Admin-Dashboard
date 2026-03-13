@@ -152,10 +152,43 @@ export default function UsersIndexRoute() {
   const [view, setView] = useViewToggle("users-view");
   const [searchQuery, setSearchQuery] = useState("");
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteStep, setInviteStep] = useState<"email" | "password">("email");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteEmailError, setInviteEmailError] = useState("");
+
+  const resetInviteModal = () => {
+    setInviteStep("email");
+    setInviteEmail("");
+    setInviteEmailError("");
+  };
+
+  const openInviteModal = () => {
+    resetInviteModal();
+    setIsInviteModalOpen(true);
+  };
+
+  const closeInviteModal = () => {
+    setIsInviteModalOpen(false);
+    resetInviteModal();
+  };
+
+  const handleInviteEmailSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const normalizedEmail = inviteEmail.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes("@")) {
+      setInviteEmailError("Enter a valid email address");
+      return;
+    }
+
+    setInviteEmail(normalizedEmail);
+    setInviteEmailError("");
+    setInviteStep("password");
+  };
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success) {
-      setIsInviteModalOpen(false);
+      closeInviteModal();
     }
   }, [fetcher.data, fetcher.state]);
 
@@ -187,7 +220,7 @@ export default function UsersIndexRoute() {
           </h2>
           <div className="flex items-center gap-3">
             <ViewToggle view={view} onChange={setView} />
-            <Button onClick={() => setIsInviteModalOpen(true)}>Invite User</Button>
+            <Button onClick={openInviteModal}>Invite User</Button>
           </div>
         </div>
 
@@ -281,53 +314,91 @@ export default function UsersIndexRoute() {
 
       <Modal
         isOpen={isInviteModalOpen}
-        onClose={() => setIsInviteModalOpen(false)}
-        title="Invite User"
+        onClose={closeInviteModal}
+        title={inviteStep === "email" ? "Invite User" : "Confirm Your Identity"}
       >
-        <fetcher.Form method="post">
-          <input type="hidden" name="intent" value="inviteUser" />
-          <InputField
-            label="User Email"
-            name="email"
-            type="email"
-            required
-            autoComplete="email"
-          />
-          <div className="mb-4">
-            <label className={formStyles.label}>
-              Confirm Your Password <span className="text-red-600 dark:text-red-400"> *</span>
-            </label>
-            <input
-              className={formStyles.input}
-              type="password"
-              name="password"
+        {inviteStep === "email" ? (
+          <form onSubmit={handleInviteEmailSubmit}>
+            <InputField
+              label="User Email"
+              name="inviteEmail"
+              type="email"
               required
-              autoComplete="current-password"
+              autoComplete="email"
+              placeholder="name@company.com"
+              value={inviteEmail}
+              error={inviteEmailError}
+              onChange={(event) => {
+                setInviteEmail(event.target.value);
+                if (inviteEmailError) {
+                  setInviteEmailError("");
+                }
+              }}
             />
-          </div>
 
-          {fetcher.data?.error && (
-            <div className={formStyles.error}>{fetcher.data.error}</div>
-          )}
-          {fetcher.data?.success && fetcher.data.message && (
-            <div className="text-green-600 dark:text-green-400 text-sm mt-2">
-              {fetcher.data.message}
+            <div className="flex gap-3 justify-end mt-6">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeInviteModal}
+              >
+                Cancel
+              </Button>
+              <Button type="submit">Continue</Button>
             </div>
-          )}
+          </form>
+        ) : (
+          <fetcher.Form method="post">
+            <input type="hidden" name="intent" value="inviteUser" />
+            <input type="hidden" name="email" value={inviteEmail} />
 
-          <div className="flex gap-3 justify-end mt-6">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setIsInviteModalOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={fetcher.state !== "idle"}>
-              {fetcher.state !== "idle" ? "Sending..." : "Send Invite"}
-            </Button>
-          </div>
-        </fetcher.Form>
+            <div className="mb-4 space-y-2">
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                You&apos;re inviting <span className="font-medium">{inviteEmail}</span>.
+              </p>
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                We need to verify it&apos;s you before sending the invite. Enter your account password to continue.
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className={formStyles.label}>
+                Confirm Your Password <span className="text-red-600 dark:text-red-400"> *</span>
+              </label>
+              <input
+                className={formStyles.input}
+                type="password"
+                name="password"
+                required
+                autoComplete="current-password"
+              />
+            </div>
+
+            {fetcher.data?.error && (
+              <div className={formStyles.error}>{fetcher.data.error}</div>
+            )}
+
+            <div className="flex gap-3 justify-end mt-6">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setInviteStep("email")}
+              >
+                Back
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={closeInviteModal}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={fetcher.state !== "idle"}>
+                {fetcher.state !== "idle" ? "Sending..." : "Send Invite"}
+              </Button>
+            </div>
+          </fetcher.Form>
+        )}
       </Modal>
     </div>
   );
