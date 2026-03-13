@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.8](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.7...v1.3.8) (2026-03-13)
+
+
+### Bug Fixes
+
+* add admin dashboard with user management ([ef1ecae](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/ef1ecae0a000d2a4108bfb52fb3ee48438548164))
+* add stripe payment link management for quotes ([9c6dc7e](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/9c6dc7e19e28cd013bc77a09d2cd5d8bbdf5ab00))
+
 ## [1.3.7](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.6...v1.3.7) (2026-03-06)
 
 
