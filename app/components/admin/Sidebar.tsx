@@ -58,7 +58,7 @@ export default function AdminSidebar() {
   return (
     <aside className="fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       {/* Back to app */}
-      <div className="px-4 py-4">
+      <div className="flex h-14 items-center border-b border-gray-200 px-4 dark:border-slate-700">
         <Link
           to="/"
           className="group flex items-center gap-2 text-sm font-medium text-gray-500 no-underline transition-colors hover:text-[#840606] dark:text-gray-400 dark:hover:text-red-400"
@@ -76,11 +76,9 @@ export default function AdminSidebar() {
               d="M10 19l-7-7m0 0l7-7m-7 7h18"
             />
           </svg>
-          <span>Back to SERP</span>
+          <span>Back to Subtract</span>
         </Link>
       </div>
-
-      <div className="border-b border-gray-200 dark:border-slate-700" />
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 py-4">

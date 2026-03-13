@@ -5,11 +5,11 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { inviteUser } from "~/lib/users.admin.server";
 import { getAllUsers, type UserEventContext } from "~/lib/users";
 import type { User } from "~/lib/db/schema";
-import SearchHeader from "~/components/SearchHeader";
-import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle";
+import AdminPageHeader from "~/components/admin/PageHeader";
+import ViewToggle, { useViewToggle } from "~/components/admin/ViewToggle";
+import Button from "~/components/admin/Button";
 import { DataTable } from "~/components/shared/DataTable";
 import Modal from "~/components/shared/Modal";
-import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
 import { formStyles, listCardStyles } from "~/utils/tw-styles";
 
@@ -173,7 +173,7 @@ export default function UsersIndexRoute() {
 
   return (
     <div className="max-w-[1920px] mx-auto">
-      <SearchHeader
+      <AdminPageHeader
         breadcrumbs={[
           { label: "Admin", href: "/admin" },
           { label: "Users" },

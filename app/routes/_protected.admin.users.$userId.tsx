@@ -1,8 +1,8 @@
 import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import { useEffect, useMemo, useState } from "react";
-import SearchHeader from "~/components/SearchHeader";
-import Button from "~/components/shared/Button";
+import AdminPageHeader from "~/components/admin/PageHeader";
+import Button from "~/components/admin/Button";
 import Modal from "~/components/shared/Modal";
 import { SelectField } from "~/components/shared/FormField";
 import { EventTimeline } from "~/components/EventTimeline";
@@ -259,7 +259,7 @@ export default function UserDetailRoute() {
 
   return (
     <div className="max-w-[1920px] mx-auto">
-      <SearchHeader
+      <AdminPageHeader
         breadcrumbs={[
           { label: "Admin", href: "/admin" },
           { label: "Users", href: "/admin/users" },

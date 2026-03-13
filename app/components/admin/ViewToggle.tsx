@@ -8,9 +8,7 @@ export function useViewToggle(storageKey: string) {
   const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
-    const handleResize = () => {
-      setIsSmallScreen(window.innerWidth < 640);
-    };
+    const handleResize = () => setIsSmallScreen(window.innerWidth < 640);
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
@@ -22,7 +20,6 @@ export function useViewToggle(storageKey: string) {
     setIsInitialized(true);
   }, [storageKey]);
 
-  // On mobile we always show card view; ignore view changes (toggle is hidden so this is rarely called).
   const setAndPersistView = (nextView: ViewMode) => {
     if (!isSmallScreen) {
       setDesktopView(nextView);
@@ -45,47 +42,43 @@ export default function ViewToggle({ view, onChange }: ViewToggleProps) {
   const [isSmallScreen, setIsSmallScreen] = useState(false);
 
   useEffect(() => {
-    const handleResize = () => {
-      setIsSmallScreen(window.innerWidth < 640);
-    };
+    const handleResize = () => setIsSmallScreen(window.innerWidth < 640);
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  if (isSmallScreen) {
-    return null;
-  }
+  if (isSmallScreen) return null;
 
   return (
-    <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
+    <div className="inline-flex overflow-hidden rounded-lg border border-gray-200 dark:border-slate-600">
       <button
         type="button"
         onClick={() => onChange("list")}
-        className={`p-2 transition-colors ${
+        className={`border p-2 transition-colors ${
           view === "list"
-            ? "bg-blue-600 text-white"
-            : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+            ? "border-transparent bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+            : "border-transparent bg-white text-gray-500 hover:bg-gray-50 dark:bg-slate-800 dark:text-gray-400 dark:hover:bg-slate-700"
         }`}
         title="List view"
         aria-label="List view"
       >
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
         </svg>
       </button>
       <button
         type="button"
         onClick={() => onChange("card")}
-        className={`p-2 transition-colors ${
+        className={`border p-2 transition-colors ${
           view === "card"
-            ? "bg-blue-600 text-white"
-            : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+            ? "border-transparent bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+            : "border-transparent bg-white text-gray-500 hover:bg-gray-50 dark:bg-slate-800 dark:text-gray-400 dark:hover:bg-slate-700"
         }`}
         title="Card view"
         aria-label="Card view"
       >
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
