@@ -94,7 +94,16 @@ export const loginRateLimiter = new RateLimiter({
   blockDurationMs: 30 * 60 * 1000 // 30 minutes
 });
 
+export const passwordCheckRateLimiter = new RateLimiter({
+  maxAttempts: 30,
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  blockDurationMs: 10 * 60 * 1000 // 10 minutes
+});
+
 // Cleanup old entries every hour
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => loginRateLimiter.cleanup(), 60 * 60 * 1000);
+  setInterval(() => {
+    loginRateLimiter.cleanup();
+    passwordCheckRateLimiter.cleanup();
+  }, 60 * 60 * 1000);
 }

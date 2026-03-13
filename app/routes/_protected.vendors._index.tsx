@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node"
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react"
+import { useLoaderData, useFetcher, Link } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
@@ -96,7 +96,6 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function Vendors() {
   const { vendors } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
-  const navigate = useNavigate()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -178,7 +177,7 @@ export default function Vendors() {
           data={filteredVendors}
           viewMode={view}
           getRowKey={(vendor) => vendor.id}
-          onRowClick={(vendor) => navigate(`/vendors/${vendor.id}`)}
+          rowLinkHref={(vendor) => `/vendors/${vendor.id}`}
           emptyMessage={
             searchQuery
               ? "No vendors found matching your search."
@@ -193,7 +192,15 @@ export default function Vendors() {
             {
               key: "displayName",
               header: "Display Name",
-              render: (vendor) => vendor.displayName,
+              render: (vendor) => (
+                <Link
+                  to={`/vendors/${vendor.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                >
+                  {vendor.displayName}
+                </Link>
+              ),
             },
             {
               key: "company",

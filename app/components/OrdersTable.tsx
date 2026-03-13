@@ -1,15 +1,38 @@
 import type { Order } from "~/lib/dashboard"
 import { listCardStyles, tableStyles, statusStyles } from "~/utils/tw-styles"
-import { useNavigate } from "@remix-run/react"
+import { useNavigate, Link } from "@remix-run/react"
 import ViewToggle, { useViewToggle } from "./shared/ViewToggle"
 
 interface OrdersTableProps {
   orders: Order[]
 }
 
+function openInNewTab(href: string) {
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+
 export default function OrdersTable({ orders }: OrdersTableProps) {
   const navigate = useNavigate()
   const [view, setView] = useViewToggle("dashboard-orders-view")
+
+  const handleRowClick = (e: React.MouseEvent<HTMLElement>, href: string) => {
+    if (e.defaultPrevented) return;
+    if (e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      openInNewTab(href);
+      return;
+    }
+    navigate(href);
+  };
+
+  const handleRowAuxClick = (e: React.MouseEvent<HTMLElement>, href: string) => {
+    if (e.defaultPrevented) return;
+    if (e.button === 1) {
+      e.preventDefault();
+      openInNewTab(href);
+    }
+  };
   
   const formatCurrency = (amount: string | null) => {
     if (!amount) return "--"
@@ -97,37 +120,41 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
                 <tr
                   key={order.id}
                   className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
-                  onClick={() => navigate(`/orders/${order.order_number}`)}
+                  onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                  onClick={(e) => handleRowClick(e, `/orders/${order.order_number}`)}
+                  onAuxClick={(e) => handleRowAuxClick(e, `/orders/${order.order_number}`)}
                 >
                   <td className={tableStyles.cell}>
-                    {order.order_number}
+                    <Link
+                      to={`/orders/${order.order_number}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                    >
+                      {order.order_number}
+                    </Link>
                   </td>
                   <td className={tableStyles.cell}>
                     {order.customer_id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          navigate(`/customers/${order.customer_id}`)
-                        }}
+                      <Link
+                        to={`/customers/${order.customer_id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                       >
                         {order.customer_name}
-                      </button>
+                      </Link>
                     ) : (
                       <span>{order.customer_name}</span>
                     )}
                   </td>
                   <td className={tableStyles.cell}>
                     {order.vendor_id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          navigate(`/vendors/${order.vendor_id}`)
-                        }}
+                      <Link
+                        to={`/vendors/${order.vendor_id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                       >
                         {order.vendor_name}
-                      </button>
+                      </Link>
                     ) : (
                       <span>{order.vendor_name}</span>
                     )}
@@ -160,7 +187,9 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
               role="button"
               tabIndex={0}
               className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}
-              onClick={() => navigate(`/orders/${order.order_number}`)}
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+              onClick={(e) => handleRowClick(e, `/orders/${order.order_number}`)}
+              onAuxClick={(e) => handleRowAuxClick(e, `/orders/${order.order_number}`)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/orders/${order.order_number}`); } }}
             >
               <div className={listCardStyles.header}>

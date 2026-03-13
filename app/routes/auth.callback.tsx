@@ -26,6 +26,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     
     if (!error) {
+      if (type === "invite") {
+        return withAuthHeaders(redirect("/setup-password"), headers);
+      }
       return withAuthHeaders(redirect(next), headers);
     }
   }
@@ -39,14 +42,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
     });
 
     if (!error) {
-      // For email change, redirect to settings with success message
+      if (type === "invite") {
+        return withAuthHeaders(redirect("/setup-password"), headers);
+      }
       if (type === "email_change" || type === "email") {
         return withAuthHeaders(
           redirect("/settings?message=Email successfully updated"),
           headers
         );
       }
-      // For other types, redirect to next or home
       return withAuthHeaders(redirect(next), headers);
     }
 

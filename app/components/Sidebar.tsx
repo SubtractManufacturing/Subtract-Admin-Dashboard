@@ -11,6 +11,7 @@ interface SidebarProps {
   showVersion?: boolean;
   showEventsLink?: boolean;
   showQuotesLink?: boolean;
+  showAdminConsole?: boolean;
 }
 
 interface NavItem {
@@ -28,6 +29,7 @@ export default function Sidebar({
   showVersion,
   showEventsLink = true,
   showQuotesLink = true,
+  showAdminConsole = false,
 }: SidebarProps) {
   const { isExpanded, toggleSidebar, isMobileOpen, setMobileOpen } = useSidebar();
   const location = useLocation();
@@ -302,6 +304,24 @@ export default function Sidebar({
                   />
                 </button>
               </div>
+
+              {showAdminConsole && (
+                <Link
+                  to="/admin"
+                  className="flex items-center gap-3 px-4 py-2.5 text-sm transition-colors no-underline text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
+                  onClick={() => setIsAccountMenuOpen(false)}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                    />
+                  </svg>
+                  <span>Admin Console</span>
+                </Link>
+              )}
 
               {/* Divider */}
               <div className="border-t border-gray-200 dark:border-slate-700 my-1" />

@@ -15,19 +15,27 @@ export async function requireAuth(request: Request) {
     throw redirect(`/login?next=${encodeURIComponent(redirectTo)}`, { headers });
   }
 
-  // Ensure user exists in public.users table and get their role
-  const role = await ensureUserExists(
+  // Ensure user exists in public.users table and get role/status
+  const userState = await ensureUserExists(
     user.id,
     user.email || '',
     user.user_metadata?.name || null
   );
+
+  if (userState.isArchived || userState.status === "disabled") {
+    await supabase.auth.signOut();
+    throw redirect(
+      "/login?error=Account+disabled.+Contact+your+administrator.",
+      { headers }
+    );
+  }
   
   // Build userDetails from Supabase auth metadata
   const userDetails = {
     id: user.id,
     email: user.email || '',
     name: user.user_metadata?.name || null,
-    role: role,
+    role: userState.role,
     createdAt: new Date(user.created_at),
   };
 
@@ -45,20 +53,28 @@ export async function getOptionalAuth(request: Request) {
   // Use getUser() instead of getSession() for security
   const { data: { user } } = await supabase.auth.getUser();
   
-  // Build userDetails if user exists and ensure they're in the database
-  const role = user ? await ensureUserExists(
+  if (!user) {
+    return { user: null, userDetails: null, supabase, headers };
+  }
+
+  const userState = await ensureUserExists(
     user.id,
     user.email || '',
     user.user_metadata?.name || null
-  ) : null;
+  );
+
+  if (userState.isArchived || userState.status === "disabled") {
+    await supabase.auth.signOut();
+    return { user: null, userDetails: null, supabase, headers };
+  }
   
-  const userDetails = user ? {
+  const userDetails = {
     id: user.id,
     email: user.email || '',
     name: user.user_metadata?.name || null,
-    role: role || "User",
+    role: userState.role || "User",
     createdAt: new Date(user.created_at),
-  } : null;
+  };
 
   return { user, userDetails, supabase, headers };
 }

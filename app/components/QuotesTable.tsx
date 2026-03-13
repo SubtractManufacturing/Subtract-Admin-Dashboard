@@ -1,15 +1,38 @@
 import type { Quote } from "~/lib/dashboard"
 import { listCardStyles, tableStyles, statusStyles } from "~/utils/tw-styles"
-import { useNavigate } from "@remix-run/react"
+import { useNavigate, Link } from "@remix-run/react"
 import ViewToggle, { useViewToggle } from "./shared/ViewToggle"
 
 interface QuotesTableProps {
   quotes: Quote[]
 }
 
+function openInNewTab(href: string) {
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+
 export default function QuotesTable({ quotes }: QuotesTableProps) {
   const navigate = useNavigate()
   const [view, setView] = useViewToggle("dashboard-quotes-view")
+
+  const handleRowClick = (e: React.MouseEvent<HTMLElement>, href: string) => {
+    if (e.defaultPrevented) return;
+    if (e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      openInNewTab(href);
+      return;
+    }
+    navigate(href);
+  };
+
+  const handleRowAuxClick = (e: React.MouseEvent<HTMLElement>, href: string) => {
+    if (e.defaultPrevented) return;
+    if (e.button === 1) {
+      e.preventDefault();
+      openInNewTab(href);
+    }
+  };
   
   const formatCurrency = (amount: string | null) => {
     if (!amount) return "--"
@@ -71,20 +94,28 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
                 <tr
                   key={quote.id}
                   className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
-                  onClick={() => navigate(`/quotes/${quote.id}`)}
+                  onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                  onClick={(e) => handleRowClick(e, `/quotes/${quote.id}`)}
+                  onAuxClick={(e) => handleRowAuxClick(e, `/quotes/${quote.id}`)}
                 >
-                  <td className={tableStyles.cell}>{quote.quote_number}</td>
+                  <td className={tableStyles.cell}>
+                    <Link
+                      to={`/quotes/${quote.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                    >
+                      {quote.quote_number}
+                    </Link>
+                  </td>
                   <td className={tableStyles.cell}>
                     {quote.customer_id ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          navigate(`/customers/${quote.customer_id}`)
-                        }}
+                      <Link
+                        to={`/customers/${quote.customer_id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                       >
                         {quote.customer_name}
-                      </button>
+                      </Link>
                     ) : (
                       <span>{quote.customer_name}</span>
                     )}
@@ -109,7 +140,9 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
               role="button"
               tabIndex={0}
               className={`${listCardStyles.card} ${listCardStyles.clickableCard}`}
-              onClick={() => navigate(`/quotes/${quote.id}`)}
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+              onClick={(e) => handleRowClick(e, `/quotes/${quote.id}`)}
+              onAuxClick={(e) => handleRowAuxClick(e, `/quotes/${quote.id}`)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/quotes/${quote.id}`); } }}
             >
               <div className={listCardStyles.header}>

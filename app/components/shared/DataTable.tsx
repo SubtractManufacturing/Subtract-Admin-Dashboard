@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
+import { useNavigate } from "@remix-run/react";
 import { listCardStyles, tableStyles } from "~/utils/tw-styles";
 import { IconButton } from "./IconButton";
 import type { ViewMode } from "./ViewToggle";
@@ -23,10 +24,15 @@ interface DataTableProps<T> {
   columns: ColumnDef<T>[];
   rowActions?: RowAction<T>[];
   onRowClick?: (row: T) => void;
+  rowLinkHref?: (row: T) => string;
   viewMode: ViewMode;
   emptyMessage?: string;
   cardRender: (row: T) => ReactNode;
   getRowKey: (row: T) => string | number;
+}
+
+function openInNewTab(href: string) {
+  window.open(href, "_blank", "noopener,noreferrer");
 }
 
 export function DataTable<T>({
@@ -34,11 +40,48 @@ export function DataTable<T>({
   columns,
   rowActions = [],
   onRowClick,
+  rowLinkHref,
   viewMode,
   emptyMessage,
   cardRender,
   getRowKey,
 }: DataTableProps<T>) {
+  const navigate = useNavigate();
+
+  const isClickable = !!(rowLinkHref || onRowClick);
+
+  const handleRowClick = (
+    e: MouseEvent<HTMLElement>,
+    row: T,
+  ) => {
+    if (e.defaultPrevented) return;
+
+    if (rowLinkHref) {
+      const href = rowLinkHref(row);
+      if (e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        openInNewTab(href);
+        return;
+      }
+      navigate(href);
+    } else if (onRowClick) {
+      onRowClick(row);
+    }
+  };
+
+  const handleRowAuxClick = (
+    e: MouseEvent<HTMLElement>,
+    row: T,
+  ) => {
+    if (e.defaultPrevented) return;
+    if (!rowLinkHref) return;
+    if (e.button === 1) {
+      e.preventDefault();
+      openInNewTab(rowLinkHref(row));
+    }
+  };
+
   if (data.length === 0) {
     return (
       <div className={tableStyles.emptyState}>
@@ -70,8 +113,10 @@ export function DataTable<T>({
             {data.map((row) => (
               <tr
                 key={getRowKey(row)}
-                className={`${tableStyles.row} ${onRowClick ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800" : ""}`}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={`${tableStyles.row} ${isClickable ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800" : ""}`}
+                onMouseDown={rowLinkHref ? (e) => { if (e.button === 1) e.preventDefault(); } : undefined}
+                onClick={isClickable ? (e) => handleRowClick(e, row) : undefined}
+                onAuxClick={rowLinkHref ? (e) => handleRowAuxClick(e, row) : undefined}
               >
                 {columns.map((column) => (
                   <td
@@ -113,20 +158,26 @@ export function DataTable<T>({
       {data.map((row) => (
         <div
           key={getRowKey(row)}
-          className={`${listCardStyles.card} ${onRowClick ? listCardStyles.clickableCard : ""}`}
-          onClick={onRowClick ? () => onRowClick(row) : undefined}
+          className={`${listCardStyles.card} ${isClickable ? listCardStyles.clickableCard : ""}`}
+          onMouseDown={rowLinkHref ? (e) => { if (e.button === 1) e.preventDefault(); } : undefined}
+          onClick={isClickable ? (e) => handleRowClick(e, row) : undefined}
+          onAuxClick={rowLinkHref ? (e) => handleRowAuxClick(e, row) : undefined}
           onKeyDown={
-            onRowClick
+            isClickable
               ? (e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    onRowClick(row);
+                    if (rowLinkHref) {
+                      navigate(rowLinkHref(row));
+                    } else if (onRowClick) {
+                      onRowClick(row);
+                    }
                   }
                 }
               : undefined
           }
-          role={onRowClick ? "button" : undefined}
-          tabIndex={onRowClick ? 0 : undefined}
+          role={isClickable ? "button" : undefined}
+          tabIndex={isClickable ? 0 : undefined}
         >
           {cardRender(row)}
           {rowActions.length > 0 && (

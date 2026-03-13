@@ -12,6 +12,7 @@ import {
   useRevalidator,
   useRouteError,
   isRouteErrorResponse,
+  Link,
 } from "@remix-run/react";
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
@@ -3055,15 +3056,12 @@ export default function QuoteDetail() {
                     <p className="text-sm text-gray-500 dark:text-gray-400">
                       Converted to Order
                     </p>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.location.href = `/orders/${convertedOrder.orderNumber}`;
-                      }}
+                    <Link
+                      to={`/orders/${convertedOrder.orderNumber}`}
                       className="text-base font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                     >
                       {convertedOrder.orderNumber}
-                    </button>
+                    </Link>
                   </div>
                 )}
                 {quote.rejectionReason && (

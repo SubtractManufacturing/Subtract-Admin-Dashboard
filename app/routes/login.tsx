@@ -1,5 +1,6 @@
 import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
-import { Form, useActionData, useNavigation, useLoaderData } from "@remix-run/react";
+import { Form, useActionData, useNavigation, useLoaderData, useNavigate } from "@remix-run/react";
+import { useEffect } from "react";
 import { createServerClient } from "~/lib/supabase";
 import { withAuthHeaders } from "~/lib/auth.server";
 import { styles } from "~/utils/tw-styles";
@@ -102,7 +103,31 @@ export default function Login() {
   const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const isSubmitting = navigation.state === "submitting";
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash || !hash.includes("access_token")) return;
+
+    const params = new URLSearchParams(hash.substring(1));
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+    const type = params.get("type");
+
+    if (accessToken && type === "invite") {
+      try {
+        sessionStorage.setItem(
+          "sb-invite-tokens",
+          JSON.stringify({ access_token: accessToken, refresh_token: refreshToken })
+        );
+      } catch {
+        return;
+      }
+      window.history.replaceState(null, "", "/login");
+      navigate("/setup-password", { replace: true });
+    }
+  }, [navigate]);
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
