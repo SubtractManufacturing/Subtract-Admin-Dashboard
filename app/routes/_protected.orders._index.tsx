@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, Link } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
@@ -177,7 +177,6 @@ export default function Orders() {
   const { orders, customers, vendors } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher();
-  const navigate = useNavigate();
   const revalidator = useRevalidator();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(
@@ -395,7 +394,7 @@ export default function Orders() {
           data={filteredOrders}
           viewMode={view}
           getRowKey={(order) => order.id}
-          onRowClick={(order) => navigate(`/orders/${order.orderNumber}`)}
+          rowLinkHref={(order) => `/orders/${order.orderNumber}`}
           emptyMessage="No orders found."
           columns={[
             {
@@ -408,15 +407,13 @@ export default function Orders() {
               header: "Customer",
               render: (order) =>
                 order.customer?.id ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/customers/${order.customer!.id}`);
-                    }}
+                  <Link
+                    to={`/customers/${order.customer.id}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                   >
                     {order.customer.displayName}
-                  </button>
+                  </Link>
                 ) : (
                   <span>{order.customer?.displayName || "--"}</span>
                 ),
@@ -426,15 +423,13 @@ export default function Orders() {
               header: "Vendor",
               render: (order) =>
                 order.vendor?.id ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/vendors/${order.vendor!.id}`);
-                    }}
+                  <Link
+                    to={`/vendors/${order.vendor.id}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                   >
                     {order.vendor.displayName}
-                  </button>
+                  </Link>
                 ) : (
                   <span>{order.vendor?.displayName || "--"}</span>
                 ),

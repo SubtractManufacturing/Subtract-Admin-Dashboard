@@ -2,10 +2,10 @@ import { json } from "@remix-run/node";
 import {
   useLoaderData,
   useFetcher,
-  useNavigate,
   useRevalidator,
   useRouteError,
   isRouteErrorResponse,
+  Link,
 } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
@@ -139,8 +139,7 @@ export default function QuotesIndex() {
     quotes,
     customers,
   } = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
-  const archiveFetcher = useFetcher(); // Dedicated fetcher for archive actions
+  const archiveFetcher = useFetcher();
   const revalidator = useRevalidator();
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
@@ -306,7 +305,7 @@ export default function QuotesIndex() {
           data={filteredQuotes}
           viewMode={view}
           getRowKey={(quote) => quote.id}
-          onRowClick={(quote) => navigate(`/quotes/${quote.id}`)}
+          rowLinkHref={(quote) => `/quotes/${quote.id}`}
           emptyMessage="No quotes found."
           columns={[
             {
@@ -319,15 +318,13 @@ export default function QuotesIndex() {
               header: "Customer",
               render: (quote) =>
                 quote.customer?.id ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/customers/${quote.customer!.id}`);
-                    }}
+                  <Link
+                    to={`/customers/${quote.customer.id}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                   >
                     {quote.customer.displayName}
-                  </button>
+                  </Link>
                 ) : (
                   <span>{quote.customer?.displayName || "--"}</span>
                 ),
@@ -337,15 +334,13 @@ export default function QuotesIndex() {
               header: "Vendor",
               render: (quote) =>
                 quote.vendor?.id ? (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/vendors/${quote.vendor!.id}`);
-                    }}
+                  <Link
+                    to={`/vendors/${quote.vendor.id}`}
+                    onClick={(e) => e.stopPropagation()}
                     className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
                   >
                     {quote.vendor.displayName}
-                  </button>
+                  </Link>
                 ) : (
                   <span>{quote.vendor?.displayName || "--"}</span>
                 ),

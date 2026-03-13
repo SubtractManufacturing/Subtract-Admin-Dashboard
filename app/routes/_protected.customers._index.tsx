@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node"
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react"
+import { useLoaderData, useFetcher, Link } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 
@@ -87,7 +87,6 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function Customers() {
   const { customers } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
-  const navigate = useNavigate()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -168,7 +167,7 @@ export default function Customers() {
           data={filteredCustomers}
           viewMode={view}
           getRowKey={(customer) => customer.id}
-          onRowClick={(customer) => navigate(`/customers/${customer.id}`)}
+          rowLinkHref={(customer) => `/customers/${customer.id}`}
           emptyMessage={
             searchQuery
               ? "No customers found matching your search."
@@ -183,7 +182,15 @@ export default function Customers() {
             {
               key: "name",
               header: "Name",
-              render: (customer) => customer.displayName,
+              render: (customer) => (
+                <Link
+                  to={`/customers/${customer.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                >
+                  {customer.displayName}
+                </Link>
+              ),
             },
             {
               key: "email",

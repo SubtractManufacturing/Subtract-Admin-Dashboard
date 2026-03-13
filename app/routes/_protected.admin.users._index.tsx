@@ -1,5 +1,5 @@
 import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import { useFetcher, useLoaderData, Link } from "@remix-run/react";
 import { useEffect, useMemo, useState } from "react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { inviteUser } from "~/lib/users.admin.server";
@@ -149,7 +149,6 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function UsersIndexRoute() {
   const { users } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<{ success?: boolean; message?: string; error?: string }>();
-  const navigate = useNavigate();
   const [view, setView] = useViewToggle("users-view");
   const [searchQuery, setSearchQuery] = useState("");
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -196,7 +195,7 @@ export default function UsersIndexRoute() {
           data={filteredUsers}
           viewMode={view}
           getRowKey={(row) => row.id}
-          onRowClick={(row) => navigate(`/admin/users/${row.id}`)}
+          rowLinkHref={(row) => `/admin/users/${row.id}`}
           emptyMessage={
             searchQuery
               ? "No users found matching your search."
@@ -206,7 +205,15 @@ export default function UsersIndexRoute() {
             {
               key: "email",
               header: "Email",
-              render: (row) => row.email,
+              render: (row) => (
+                <Link
+                  to={`/admin/users/${row.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                >
+                  {row.email}
+                </Link>
+              ),
             },
             {
               key: "name",
