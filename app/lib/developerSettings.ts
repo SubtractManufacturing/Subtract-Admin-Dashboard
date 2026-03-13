@@ -9,6 +9,40 @@ export const DEV_SETTINGS = {
   BANANA_CONVERSION_STATUS: "banana_conversion_status",
 } as const;
 
+export const STRIPE_SETTINGS = {
+  COLLECT_BILLING_ADDRESS: "stripe_collect_billing_address",
+  COLLECT_SHIPPING_ADDRESS: "stripe_collect_shipping_address",
+  REQUIRE_PHONE: "stripe_require_phone",
+  LIMIT_PAYMENTS: "stripe_limit_payments",
+  LIMIT_PAYMENTS_COUNT: "stripe_limit_payments_count",
+} as const;
+
+export interface StripeDefaults {
+  collectBillingAddress: boolean;
+  collectShippingAddress: boolean;
+  requirePhone: boolean;
+  limitPayments: boolean;
+  limitPaymentsCount: number;
+}
+
+export async function getStripeDefaults(): Promise<StripeDefaults> {
+  const [billing, shipping, phone, limit, limitCount] = await Promise.all([
+    getDeveloperSetting(STRIPE_SETTINGS.COLLECT_BILLING_ADDRESS),
+    getDeveloperSetting(STRIPE_SETTINGS.COLLECT_SHIPPING_ADDRESS),
+    getDeveloperSetting(STRIPE_SETTINGS.REQUIRE_PHONE),
+    getDeveloperSetting(STRIPE_SETTINGS.LIMIT_PAYMENTS),
+    getDeveloperSetting(STRIPE_SETTINGS.LIMIT_PAYMENTS_COUNT),
+  ]);
+
+  return {
+    collectBillingAddress: billing !== "false",
+    collectShippingAddress: shipping !== "false",
+    requirePhone: phone !== "false",
+    limitPayments: limit !== "false",
+    limitPaymentsCount: parseInt(limitCount || "1", 10) || 1,
+  };
+}
+
 /**
  * Get a developer setting by key
  */
@@ -115,7 +149,10 @@ export async function setBananaModelUrls(
 }
 
 export async function pruneStaleDeveloperSettings(): Promise<string[]> {
-  const validKeys = Object.values(DEV_SETTINGS);
+  const validKeys = [
+    ...Object.values(DEV_SETTINGS),
+    ...Object.values(STRIPE_SETTINGS),
+  ];
   const stale = await db
     .select({ key: developerSettings.key })
     .from(developerSettings)

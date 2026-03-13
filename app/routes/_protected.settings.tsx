@@ -1529,6 +1529,7 @@ export default function Settings() {
                     <div>
                       {localFeatureFlags
                         ?.filter((flag: FeatureFlag) =>
+                          flag.key === 'admin_console_access' ||
                           flag.key === 'display_version_header' ||
                           flag.key === 'mesh_uploads_dev' ||
                           flag.key === 'mesh_uploads_all' ||
@@ -1537,7 +1538,8 @@ export default function Settings() {
                           flag.key === 'cad_revisions_dev' ||
                           flag.key === 'cad_revisions_admin' ||
                           flag.key === 'cad_revisions_all' ||
-                          flag.key === 'banana_for_scale'
+                          flag.key === 'banana_for_scale' ||
+                          flag.key === 'stripe_payment_links'
                         )
                         .sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key)

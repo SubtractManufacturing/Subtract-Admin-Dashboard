@@ -72,6 +72,9 @@ export type QuoteWithRelations = {
   createdById: string | null;
   convertedToOrderId: number | null;
   rejectionReason: string | null;
+  stripePaymentLinkUrl: string | null;
+  stripePaymentLinkId: string | null;
+  stripePaymentLinkActive: boolean | null;
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -96,6 +99,9 @@ export type QuoteInput = {
   validUntil?: Date | null;
   expirationDays?: number | null;
   rejectionReason?: string | null;
+  stripePaymentLinkUrl?: string | null;
+  stripePaymentLinkId?: string | null;
+  stripePaymentLinkActive?: boolean | null;
   createdById?: string | null;
 };
 

@@ -167,6 +167,9 @@ export const quotes = pgTable("quotes", {
     () => orders.id
   ),
   rejectionReason: text("rejection_reason"),
+  stripePaymentLinkUrl: text("stripe_payment_link_url"),
+  stripePaymentLinkId: text("stripe_payment_link_id"),
+  stripePaymentLinkActive: boolean("stripe_payment_link_active"),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

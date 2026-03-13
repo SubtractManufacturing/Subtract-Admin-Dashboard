@@ -3,7 +3,7 @@ import { Outlet, useLoaderData, useLocation } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { createServerClient } from "~/lib/supabase";
 import { getAppConfig } from "~/lib/config.server";
-import { shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
+import { canUserAccessAdminConsole, shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
 import Sidebar from "~/components/Sidebar";
 import MobileHeader from "~/components/MobileHeader";
 import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
@@ -11,11 +11,11 @@ import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
-  const showAdminConsole = userDetails.role === "Admin" || userDetails.role === "Dev";
   
-  const [showEventsLink, showVersionInHeader] = await Promise.all([
+  const [showEventsLink, showVersionInHeader, showAdminConsole] = await Promise.all([
     shouldShowEventsInNav(),
     shouldShowVersionInHeader(),
+    canUserAccessAdminConsole(userDetails.role),
   ]);
   
   return withAuthHeaders(
