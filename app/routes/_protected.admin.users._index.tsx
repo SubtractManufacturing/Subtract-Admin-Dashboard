@@ -1,6 +1,6 @@
 import { json, redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { useFetcher, useLoaderData, Link } from "@remix-run/react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { inviteUser } from "~/lib/users.admin.server";
 import { getAllUsers, type UserEventContext } from "~/lib/users";
@@ -156,21 +156,21 @@ export default function UsersIndexRoute() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteEmailError, setInviteEmailError] = useState("");
 
-  const resetInviteModal = () => {
+  const resetInviteModal = useCallback(() => {
     setInviteStep("email");
     setInviteEmail("");
     setInviteEmailError("");
-  };
+  }, []);
 
   const openInviteModal = () => {
     resetInviteModal();
     setIsInviteModalOpen(true);
   };
 
-  const closeInviteModal = () => {
+  const closeInviteModal = useCallback(() => {
     setIsInviteModalOpen(false);
     resetInviteModal();
-  };
+  }, [resetInviteModal]);
 
   const handleInviteEmailSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -190,7 +190,7 @@ export default function UsersIndexRoute() {
     if (fetcher.state === "idle" && fetcher.data?.success) {
       closeInviteModal();
     }
-  }, [fetcher.data, fetcher.state]);
+  }, [closeInviteModal, fetcher.data, fetcher.state]);
 
   const filteredUsers = useMemo(() => {
     const normalized = searchQuery.trim().toLowerCase();
