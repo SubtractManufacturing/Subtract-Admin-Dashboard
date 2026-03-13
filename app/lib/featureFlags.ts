@@ -8,6 +8,7 @@ export const FEATURE_FLAGS = {
   MESH_UPLOADS_ALL: "mesh_uploads_all",
   EVENTS_ACCESS_ALL: "events_access_all",
   EVENTS_NAV_VISIBLE: "events_nav_visible",
+  ADMIN_CONSOLE_ACCESS: "admin_console_access",
   PRICE_CALCULATOR_DEV: "price_calculator_dev",
   PRICE_CALCULATOR_ALL: "price_calculator_all",
   PDF_AUTO_DOWNLOAD: "pdf_auto_download",
@@ -18,6 +19,7 @@ export const FEATURE_FLAGS = {
   BANANA_FOR_SCALE: "banana_for_scale",
   DISPLAY_VERSION_HEADER: "display_version_header",
   DUPLICATE_INCLUDE_ATTACHMENTS: "duplicate_include_attachments",
+  STRIPE_PAYMENT_LINKS: "stripe_payment_links",
 } as const;
 
 // Default feature flags with their metadata
@@ -45,6 +47,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     name: "Show Events in Navigation",
     description: "Display the Events link in the navigation bar for all users",
     enabled: true,
+  },
+  {
+    key: FEATURE_FLAGS.ADMIN_CONSOLE_ACCESS,
+    name: "Enable Admin Console Access",
+    description: "Allow Admin and Dev users to access the Admin Console and show its navigation link",
+    enabled: false,
   },
   {
     key: FEATURE_FLAGS.PRICE_CALCULATOR_DEV,
@@ -104,6 +112,12 @@ const DEFAULT_FLAGS: Array<Omit<NewFeatureFlag, "id" | "createdAt" | "updatedAt"
     key: FEATURE_FLAGS.DUPLICATE_INCLUDE_ATTACHMENTS,
     name: "Include Attachments When Duplicating Quotes/Orders",
     description: "When duplicating a quote or order, copy quote-level or order-level attachments to the duplicate (when disabled, attachments are not copied)",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.STRIPE_PAYMENT_LINKS,
+    name: "Stripe Payment Links",
+    description: "Automatically generate Stripe payment links when quotes are sent. Requires STRIPE_SECRET_KEY env var.",
     enabled: false,
   },
 ];
@@ -209,6 +223,15 @@ export async function shouldShowEventsInNav() {
   return navVisible;
 }
 
+export async function canUserAccessAdminConsole(userRole?: string | null) {
+  // Admin Console is only for elevated roles and can be globally disabled via feature flag.
+  if (userRole !== "Admin" && userRole !== "Dev") {
+    return false;
+  }
+
+  return isFeatureEnabled(FEATURE_FLAGS.ADMIN_CONSOLE_ACCESS);
+}
+
 export async function canUserAccessPriceCalculator(userRole?: string | null) {
   // Check if price calculator is enabled for all users
   const allUsersEnabled = await isFeatureEnabled(FEATURE_FLAGS.PRICE_CALCULATOR_ALL);
@@ -249,6 +272,10 @@ export async function canUserUploadCadRevision(userRole?: string | null) {
 
 export async function shouldShowVersionInHeader() {
   return isFeatureEnabled(FEATURE_FLAGS.DISPLAY_VERSION_HEADER);
+}
+
+export async function isStripePaymentLinksEnabled(): Promise<boolean> {
+  return isFeatureEnabled(FEATURE_FLAGS.STRIPE_PAYMENT_LINKS);
 }
 
 export async function pruneStaleFeatureFlags(): Promise<string[]> {

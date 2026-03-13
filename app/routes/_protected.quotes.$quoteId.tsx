@@ -38,6 +38,7 @@ import {
   canUserAccessPriceCalculator,
   canUserUploadCadRevision,
   isFeatureEnabled,
+  isStripePaymentLinksEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
 import {
@@ -274,6 +275,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     events,
     canRevise,
     bananaEnabled,
+    stripeEnabled,
   ] = await Promise.all([
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
@@ -281,6 +283,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     getEventsByEntity("quote", quote.id.toString(), 10),
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
+    isStripePaymentLinksEnabled(),
   ]);
 
   // Get banana model URL if feature is enabled
@@ -320,6 +323,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       canRevise,
       bananaEnabled,
       bananaModelUrl,
+      stripeEnabled,
     }),
     headers
   );
@@ -745,6 +749,109 @@ export async function action({ request, params }: ActionFunctionArgs) {
           | "Dropped"
           | "Expired";
         const rejectionReason = formData.get("rejectionReason") as string;
+
+        // Stripe payment link creation when sending a quote
+        if (status === "Sent") {
+          const stripeOn = await isStripePaymentLinksEnabled();
+          if (stripeOn) {
+            const { isStripeConfigured, createQuotePaymentLink } =
+              await import("~/lib/stripe.server");
+            if (!isStripeConfigured()) {
+              return json(
+                {
+                  error:
+                    "Cannot send quote: Stripe is not configured. Contact your administrator.",
+                },
+                { status: 400 }
+              );
+            }
+
+            const sendTotal = parseFloat(quote.total || "0");
+            if (sendTotal <= 0) {
+              return json(
+                {
+                  error:
+                    "Cannot send quote: Quote total must be greater than $0.",
+                },
+                { status: 400 }
+              );
+            }
+
+            // Skip creation if an active link already exists (idempotency)
+            if (
+              quote.stripePaymentLinkId &&
+              quote.stripePaymentLinkActive
+            ) {
+              await updateQuote(
+                quote.id,
+                { status: "Sent", rejectionReason: null },
+                eventContext
+              );
+              return redirect(`/quotes/${quoteId}`);
+            }
+
+            try {
+              const paymentLink = await createQuotePaymentLink({
+                quoteId: quote.id,
+                quoteNumber: quote.quoteNumber,
+                totalDollars: quote.total!,
+                customerId: quote.customerId,
+              });
+
+              await updateQuote(
+                quote.id,
+                {
+                  status: "Sent",
+                  stripePaymentLinkUrl: paymentLink.url,
+                  stripePaymentLinkId: paymentLink.id,
+                  stripePaymentLinkActive: true,
+                  rejectionReason: null,
+                },
+                eventContext
+              );
+
+              return redirect(`/quotes/${quoteId}`);
+            } catch (stripeError) {
+              console.error(
+                "Stripe payment link creation failed:",
+                stripeError
+              );
+              return json(
+                {
+                  error: `Failed to create payment link: ${
+                    stripeError instanceof Error
+                      ? stripeError.message
+                      : "Unknown error"
+                  }`,
+                },
+                { status: 500 }
+              );
+            }
+          }
+        }
+
+        // Stripe payment link deactivation on terminal statuses
+        if (
+          ["Accepted", "Rejected", "Expired"].includes(status) &&
+          quote.stripePaymentLinkId
+        ) {
+          const stripeOn = await isStripePaymentLinksEnabled();
+          if (stripeOn) {
+            try {
+              const { deactivateQuotePaymentLink } = await import(
+                "~/lib/stripe.server"
+              );
+              await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
+              await updateQuote(
+                quote.id,
+                { stripePaymentLinkActive: false },
+                eventContext
+              );
+            } catch (stripeError) {
+              console.error("Stripe deactivation failed:", stripeError);
+            }
+          }
+        }
 
         // If status is Accepted, validate and convert to order BEFORE updating status
         if (status === "Accepted") {
@@ -1703,6 +1810,7 @@ export default function QuoteDetail() {
     canRevise,
     bananaEnabled,
     bananaModelUrl,
+    stripeEnabled,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -3039,6 +3147,51 @@ export default function QuoteDetail() {
                     <p className="text-base font-medium text-gray-900 dark:text-gray-100">
                       {formatDateTime(quote.sentAt)}
                     </p>
+                  </div>
+                )}
+                {stripeEnabled && quote.stripePaymentLinkUrl && (
+                  <div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Payment Link
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            quote.stripePaymentLinkUrl!
+                          );
+                        }}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-700"
+                        title="Copy payment link"
+                      >
+                        <svg
+                          className="h-3.5 w-3.5 text-gray-500"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                          />
+                        </svg>
+                        <span>Copy Link</span>
+                      </button>
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          quote.stripePaymentLinkActive
+                            ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+                            : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                        }`}
+                      >
+                        {quote.stripePaymentLinkActive
+                          ? "Active"
+                          : "Deactivated"}
+                      </span>
+                    </div>
                   </div>
                 )}
                 {quote.acceptedAt && (

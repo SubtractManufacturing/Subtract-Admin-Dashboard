@@ -3,6 +3,7 @@ import { Link, useLoaderData } from "@remix-run/react";
 import { getAppConfig } from "~/lib/config.server";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAllUsers } from "~/lib/users";
+import { isStripePaymentLinksEnabled } from "~/lib/featureFlags";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { userDetails, headers } = await requireAuth(request);
@@ -11,7 +12,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return withAuthHeaders(redirect("/"), headers);
   }
 
-  const users = await getAllUsers();
+  const [users, stripeEnabled] = await Promise.all([
+    getAllUsers(),
+    isStripePaymentLinksEnabled(),
+  ]);
   const activeUserCount = users.filter((user) => user.status === "active").length;
   const totalUserCount = users.length;
   const pendingUserCount = users.filter((user) => user.status === "pending").length;
@@ -24,13 +28,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       pendingUserCount,
       version: appConfig.version,
       environment: appConfig.environment,
+      stripeEnabled,
     }),
     headers
   );
 }
 
 export default function AdminDashboard() {
-  const { activeUserCount, totalUserCount, pendingUserCount, version, environment } =
+  const { activeUserCount, totalUserCount, pendingUserCount, version, environment, stripeEnabled } =
     useLoaderData<typeof loader>();
 
   return (
@@ -68,25 +73,29 @@ export default function AdminDashboard() {
           </p>
         </Link>
 
-        <div className="rounded-xl border border-dashed border-gray-300 bg-white/50 p-5 dark:border-slate-600 dark:bg-slate-800/50">
-          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-400 dark:bg-slate-700 dark:text-slate-500">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"
-              />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </div>
-          <h2 className="text-sm font-semibold text-gray-400 dark:text-slate-500">
-            App Settings
-          </h2>
-          <p className="mt-0.5 text-sm text-gray-400 dark:text-slate-500">
-            Coming soon
-          </p>
-        </div>
+        {stripeEnabled && (
+          <Link
+            to="/admin/stripe"
+            className="group rounded-xl border border-gray-200 bg-white p-5 no-underline transition hover:border-gray-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
+          >
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[#840606]/[0.07] text-[#840606] dark:bg-red-400/10 dark:text-red-400">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z"
+                />
+              </svg>
+            </div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+              Stripe
+            </h2>
+            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+              Configure payment link defaults
+            </p>
+          </Link>
+        )}
 
         <div className="rounded-xl border border-dashed border-gray-300 bg-white/50 p-5 dark:border-slate-600 dark:bg-slate-800/50">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-400 dark:bg-slate-700 dark:text-slate-500">
