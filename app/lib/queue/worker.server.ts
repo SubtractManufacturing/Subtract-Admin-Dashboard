@@ -8,9 +8,9 @@ export async function startWorkerQueue(): Promise<PgBoss> {
     return boss;
   }
 
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL;
   if (!connectionString) {
-    throw new Error("[PgBoss:Worker] DATABASE_URL is not set");
+    throw new Error("[PgBoss:Worker] DATABASE_DIRECT_URL or DATABASE_URL must be set");
   }
 
   boss = new PgBoss({

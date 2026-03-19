@@ -1,7 +1,12 @@
 import "dotenv/config";
 import type { Job } from "pg-boss";
 import { createEvent } from "../app/lib/events";
-import { QUEUES, type MockJobPayload } from "../app/lib/queue/types";
+import {
+  QUEUES,
+  type CadConversionPayload,
+  type MockJobPayload,
+} from "../app/lib/queue/types";
+import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
 import { startWorkerQueue, stopWorkerQueue } from "../app/lib/queue/worker.server";
 
 let isShuttingDown = false;
@@ -44,6 +49,13 @@ async function main() {
 
   await boss.work<MockJobPayload>(QUEUES.MOCK_JOB, { batchSize: 1 }, handleMockJob);
   console.log(`[Worker] Listening on queue: ${QUEUES.MOCK_JOB}`);
+
+  await boss.work<CadConversionPayload>(
+    QUEUES.CAD_CONVERSION,
+    { batchSize: 1 },
+    handleCadConversion,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.CAD_CONVERSION}`);
 
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {

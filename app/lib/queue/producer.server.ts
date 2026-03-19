@@ -1,19 +1,32 @@
 import { PgBoss } from "pg-boss";
-import { DEFAULT_RETRY_OPTIONS, QUEUES, type MockJobPayload } from "./types";
+import {
+  CAD_CONVERSION_OPTIONS,
+  DEFAULT_RETRY_OPTIONS,
+  QUEUES,
+  type CadConversionPayload,
+  type MockJobPayload,
+} from "./types";
 
-let producerPromise: Promise<PgBoss> | null = null;
+declare global {
+  var __pgBossProducer: Promise<PgBoss> | undefined;
+}
+
+let producerPromise: Promise<PgBoss> | null = global.__pgBossProducer ?? null;
 
 function getProducer(): Promise<PgBoss> {
   if (!producerPromise) {
     producerPromise = initProducer();
+    if (process.env.NODE_ENV !== "production") {
+      global.__pgBossProducer = producerPromise;
+    }
   }
   return producerPromise;
 }
 
 async function initProducer(): Promise<PgBoss> {
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL;
   if (!connectionString) {
-    throw new Error("[PgBoss:Producer] DATABASE_URL is not set");
+    throw new Error("[PgBoss:Producer] DATABASE_DIRECT_URL or DATABASE_URL must be set");
   }
 
   const boss = new PgBoss({
@@ -40,5 +53,14 @@ export async function sendMockJob(payload: MockJobPayload): Promise<string | nul
   const producer = await getProducer();
   return producer.send(QUEUES.MOCK_JOB, payload, {
     ...DEFAULT_RETRY_OPTIONS,
+  });
+}
+
+export async function sendCadConversionJob(
+  payload: CadConversionPayload,
+): Promise<string | null> {
+  const producer = await getProducer();
+  return producer.send(QUEUES.CAD_CONVERSION, payload, {
+    ...CAD_CONVERSION_OPTIONS,
   });
 }

@@ -18,6 +18,7 @@ import {
 } from "./conversion-service.server";
 import { uploadToS3, downloadFromS3, deleteFile, getDownloadUrl } from "./s3.server";
 import { createEvent } from "./events";
+import { sendCadConversionJob } from "./queue/producer.server";
 
 export interface QuotePartMeshConversionResult {
   success: boolean;
@@ -274,29 +275,41 @@ function getMimeTypeForMesh(filename: string): string {
  */
 export async function triggerQuotePartMeshConversion(
   quotePartId: string,
-  fileUrl: string
+  fileUrl: string,
 ) {
-  // Check if conversion is enabled
   if (!isConversionEnabled()) {
-    console.log("Mesh conversion service not configured - skipping");
     return;
   }
 
-  // Check if file is a BREP format
   const filename = fileUrl.split("/").pop() || "";
   const format = detectFileFormat(filename);
 
   if (format !== "brep") {
-    console.log(`File ${filename} is not a BREP format - skipping conversion`);
     await updateQuotePartConversionStatus(quotePartId, "skipped");
     return;
   }
 
-  // Start conversion asynchronously
-  console.log(`Triggering mesh conversion for quote part ${quotePartId}`);
-  convertQuotePartToMesh(quotePartId, fileUrl).catch((error) => {
-    console.error(`Failed to convert mesh for quote part ${quotePartId}:`, error);
+  await updateQuotePartConversionStatus(quotePartId, "queued");
+
+  const jobId = await sendCadConversionJob({
+    entityType: "quote_part",
+    entityId: quotePartId,
   });
+
+  if (jobId) {
+    console.log(
+      `[MeshConverter] Queued CAD conversion for quote part ${quotePartId} (job ${jobId})`,
+    );
+  } else {
+    console.error(
+      `[MeshConverter] Failed to queue CAD conversion for quote part ${quotePartId}`,
+    );
+    await updateQuotePartConversionStatus(
+      quotePartId,
+      "failed",
+      "Failed to enqueue conversion job",
+    );
+  }
 }
 
 /**
