@@ -18,6 +18,7 @@ import {
   type ConversionOptions,
 } from "./conversion-service.server";
 import { uploadToS3, downloadFromS3 } from "./s3.server";
+import { sendCadConversionJob } from "./queue/producer.server";
 
 export interface MeshConversionResult {
   success: boolean;
@@ -249,70 +250,70 @@ function getMimeTypeForMesh(filename: string): string {
 /**
  * Retry failed conversions for a part
  */
-export async function retryPartConversion(partId: string): Promise<MeshConversionResult> {
-  // Get part details
-  const [part] = await db.select()
-    .from(parts)
-    .where(eq(parts.id, partId));
+export async function retryPartConversion(
+  partId: string,
+): Promise<MeshConversionResult> {
+  const [part] = await db.select().from(parts).where(eq(parts.id, partId));
 
   if (!part) {
-    return { 
-      success: false, 
-      error: "Part not found" 
-    };
+    return { success: false, error: "Part not found" };
   }
 
   if (!part.partFileUrl) {
-    return { 
-      success: false, 
-      error: "Part has no BREP file to convert" 
-    };
+    return { success: false, error: "Part has no BREP file to convert" };
   }
 
-  // Reset status and retry
-  await updatePartConversionStatus(partId, "pending");
-  return convertPartToMesh(partId, part.partFileUrl);
+  await updatePartConversionStatus(partId, "queued");
+
+  const jobId = await sendCadConversionJob({
+    entityType: "part",
+    entityId: partId,
+  });
+
+  if (!jobId) {
+    await updatePartConversionStatus(
+      partId,
+      "failed",
+      "Failed to enqueue conversion job",
+    );
+    return { success: false, error: "Failed to enqueue conversion job" };
+  }
+
+  return { success: true, jobId };
 }
 
 /**
  * Batch convert multiple parts
  */
 export async function batchConvertParts(
-  partIds: string[]
+  partIds: string[],
 ): Promise<Map<string, MeshConversionResult>> {
   const results = new Map<string, MeshConversionResult>();
-  
-  // Process conversions in parallel with a limit
-  const BATCH_SIZE = 3; // Process 3 at a time to avoid overwhelming the service
-  
-  for (let i = 0; i < partIds.length; i += BATCH_SIZE) {
-    const batch = partIds.slice(i, i + BATCH_SIZE);
-    
-    const batchPromises = batch.map(async (partId) => {
-      // Get part details
-      const [part] = await db.select()
-        .from(parts)
-        .where(eq(parts.id, partId));
 
-      if (!part || !part.partFileUrl) {
-        return { 
-          partId, 
-          result: { 
-            success: false, 
-            error: "Part not found or has no BREP file" 
-          } 
-        };
-      }
+  for (const partId of partIds) {
+    const [part] = await db.select().from(parts).where(eq(parts.id, partId));
 
-      const result = await convertPartToMesh(partId, part.partFileUrl);
-      return { partId, result };
+    if (!part || !part.partFileUrl) {
+      results.set(partId, {
+        success: false,
+        error: "Part not found or has no BREP file",
+      });
+      continue;
+    }
+
+    await updatePartConversionStatus(partId, "queued");
+
+    const jobId = await sendCadConversionJob({
+      entityType: "part",
+      entityId: partId,
     });
 
-    const batchResults = await Promise.all(batchPromises);
-    
-    for (const { partId, result } of batchResults) {
-      results.set(partId, result);
-    }
+    results.set(
+      partId,
+      jobId
+        ? { success: true, jobId }
+        : { success: false, error: "Failed to enqueue" },
+    );
   }
 
   return results;
@@ -415,32 +416,25 @@ export async function getPartConversionStatusWithLive(partId: string) {
 /**
  * Trigger conversion for a part
  */
-export async function triggerPartConversion(partId: string, action: "convert" | "retry") {
-  if (action === "retry") {
-    return retryPartConversion(partId);
-  }
-
-  // Get part details
-  const [part] = await db.select()
-    .from(parts)
-    .where(eq(parts.id, partId));
+export async function triggerPartConversion(
+  partId: string,
+  action: "convert" | "retry",
+) {
+  const [part] = await db.select().from(parts).where(eq(parts.id, partId));
 
   if (!part) {
-    return {
-      success: false,
-      error: "Part not found"
-    };
+    return { success: false, error: "Part not found" };
   }
 
   if (!part.partFileUrl) {
-    return {
-      success: false,
-      error: "Part has no model file to convert"
-    };
+    return { success: false, error: "Part has no model file to convert" };
   }
 
-  // Check if already converted
-  if (part.partMeshUrl && part.meshConversionStatus === "completed") {
+  if (
+    action === "convert" &&
+    part.partMeshUrl &&
+    part.meshConversionStatus === "completed"
+  ) {
     return {
       success: true,
       message: "Part already has a mesh file",
@@ -448,8 +442,31 @@ export async function triggerPartConversion(partId: string, action: "convert" | 
     };
   }
 
-  // Start conversion
-  return convertPartToMesh(partId, part.partFileUrl);
+  if (action === "retry") {
+    await updatePartConversionStatus(partId, "pending");
+  }
+
+  await updatePartConversionStatus(partId, "queued");
+
+  const jobId = await sendCadConversionJob({
+    entityType: "part",
+    entityId: partId,
+  });
+
+  if (!jobId) {
+    await updatePartConversionStatus(
+      partId,
+      "failed",
+      "Failed to enqueue conversion job",
+    );
+    return { success: false, error: "Failed to enqueue conversion job" };
+  }
+
+  return {
+    success: true,
+    message: "Conversion queued",
+    jobId,
+  };
 }
 
 /**

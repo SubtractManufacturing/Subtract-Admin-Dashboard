@@ -18,6 +18,7 @@ import {
 } from "./conversion-service.server";
 import { uploadToS3, downloadFromS3, deleteFile, getDownloadUrl } from "./s3.server";
 import { createEvent } from "./events";
+import { sendCadConversionJob } from "./queue/producer.server";
 
 export interface PartMeshConversionResult {
   success: boolean;
@@ -272,14 +273,12 @@ function getMimeTypeForMesh(filename: string): string {
  */
 export async function triggerPartMeshConversion(
   partId: string,
-  fileUrl: string
+  fileUrl: string,
 ) {
-  // Check if conversion is enabled
   if (!isConversionEnabled()) {
     return;
   }
 
-  // Check if file is a BREP format
   const filename = fileUrl.split("/").pop() || "";
   const format = detectFileFormat(filename);
 
@@ -288,10 +287,27 @@ export async function triggerPartMeshConversion(
     return;
   }
 
-  // Start conversion asynchronously
-  convertPartToMesh(partId, fileUrl).catch((error) => {
-    console.error(`Failed to convert mesh for part ${partId}:`, error);
+  await updatePartConversionStatus(partId, "queued");
+
+  const jobId = await sendCadConversionJob({
+    entityType: "part",
+    entityId: partId,
   });
+
+  if (jobId) {
+    console.log(
+      `[MeshConverter] Queued CAD conversion for part ${partId} (job ${jobId})`,
+    );
+  } else {
+    console.error(
+      `[MeshConverter] Failed to queue CAD conversion for part ${partId}`,
+    );
+    await updatePartConversionStatus(
+      partId,
+      "failed",
+      "Failed to enqueue conversion job",
+    );
+  }
 }
 
 /**

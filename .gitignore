@@ -126,3 +126,6 @@ CLAUDE.md
 /planning
 /logs
 /scripts
+!/scripts/
+/scripts/*
+!/scripts/worker.ts
