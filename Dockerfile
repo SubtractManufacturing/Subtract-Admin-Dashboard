@@ -72,6 +72,10 @@ COPY --from=builder --chown=nodejs:nodejs /app/drizzle ./drizzle
 COPY --from=builder --chown=nodejs:nodejs /app/build/worker.js ./build/worker.js
 COPY --from=builder --chown=nodejs:nodejs /app/build/worker.js.map ./build/worker.js.map
 
+# Copy entrypoint script
+COPY --chown=nodejs:nodejs start.sh ./
+RUN chmod +x start.sh
+
 # Switch to non-root user
 USER nodejs
 
@@ -91,4 +95,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start the application with signal handling
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["npm", "start"]
+CMD ["./start.sh"]
