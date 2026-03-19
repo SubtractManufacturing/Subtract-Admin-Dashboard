@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.9](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.8...v1.3.9) (2026-03-19)
+
+
+### Bug Fixes
+
+* add dotenv to build dependencies ([f7dd611](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/f7dd611ca58eb2f48fad0617e3659e2ede5702ed))
+* add queue worker and scheduling service ([5319815](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/53198156cce98661a8bfcb9e1b81c079c3d9b54f))
+
 ## [1.3.8](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.7...v1.3.8) (2026-03-13)
 
 
