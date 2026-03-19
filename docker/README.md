@@ -47,6 +47,27 @@ docker run -d \
   subtract-frontend:latest
 ```
 
+## Running the Worker
+
+Run the same image with a worker command override:
+```bash
+docker run -d \
+  --name subtract-worker \
+  --env-file .env \
+  --restart unless-stopped \
+  subtract-frontend:latest \
+  node build/worker.js
+```
+
+View worker logs:
+```bash
+docker logs -f subtract-worker
+```
+
+Notes:
+- Worker only requires `DATABASE_URL`
+- Multiple worker containers can run concurrently (PG Boss uses row locking for safe distribution)
+
 ## Environment Variables
 
 Create a `.env` file based on the example in the docker directory:
@@ -115,7 +136,7 @@ docker push myregistry.com/subtract-frontend:latest
 
 ## Image Details
 
-- Base image: `node:20-alpine`
+- Base image: `node:22-slim`
 - Exposed port: `3000`
 - Non-root user: `nodejs` (UID 1001)
 - Includes health check at `/health`

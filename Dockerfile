@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -25,7 +25,7 @@ COPY . .
 RUN rm -rf build && npm run build
 
 # Production stage
-FROM node:20-slim AS production
+FROM node:22-slim AS production
 
 # Install dumb-init for proper signal handling and Chromium for Puppeteer
 RUN apt-get update && apt-get install -y \
@@ -67,6 +67,10 @@ COPY --from=builder --chown=nodejs:nodejs /app/drizzle.config.ts ./drizzle.confi
 
 # Copy migration files for runtime execution
 COPY --from=builder --chown=nodejs:nodejs /app/drizzle ./drizzle
+
+# Copy compiled worker for background job processing
+COPY --from=builder --chown=nodejs:nodejs /app/build/worker.js ./build/worker.js
+COPY --from=builder --chown=nodejs:nodejs /app/build/worker.js.map ./build/worker.js.map
 
 # Switch to non-root user
 USER nodejs

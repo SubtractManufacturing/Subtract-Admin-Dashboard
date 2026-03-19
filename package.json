@@ -5,7 +5,8 @@
   "sideEffects": false,
   "type": "module",
   "scripts": {
-    "build": "remix vite:build",
+    "build": "remix vite:build && npm run build:worker",
+    "build:worker": "node --input-type=module -e \"import('esbuild').then(e=>e.build({entryPoints:['scripts/worker.ts'],bundle:true,platform:'node',packages:'external',outfile:'build/worker.js',format:'esm',sourcemap:true}))\"",
     "dev": "remix vite:dev --host",
     "predev": "drizzle-kit push",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
@@ -17,7 +18,9 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "sync:users": "tsx scripts/sync-auth-users.ts",
-    "init:feature-flags": "tsx scripts/init-feature-flags.ts"
+    "init:feature-flags": "tsx scripts/init-feature-flags.ts",
+    "worker": "tsx scripts/worker.ts",
+    "worker:dev": "tsx watch scripts/worker.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.856.0",
@@ -39,6 +42,7 @@
     "lucide-react": "^0.539.0",
     "match-sorter": "^6.3.1",
     "mupdf": "^1.26.4",
+    "pg-boss": "^12.14.0",
     "postgres": "^3.4.7",
     "puppeteer": "^24.23.0",
     "react": "^18.2.0",
