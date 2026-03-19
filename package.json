@@ -7,7 +7,9 @@
   "scripts": {
     "build": "remix vite:build && npm run build:worker",
     "build:worker": "node --input-type=module -e \"import('esbuild').then(e=>e.build({entryPoints:['scripts/worker.ts'],bundle:true,platform:'node',packages:'external',outfile:'build/worker.js',format:'esm',sourcemap:true}))\"",
-    "dev": "remix vite:dev --host",
+    "dev:web": "remix vite:dev --host",
+    "dev:worker": "tsx watch scripts/worker.ts",
+    "dev": "concurrently -c \"blue,green\" -n \"web,worker\" \"npm run dev:web\" \"npm run dev:worker\"",
     "predev": "drizzle-kit push",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
     "start": "remix-serve build/server/index.js",
@@ -62,6 +64,7 @@
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.2.1",
     "dotenv": "^17.2.1",
     "eslint": "^8.47.0",
     "eslint-import-resolver-typescript": "^3.6.1",
