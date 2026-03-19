@@ -8,6 +8,7 @@ import {
 } from "./types";
 
 declare global {
+  // eslint-disable-next-line no-var
   var __pgBossProducer: Promise<PgBoss> | undefined;
 }
 
@@ -24,9 +25,12 @@ function getProducer(): Promise<PgBoss> {
 }
 
 async function initProducer(): Promise<PgBoss> {
-  const connectionString = process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL;
+  const connectionString =
+    process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL;
   if (!connectionString) {
-    throw new Error("[PgBoss:Producer] DATABASE_DIRECT_URL or DATABASE_URL must be set");
+    throw new Error(
+      "[PgBoss:Producer] DATABASE_DIRECT_URL or DATABASE_URL must be set",
+    );
   }
 
   const boss = new PgBoss({
@@ -49,7 +53,9 @@ async function initProducer(): Promise<PgBoss> {
   return boss;
 }
 
-export async function sendMockJob(payload: MockJobPayload): Promise<string | null> {
+export async function sendMockJob(
+  payload: MockJobPayload,
+): Promise<string | null> {
   const producer = await getProducer();
   return producer.send(QUEUES.MOCK_JOB, payload, {
     ...DEFAULT_RETRY_OPTIONS,
