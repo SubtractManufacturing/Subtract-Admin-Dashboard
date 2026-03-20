@@ -2,18 +2,42 @@ import type { Order } from "~/lib/dashboard"
 import { listCardStyles, tableStyles, statusStyles } from "~/utils/tw-styles"
 import { useNavigate, Link } from "@remix-run/react"
 import ViewToggle, { useViewToggle } from "./shared/ViewToggle"
+import { useState } from "react"
+
+import { Filter } from "lucide-react"
 
 interface OrdersTableProps {
   orders: Order[]
+  showFilters?: boolean
 }
+
+const ORDER_STATUS_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "Pending", label: "Pending" },
+  { value: "Waiting_For_Shop_Selection", label: "Waiting" },
+  { value: "In_Production", label: "In Production" },
+  { value: "In_Inspection", label: "In Inspection" },
+  { value: "Shipped", label: "Shipped" },
+  { value: "Delivered", label: "Delivered" },
+  { value: "Completed", label: "Completed" },
+] as const;
+
+type FilterValue = typeof ORDER_STATUS_FILTERS[number]["value"];
 
 function openInNewTab(href: string) {
   window.open(href, "_blank", "noopener,noreferrer");
 }
 
-export default function OrdersTable({ orders }: OrdersTableProps) {
+export default function OrdersTable({ orders, showFilters = true }: OrdersTableProps) {
   const navigate = useNavigate()
   const [view, setView] = useViewToggle("dashboard-orders-view")
+  const [statusFilter, setStatusFilter] = useState<FilterValue>("all")
+
+  
+  // Filter orders based on status
+  const filteredOrders = statusFilter === "all" 
+    ? orders 
+    : orders.filter(order => order.status === statusFilter);
 
   const handleRowClick = (e: React.MouseEvent<HTMLElement>, href: string) => {
     if (e.defaultPrevented) return;
@@ -33,7 +57,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
       openInNewTab(href);
     }
   };
-  
+
   const formatCurrency = (amount: string | null) => {
     if (!amount) return "--"
     return new Intl.NumberFormat('en-US', {
@@ -47,7 +71,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
     return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: '2-digit',
-      day: '2-digit'
+      day: '2-digit',
     })
   }
 
@@ -96,8 +120,28 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-semibold">Orders</h2>
-        <ViewToggle view={view} onChange={setView} />
+        <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
+          📋 Orders
+        </h2>
+        <div className="flex items-center gap-3">
+          {showFilters && (
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as FilterValue)}
+                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {ORDER_STATUS_FILTERS.map(filter => (
+                  <option key={filter.value} value={filter.value}>
+                    {filter.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <ViewToggle view={view} onChange={setView} />
+        </div>
       </div>
 
       {view === "list" ? (
@@ -116,7 +160,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
+              {filteredOrders.map((order) => (
                 <tr
                   key={order.id}
                   className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
@@ -181,7 +225,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
         </div>
       ) : (
         <div className={listCardStyles.grid}>
-          {orders.map((order) => (
+          {filteredOrders.map((order) => (
             <div
               key={order.id}
               role="button"
@@ -221,5 +265,5 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
         </div>
       )}
     </div>
-  )
+  );
 }

@@ -1,5 +1,5 @@
 import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, Link } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, Link, useSearchParams } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
@@ -178,6 +178,7 @@ export default function Orders() {
     useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<OrderWithRelations | null>(
     null
@@ -191,6 +192,19 @@ export default function Orders() {
   const [isReassigningOrderNumber, setIsReassigningOrderNumber] = useState(false);
   const [reassignError, setReassignError] = useState("");
   const [view, setView] = useViewToggle("orders-view");
+  
+  // Status filter from URL params
+  const statusFilter = searchParams.get("status") || "all";
+  
+  const setStatusFilter = (status: string) => {
+    const newParams = new URLSearchParams(searchParams);
+    if (status === "all") {
+      newParams.delete("status");
+    } else {
+      newParams.set("status", status);
+    }
+    setSearchParams(newParams, { preventScrollReset: true });
+  };
 
   // Handle fetcher response
   useEffect(() => {
@@ -230,12 +244,15 @@ export default function Orders() {
 
   const filteredOrders = orders.filter((order: OrderWithRelations) => {
     const query = searchQuery.toLowerCase();
-    return (
+    const matchesSearch =
       order.orderNumber?.toLowerCase().includes(query) ||
       order.customer?.displayName?.toLowerCase().includes(query) ||
       order.vendor?.displayName?.toLowerCase().includes(query) ||
-      order.status?.toLowerCase().includes(query)
-    );
+      order.status?.toLowerCase().includes(query);
+    
+    const matchesStatus = statusFilter === "all" || order.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
   });
 
   const handleAdd = () => {
@@ -380,11 +397,27 @@ export default function Orders() {
       />
 
       <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
-        <div className="flex justify-between items-center mb-5 gap-3">
+        <div className="flex flex-wrap justify-between items-end mb-5 gap-3">
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">
             Orders ({filteredOrders.length})
           </h2>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              id="status-filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+            >
+              <option value="all">All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="Waiting_For_Shop_Selection">Waiting for Shop</option>
+              <option value="In_Production">In Production</option>
+              <option value="In_Inspection">In Inspection</option>
+              <option value="Shipped">Shipped</option>
+              <option value="Delivered">Delivered</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
             <ViewToggle view={view} onChange={setView} />
             <Button onClick={handleAdd}>Add Order</Button>
           </div>

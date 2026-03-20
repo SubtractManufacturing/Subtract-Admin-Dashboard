@@ -2,18 +2,40 @@ import type { Quote } from "~/lib/dashboard"
 import { listCardStyles, tableStyles, statusStyles } from "~/utils/tw-styles"
 import { useNavigate, Link } from "@remix-run/react"
 import ViewToggle, { useViewToggle } from "./shared/ViewToggle"
+import { useState } from "react"
+import { Filter } from "lucide-react"
 
 interface QuotesTableProps {
   quotes: Quote[]
+  showFilters?: boolean
 }
+
+const QUOTE_STATUS_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "RFQ", label: "RFQ" },
+  { value: "Draft", label: "Draft" },
+  { value: "Sent", label: "Sent" },
+  { value: "Accepted", label: "Accepted" },
+  { value: "Rejected", label: "Rejected" },
+  { value: "Expired", label: "Expired" },
+] as const;
+
+type FilterValue = typeof QUOTE_STATUS_FILTERS[number]["value"];
 
 function openInNewTab(href: string) {
   window.open(href, "_blank", "noopener,noreferrer");
 }
 
-export default function QuotesTable({ quotes }: QuotesTableProps) {
+export default function QuotesTable({ quotes, showFilters = true }: QuotesTableProps) {
   const navigate = useNavigate()
   const [view, setView] = useViewToggle("dashboard-quotes-view")
+  const [statusFilter, setStatusFilter] = useState<FilterValue>("all")
+
+  
+  // Filter quotes based on status
+  const filteredQuotes = statusFilter === "all" 
+    ? quotes 
+    : quotes.filter(quote => quote.status === statusFilter);
 
   const handleRowClick = (e: React.MouseEvent<HTMLElement>, href: string) => {
     if (e.defaultPrevented) return;
@@ -33,26 +55,28 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
       openInNewTab(href);
     }
   };
-  
+
   const formatCurrency = (amount: string | null) => {
     if (!amount) return "--"
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
     }).format(parseFloat(amount))
-  }
+  };
 
   const formatDate = (date: Date | string) => {
     const dateObj = typeof date === 'string' ? new Date(date) : date
     return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: '2-digit',
-      day: '2-digit'
+      day: '2-digit',
     })
   }
 
   const getStatusStyle = (status: string) => {
     switch (status.toLowerCase()) {
+      case 'rfq':
+        return statusStyles.pending
       case 'draft':
         return statusStyles.draft
       case 'sent':
@@ -71,8 +95,28 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-semibold">Quotes</h2>
-        <ViewToggle view={view} onChange={setView} />
+        <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
+          📝 Quotes
+        </h2>
+        <div className="flex items-center gap-3">
+          {showFilters && (
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as FilterValue)}
+                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {QUOTE_STATUS_FILTERS.map(filter => (
+                  <option key={filter.value} value={filter.value}>
+                    {filter.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <ViewToggle view={view} onChange={setView} />
+        </div>
       </div>
 
       {view === "list" ? (
@@ -90,7 +134,7 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
               </tr>
             </thead>
             <tbody>
-              {quotes.map((quote) => (
+              {filteredQuotes.map((quote) => (
                 <tr
                   key={quote.id}
                   className={`${tableStyles.row} cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800`}
@@ -134,7 +178,7 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
         </div>
       ) : (
         <div className={listCardStyles.grid}>
-          {quotes.map((quote) => (
+          {filteredQuotes.map((quote) => (
             <div
               key={quote.id}
               role="button"
@@ -174,5 +218,5 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
         </div>
       )}
     </div>
-  )
+  );
 }

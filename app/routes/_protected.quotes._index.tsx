@@ -6,6 +6,7 @@ import {
   useRouteError,
   isRouteErrorResponse,
   Link,
+  useSearchParams,
 } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
@@ -141,11 +142,24 @@ export default function QuotesIndex() {
   } = useLoaderData<typeof loader>();
   const archiveFetcher = useFetcher();
   const revalidator = useRevalidator();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [showAllQuotes, setShowAllQuotes] = useState(false);
   const [view, setView] = useViewToggle("quotes-view");
+  
+  // Status filter from URL params
+  const selectedStatus = searchParams.get("status") || "all";
+  
+  const setSelectedStatus = (status: string) => {
+    const newParams = new URLSearchParams(searchParams);
+    if (status === "all") {
+      newParams.delete("status");
+    } else {
+      newParams.set("status", status);
+    }
+    setSearchParams(newParams, { preventScrollReset: true });
+  };
 
   // Handle archive success
   useEffect(() => {
