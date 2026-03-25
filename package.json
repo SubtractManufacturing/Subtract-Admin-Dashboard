@@ -22,6 +22,7 @@
     "db:studio": "drizzle-kit studio",
     "sync:users": "tsx scripts/sync-auth-users.ts",
     "init:feature-flags": "tsx scripts/init-feature-flags.ts",
+    "seed:email-config": "tsx scripts/seed-email-config.ts",
     "worker": "tsx scripts/worker.ts",
     "worker:dev": "tsx watch scripts/worker.ts"
   },

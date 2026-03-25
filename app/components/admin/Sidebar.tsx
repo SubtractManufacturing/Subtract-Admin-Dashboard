@@ -69,19 +69,40 @@ const stripeNavItem: AdminNavItem = {
   ),
 };
 
+const emailNavItem: AdminNavItem = {
+  to: "/admin/email",
+  label: "Email",
+  icon: (
+    <svg
+      className="w-5 h-5"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"
+      />
+    </svg>
+  ),
+};
+
 interface AdminSidebarProps {
   stripeEnabled?: boolean;
+  outboundEmailEnabled?: boolean;
 }
 
-export default function AdminSidebar({ stripeEnabled }: AdminSidebarProps) {
+export default function AdminSidebar({ stripeEnabled, outboundEmailEnabled }: AdminSidebarProps) {
   const location = useLocation();
 
   const isActive = (path: string, end = false) =>
     end ? location.pathname === path : location.pathname.startsWith(path);
 
-  const navItems = stripeEnabled
-    ? [...adminNavItems, stripeNavItem]
-    : adminNavItems;
+  const navItems = [...adminNavItems];
+  if (stripeEnabled) navItems.push(stripeNavItem);
+  if (outboundEmailEnabled) navItems.push(emailNavItem);
 
   return (
     <aside className="fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900">

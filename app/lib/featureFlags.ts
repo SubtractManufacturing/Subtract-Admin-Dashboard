@@ -139,7 +139,7 @@ const DEFAULT_FLAGS: Array<
     key: FEATURE_FLAGS.OUTBOUND_EMAIL_ENABLED,
     name: "Enable Email Sending",
     description:
-      "Allow app-controlled outbound email sending. Disable to hide email-send UI and block send execution while testing/staging rollout.",
+      "Allow app-controlled outbound email sending. Disable to hide email-send UI and block send execution.",
     enabled: false,
   },
 ];

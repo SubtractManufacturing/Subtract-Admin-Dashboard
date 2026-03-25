@@ -75,9 +75,12 @@ export async function sendCadConversionJob(
 
 export async function sendEmailJob(
   payload: SendEmailPayload,
+  delayMinutes: number = 0
 ): Promise<string | null> {
   const producer = await getProducer();
-  return producer.send(QUEUES.SEND_EMAIL, payload, {
-    ...SEND_EMAIL_OPTIONS,
-  });
+  const options: Record<string, unknown> = { ...SEND_EMAIL_OPTIONS };
+  if (delayMinutes > 0) {
+    options.startAfter = delayMinutes * 60; // pg-boss startAfter is in seconds
+  }
+  return producer.send(QUEUES.SEND_EMAIL, payload, options);
 }

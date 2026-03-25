@@ -14,3 +14,13 @@ export const emailTemplateRegistry = {
 >;
 
 export type TemplateSlug = keyof typeof emailTemplateRegistry;
+
+export function isRegisteredEmailLayoutSlug(
+  slug: string
+): slug is TemplateSlug {
+  return slug in emailTemplateRegistry;
+}
+
+export const REGISTERED_EMAIL_LAYOUT_SLUGS = Object.keys(
+  emailTemplateRegistry
+) as TemplateSlug[];

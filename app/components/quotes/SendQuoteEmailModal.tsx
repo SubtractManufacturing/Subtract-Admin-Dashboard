@@ -33,6 +33,8 @@ interface SendQuoteEmailModalProps {
   quote: QuotePreviewData;
   customer: CustomerPreviewData | null;
   attachments: EmailAttachmentData[];
+  /** From configured email template (Admin → Email) */
+  defaultSubject?: string;
 }
 
 export default function SendQuoteEmailModal({
@@ -42,16 +44,26 @@ export default function SendQuoteEmailModal({
   quote,
   customer,
   attachments,
+  defaultSubject,
 }: SendQuoteEmailModalProps) {
   const fetcher = useFetcher<QuoteEmailModalData>();
   const revalidator = useRevalidator();
   const idempotencyKeyRef = useRef(crypto.randomUUID());
-  
+
   const [subject, setSubject] = useState(
-    `Your Quote ${quote.quoteNumber} from Subtract Manufacturing`
+    defaultSubject ??
+      `Your Quote ${quote.quoteNumber} from Subtract Manufacturing`
   );
+
+  useEffect(() => {
+    if (isOpen) {
+      setSubject(
+        defaultSubject ??
+          `Your Quote ${quote.quoteNumber} from Subtract Manufacturing`
+      );
+    }
+  }, [isOpen, defaultSubject, quote.quoteNumber]);
   const [cc, setCc] = useState("");
-  const [replyTo, setReplyTo] = useState("");
   const [selectedAttachments, setSelectedAttachments] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,7 +103,6 @@ export default function SendQuoteEmailModal({
     formData.append("idempotencyKey", idempotencyKeyRef.current);
     formData.append("subject", subject);
     if (cc) formData.append("cc", cc);
-    if (replyTo) formData.append("replyTo", replyTo);
     selectedAttachments.forEach((id) => formData.append("attachmentId", id));
 
     fetcher.submit(formData, { method: "post" });
@@ -127,19 +138,6 @@ export default function SendQuoteEmailModal({
             value={cc}
             onChange={(e) => setCc(e.target.value)}
             placeholder="comma-separated email addresses"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Reply-To (optional)
-          </label>
-          <input
-            type="text"
-            value={replyTo}
-            onChange={(e) => setReplyTo(e.target.value)}
-            placeholder="email address"
             className="w-full px-3 py-2 border border-gray-300 rounded-md"
           />
         </div>

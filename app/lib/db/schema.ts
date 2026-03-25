@@ -710,6 +710,42 @@ export const developerSettings = pgTable("developer_settings", {
   updatedBy: text("updated_by"),
 });
 
+export const emailSettings = pgTable("email_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by"),
+});
+
+export const emailIdentities = pgTable("email_identities", {
+  id: serial("id").primaryKey(),
+  fromEmail: text("from_email").notNull(),
+  fromDisplayName: text("from_display_name"),
+  replyToEmail: text("reply_to_email"),
+  isDefault: boolean("is_default").default(false).notNull(),
+  isArchived: boolean("is_archived").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by"),
+});
+
+export const emailTemplates = pgTable("email_templates", {
+  id: serial("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  /** React-email layout key in code (e.g. quote-send); not the same as DB slug */
+  layoutSlug: text("layout_slug").notNull().default("quote-send"),
+  /** Optional app context key (e.g. quote_send); unique when not null */
+  contextKey: text("context_key").unique(),
+  emailIdentityId: integer("email_identity_id").references(() => emailIdentities.id).notNull(),
+  subjectTemplate: text("subject_template").notNull(),
+  bodyCopy: jsonb("body_copy").notNull(),
+  isArchived: boolean("is_archived").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by"),
+});
 
 export const sentEmails = pgTable(
   "sent_emails",
@@ -722,10 +758,12 @@ export const sentEmails = pgTable(
 
     // Envelope
     fromEmail: text("from_email").notNull(),   // resolved at enqueue, stored for audit
+    fromDisplayName: text("from_display_name"),
     subject: text("subject").notNull(),
     toAddresses: text("to_addresses").array().notNull(),
     ccAddresses: text("cc_addresses").array(),
     replyTo: text("reply_to"),
+    recipientOverride: text("recipient_override"),
 
     // Body (both stored; HTML is sanitized before insert)
     htmlBody: text("html_body").notNull(),
@@ -768,6 +806,15 @@ export const sentEmailAttachments = pgTable(
 
 export type SentEmail = typeof sentEmails.$inferSelect;
 export type NewSentEmail = typeof sentEmails.$inferInsert;
+
+export type EmailSetting = typeof emailSettings.$inferSelect;
+export type NewEmailSetting = typeof emailSettings.$inferInsert;
+
+export type EmailIdentity = typeof emailIdentities.$inferSelect;
+export type NewEmailIdentity = typeof emailIdentities.$inferInsert;
+
+export type EmailTemplate = typeof emailTemplates.$inferSelect;
+export type NewEmailTemplate = typeof emailTemplates.$inferInsert;
 
 export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
 export type NewQuotePriceCalculation =

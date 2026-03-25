@@ -1,14 +1,12 @@
 import type { SentEmail } from "../db/schema";
 
-const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS;
-const FROM_NAME = process.env.EMAIL_FROM_NAME;
 const SERVER_TOKEN =
   process.env.POSTMARK_SERVER_TOKEN ?? process.env.POSTMARK_API_TOKEN;
 const MESSAGE_STREAM = process.env.POSTMARK_MESSAGE_STREAM;
 
-if (!FROM_ADDRESS || !SERVER_TOKEN) {
+if (!SERVER_TOKEN) {
   console.warn(
-    "EMAIL_FROM_ADDRESS and (POSTMARK_SERVER_TOKEN or POSTMARK_API_TOKEN) must be set to send emails"
+    "POSTMARK_SERVER_TOKEN or POSTMARK_API_TOKEN must be set to send emails"
   );
 }
 
@@ -24,18 +22,24 @@ export async function sendViaPostmark(
   row: SentEmail,
   attachmentBuffers: PostmarkAttachment[]
 ) {
-  if (!FROM_ADDRESS || !SERVER_TOKEN) {
+  if (!SERVER_TOKEN) {
     throw new Error(
-      "EMAIL_FROM_ADDRESS and (POSTMARK_SERVER_TOKEN or POSTMARK_API_TOKEN) must be set to send emails"
+      "POSTMARK_SERVER_TOKEN or POSTMARK_API_TOKEN must be set to send emails"
     );
   }
 
-  const from = FROM_NAME ? `${FROM_NAME} <${FROM_ADDRESS}>` : FROM_ADDRESS;
+  const from = row.fromDisplayName ? `${row.fromDisplayName} <${row.fromEmail}>` : row.fromEmail;
+
+  // Recipient override logic
+  const isOverride = !!row.recipientOverride;
+  const to = isOverride ? row.recipientOverride! : row.toAddresses.join(", ");
+  // Do not send CC if override is active
+  const cc = (!isOverride && row.ccAddresses?.length) ? row.ccAddresses.join(", ") : undefined;
 
   const payload = {
     From: from,
-    To: row.toAddresses.join(", "),
-    ...(row.ccAddresses?.length ? { Cc: row.ccAddresses.join(", ") } : {}),
+    To: to,
+    ...(cc ? { Cc: cc } : {}),
     ...(row.replyTo ? { ReplyTo: row.replyTo } : {}),
     ...(MESSAGE_STREAM ? { MessageStream: MESSAGE_STREAM } : {}),
     Subject: row.subject,

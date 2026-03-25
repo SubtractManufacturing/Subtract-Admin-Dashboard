@@ -291,6 +291,29 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     isOutboundEmailEnabled(),
   ]);
 
+  let quoteSendEmailReady = false;
+  let quoteSendEmailDefaultSubject: string | null = null;
+  if (outboundEmailEnabled) {
+    const { resolveEmailTemplateForContext } = await import(
+      "~/lib/email/templates.server"
+    );
+    const { interpolateSubject } = await import("~/emails/render.server");
+    // Email context: quote_send — register in lib/email/email-context-registry.ts
+    const { EMAIL_CONTEXT } = await import("~/lib/email/email-context-registry");
+    const resolved = await resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND);
+    if (resolved) {
+      quoteSendEmailReady = true;
+      quoteSendEmailDefaultSubject = interpolateSubject(
+        resolved.template.subjectTemplate,
+        {
+          quoteNumber: quote.quoteNumber,
+          customerName: customer?.displayName ?? "Customer",
+          total: quote.total ?? "0.00",
+        }
+      );
+    }
+  }
+
   // Get banana model URL if feature is enabled
   let bananaModelUrl: string | null = null;
   if (bananaEnabled) {
@@ -330,6 +353,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       bananaModelUrl,
       stripeEnabled,
       outboundEmailEnabled,
+      quoteSendEmailReady,
+      quoteSendEmailDefaultSubject,
     }),
     headers
   );
@@ -1641,17 +1666,40 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Customer has no email address" }, { status: 400 });
         }
 
-        // 3. From address resolution
-        const fromEmail = process.env.EMAIL_FROM_ADDRESS;
+        // 3. Resolve template, identity, and settings (context → DB template, not hardcoded slug)
+        const { resolveEmailTemplateForContext, getEmailSettings } = await import(
+          "~/lib/email/templates.server"
+        );
+        // Email context: quote_send — register in lib/email/email-context-registry.ts
+        const { EMAIL_CONTEXT } = await import("~/lib/email/email-context-registry");
+        const templateData = await resolveEmailTemplateForContext(
+          EMAIL_CONTEXT.QUOTE_SEND
+        );
+        const settings = await getEmailSettings();
+
+        if (!templateData) {
+          return json(
+            {
+              error:
+                "Quote email is not configured. In Admin → Email, assign a template to “Send quote email”.",
+            },
+            { status: 400 }
+          );
+        }
+
+        // Fallback to defaults if no DB row yet
+        const fromEmail = templateData?.identity.fromEmail;
+        const fromDisplayName = templateData?.identity.fromDisplayName || null;
+        const replyToEmail = templateData?.identity.replyToEmail || null;
+
         if (!fromEmail) {
-          return json({ error: "Email sending is not configured" }, { status: 400 });
+          return json({ error: "Email sending is not configured (no identity found)" }, { status: 400 });
         }
 
         // 4. Subject/CC header injection guard
         const subject = (formData.get("subject") as string)?.trim();
         const cc = (formData.get("cc") as string | null)?.trim() ?? "";
-        const replyTo = (formData.get("replyTo") as string | null)?.trim() ?? "";
-        if (!subject || /[\r\n]/.test(subject) || /[\r\n]/.test(cc) || /[\r\n]/.test(replyTo)) {
+        if (!subject || /[\r\n]/.test(subject) || /[\r\n]/.test(cc)) {
           return json({ error: "Invalid subject or header value" }, { status: 400 });
         }
 
@@ -1712,14 +1760,40 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const quoteForEmail = (await getQuote(quote.id)) ?? quote;
 
         // 9. Render HTML + plain text via react-email registry
-        const { renderEmailTemplate } = await import("~/emails/render.server");
+        const { renderEmailTemplate, interpolateCopy, replaceGlobalPlaceholders } = await import("~/emails/render.server");
         const props = {
           quoteNumber: quoteForEmail.quoteNumber,
           customerName: customer.displayName,
           total: quoteForEmail.total ?? "0.00",
           paymentLinkUrl: quoteForEmail.stripePaymentLinkUrl ?? undefined,
         };
-        const { html: rawHtml, text: textBody } = await renderEmailTemplate("quote-send", props);
+        
+        let copy = undefined;
+        if (templateData.template.bodyCopy) {
+          const stringProps: Record<string, string> = {
+            quoteNumber: props.quoteNumber,
+            customerName: props.customerName,
+            total: props.total,
+            default_signature: settings.defaultSignature,
+            default_footer: settings.defaultFooter,
+          };
+          if (props.paymentLinkUrl) {
+            stringProps.paymentLinkUrl = props.paymentLinkUrl;
+          }
+
+          copy = interpolateCopy(
+            templateData.template.bodyCopy as Record<string, string>,
+            stringProps
+          );
+        }
+
+        let { html: rawHtml, text: textBody } = await renderEmailTemplate(
+          templateData.layoutSlug,
+          { ...props, copy }
+        );
+
+        rawHtml = replaceGlobalPlaceholders(rawHtml, settings.defaultSignature, settings.defaultFooter);
+        textBody = replaceGlobalPlaceholders(textBody, settings.defaultSignature, settings.defaultFooter);
 
         // 10. Sanitize rendered HTML
         const { sanitizeEmailHtml } = await import("~/lib/email/sanitize.server");
@@ -1732,10 +1806,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
             quoteId: quote.id,
             idempotencyKey,
             fromEmail,
+            fromDisplayName,
             subject,
             toAddresses: [customer.email],
             ccAddresses: cc ? [cc] : undefined,
-            replyTo: replyTo || undefined,
+            replyTo: replyToEmail,
+            recipientOverride: settings.recipientOverride || null,
             htmlBody,
             textBody,
             source: "user",
@@ -1758,7 +1834,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         const { sendEmailJob } = await import("~/lib/queue/producer.server");
-        await sendEmailJob({ sentEmailId: emailRow.id });
+        await sendEmailJob({ sentEmailId: emailRow.id }, settings.outboundDelayMinutes);
         return json({ success: true });
       }
 
@@ -1895,6 +1971,8 @@ export default function QuoteDetail() {
     bananaModelUrl,
     stripeEnabled,
     outboundEmailEnabled,
+    quoteSendEmailReady,
+    quoteSendEmailDefaultSubject,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -2573,8 +2651,18 @@ export default function QuoteDetail() {
                       <Button
                         onClick={() => setSendEmailModalOpen(true)}
                         variant="primary"
-                        disabled={!customer?.email || isWaitingForSentStatus}
-                        title={!customer?.email ? "Customer has no email address" : undefined}
+                        disabled={
+                          !customer?.email ||
+                          isWaitingForSentStatus ||
+                          !quoteSendEmailReady
+                        }
+                        title={
+                          !customer?.email
+                            ? "Customer has no email address"
+                            : !quoteSendEmailReady
+                              ? "Configure quote email: Admin → Email → assign a template to “Send quote email”"
+                              : undefined
+                        }
                       >
                         <Mail className="w-4 h-4 mr-1.5 inline-block" />
                         Send Quote
@@ -3629,6 +3717,7 @@ export default function QuoteDetail() {
           quote={quote}
           customer={customer}
           attachments={attachments}
+          defaultSubject={quoteSendEmailDefaultSubject ?? undefined}
         />
       )}
 
