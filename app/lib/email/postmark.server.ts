@@ -18,6 +18,8 @@ export interface PostmarkAttachment {
   ContentType: string;
 }
 
+type PermanentError = Error & { permanent?: boolean };
+
 export async function sendViaPostmark(
   row: SentEmail,
   attachmentBuffers: PostmarkAttachment[]
@@ -60,8 +62,8 @@ export async function sendViaPostmark(
     const body = await response.text();
     // 4xx (except 429): permanent failure — don't retry
     const isPermanent = response.status >= 400 && response.status < 500;
-    const err = new Error(`Postmark error ${response.status}: ${body}`);
-    (err as any).permanent = isPermanent;
+    const err: PermanentError = new Error(`Postmark error ${response.status}: ${body}`);
+    err.permanent = isPermanent;
     throw err;
   }
 

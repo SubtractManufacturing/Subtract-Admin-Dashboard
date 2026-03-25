@@ -4,13 +4,35 @@ import Modal from "~/components/shared/Modal";
 import Button from "~/components/shared/Button";
 import { QuoteSendEmail as QuoteEmailTemplate } from "~/emails/templates/quote-send";
 
+type QuoteEmailModalData = {
+  success?: boolean;
+  error?: string;
+};
+
+type QuotePreviewData = {
+  quoteNumber: string;
+  total: string | null;
+  stripePaymentLinkUrl: string | null;
+};
+
+type CustomerPreviewData = {
+  email: string | null;
+  displayName: string | null;
+};
+
+type EmailAttachmentData = {
+  id: string | number;
+  fileName: string;
+  fileSize: number | null;
+};
+
 interface SendQuoteEmailModalProps {
   isOpen: boolean;
   onClose: () => void;
   onQueued?: () => void;
-  quote: any;
-  customer: any;
-  attachments: any[];
+  quote: QuotePreviewData;
+  customer: CustomerPreviewData | null;
+  attachments: EmailAttachmentData[];
 }
 
 export default function SendQuoteEmailModal({
@@ -21,7 +43,7 @@ export default function SendQuoteEmailModal({
   customer,
   attachments,
 }: SendQuoteEmailModalProps) {
-  const fetcher = useFetcher();
+  const fetcher = useFetcher<QuoteEmailModalData>();
   const revalidator = useRevalidator();
   const idempotencyKeyRef = useRef(crypto.randomUUID());
   
@@ -36,24 +58,27 @@ export default function SendQuoteEmailModal({
   const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10 MB
 
   const totalSize = attachments
-    .filter((a) => selectedAttachments.includes(a.id))
+    .filter((a) => selectedAttachments.includes(String(a.id)))
     .reduce((sum, a) => sum + (a.fileSize || 0), 0);
 
   const isOverSizeLimit = totalSize > MAX_EMAIL_ATTACHMENT_BYTES;
 
   useEffect(() => {
-    if (fetcher.data && (fetcher.data as any).success) {
+    if (fetcher.data?.success) {
       onQueued?.();
       onClose();
       revalidator.revalidate();
-    } else if (fetcher.data && (fetcher.data as any).error) {
-      setError((fetcher.data as any).error);
+    } else if (fetcher.data?.error) {
+      setError(fetcher.data.error);
     }
   }, [fetcher.data, onClose, onQueued, revalidator]);
 
-  const handleToggleAttachment = (id: string) => {
+  const handleToggleAttachment = (id: string | number) => {
+    const normalizedId = String(id);
     setSelectedAttachments((prev) =>
-      prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
+      prev.includes(normalizedId)
+        ? prev.filter((a) => a !== normalizedId)
+        : [...prev, normalizedId]
     );
   };
 
@@ -141,13 +166,13 @@ export default function SendQuoteEmailModal({
           ) : (
             <div className="flex flex-col gap-2 max-h-40 overflow-y-auto border border-gray-200 rounded-md p-2">
               {attachments.map((a) => (
-                <label key={a.id} className="flex items-center gap-2 text-sm">
+                <label key={String(a.id)} className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={selectedAttachments.includes(a.id)}
+                    checked={selectedAttachments.includes(String(a.id))}
                     onChange={() => handleToggleAttachment(a.id)}
                     disabled={
-                      !selectedAttachments.includes(a.id) &&
+                      !selectedAttachments.includes(String(a.id)) &&
                       totalSize + (a.fileSize || 0) > MAX_EMAIL_ATTACHMENT_BYTES
                     }
                   />
@@ -178,7 +203,7 @@ export default function SendQuoteEmailModal({
               quoteNumber={quote.quoteNumber}
               customerName={customer?.displayName || "Customer"}
               total={quote.total || "0.00"}
-              paymentLinkUrl={quote.stripePaymentLinkUrl}
+              paymentLinkUrl={quote.stripePaymentLinkUrl ?? undefined}
             />
           </div>
         </div>

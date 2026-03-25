@@ -172,12 +172,8 @@ export async function downloadFile(key: string): Promise<Buffer> {
     throw new Error(`Failed to download ${key} from S3`)
   }
 
-  // Convert the readable stream to a buffer
-  const chunks = []
-  for await (const chunk of response.Body as any) {
-    chunks.push(chunk)
-  }
-  return Buffer.concat(chunks)
+  const bytes = await response.Body.transformToByteArray()
+  return Buffer.from(bytes)
 }
 
 export async function getFileInfo(key: string) {

@@ -1539,7 +1539,8 @@ export default function Settings() {
                           flag.key === 'cad_revisions_admin' ||
                           flag.key === 'cad_revisions_all' ||
                           flag.key === 'banana_for_scale' ||
-                          flag.key === 'stripe_payment_links'
+                          flag.key === 'stripe_payment_links' ||
+                          flag.key === 'outbound_email_enabled'
                         )
                         .sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key)

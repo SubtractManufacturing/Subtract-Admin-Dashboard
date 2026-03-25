@@ -4,8 +4,11 @@ import { db } from "../../db";
 import { sentEmails } from "../../db/schema";
 import { eq, and } from "drizzle-orm";
 import { sendOutboundEmail } from "../../email/send-outbound.server";
+import { isOutboundEmailEnabled } from "../../featureFlags";
 import { createEvent } from "../../events";
 import { transitionQuoteToSent } from "../../quotes.server";
+
+type PermanentError = Error & { permanent?: boolean };
 
 export async function handleSendEmail(jobs: Job<SendEmailPayload>[]) {
   for (const job of jobs) {
@@ -30,6 +33,18 @@ export async function handleSendEmail(jobs: Job<SendEmailPayload>[]) {
       )
       .returning();
     if (claimed.length === 0) return; // another worker instance claimed it
+
+    if (!(await isOutboundEmailEnabled())) {
+      await db
+        .update(sentEmails)
+        .set({
+          status: "failed",
+          errorMessage: "Outbound email is disabled by feature flag",
+          updatedAt: new Date(),
+        })
+        .where(eq(sentEmails.id, sentEmailId));
+      return;
+    }
 
     try {
       const messageId = await sendOutboundEmail(sentEmailId);
@@ -65,8 +80,10 @@ export async function handleSendEmail(jobs: Job<SendEmailPayload>[]) {
           `[Worker:SendEmail] Quote ${row.quoteId} transition failed: ${result.error}`
         );
       }
-    } catch (err: any) {
-      const isPermanent = err.permanent === true;
+    } catch (err: unknown) {
+      const normalizedErr: PermanentError =
+        err instanceof Error ? (err as PermanentError) : (new Error(String(err)) as PermanentError);
+      const isPermanent = normalizedErr.permanent === true;
 
       if (isPermanent) {
         // Permanent failure (e.g. 422): mark failed, don't re-throw
@@ -74,7 +91,7 @@ export async function handleSendEmail(jobs: Job<SendEmailPayload>[]) {
           .update(sentEmails)
           .set({
             status: "failed",
-            errorMessage: String(err),
+            errorMessage: String(normalizedErr),
             updatedAt: new Date(),
           })
           .where(eq(sentEmails.id, sentEmailId));
@@ -84,11 +101,11 @@ export async function handleSendEmail(jobs: Job<SendEmailPayload>[]) {
           .update(sentEmails)
           .set({
             status: "queued",
-            errorMessage: String(err),
+            errorMessage: String(normalizedErr),
             updatedAt: new Date(),
           })
           .where(eq(sentEmails.id, sentEmailId));
-        throw err; // pg-boss retries with backoff
+        throw normalizedErr; // pg-boss retries with backoff
       }
     }
   }

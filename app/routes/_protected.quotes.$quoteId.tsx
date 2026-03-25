@@ -38,6 +38,7 @@ import {
   canUserAccessPriceCalculator,
   canUserUploadCadRevision,
   isFeatureEnabled,
+  isOutboundEmailEnabled,
   isStripePaymentLinksEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
@@ -278,6 +279,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     canRevise,
     bananaEnabled,
     stripeEnabled,
+    outboundEmailEnabled,
   ] = await Promise.all([
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
@@ -286,6 +288,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
     isStripePaymentLinksEnabled(),
+    isOutboundEmailEnabled(),
   ]);
 
   // Get banana model URL if feature is enabled
@@ -326,6 +329,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       bananaEnabled,
       bananaModelUrl,
       stripeEnabled,
+      outboundEmailEnabled,
     }),
     headers
   );
@@ -1616,6 +1620,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "queueSendQuoteEmail": {
+        if (!(await isOutboundEmailEnabled())) {
+          return json({ error: "Outbound email is disabled." }, { status: 403 });
+        }
+
         // 1. Status guard
         if (!["RFQ", "Draft"].includes(quote.status)) {
           return json({ error: "Quote must be RFQ or Draft to send" }, { status: 400 });
@@ -1735,8 +1743,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
             sentByUserEmail: user?.email ?? undefined,
             status: "queued",
           }).returning();
-        } catch (err: any) {
-          if (err.code === "23505") { // unique_violation on idempotencyKey
+        } catch (err: unknown) {
+          const dbError = err as { code?: string };
+          if (dbError.code === "23505") { // unique_violation on idempotencyKey
             return json({ error: "Duplicate send request" }, { status: 409 });
           }
           throw err;
@@ -1885,6 +1894,7 @@ export default function QuoteDetail() {
     bananaEnabled,
     bananaModelUrl,
     stripeEnabled,
+    outboundEmailEnabled,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -2559,15 +2569,17 @@ export default function QuoteDetail() {
                     >
                       Mark as Sent
                     </Button>
-                    <Button
-                      onClick={() => setSendEmailModalOpen(true)}
-                      variant="primary"
-                      disabled={!customer?.email || isWaitingForSentStatus}
-                      title={!customer?.email ? "Customer has no email address" : undefined}
-                    >
-                      <Mail className="w-4 h-4 mr-1.5 inline-block" />
-                      Send Quote
-                    </Button>
+                    {outboundEmailEnabled && (
+                      <Button
+                        onClick={() => setSendEmailModalOpen(true)}
+                        variant="primary"
+                        disabled={!customer?.email || isWaitingForSentStatus}
+                        title={!customer?.email ? "Customer has no email address" : undefined}
+                      >
+                        <Mail className="w-4 h-4 mr-1.5 inline-block" />
+                        Send Quote
+                      </Button>
+                    )}
                     {isWaitingForSentStatus && (
                       <div className="flex items-center text-sm text-blue-700 dark:text-blue-300">
                         <svg
@@ -3609,12 +3621,12 @@ export default function QuoteDetail() {
       )}
 
       {/* Send Email Modal */}
-      {isSendEmailModalOpen && (
+      {outboundEmailEnabled && isSendEmailModalOpen && (
         <SendQuoteEmailModal
           isOpen={isSendEmailModalOpen}
           onClose={() => setSendEmailModalOpen(false)}
           onQueued={() => setIsWaitingForSentStatus(true)}
-          quote={quote as any}
+          quote={quote}
           customer={customer}
           attachments={attachments}
         />
