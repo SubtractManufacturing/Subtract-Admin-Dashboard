@@ -46,6 +46,17 @@ export const userStatusEnum = pgEnum("user_status", [
   "disabled",
 ]);
 
+export const sentEmailStatusEnum = pgEnum("sent_email_status", [
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+]);
+export const sentEmailSourceEnum = pgEnum("sent_email_source", [
+  "user",
+  "system",
+]);
+
 export const users = pgTable("users", {
   id: text("id").primaryKey(), // Will match Supabase auth.users.id
   name: text("name"),
@@ -699,6 +710,64 @@ export const developerSettings = pgTable("developer_settings", {
   updatedBy: text("updated_by"),
 });
 
+
+export const sentEmails = pgTable(
+  "sent_emails",
+  {
+    id: serial("id").primaryKey(),
+    quoteId: integer("quote_id").references(() => quotes.id).notNull(),
+
+    // Client-generated UUID per modal open — prevents double-submit
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+
+    // Envelope
+    fromEmail: text("from_email").notNull(),   // resolved at enqueue, stored for audit
+    subject: text("subject").notNull(),
+    toAddresses: text("to_addresses").array().notNull(),
+    ccAddresses: text("cc_addresses").array(),
+    replyTo: text("reply_to"),
+
+    // Body (both stored; HTML is sanitized before insert)
+    htmlBody: text("html_body").notNull(),
+    textBody: text("text_body"),               // rendered via @react-email/render plainText:true
+
+    // Delivery state machine
+    status: sentEmailStatusEnum("status").default("queued").notNull(),
+    providerMessageId: text("provider_message_id"),
+    errorMessage: text("error_message"),
+
+    // Sender provenance — proper FK columns, not JSONB
+    source: sentEmailSourceEnum("source").notNull(),
+    sentByUserId: text("sent_by_user_id").references(() => users.id),
+    sentByUserEmail: text("sent_by_user_email"), // denormalized for audit
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    quoteIdx: index("sent_emails_quote_idx").on(table.quoteId),
+    statusIdx: index("sent_emails_status_idx").on(table.status),
+  })
+);
+
+export const sentEmailAttachments = pgTable(
+  "sent_email_attachments",
+  {
+    sentEmailId: integer("sent_email_id")
+      .references(() => sentEmails.id)
+      .notNull(),
+    attachmentId: uuid("attachment_id")
+      .references(() => attachments.id)
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.sentEmailId, table.attachmentId] }),
+    sentEmailIdx: index("sent_email_attachments_email_idx").on(table.sentEmailId),
+  })
+);
+
+export type SentEmail = typeof sentEmails.$inferSelect;
+export type NewSentEmail = typeof sentEmails.$inferInsert;
 
 export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
 export type NewQuotePriceCalculation =

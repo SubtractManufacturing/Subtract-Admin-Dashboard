@@ -161,6 +161,25 @@ export async function getDownloadUrl(key: string, expiresIn = 3600): Promise<str
   return getSignedUrl(getS3Client(), command, { expiresIn })
 }
 
+export async function downloadFile(key: string): Promise<Buffer> {
+  const command = new GetObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: key,
+  })
+
+  const response = await getS3Client().send(command)
+  if (!response.Body) {
+    throw new Error(`Failed to download ${key} from S3`)
+  }
+
+  // Convert the readable stream to a buffer
+  const chunks = []
+  for await (const chunk of response.Body as any) {
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
+}
+
 export async function getFileInfo(key: string) {
   const command = new HeadObjectCommand({
     Bucket: S3_BUCKET,

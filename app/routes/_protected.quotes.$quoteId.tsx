@@ -71,7 +71,7 @@ import {
   partDrawings,
   type QuotePart,
 } from "~/lib/db/schema";
-import { eq, inArray, and, or } from "drizzle-orm";
+import { eq, inArray, and, or, gte } from "drizzle-orm";
 
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -89,6 +89,8 @@ import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import SendQuoteEmailModal from "~/components/quotes/SendQuoteEmailModal";
+import { Mail } from "lucide-react";
 import { useDownload } from "~/hooks/useDownload";
 import {
   createPriceCalculation,
@@ -343,6 +345,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!quote) {
     return json({ error: "Quote not found" }, { status: 404 });
   }
+  const customer = quote.customerId ? await getCustomer(quote.customerId) : null;
 
   // Create event context for all operations
   const eventContext: QuoteEventContext = {
@@ -752,82 +755,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Stripe payment link creation when sending a quote
         if (status === "Sent") {
-          const stripeOn = await isStripePaymentLinksEnabled();
-          if (stripeOn) {
-            const { isStripeConfigured, createQuotePaymentLink } =
-              await import("~/lib/stripe.server");
-            if (!isStripeConfigured()) {
-              return json(
-                {
-                  error:
-                    "Cannot send quote: Stripe is not configured. Contact your administrator.",
-                },
-                { status: 400 }
-              );
-            }
-
-            const sendTotal = parseFloat(quote.total || "0");
-            if (sendTotal <= 0) {
-              return json(
-                {
-                  error:
-                    "Cannot send quote: Quote total must be greater than $0.",
-                },
-                { status: 400 }
-              );
-            }
-
-            // Skip creation if an active link already exists (idempotency)
-            if (
-              quote.stripePaymentLinkId &&
-              quote.stripePaymentLinkActive
-            ) {
-              await updateQuote(
-                quote.id,
-                { status: "Sent", rejectionReason: null },
-                eventContext
-              );
-              return redirect(`/quotes/${quoteId}`);
-            }
-
-            try {
-              const paymentLink = await createQuotePaymentLink({
-                quoteId: quote.id,
-                quoteNumber: quote.quoteNumber,
-                totalDollars: quote.total!,
-                customerId: quote.customerId,
-              });
-
-              await updateQuote(
-                quote.id,
-                {
-                  status: "Sent",
-                  stripePaymentLinkUrl: paymentLink.url,
-                  stripePaymentLinkId: paymentLink.id,
-                  stripePaymentLinkActive: true,
-                  rejectionReason: null,
-                },
-                eventContext
-              );
-
-              return redirect(`/quotes/${quoteId}`);
-            } catch (stripeError) {
-              console.error(
-                "Stripe payment link creation failed:",
-                stripeError
-              );
-              return json(
-                {
-                  error: `Failed to create payment link: ${
-                    stripeError instanceof Error
-                      ? stripeError.message
-                      : "Unknown error"
-                  }`,
-                },
-                { status: 500 }
-              );
-            }
+          const { transitionQuoteToSent } = await import("~/lib/quotes.server");
+          const result = await transitionQuoteToSent(quote.id, eventContext);
+          if (!result.success) {
+            return json(
+              { error: result.error },
+              { status: 400 }
+            );
           }
+          return redirect(`/quotes/${quoteId}`);
         }
 
         // Stripe payment link deactivation on terminal statuses
@@ -1679,6 +1615,144 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "queueSendQuoteEmail": {
+        // 1. Status guard
+        if (!["RFQ", "Draft"].includes(quote.status)) {
+          return json({ error: "Quote must be RFQ or Draft to send" }, { status: 400 });
+        }
+
+        // 1.5 Preflight status transition checks (e.g. Stripe config / total > 0)
+        const { validateQuoteCanBeSent } = await import("~/lib/quotes.server");
+        const preflightResult = await validateQuoteCanBeSent(quote.id);
+        if (!preflightResult.success) {
+          return json({ error: `Cannot send email: ${preflightResult.error}` }, { status: 400 });
+        }
+
+        // 2. Customer email guard
+        if (!customer?.email) {
+          return json({ error: "Customer has no email address" }, { status: 400 });
+        }
+
+        // 3. From address resolution
+        const fromEmail = process.env.EMAIL_FROM_ADDRESS;
+        if (!fromEmail) {
+          return json({ error: "Email sending is not configured" }, { status: 400 });
+        }
+
+        // 4. Subject/CC header injection guard
+        const subject = (formData.get("subject") as string)?.trim();
+        const cc = (formData.get("cc") as string | null)?.trim() ?? "";
+        const replyTo = (formData.get("replyTo") as string | null)?.trim() ?? "";
+        if (!subject || /[\r\n]/.test(subject) || /[\r\n]/.test(cc) || /[\r\n]/.test(replyTo)) {
+          return json({ error: "Invalid subject or header value" }, { status: 400 });
+        }
+
+        // 5. Attachment ownership verification
+        const attachmentIds = formData.getAll("attachmentId") as string[];
+        if (attachmentIds.length > 0) {
+          const owned = await db
+            .select({ id: quoteAttachments.attachmentId })
+            .from(quoteAttachments)
+            .where(and(
+              eq(quoteAttachments.quoteId, quote.id),
+              inArray(quoteAttachments.attachmentId, attachmentIds)
+            ));
+          if (owned.length !== attachmentIds.length) {
+            return json({ error: "Invalid attachment selection" }, { status: 400 });
+          }
+        }
+
+        // 6. Cumulative attachment size guard
+        const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+        if (attachmentIds.length > 0) {
+          const rows = await db
+            .select({ fileSize: attachments.fileSize })
+            .from(attachments)
+            .where(inArray(attachments.id, attachmentIds));
+          const total = rows.reduce((sum, r) => sum + (r.fileSize ?? 0), 0);
+          if (total > MAX_EMAIL_ATTACHMENT_BYTES) {
+            return json({ error: "Total attachment size exceeds Postmark's 10 MB limit" }, { status: 400 });
+          }
+        }
+
+        // 7. Send throttle
+        const { sentEmails, sentEmailAttachments } = await import("~/lib/db/schema");
+        const recent = await db
+          .select({ id: sentEmails.id })
+          .from(sentEmails)
+          .where(and(
+            eq(sentEmails.quoteId, quote.id),
+            inArray(sentEmails.status, ["queued", "sending", "sent"]),
+            gte(sentEmails.createdAt, new Date(Date.now() - 60_000))
+          )).limit(1);
+        if (recent.length > 0) {
+          return json({ error: "A send is already in progress. Please wait 60 seconds." }, { status: 429 });
+        }
+
+        // 8. Idempotency key from client
+        const idempotencyKey = formData.get("idempotencyKey") as string;
+        if (!idempotencyKey || !/^[0-9a-f-]{36}$/.test(idempotencyKey)) {
+          return json({ error: "Missing or invalid idempotency key" }, { status: 400 });
+        }
+
+        // 8.5 Pre-create Stripe payment link when enabled so the email includes Pay now on first send
+        const { ensureQuoteStripePaymentLink } = await import("~/lib/quotes.server");
+        const linkResult = await ensureQuoteStripePaymentLink(quote.id, eventContext);
+        if (!linkResult.success) {
+          return json({ error: linkResult.error }, { status: 400 });
+        }
+        const quoteForEmail = (await getQuote(quote.id)) ?? quote;
+
+        // 9. Render HTML + plain text via react-email registry
+        const { renderEmailTemplate } = await import("~/emails/render.server");
+        const props = {
+          quoteNumber: quoteForEmail.quoteNumber,
+          customerName: customer.displayName,
+          total: quoteForEmail.total ?? "0.00",
+          paymentLinkUrl: quoteForEmail.stripePaymentLinkUrl ?? undefined,
+        };
+        const { html: rawHtml, text: textBody } = await renderEmailTemplate("quote-send", props);
+
+        // 10. Sanitize rendered HTML
+        const { sanitizeEmailHtml } = await import("~/lib/email/sanitize.server");
+        const htmlBody = sanitizeEmailHtml(rawHtml);
+
+        // 11. Insert row and enqueue
+        let emailRow;
+        try {
+          [emailRow] = await db.insert(sentEmails).values({
+            quoteId: quote.id,
+            idempotencyKey,
+            fromEmail,
+            subject,
+            toAddresses: [customer.email],
+            ccAddresses: cc ? [cc] : undefined,
+            replyTo: replyTo || undefined,
+            htmlBody,
+            textBody,
+            source: "user",
+            sentByUserId: user?.id,
+            sentByUserEmail: user?.email ?? undefined,
+            status: "queued",
+          }).returning();
+        } catch (err: any) {
+          if (err.code === "23505") { // unique_violation on idempotencyKey
+            return json({ error: "Duplicate send request" }, { status: 409 });
+          }
+          throw err;
+        }
+
+        if (attachmentIds.length > 0) {
+          await db.insert(sentEmailAttachments).values(
+            attachmentIds.map((aid) => ({ sentEmailId: emailRow.id, attachmentId: aid }))
+          );
+        }
+
+        const { sendEmailJob } = await import("~/lib/queue/producer.server");
+        await sendEmailJob({ sentEmailId: emailRow.id });
+        return json({ success: true });
+      }
+
       case "generateQuote": {
         const htmlContent = formData.get("htmlContent") as string;
 
@@ -1817,8 +1891,12 @@ export default function QuoteDetail() {
   const [isAddingNote, setIsAddingNote] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [pollCount, setPollCount] = useState(0);
+  const emailPollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [emailPollCount, setEmailPollCount] = useState(0);
+  const [isWaitingForSentStatus, setIsWaitingForSentStatus] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [isSendEmailModalOpen, setSendEmailModalOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
@@ -1936,6 +2014,50 @@ export default function QuoteDetail() {
       }
     };
   }, [hasConvertingParts, pollCount, revalidator]);
+
+  // Poll for quote status change after queueing an email send
+  useEffect(() => {
+    const MAX_EMAIL_POLL_COUNT = 40; // ~2 minutes at 3s interval
+
+    if (!isWaitingForSentStatus) {
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (quote.status === "Sent") {
+      setIsWaitingForSentStatus(false);
+      setEmailPollCount(0);
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (!emailPollIntervalRef.current && emailPollCount < MAX_EMAIL_POLL_COUNT) {
+      emailPollIntervalRef.current = setInterval(() => {
+        setEmailPollCount((prev) => prev + 1);
+        revalidator.revalidate();
+      }, 3000);
+    } else if (emailPollCount >= MAX_EMAIL_POLL_COUNT) {
+      setIsWaitingForSentStatus(false);
+      setEmailPollCount(0);
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+    };
+  }, [emailPollCount, isWaitingForSentStatus, quote.status, revalidator]);
 
   // Update optimistic line items when the actual data changes
   // Sort so part line items (quotePartId != null) appear before additional services,
@@ -2082,10 +2204,10 @@ export default function QuoteDetail() {
     }
   };
 
-  const handleSendQuote = () => {
+  const handleMarkAsSent = () => {
     if (
       confirm(
-        "Are you sure you want to send this quote? Once sent, the quote will be locked and line items cannot be modified."
+        "Are you sure you want to mark this quote as sent? Once sent, the quote will be locked and line items cannot be modified."
       )
     ) {
       fetcher.submit(
@@ -2429,9 +2551,49 @@ export default function QuoteDetail() {
                   />
                 </div>
                 {(quote.status === "RFQ" || quote.status === "Draft") && (
-                  <Button onClick={handleSendQuote} variant="primary">
-                    Send Quote
-                  </Button>
+                  <>
+                    <Button 
+                      onClick={handleMarkAsSent} 
+                      variant="secondary"
+                      className="!border-blue-600 !text-blue-600 hover:!bg-blue-50 dark:!border-blue-500 dark:!text-blue-400 dark:hover:!bg-blue-900/20"
+                    >
+                      Mark as Sent
+                    </Button>
+                    <Button
+                      onClick={() => setSendEmailModalOpen(true)}
+                      variant="primary"
+                      disabled={!customer?.email || isWaitingForSentStatus}
+                      title={!customer?.email ? "Customer has no email address" : undefined}
+                    >
+                      <Mail className="w-4 h-4 mr-1.5 inline-block" />
+                      Send Quote
+                    </Button>
+                    {isWaitingForSentStatus && (
+                      <div className="flex items-center text-sm text-blue-700 dark:text-blue-300">
+                        <svg
+                          className="animate-spin h-4 w-4 mr-2"
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                          />
+                        </svg>
+                        Waiting for status update...
+                      </div>
+                    )}
+                  </>
                 )}
                 {quote.status === "Sent" && !quote.convertedToOrderId && (
                   <>
@@ -3443,6 +3605,18 @@ export default function QuoteDetail() {
           existingCalculations={priceCalculations || []}
           isSaving={calculatorFetcher.state !== "idle"}
           mode={calculatorMode}
+        />
+      )}
+
+      {/* Send Email Modal */}
+      {isSendEmailModalOpen && (
+        <SendQuoteEmailModal
+          isOpen={isSendEmailModalOpen}
+          onClose={() => setSendEmailModalOpen(false)}
+          onQueued={() => setIsWaitingForSentStatus(true)}
+          quote={quote as any}
+          customer={customer}
+          attachments={attachments}
         />
       )}
 
