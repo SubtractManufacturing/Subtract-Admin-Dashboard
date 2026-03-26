@@ -31,6 +31,8 @@ import {
   getAllowedEmailDomains,
   isEmailDomainAllowed,
 } from "~/lib/email/email-domains.server";
+import { normalizeEmailSnippetKeyInput } from "~/lib/email/email-merge-snippet-key-normalizer";
+import { templatesReferencingSnippetKey } from "~/lib/email/email-merge-snippet-template-references";
 import { findConflictingTemplateForContextKey } from "~/lib/email/templates.server";
 import { isOutboundEmailEnabled } from "~/lib/featureFlags";
 import {
@@ -57,25 +59,6 @@ const SNIPPET_CONTEXT_COLLISION_KEYS = new Set([
 ]);
 
 const SNIPPET_KEY_RE = /^[a-zA-Z]\w*$/;
-
-function textHasExactSnippetPlaceholder(text: string, key: string): boolean {
-  return new RegExp(`\\{\\{${key}\\}\\}`).test(text);
-}
-
-function templatesReferencingSnippetKey(
-  templateList: EmailTemplate[],
-  key: string,
-): EmailTemplate[] {
-  return templateList.filter((t) => {
-    if (textHasExactSnippetPlaceholder(t.subjectTemplate, key)) return true;
-    const copy = t.bodyCopy as Record<string, unknown>;
-    for (const v of Object.values(copy)) {
-      if (typeof v === "string" && textHasExactSnippetPlaceholder(v, key))
-        return true;
-    }
-    return false;
-  });
-}
 
 function parseBodyCopyJson(raw: string): Record<string, string> | null {
   try {
@@ -220,7 +203,9 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === "createSnippet") {
-    const key = ((formData.get("key") as string) ?? "").trim();
+    const key = normalizeEmailSnippetKeyInput(
+      (formData.get("key") as string) ?? "",
+    );
     const value = (formData.get("value") as string) ?? "";
     if (!SNIPPET_KEY_RE.test(key)) {
       return withAuthHeaders(
@@ -264,19 +249,104 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === "updateSnippet") {
-    const key = ((formData.get("key") as string) ?? "").trim();
+    const originalKey = (
+      (formData.get("originalKey") as string) ?? ""
+    ).trim();
+    const newKey = normalizeEmailSnippetKeyInput(
+      (formData.get("key") as string) ?? "",
+    );
     const value = (formData.get("value") as string) ?? "";
-    if (!key) {
+    if (!originalKey || !newKey) {
       return withAuthHeaders(
         json({ error: "Snippet name is required." }, { status: 400 }),
         headers,
       );
     }
+
+    if (newKey !== originalKey) {
+      const activeTemplates = await db
+        .select()
+        .from(emailTemplates)
+        .where(eq(emailTemplates.isArchived, false));
+      const referenced = templatesReferencingSnippetKey(
+        activeTemplates,
+        originalKey,
+      );
+      if (referenced.length > 0) {
+        return withAuthHeaders(
+          json(
+            {
+              error: `Cannot rename. Still referenced in: ${referenced.map((t) => t.name).join(", ")}. Remove {{${originalKey}}} from those templates first.`,
+            },
+            { status: 400 },
+          ),
+          headers,
+        );
+      }
+      if (!SNIPPET_KEY_RE.test(newKey)) {
+        return withAuthHeaders(
+          json(
+            {
+              error:
+                "Snippet name must start with a letter and contain only letters, numbers, or underscores.",
+            },
+            { status: 400 },
+          ),
+          headers,
+        );
+      }
+      if (RESERVED_SNIPPET_KEYS.has(newKey)) {
+        return withAuthHeaders(
+          json({ error: "That snippet name is reserved." }, { status: 400 }),
+          headers,
+        );
+      }
+      try {
+        const updated = await db
+          .update(emailSettings)
+          .set({
+            key: newKey,
+            value,
+            updatedAt: new Date(),
+            updatedBy,
+          })
+          .where(
+            and(
+              eq(emailSettings.key, originalKey),
+              eq(emailSettings.kind, "merge"),
+            ),
+          )
+          .returning({ id: emailSettings.id });
+        if (updated.length === 0) {
+          return withAuthHeaders(
+            json({ error: "Snippet not found." }, { status: 404 }),
+            headers,
+          );
+        }
+      } catch (err: unknown) {
+        const code = (err as { code?: string }).code;
+        if (code === "23505") {
+          return withAuthHeaders(
+            json(
+              { error: "A snippet with this name already exists." },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+        throw err;
+      }
+      return withAuthHeaders(json({ success: true }), headers);
+    }
+
     const updated = await db
       .update(emailSettings)
       .set({ value, updatedAt: new Date(), updatedBy })
       .where(
-        and(eq(emailSettings.key, key), eq(emailSettings.kind, "merge")),
+        and(
+          eq(emailSettings.key, originalKey),
+          eq(emailSettings.kind, "merge"),
+        ),
       )
       .returning({ id: emailSettings.id });
     if (updated.length === 0) {
@@ -687,6 +757,9 @@ export default function AdminEmail() {
     key: string;
     value: string;
   } | null>(null);
+  const [draftSnippetKey, setDraftSnippetKey] = useState("");
+  const [draftEditSnippetKey, setDraftEditSnippetKey] = useState("");
+  const [lockedSnippetHintOpen, setLockedSnippetHintOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(
     null,
@@ -703,6 +776,34 @@ export default function AdminEmail() {
       setEditingTemplate(null);
     }
   }, [fetcher.state, fetcher.data, revalidator]);
+
+  useEffect(() => {
+    if (!snippetModalOpen) {
+      setLockedSnippetHintOpen(false);
+      return;
+    }
+    if (!editingSnippet) {
+      setDraftSnippetKey("");
+      setLockedSnippetHintOpen(false);
+      return;
+    }
+    setLockedSnippetHintOpen(false);
+    if (
+      templatesReferencingSnippetKey(templates, editingSnippet.key).length === 0
+    ) {
+      setDraftEditSnippetKey(editingSnippet.key);
+    }
+  }, [snippetModalOpen, editingSnippet, templates]);
+
+  const templatesReferencingEditingSnippet = editingSnippet
+    ? templatesReferencingSnippetKey(templates, editingSnippet.key)
+    : [];
+  const snippetRenameLocked = templatesReferencingEditingSnippet.length > 0;
+  const snippetKeyForCollisionHint = editingSnippet
+    ? snippetRenameLocked
+      ? editingSnippet.key
+      : draftEditSnippetKey
+    : draftSnippetKey;
 
   const activeIdentities = identities.filter(
     (i: EmailIdentity) => !i.isArchived,
@@ -1367,18 +1468,99 @@ export default function AdminEmail() {
             <label className={labelClass}>Snippet name</label>
             {editingSnippet ? (
               <>
-                <input type="hidden" name="key" value={editingSnippet.key} />
-                <div className="rounded-lg bg-gray-50 px-3 py-2 font-mono text-sm text-gray-700 dark:bg-slate-800 dark:text-gray-300">
-                  {editingSnippet.key}
-                </div>
+                <input
+                  type="hidden"
+                  name="originalKey"
+                  value={editingSnippet.key}
+                />
+                {snippetRenameLocked ? (
+                  <>
+                    <input
+                      type="hidden"
+                      name="key"
+                      value={editingSnippet.key}
+                    />
+                    <div className="group">
+                      <button
+                        type="button"
+                        title={`Name is locked — remove {{${editingSnippet.key}}} from these templates: ${templatesReferencingEditingSnippet.map((t) => `${t.name} (${t.slug})`).join("; ")}.`}
+                        className="flex w-full cursor-help items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left font-mono text-sm text-gray-600 transition-colors hover:border-amber-400/80 hover:bg-amber-50/50 focus:outline-none focus:ring-2 focus:ring-amber-400/35 active:bg-amber-50/70 dark:border-slate-600 dark:bg-slate-800/80 dark:text-gray-400 dark:hover:border-amber-500/55 dark:hover:bg-amber-950/25 dark:focus:ring-amber-500/35 dark:active:bg-amber-950/35"
+                        onClick={() =>
+                          setLockedSnippetHintOpen((open) => !open)
+                        }
+                        aria-expanded={lockedSnippetHintOpen}
+                        aria-controls="snippet-locked-by-templates"
+                        aria-label={`Snippet name ${editingSnippet.key} is locked; used in ${templatesReferencingEditingSnippet.length} template(s). Hover for a summary or click for details.`}
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {editingSnippet.key}
+                        </span>
+                        <svg
+                          className="h-4 w-4 shrink-0 text-gray-400 transition-colors group-hover:text-amber-600 dark:text-gray-500 dark:group-hover:text-amber-400"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                          />
+                        </svg>
+                      </button>
+                      {lockedSnippetHintOpen && (
+                        <div
+                          id="snippet-locked-by-templates"
+                          className="mt-2 max-h-48 overflow-y-auto rounded-md border border-amber-200/90 bg-amber-50/90 px-3 py-2.5 text-xs shadow-sm dark:border-amber-800/60 dark:bg-amber-950/40"
+                        >
+                          <p className="font-medium text-amber-950 dark:text-amber-100">
+                            Name is locked — remove{" "}
+                            <code className="rounded bg-white/80 px-1 font-mono text-[11px] dark:bg-amber-900/80">
+                              {`{{${editingSnippet.key}}}`}
+                            </code>{" "}
+                            from these templates to rename:
+                          </p>
+                          <ul className="mt-2 space-y-1 text-amber-900/90 dark:text-amber-100/90">
+                            {templatesReferencingEditingSnippet.map((t) => (
+                              <li key={t.id}>
+                                <span className="font-medium">{t.name}</span>
+                                <span className="opacity-80"> ({t.slug})</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <input
+                    name="key"
+                    type="text"
+                    required
+                    value={draftEditSnippetKey}
+                    onChange={(e) =>
+                      setDraftEditSnippetKey(
+                        normalizeEmailSnippetKeyInput(e.target.value),
+                      )
+                    }
+                    placeholder="e.g. default_signature or signOff"
+                    className={inputClass}
+                  />
+                )}
               </>
             ) : (
               <input
                 name="key"
                 type="text"
                 required
-                pattern="^[a-zA-Z]\w*$"
-                title="Start with a letter; letters, numbers, underscores only"
+                value={draftSnippetKey}
+                onChange={(e) =>
+                  setDraftSnippetKey(
+                    normalizeEmailSnippetKeyInput(e.target.value),
+                  )
+                }
                 placeholder="e.g. default_signature or signOff"
                 className={inputClass}
               />
@@ -1398,13 +1580,12 @@ export default function AdminEmail() {
               </code>
               , etc., unless you want the live quote to override the snippet.
             </p>
-            {editingSnippet &&
-              SNIPPET_CONTEXT_COLLISION_KEYS.has(editingSnippet.key) && (
-                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                  This name matches a quote field; the live quote value will
-                  override this snippet when both exist.
-                </p>
-              )}
+            {SNIPPET_CONTEXT_COLLISION_KEYS.has(snippetKeyForCollisionHint) && (
+              <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                This name matches a quote field; the live quote value will
+                override this snippet when both exist.
+              </p>
+            )}
           </div>
           <div>
             <label className={labelClass}>Content</label>

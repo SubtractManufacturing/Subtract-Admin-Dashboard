@@ -71,14 +71,22 @@ export async function ensureUserExists(
       isArchived: result[0].isArchived,
     };
   } catch (error) {
-    // If insert still fails, fallback to reading existing user
-    console.error('Error in ensureUserExists, falling back to read:', error);
-    const existingUser = await getUserById(userId);
-    return {
-      role: existingUser?.role || "User",
-      status: existingUser?.status || "active",
-      isArchived: existingUser?.isArchived || false,
-    };
+    // If upsert still fails, fallback to reading existing user (e.g. timeout, race)
+    console.error("Error in ensureUserExists, falling back to read:", error);
+    try {
+      const existingUser = await getUserById(userId);
+      return {
+        role: existingUser?.role || "User",
+        status: existingUser?.status || "active",
+        isArchived: existingUser?.isArchived || false,
+      };
+    } catch (readError) {
+      console.error("ensureUserExists fallback read failed:", readError);
+      throw new Error(
+        "Could not reach the database to verify your account (timeout or connection error). Check DATABASE_URL, VPN, and that Postgres is reachable.",
+        { cause: readError },
+      );
+    }
   }
 }
 
