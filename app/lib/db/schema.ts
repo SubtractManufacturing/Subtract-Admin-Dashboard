@@ -51,6 +51,12 @@ export const sentEmailStatusEnum = pgEnum("sent_email_status", [
   "sending",
   "sent",
   "failed",
+  "bounced",
+]);
+export const sentEmailEntityTypeEnum = pgEnum("sent_email_entity_type", [
+  "quote",
+  "order",
+  "invoice",
 ]);
 export const sentEmailSourceEnum = pgEnum("sent_email_source", [
   "user",
@@ -757,7 +763,13 @@ export const sentEmails = pgTable(
   "sent_emails",
   {
     id: serial("id").primaryKey(),
-    quoteId: integer("quote_id").references(() => quotes.id).notNull(),
+    /** Populated for quote sends; optional for other entity types */
+    quoteId: integer("quote_id").references(() => quotes.id),
+
+    /** Matches email_templates.context_key — used for worker afterSent dispatch */
+    contextKey: text("context_key").notNull(),
+    entityType: sentEmailEntityTypeEnum("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
 
     // Client-generated UUID per modal open — prevents double-submit
     idempotencyKey: text("idempotency_key").notNull().unique(),
@@ -779,6 +791,8 @@ export const sentEmails = pgTable(
     status: sentEmailStatusEnum("status").default("queued").notNull(),
     providerMessageId: text("provider_message_id"),
     errorMessage: text("error_message"),
+    /** Set when worker confirms provider delivery */
+    sentAt: timestamp("sent_at"),
 
     // Sender provenance — proper FK columns, not JSONB
     source: sentEmailSourceEnum("source").notNull(),
@@ -791,6 +805,11 @@ export const sentEmails = pgTable(
   (table) => ({
     quoteIdx: index("sent_emails_quote_idx").on(table.quoteId),
     statusIdx: index("sent_emails_status_idx").on(table.status),
+    entityIdx: index("sent_emails_entity_idx").on(
+      table.entityType,
+      table.entityId,
+    ),
+    contextIdx: index("sent_emails_context_idx").on(table.contextKey),
   })
 );
 
@@ -812,6 +831,8 @@ export const sentEmailAttachments = pgTable(
 
 export type SentEmail = typeof sentEmails.$inferSelect;
 export type NewSentEmail = typeof sentEmails.$inferInsert;
+export type SentEmailEntityType =
+  (typeof sentEmailEntityTypeEnum.enumValues)[number];
 
 export type EmailSetting = typeof emailSettings.$inferSelect;
 export type NewEmailSetting = typeof emailSettings.$inferInsert;

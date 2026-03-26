@@ -5,8 +5,8 @@ import { sentEmails } from "../../db/schema";
 import { eq, and } from "drizzle-orm";
 import { sendOutboundEmail } from "../../email/send-outbound.server";
 import { isOutboundEmailEnabled } from "../../featureFlags";
-import { createEvent } from "../../events";
-import { transitionQuoteToSent } from "../../quotes.server";
+import { isEmailContextKey } from "../../email/email-context-registry";
+import { getEmailSendHandler } from "../../email/email-send-context-registry.server";
 
 type PermanentError = Error & { permanent?: boolean };
 
@@ -48,36 +48,32 @@ export async function handleSendEmail(jobs: Job<SendEmailPayload>[]) {
 
     try {
       const messageId = await sendOutboundEmail(sentEmailId);
+      const sentAt = new Date();
 
-      await db
+      const [updatedRow] = await db
         .update(sentEmails)
         .set({
           status: "sent",
           providerMessageId: messageId,
-          updatedAt: new Date(),
+          sentAt,
+          updatedAt: sentAt,
         })
-        .where(eq(sentEmails.id, sentEmailId));
+        .where(eq(sentEmails.id, sentEmailId))
+        .returning();
+      const rowForEffects = updatedRow ?? row;
 
-      await createEvent({
-        entityType: "quote",
-        entityId: row.quoteId.toString(),
-        eventType: "quote_email_sent",
-        eventCategory: "communication",
-        title: "Quote email sent",
-        description: `Email delivered to ${row.toAddresses.join(", ")}`,
-        metadata: { sentEmailId, providerMessageId: messageId },
-        userId: row.sentByUserId ?? undefined,
-        userEmail: row.sentByUserEmail ?? undefined,
-      });
-
-      const result = await transitionQuoteToSent(row.quoteId, {
-        userId: row.sentByUserId ?? undefined,
-        userEmail: row.sentByUserEmail ?? undefined,
-      });
-      if (!result.success) {
-        // Email was already delivered — log but don't re-throw
+      if (!isEmailContextKey(rowForEffects.contextKey)) {
+        throw new Error(
+          `sent_emails ${sentEmailId} has invalid contextKey: ${rowForEffects.contextKey}`,
+        );
+      }
+      const effectHandler = getEmailSendHandler(rowForEffects.contextKey);
+      try {
+        await effectHandler.afterSent(rowForEffects);
+      } catch (afterErr: unknown) {
         console.error(
-          `[Worker:SendEmail] Quote ${row.quoteId} transition failed: ${result.error}`
+          `[Worker:afterSent] context=${rowForEffects.contextKey} sentEmailId=${sentEmailId}`,
+          afterErr,
         );
       }
     } catch (err: unknown) {
