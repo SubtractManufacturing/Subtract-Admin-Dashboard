@@ -294,22 +294,25 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   let quoteSendEmailReady = false;
   let quoteSendEmailDefaultSubject: string | null = null;
   if (outboundEmailEnabled) {
-    const { resolveEmailTemplateForContext } = await import(
-      "~/lib/email/templates.server"
-    );
-    const { interpolateSubject } = await import("~/emails/render.server");
+    const { resolveEmailTemplateForContext, getEmailMergeFieldsMap } =
+      await import("~/lib/email/templates.server");
+    const { interpolateTemplateString } = await import("~/emails/render.server");
     // Email context: quote_send — register in lib/email/email-context-registry.ts
     const { EMAIL_CONTEXT } = await import("~/lib/email/email-context-registry");
-    const resolved = await resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND);
+    const [resolved, mergeFields] = await Promise.all([
+      resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND),
+      getEmailMergeFieldsMap(),
+    ]);
     if (resolved) {
       quoteSendEmailReady = true;
-      quoteSendEmailDefaultSubject = interpolateSubject(
+      quoteSendEmailDefaultSubject = interpolateTemplateString(
         resolved.template.subjectTemplate,
         {
+          ...mergeFields,
           quoteNumber: quote.quoteNumber,
           customerName: customer?.displayName ?? "Customer",
           total: quote.total ?? "0.00",
-        }
+        },
       );
     }
   }
@@ -1667,15 +1670,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         // 3. Resolve template, identity, and settings (context → DB template, not hardcoded slug)
-        const { resolveEmailTemplateForContext, getEmailSettings } = await import(
-          "~/lib/email/templates.server"
-        );
+        const {
+          resolveEmailTemplateForContext,
+          getEmailSettings,
+          getEmailMergeFieldsMap,
+        } = await import("~/lib/email/templates.server");
         // Email context: quote_send — register in lib/email/email-context-registry.ts
         const { EMAIL_CONTEXT } = await import("~/lib/email/email-context-registry");
-        const templateData = await resolveEmailTemplateForContext(
-          EMAIL_CONTEXT.QUOTE_SEND
-        );
-        const settings = await getEmailSettings();
+        const [templateData, settings, mergeFields] = await Promise.all([
+          resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND),
+          getEmailSettings(),
+          getEmailMergeFieldsMap(),
+        ]);
 
         if (!templateData) {
           return json(
@@ -1760,40 +1766,57 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const quoteForEmail = (await getQuote(quote.id)) ?? quote;
 
         // 9. Render HTML + plain text via react-email registry
-        const { renderEmailTemplate, interpolateCopy, replaceGlobalPlaceholders } = await import("~/emails/render.server");
+        const {
+          renderEmailTemplate,
+          interpolateCopy,
+          interpolateTemplateString,
+        } = await import("~/emails/render.server");
         const props = {
           quoteNumber: quoteForEmail.quoteNumber,
           customerName: customer.displayName,
           total: quoteForEmail.total ?? "0.00",
           paymentLinkUrl: quoteForEmail.stripePaymentLinkUrl ?? undefined,
         };
-        
+
+        const stringProps: Record<string, string> = {
+          ...mergeFields,
+          quoteNumber: props.quoteNumber,
+          customerName: props.customerName,
+          total: props.total,
+          ...(props.paymentLinkUrl ? { paymentLinkUrl: props.paymentLinkUrl } : {}),
+        };
+
         let copy = undefined;
         if (templateData.template.bodyCopy) {
-          const stringProps: Record<string, string> = {
-            quoteNumber: props.quoteNumber,
-            customerName: props.customerName,
-            total: props.total,
-            default_signature: settings.defaultSignature,
-            default_footer: settings.defaultFooter,
-          };
-          if (props.paymentLinkUrl) {
-            stringProps.paymentLinkUrl = props.paymentLinkUrl;
-          }
-
           copy = interpolateCopy(
             templateData.template.bodyCopy as Record<string, string>,
-            stringProps
+            stringProps,
           );
         }
 
         let { html: rawHtml, text: textBody } = await renderEmailTemplate(
           templateData.layoutSlug,
-          { ...props, copy }
+          { ...props, copy },
         );
 
-        rawHtml = replaceGlobalPlaceholders(rawHtml, settings.defaultSignature, settings.defaultFooter);
-        textBody = replaceGlobalPlaceholders(textBody, settings.defaultSignature, settings.defaultFooter);
+        rawHtml = interpolateTemplateString(rawHtml, stringProps);
+        textBody = interpolateTemplateString(textBody, stringProps);
+
+        const subjectResolved = interpolateTemplateString(subject, stringProps);
+        const unresolvedInBody = [
+          ...(rawHtml.match(/\{\{\w+\}\}/g) ?? []),
+          ...(textBody.match(/\{\{\w+\}\}/g) ?? []),
+          ...(subjectResolved.match(/\{\{\w+\}\}/g) ?? []),
+        ];
+        if (unresolvedInBody.length > 0) {
+          const unique = [...new Set(unresolvedInBody)];
+          return json(
+            {
+              error: `Email contains unresolved placeholders: ${unique.join(", ")}`,
+            },
+            { status: 400 },
+          );
+        }
 
         // 10. Sanitize rendered HTML
         const { sanitizeEmailHtml } = await import("~/lib/email/sanitize.server");
@@ -1807,7 +1830,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             idempotencyKey,
             fromEmail,
             fromDisplayName,
-            subject,
+            subject: subjectResolved,
             toAddresses: [customer.email],
             ccAddresses: cc ? [cc] : undefined,
             replyTo: replyToEmail,

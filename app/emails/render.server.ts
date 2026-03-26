@@ -18,31 +18,33 @@ export async function renderEmailTemplate(
   return { html, text };
 }
 
-export function replaceGlobalPlaceholders(
-  content: string,
-  signature: string,
-  footer: string
-): string {
-  return content
-    .replace(/\{\{default_signature\}\}/g, signature)
-    .replace(/\{\{default_footer\}\}/g, footer);
-}
-
-export function interpolateSubject(
+/** Substitute `{{key}}` placeholders (matches `\w+` keys). */
+export function interpolateTemplateString(
   template: string,
-  props: Record<string, string>
+  props: Record<string, string>,
 ): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => props[key] ?? "");
 }
 
+/** Use interpolateTemplateString for non-subject strings; name kept for readability at call sites. */
+export function interpolateSubject(
+  template: string,
+  props: Record<string, string>,
+): string {
+  return interpolateTemplateString(template, props);
+}
+
 export function interpolateCopy<T extends Record<string, string>>(
   copy: T,
-  props: Record<string, string>
+  props: Record<string, string>,
 ): T {
   const result = { ...copy };
   for (const key in result) {
     if (typeof result[key] === "string") {
-      result[key] = interpolateSubject(result[key] as string, props) as T[Extract<keyof T, string>];
+      result[key] = interpolateTemplateString(
+        result[key] as string,
+        props,
+      ) as T[Extract<keyof T, string>];
     }
   }
   return result;

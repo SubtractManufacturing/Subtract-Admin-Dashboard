@@ -6,6 +6,9 @@ export interface QuoteSendCopy {
   totalLabel?: string;
   payNowButton?: string;
   signOff?: string;
+  /** Resolved snippet text (or placeholders—final pass substitutes HTML). */
+  signature?: string;
+  footer?: string;
 }
 
 export interface QuoteSendEmailProps {
@@ -26,6 +29,8 @@ export const QuoteSendEmail: React.FC<QuoteSendEmailProps> = ({
   const totalLabel = copy?.totalLabel || "Total:";
   const payNowButton = copy?.payNowButton || "Pay Now";
   const signOff = copy?.signOff || "Best regards,\nSubtract Manufacturing";
+  const signature = copy?.signature ?? "{{default_signature}}";
+  const footer = copy?.footer ?? "{{default_footer}}";
 
   // Simple interpolation for the component (though the server might pre-interpolate, it's safe to do it here too or assume it's pre-interpolated)
   // Actually, the plan says: "Interpolate each string in bodyCopy the same way if placeholders are used inside copy."
@@ -69,12 +74,11 @@ export const QuoteSendEmail: React.FC<QuoteSendEmailProps> = ({
           </React.Fragment>
         ))}
       </p>
-      {/* Global placeholders that the server will replace later */}
-      <div style={{ marginTop: "20px" }}>
-        {"{{default_signature}}"}
-      </div>
-      <div style={{ marginTop: "20px", fontSize: "12px", color: "#666" }}>
-        {"{{default_footer}}"}
+      <div style={{ marginTop: "20px", whiteSpace: "pre-wrap" }}>{signature}</div>
+      <div
+        style={{ marginTop: "20px", fontSize: "12px", color: "#666", whiteSpace: "pre-wrap" }}
+      >
+        {footer}
       </div>
     </div>
   );

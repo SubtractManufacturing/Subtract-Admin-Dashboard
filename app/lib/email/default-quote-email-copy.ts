@@ -5,4 +5,6 @@ export const DEFAULT_QUOTE_SEND_BODY_COPY: Record<string, string> = {
   totalLabel: "Total:",
   payNowButton: "Pay Now",
   signOff: "Best regards,\nSubtract Manufacturing",
+  signature: "{{default_signature}}",
+  footer: "{{default_footer}}",
 };

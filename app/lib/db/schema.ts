@@ -57,6 +57,11 @@ export const sentEmailSourceEnum = pgEnum("sent_email_source", [
   "system",
 ]);
 
+export const emailSettingKindEnum = pgEnum("email_setting_kind", [
+  "operational",
+  "merge",
+]);
+
 export const users = pgTable("users", {
   id: text("id").primaryKey(), // Will match Supabase auth.users.id
   name: text("name"),
@@ -714,6 +719,7 @@ export const emailSettings = pgTable("email_settings", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
   value: text("value"),
+  kind: emailSettingKindEnum("kind").default("operational").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   updatedBy: text("updated_by"),
 });

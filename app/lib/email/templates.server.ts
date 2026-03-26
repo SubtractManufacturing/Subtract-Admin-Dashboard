@@ -12,7 +12,10 @@ import {
 import type { EmailContextKey } from "./email-context-registry";
 
 export async function getEmailSettings() {
-  const settings = await db.select().from(emailSettings);
+  const settings = await db
+    .select()
+    .from(emailSettings)
+    .where(eq(emailSettings.kind, "operational"));
   const map = new Map<string, string>();
   for (const s of settings) {
     if (s.value !== null) {
@@ -22,9 +25,20 @@ export async function getEmailSettings() {
   return {
     outboundDelayMinutes: parseInt(map.get("outbound_delay_minutes") || "0", 10) || 0,
     recipientOverride: map.get("recipient_override") || null,
-    defaultSignature: map.get("default_signature") || "",
-    defaultFooter: map.get("default_footer") || "",
   };
+}
+
+/** Snippet / merge field values (kind = merge). */
+export async function getEmailMergeFieldsMap(): Promise<Record<string, string>> {
+  const rows = await db
+    .select()
+    .from(emailSettings)
+    .where(eq(emailSettings.kind, "merge"));
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.value !== null) map[row.key] = row.value;
+  }
+  return map;
 }
 
 export type ResolvedEmailTemplate = {
