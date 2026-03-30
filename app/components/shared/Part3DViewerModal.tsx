@@ -1,5 +1,6 @@
 import { Part3DViewer } from "~/components/shared/Part3DViewer";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { PartAssetAdminTrigger } from "~/components/admin/PartAssetAdminFlyout";
+import { useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import { useFetcher } from "@remix-run/react";
 import { useDownload } from "~/hooks/useDownload";
 
@@ -55,6 +56,10 @@ interface Part3DViewerModalProps {
   bananaEnabled?: boolean;
   /** URL to the banana mesh model */
   bananaModelUrl?: string;
+  /** Remix parent action URL for Ctrl+Shift part asset admin flyout (Admin/Dev) */
+  partAssetAdminAction?: string;
+  meshConversionStatus?: string | null;
+  meshConversionError?: string | null;
 }
 
 export function Part3DViewerModal({
@@ -76,6 +81,9 @@ export function Part3DViewerModal({
   entityType: propEntityType,
   bananaModelUrl,
   onRegenerateMesh,
+  partAssetAdminAction,
+  meshConversionStatus,
+  meshConversionError,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -597,8 +605,10 @@ export function Part3DViewerModal({
           </div>
         )}
 
-        {/* 3D Viewer Area - Full Height */}
-        <div className="w-full h-full">
+        {/* 3D Viewer Area - Full Height (Ctrl+Shift+click: part asset admin when enabled) */}
+        {(() => {
+          const viewerBody: ReactNode = (
+            <>
           {isProcessing ? (
             // Show processing state during upload/restore to prevent 404 on old mesh
             <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
@@ -701,7 +711,35 @@ export function Part3DViewerModal({
               })()}
             </div>
           )}
-        </div>
+            </>
+          );
+          const shell = (
+            <div className="w-full h-full">{viewerBody}</div>
+          );
+          if (
+            partAssetAdminAction &&
+            entityId &&
+            (entityType === "quote_part" || entityType === "part")
+          ) {
+            return (
+              <PartAssetAdminTrigger
+                action={partAssetAdminAction}
+                context={{
+                  surface: "cad3d",
+                  entity: entityType === "quote_part" ? "quote_part" : "part",
+                  id: entityId,
+                  partName,
+                  conversionStatus: meshConversionStatus,
+                  meshConversionError: meshConversionError ?? undefined,
+                  cadFileUrl,
+                }}
+              >
+                {shell}
+              </PartAssetAdminTrigger>
+            );
+          }
+          return shell;
+        })()}
       </div>
     </div>
   );

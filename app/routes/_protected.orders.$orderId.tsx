@@ -25,6 +25,7 @@ import {
   type AttachmentEventContext,
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import {
   isFeatureEnabled,
   FEATURE_FLAGS,
@@ -78,6 +79,7 @@ import { EventTimeline } from "~/components/EventTimeline";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import { AddLineItemModal } from "~/components/shared/AddLineItemModal";
 import { LineItemsSection } from "~/components/shared/LineItemsSection";
+import { usePartAssetAdminAccess } from "~/components/admin/PartAssetAdminFlyout";
 import {
   normalizeOrderLineItems,
   type NormalizedDrawing,
@@ -336,6 +338,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = formData.get("intent");
 
   try {
+    const partAssetAdminResponse = await tryPartAssetAdminAction(
+      formData,
+      {
+        type: "order",
+        orderId: order.id,
+        customerId: order.customerId,
+      },
+      { user: { id: user.id }, userDetails, headers }
+    );
+    if (partAssetAdminResponse) {
+      return partAssetAdminResponse;
+    }
+
     switch (intent) {
       case "getNotes": {
         const notes = await getNotes("order", order.id.toString());
@@ -1291,6 +1306,9 @@ export default function OrderDetails() {
     bananaEnabled,
     bananaModelUrl,
   } = useLoaderData<typeof loader>();
+  const partAssetAdminAction = usePartAssetAdminAccess()
+    ? `/orders/${order.orderNumber}`
+    : undefined;
   const revalidator = useRevalidator();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -1312,6 +1330,8 @@ export default function OrderDetails() {
     solidModelUrl?: string;
     thumbnailUrl?: string;
     cadFileUrl?: string;
+    meshConversionStatus?: string | null;
+    meshConversionError?: string | null;
   } | null>(null);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
   const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
@@ -1557,6 +1577,8 @@ export default function OrderDetails() {
     partMeshUrl?: string | null;
     partFileUrl?: string | null;
     thumbnailUrl?: string | null;
+    meshConversionStatus?: string | null;
+    meshConversionError?: string | null;
   }) => {
     if (part) {
       setSelectedPart3D({
@@ -1567,6 +1589,8 @@ export default function OrderDetails() {
         thumbnailUrl: part.thumbnailUrl || undefined,
         // partFileUrl is the original CAD file used for revisions
         cadFileUrl: part.partFileUrl || undefined,
+        meshConversionStatus: part.meshConversionStatus,
+        meshConversionError: part.meshConversionError,
       });
       setPart3DModalOpen(true);
     }
@@ -2294,6 +2318,7 @@ export default function OrderDetails() {
             onDrawingUpload={(partId, files) => handleDrawingUpload(partId, files)}
             onDrawingDelete={handleDeleteDrawing}
             drawingUploadingPartId={drawingUploadingPartId}
+            partAssetAdminAction={partAssetAdminAction}
             onView3DModel={(part: NormalizedPart) => {
               handleView3DModel({
                 id: part.id,
@@ -2301,6 +2326,8 @@ export default function OrderDetails() {
                 partMeshUrl: part.modelUrl || null,
                 partFileUrl: part.cadFileUrl || null,
                 thumbnailUrl: part.thumbnailUrl || null,
+                meshConversionStatus: part.conversionStatus,
+                meshConversionError: part.meshConversionError,
               });
             }}
             onViewDrawing={(drawing: NormalizedDrawing, partId: string) => {
@@ -2453,6 +2480,22 @@ export default function OrderDetails() {
               : undefined
           }
           isDeleting={drawingDeleteFetcher.state === "submitting"}
+          partAssetAdmin={
+            partAssetAdminAction &&
+            selectedFile.drawingId &&
+            selectedFile.partId
+              ? {
+                  action: partAssetAdminAction,
+                  context: {
+                    surface: "drawing",
+                    entity: "part",
+                    parentPartId: selectedFile.partId,
+                    drawingId: selectedFile.drawingId,
+                    fileName: selectedFile.fileName,
+                  },
+                }
+              : undefined
+          }
         />
       )}
 
@@ -2480,6 +2523,9 @@ export default function OrderDetails() {
           partId={selectedPart3D.partId}
           entityType="part"
           cadFileUrl={selectedPart3D.cadFileUrl}
+          partAssetAdminAction={partAssetAdminAction}
+          meshConversionStatus={selectedPart3D.meshConversionStatus}
+          meshConversionError={selectedPart3D.meshConversionError}
           canRevise={canRevise}
           onThumbnailUpdate={() => {
             revalidator.revalidate();

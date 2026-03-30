@@ -34,6 +34,7 @@ import {
   type AttachmentEventContext,
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import {
   canUserAccessPriceCalculator,
   canUserUploadCadRevision,
@@ -77,6 +78,7 @@ import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import FileViewerModal from "~/components/shared/FileViewerModal";
+import { usePartAssetAdminAccess } from "~/components/admin/PartAssetAdminFlyout";
 import Modal from "~/components/shared/Modal";
 import { Notes } from "~/components/shared/Notes";
 import { EventTimeline } from "~/components/EventTimeline";
@@ -738,6 +740,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = formData.get("intent");
 
   try {
+    const partAssetAdminResponse = await tryPartAssetAdminAction(
+      formData,
+      { type: "quote", quoteId: quote.id },
+      { user: { id: user.id }, userDetails, headers }
+    );
+    if (partAssetAdminResponse) {
+      return partAssetAdminResponse;
+    }
+
     switch (intent) {
       case "updateStatus": {
         const status = formData.get("status") as
@@ -1812,6 +1823,9 @@ export default function QuoteDetail() {
     bananaModelUrl,
     stripeEnabled,
   } = useLoaderData<typeof loader>();
+  const partAssetAdminAction = usePartAssetAdminAccess()
+    ? `/quotes/${quote.id}`
+    : undefined;
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
   const [isAddingNote, setIsAddingNote] = useState(false);
@@ -1885,6 +1899,8 @@ export default function QuoteDetail() {
     solidModelUrl?: string;
     cadFileUrl?: string;
     thumbnailUrl?: string;
+    conversionStatus?: string | null;
+    meshConversionError?: string | null;
   } | null>(null);
 
   // Granular locking for different sections
@@ -1992,6 +2008,7 @@ export default function QuoteDetail() {
           tolerance: string | null;
           finish: string | null;
           conversionStatus: string | null;
+          meshConversionError?: string | null;
           partFileUrl?: string | null;
           signedFileUrl?: string;
           signedMeshUrl?: string;
@@ -2046,6 +2063,8 @@ export default function QuoteDetail() {
     signedFileUrl?: string;
     signedThumbnailUrl?: string;
     partFileUrl?: string | null;
+    conversionStatus?: string | null;
+    meshConversionError?: string | null;
   }) => {
     // Open modal if mesh is available OR if CAD file is available (for download/revision)
     if (part.signedMeshUrl || part.signedFileUrl || part.partFileUrl) {
@@ -2057,6 +2076,8 @@ export default function QuoteDetail() {
         solidModelUrl: part.signedFileUrl,
         cadFileUrl: part.partFileUrl || part.signedFileUrl,
         thumbnailUrl: part.signedThumbnailUrl,
+        conversionStatus: part.conversionStatus,
+        meshConversionError: part.meshConversionError,
       });
       setPart3DModalOpen(true);
     }
@@ -3242,6 +3263,7 @@ export default function QuoteDetail() {
             onSaveAttribute={handleSaveQuotePartAttribute}
             onDrawingUpload={handleQuoteDrawingUpload}
             onDrawingDelete={handleQuoteDrawingDelete}
+            partAssetAdminAction={partAssetAdminAction}
             onView3DModel={(part: NormalizedPart) => {
               handleView3DModel({
                 id: part.id,
@@ -3250,6 +3272,8 @@ export default function QuoteDetail() {
                 signedFileUrl: part.solidModelUrl,
                 signedThumbnailUrl: part.thumbnailUrl,
                 partFileUrl: part.cadFileUrl,
+                conversionStatus: part.conversionStatus,
+                meshConversionError: part.meshConversionError,
               });
             }}
             onViewDrawing={(drawing: NormalizedDrawing, quotePartId: string) => {
@@ -3345,6 +3369,20 @@ export default function QuoteDetail() {
                   )
           }
           isDeleting={fetcher.state === "submitting"}
+          partAssetAdmin={
+            partAssetAdminAction
+              ? {
+                  action: partAssetAdminAction,
+                  context: {
+                    surface: "drawing",
+                    entity: "quote_part",
+                    parentPartId: selectedDrawing.quotePartId,
+                    drawingId: selectedDrawing.drawing.id,
+                    fileName: selectedDrawing.drawing.fileName,
+                  },
+                }
+              : undefined
+          }
         />
       )}
 
@@ -3368,6 +3406,9 @@ export default function QuoteDetail() {
           existingThumbnailUrl={selectedPart3D.thumbnailUrl}
           isQuotePart={true}
           cadFileUrl={selectedPart3D.cadFileUrl}
+          partAssetAdminAction={partAssetAdminAction}
+          meshConversionStatus={selectedPart3D.conversionStatus}
+          meshConversionError={selectedPart3D.meshConversionError}
           canRevise={canRevise}
           onRevisionComplete={() => {
             setPart3DModalOpen(false);
