@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   json,
   redirect,
@@ -21,7 +21,6 @@ import {
   type EmailIdentity,
   type EmailTemplate,
 } from "~/lib/db/schema";
-import { DEFAULT_QUOTE_SEND_BODY_COPY } from "~/lib/email/default-quote-email-copy";
 import {
   EMAIL_CONTEXTS,
   isEmailContextKey,
@@ -34,10 +33,19 @@ import {
 import { normalizeEmailSnippetKeyInput } from "~/lib/email/email-merge-snippet-key-normalizer";
 import { templatesReferencingSnippetKey } from "~/lib/email/email-merge-snippet-template-references";
 import { findConflictingTemplateForContextKey } from "~/lib/email/templates.server";
-import { isOutboundEmailEnabled } from "~/lib/featureFlags";
 import {
+  isExampleEmailLayoutsEnabled,
+  isOutboundEmailEnabled,
+} from "~/lib/featureFlags";
+import type { EmailLayoutDefinition } from "~/emails/layout-definition";
+import {
+  getDefaultBodyCopyForLayout,
+  getLayoutDefinition,
+  getSelectableEmailLayoutSlugs,
   isRegisteredEmailLayoutSlug,
-  REGISTERED_EMAIL_LAYOUT_SLUGS,
+  isSelectableEmailLayoutSlug,
+  parseBodyCopyForLayout,
+  type TemplateSlug,
 } from "~/emails/registry";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -60,22 +68,24 @@ const SNIPPET_CONTEXT_COLLISION_KEYS = new Set([
 
 const SNIPPET_KEY_RE = /^[a-zA-Z]\w*$/;
 
-function parseBodyCopyJson(raw: string): Record<string, string> | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
+function bodyCopyFromFormData(
+  formData: FormData,
+  definition: EmailLayoutDefinition,
+): Record<string, unknown> {
+  const obj: Record<string, unknown> = {};
+  for (const slot of definition.slots) {
+    if (slot.type === "button") {
+      obj[slot.id] = {
+        buttonLabel: String(
+          formData.get(`slot.${slot.id}.buttonLabel`) ?? "",
+        ),
+        link: String(formData.get(`slot.${slot.id}.link`) ?? ""),
+      };
+    } else {
+      obj[slot.id] = String(formData.get(`slot.${slot.id}`) ?? "");
     }
-    const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(
-      parsed as Record<string, unknown>,
-    )) {
-      if (typeof value === "string") result[key] = value;
-    }
-    return result;
-  } catch {
-    return null;
   }
+  return obj;
 }
 
 function normalizeContextKey(
@@ -100,7 +110,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return withAuthHeaders(redirect("/admin"), headers);
   }
 
-  const [settingsRows, snippetsRows, identities, templates] =
+  const [settingsRows, snippetsRows, identities, templates, exampleEmailLayoutsEnabled] =
     await Promise.all([
       db
         .select()
@@ -115,6 +125,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         .select()
         .from(emailTemplates)
         .where(eq(emailTemplates.isArchived, false)),
+      isExampleEmailLayoutsEnabled(),
     ]);
 
   const settingsMap = new Map<string, string>();
@@ -137,6 +148,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       identities,
       templates,
       allowedDomains: getAllowedEmailDomains(),
+      exampleEmailLayoutsEnabled,
     }),
     headers,
   );
@@ -557,7 +569,7 @@ export async function action({ request }: ActionFunctionArgs) {
       10,
     );
     const subjectTemplate = (formData.get("subjectTemplate") as string)?.trim();
-    const bodyCopyRaw = (formData.get("bodyCopyJson") as string) ?? "";
+    const exampleEmailLayoutsEnabled = await isExampleEmailLayoutsEnabled();
 
     if (intent === "createTemplate" && !slug && name) {
       slug = name
@@ -587,12 +599,6 @@ export async function action({ request }: ActionFunctionArgs) {
         headers,
       );
     }
-    if (isNaN(emailIdentityId)) {
-      return withAuthHeaders(
-        json({ error: "Select a sender identity." }, { status: 400 }),
-        headers,
-      );
-    }
 
     if (intent === "createTemplate") {
       if (!slug || !SLUG_RE.test(slug)) {
@@ -610,6 +616,57 @@ export async function action({ request }: ActionFunctionArgs) {
     } else if (!id || isNaN(id)) {
       return withAuthHeaders(
         json({ error: "Invalid template." }, { status: 400 }),
+        headers,
+      );
+    }
+
+    let existingLayoutSlug: string | null = null;
+    if (intent === "updateTemplate") {
+      const [existingRow] = await db
+        .select({ layoutSlug: emailTemplates.layoutSlug })
+        .from(emailTemplates)
+        .where(
+          and(
+            eq(emailTemplates.id, id!),
+            eq(emailTemplates.isArchived, false),
+          ),
+        )
+        .limit(1);
+      if (!existingRow) {
+        return withAuthHeaders(
+          json({ error: "Template not found." }, { status: 404 }),
+          headers,
+        );
+      }
+      existingLayoutSlug = existingRow.layoutSlug;
+    }
+
+    if (intent === "createTemplate") {
+      if (!isSelectableEmailLayoutSlug(layoutSlug, exampleEmailLayoutsEnabled)) {
+        return withAuthHeaders(
+          json(
+            { error: "This layout is not available for new templates." },
+            { status: 400 },
+          ),
+          headers,
+        );
+      }
+    } else if (
+      !isSelectableEmailLayoutSlug(layoutSlug, exampleEmailLayoutsEnabled) &&
+      layoutSlug !== existingLayoutSlug
+    ) {
+      return withAuthHeaders(
+        json(
+          { error: "This layout is not available for this template." },
+          { status: 400 },
+        ),
+        headers,
+      );
+    }
+
+    if (isNaN(emailIdentityId)) {
+      return withAuthHeaders(
+        json({ error: "Select a sender identity." }, { status: 400 }),
         headers,
       );
     }
@@ -647,23 +704,31 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    const bodyCopy =
-      parseBodyCopyJson(bodyCopyRaw) ??
-      (layoutSlug === "quote-send"
-        ? { ...DEFAULT_QUOTE_SEND_BODY_COPY }
-        : null);
-    if (!bodyCopy || Object.keys(bodyCopy).length === 0) {
+    const layoutDef = getLayoutDefinition(layoutSlug);
+    const rawBody = bodyCopyFromFormData(formData, layoutDef);
+    const bodyParsed = parseBodyCopyForLayout(
+      layoutSlug,
+      rawBody,
+    );
+    if (!bodyParsed.ok) {
+      const mergedErrors = { ...bodyParsed.errors };
+      const message =
+        mergedErrors._root ??
+        Object.values(mergedErrors)[0] ??
+        "Invalid template body fields.";
+      delete mergedErrors._root;
       return withAuthHeaders(
         json(
           {
-            error:
-              "Body copy must be a non-empty JSON object with string values.",
+            error: message,
+            slotErrors: mergedErrors,
           },
           { status: 400 },
         ),
         headers,
       );
     }
+    const bodyCopy = bodyParsed.data;
 
     try {
       if (intent === "createTemplate") {
@@ -741,9 +806,19 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function AdminEmail() {
-  const { settings, snippets, identities, templates, allowedDomains } =
-    useLoaderData<typeof loader>();
-  const fetcher = useFetcher<{ success?: boolean; error?: string }>();
+  const {
+    settings,
+    snippets,
+    identities,
+    templates,
+    allowedDomains,
+    exampleEmailLayoutsEnabled,
+  } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+    slotErrors?: Record<string, string>;
+  }>();
   const revalidator = useRevalidator();
   const isSaving = fetcher.state !== "idle";
 
@@ -764,6 +839,8 @@ export default function AdminEmail() {
   const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(
     null,
   );
+  const [templateLayoutSlug, setTemplateLayoutSlug] =
+    useState<TemplateSlug>("quote-send");
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success) {
@@ -776,6 +853,15 @@ export default function AdminEmail() {
       setEditingTemplate(null);
     }
   }, [fetcher.state, fetcher.data, revalidator]);
+
+  useEffect(() => {
+    if (!templateModalOpen) {
+      return;
+    }
+    const raw = editingTemplate?.layoutSlug ?? "quote-send";
+    const slug = isRegisteredEmailLayoutSlug(raw) ? raw : "quote-send";
+    setTemplateLayoutSlug(slug);
+  }, [templateModalOpen, editingTemplate]);
 
   useEffect(() => {
     if (!snippetModalOpen) {
@@ -813,10 +899,43 @@ export default function AdminEmail() {
         keys: ["name", "slug", "layoutSlug", "contextKey", "subjectTemplate"],
       })
     : templates;
-  const defaultBodyCopyJson = JSON.stringify(
-    DEFAULT_QUOTE_SEND_BODY_COPY,
-    null,
-    2,
+  const templateSlotInitial = useMemo(() => {
+    if (!templateModalOpen) {
+      return null;
+    }
+    const slug = templateLayoutSlug;
+    if (
+      editingTemplate &&
+      isRegisteredEmailLayoutSlug(editingTemplate.layoutSlug) &&
+      editingTemplate.layoutSlug === slug
+    ) {
+      const parsed = parseBodyCopyForLayout(
+        editingTemplate.layoutSlug,
+        editingTemplate.bodyCopy ?? {},
+      );
+      if (parsed.ok) {
+        return parsed.data as Record<string, unknown>;
+      }
+    }
+    return getDefaultBodyCopyForLayout(slug) as Record<string, unknown>;
+  }, [templateModalOpen, templateLayoutSlug, editingTemplate]);
+
+  const templateLayoutOptions = useMemo((): TemplateSlug[] => {
+    const base = [...getSelectableEmailLayoutSlugs(exampleEmailLayoutsEnabled)];
+    const cur = editingTemplate?.layoutSlug;
+    if (
+      cur &&
+      isRegisteredEmailLayoutSlug(cur) &&
+      !base.includes(cur)
+    ) {
+      return [cur, ...base];
+    }
+    return base;
+  }, [editingTemplate, exampleEmailLayoutsEnabled]);
+
+  const templateLayoutDefinition = useMemo(
+    () => getLayoutDefinition(templateLayoutSlug),
+    [templateLayoutSlug],
   );
 
   const pencilIcon = (
@@ -1230,6 +1349,7 @@ export default function AdminEmail() {
                   aria-label="Add email template"
                   onClick={() => {
                     setEditingTemplate(null);
+                    setTemplateLayoutSlug("quote-send");
                     setTemplateModalOpen(true);
                   }}
                 />
@@ -1633,7 +1753,7 @@ export default function AdminEmail() {
         )}
         <fetcher.Form
           method="post"
-          key={editingTemplate?.id ?? "new-template"}
+          key={`tpl-${editingTemplate?.id ?? "new"}-${templateLayoutSlug}`}
           className="space-y-4"
         >
           <input
@@ -1678,15 +1798,39 @@ export default function AdminEmail() {
               <label className={labelClass}>Layout</label>
               <select
                 name="layoutSlug"
-                defaultValue={editingTemplate?.layoutSlug ?? "quote-send"}
+                value={templateLayoutSlug}
                 className={inputClass}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (!isRegisteredEmailLayoutSlug(next)) {
+                    return;
+                  }
+                  if (next === templateLayoutSlug) {
+                    return;
+                  }
+                  if (
+                    !window.confirm(
+                      "Switch layout? This will discard the current body copy and load defaults for the new layout.",
+                    )
+                  ) {
+                    return;
+                  }
+                  setTemplateLayoutSlug(next);
+                }}
               >
-                {REGISTERED_EMAIL_LAYOUT_SLUGS.map((layout) => (
+                {templateLayoutOptions.map((layout) => (
                   <option key={layout} value={layout}>
                     {layout}
                   </option>
                 ))}
               </select>
+              {!exampleEmailLayoutsEnabled ? (
+                <p className={helperClass}>
+                  Example layouts are hidden. Users with the Dev role can enable
+                  &quot;Show Example Email Layouts (Admin)&quot; under Settings →
+                  Developer → Developer Feature Flags, then save.
+                </p>
+              ) : null}
             </div>
             <div>
               <label className={labelClass}>Sender Identity</label>
@@ -1739,22 +1883,77 @@ export default function AdminEmail() {
             />
           </div>
 
-          <div>
-            <label className={labelClass}>Body Copy (JSON)</label>
-            <textarea
-              name="bodyCopyJson"
-              rows={8}
-              defaultValue={
-                editingTemplate
-                  ? JSON.stringify(editingTemplate.bodyCopy, null, 2)
-                  : defaultBodyCopyJson
-              }
-              className={`${inputClass} font-mono text-xs`}
-            />
-            <p className={helperClass}>
-              JSON object with string values for each content block.
-            </p>
-          </div>
+          {templateSlotInitial
+            ? templateLayoutDefinition.slots.map((slot) => {
+                const initial = templateSlotInitial[slot.id];
+                const slotErr = fetcher.data?.slotErrors?.[slot.id];
+                return (
+                  <div key={slot.id}>
+                    <label className={labelClass}>{slot.adminLabel}</label>
+                    {slot.adminHelpText ? (
+                      <p className={helperClass}>{slot.adminHelpText}</p>
+                    ) : null}
+                    {slot.type === "button" ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">
+                            Label
+                          </span>
+                          <input
+                            name={`slot.${slot.id}.buttonLabel`}
+                            defaultValue={
+                              initial &&
+                              typeof initial === "object" &&
+                              initial !== null &&
+                              "buttonLabel" in initial
+                                ? String(
+                                    (initial as { buttonLabel?: unknown })
+                                      .buttonLabel ?? "",
+                                  )
+                                : ""
+                            }
+                            className={inputClass}
+                          />
+                        </div>
+                        <div>
+                          <span className="mb-1 block text-xs text-gray-500 dark:text-gray-400">
+                            Link
+                          </span>
+                          <input
+                            name={`slot.${slot.id}.link`}
+                            defaultValue={
+                              initial &&
+                              typeof initial === "object" &&
+                              initial !== null &&
+                              "link" in initial
+                                ? String(
+                                    (initial as { link?: unknown }).link ?? "",
+                                  )
+                                : ""
+                            }
+                            className={inputClass}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <textarea
+                        name={`slot.${slot.id}`}
+                        rows={slot.type === "markdown" ? 6 : 3}
+                        defaultValue={
+                          typeof initial === "string" ? initial : ""
+                        }
+                        className={inputClass}
+                      />
+                    )}
+                    {slotErr ? (
+                      <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                        {slotErr}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })
+            : null}
 
           <div className="flex justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-600">
             <Button

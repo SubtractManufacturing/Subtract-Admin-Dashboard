@@ -22,6 +22,11 @@ export const FEATURE_FLAGS = {
   STRIPE_PAYMENT_LINKS: "stripe_payment_links",
   /** Global email sending toggle for app-controlled outbound email flows. */
   OUTBOUND_EMAIL_ENABLED: "outbound_email_enabled",
+  /**
+   * When enabled (Dev settings), example email layouts (e.g. kitchen sink) appear
+   * in Admin → Email and may be assigned to new templates.
+   */
+  EMAIL_EXAMPLE_LAYOUTS_DEV: "email_example_layouts_dev",
 } as const;
 
 // Default feature flags with their metadata
@@ -140,6 +145,13 @@ const DEFAULT_FLAGS: Array<
     name: "Enable Email Sending",
     description:
       "Allow app-controlled outbound email sending. Disable to hide email-send UI and block send execution.",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.EMAIL_EXAMPLE_LAYOUTS_DEV,
+    name: "Show Example Email Layouts (Admin)",
+    description:
+      "Developer-only: list example email layouts (e.g. example-kitchen-sink) in Admin → Email when creating or editing templates.",
     enabled: false,
   },
 ];
@@ -319,6 +331,11 @@ export async function isStripePaymentLinksEnabled(): Promise<boolean> {
 
 export async function isOutboundEmailEnabled(): Promise<boolean> {
   return isFeatureEnabled(FEATURE_FLAGS.OUTBOUND_EMAIL_ENABLED);
+}
+
+/** Example / playground email layouts in Admin → Email (Developer feature flag). */
+export async function isExampleEmailLayoutsEnabled(): Promise<boolean> {
+  return isFeatureEnabled(FEATURE_FLAGS.EMAIL_EXAMPLE_LAYOUTS_DEV);
 }
 
 export async function pruneStaleFeatureFlags(): Promise<string[]> {

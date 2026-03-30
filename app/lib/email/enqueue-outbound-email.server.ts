@@ -12,7 +12,7 @@ import {
   resolveEmailTemplateForContext,
 } from "~/lib/email/templates.server";
 import {
-  interpolateCopy,
+  interpolateLayoutCopy,
   interpolateTemplateString,
   renderEmailTemplate,
 } from "~/emails/render.server";
@@ -25,7 +25,13 @@ import {
 } from "~/lib/email/email-context-registry";
 import { sendEmailJob } from "~/lib/queue/producer.server";
 import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
-import type { EmailTemplateProps } from "~/emails/registry";
+import { validateInterpolatedButtonLinksInCopy } from "~/emails/layout-definition";
+import {
+  getLayoutDefinition,
+  type PropsBySlug,
+  type TemplateSlug,
+  parseBodyCopyForLayout,
+} from "~/emails/registry";
 
 const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ENTITY_THROTTLE_WINDOW_MS = 60_000;
@@ -40,6 +46,31 @@ const ENTITY_TYPES: readonly SentEmailEntityType[] = [
 
 function isSentEmailEntityType(x: string): x is SentEmailEntityType {
   return (ENTITY_TYPES as readonly string[]).includes(x);
+}
+
+function buildEmailLayoutProps(
+  layoutSlug: TemplateSlug,
+  copy: unknown,
+  stringProps: Record<string, string>,
+): PropsBySlug[TemplateSlug] {
+  if (layoutSlug === "quote-send") {
+    return {
+      quoteNumber: stringProps.quoteNumber,
+      customerName: stringProps.customerName,
+      total: stringProps.total,
+      ...(stringProps.paymentLinkUrl
+        ? { paymentLinkUrl: stringProps.paymentLinkUrl }
+        : {}),
+      copy: copy as PropsBySlug["quote-send"]["copy"],
+    };
+  }
+  if (layoutSlug === "example-kitchen-sink") {
+    return {
+      copy: copy as PropsBySlug["example-kitchen-sink"]["copy"],
+    };
+  }
+  const _exhaustive: never = layoutSlug;
+  return _exhaustive;
 }
 
 function fail(
@@ -221,26 +252,39 @@ export async function enqueueOutboundUserEmail(
     ...mergeProps,
   };
 
-  let copy: Record<string, string> | undefined;
-  if (templateData.template.bodyCopy) {
-    copy = interpolateCopy(
-      templateData.template.bodyCopy as Record<string, string>,
-      stringProps,
+  const layoutSlug = templateData.layoutSlug;
+  const bodyParse = parseBodyCopyForLayout(
+    layoutSlug,
+    templateData.template.bodyCopy ?? {},
+  );
+  if (!bodyParse.ok) {
+    const detail = Object.entries(bodyParse.errors)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("; ");
+    return fail(
+      400,
+      `Email template body is invalid. Fix it in Admin → Email. ${detail}`,
     );
   }
 
-  const props: EmailTemplateProps = {
-    quoteNumber: stringProps.quoteNumber,
-    customerName: stringProps.customerName,
-    total: stringProps.total,
-    ...(stringProps.paymentLinkUrl
-      ? { paymentLinkUrl: stringProps.paymentLinkUrl }
-      : {}),
-    ...(copy ? { copy } : {}),
-  };
+  const interpolatedCopy = interpolateLayoutCopy(bodyParse.data, stringProps);
+
+  const linkPolicyError = validateInterpolatedButtonLinksInCopy(
+    getLayoutDefinition(layoutSlug),
+    interpolatedCopy as Record<string, unknown>,
+  );
+  if (linkPolicyError) {
+    return fail(400, linkPolicyError);
+  }
+
+  const props = buildEmailLayoutProps(
+    layoutSlug,
+    interpolatedCopy,
+    stringProps,
+  );
 
   let { html: rawHtml, text: textBody } = await renderEmailTemplate(
-    templateData.layoutSlug,
+    layoutSlug,
     props,
   );
 

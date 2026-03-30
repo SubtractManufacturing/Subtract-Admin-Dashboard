@@ -16,12 +16,30 @@ export function textHasExactSnippetPlaceholder(
   return new RegExp(`\\{\\{${key}\\}\\}`).test(text);
 }
 
+function bodyFieldReferencesSnippet(
+  value: unknown,
+  key: string,
+): boolean {
+  if (typeof value === "string") {
+    return textHasExactSnippetPlaceholder(value, key);
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    for (const v of Object.values(o)) {
+      if (typeof v === "string" && textHasExactSnippetPlaceholder(v, key)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Finds active templates that currently reference a merge snippet key.
  *
  * We check:
  * - `subjectTemplate`, and
- * - string fields inside `bodyCopy`
+ * - string values and nested button strings inside `bodyCopy`
  *
  * This helper is shared by:
  * - UI logic (to lock snippet renaming and show where it is used), and
@@ -36,12 +54,12 @@ export function templatesReferencingSnippetKey(
       return true;
     }
 
-    const bodyCopy = template.bodyCopy as Record<string, unknown>;
+    const bodyCopy = template.bodyCopy as Record<string, unknown> | null;
+    if (!bodyCopy || typeof bodyCopy !== "object") {
+      return false;
+    }
     for (const value of Object.values(bodyCopy)) {
-      if (
-        typeof value === "string" &&
-        textHasExactSnippetPlaceholder(value, key)
-      ) {
+      if (bodyFieldReferencesSnippet(value, key)) {
         return true;
       }
     }

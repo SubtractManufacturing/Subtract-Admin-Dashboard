@@ -1,18 +1,20 @@
 import { render } from "@react-email/render";
 import {
   emailTemplateRegistry,
+  type PropsBySlug,
   type TemplateSlug,
-  type EmailTemplateProps,
 } from "./registry";
 import React from "react";
 
-export async function renderEmailTemplate(
-  slug: TemplateSlug,
-  props: EmailTemplateProps
+export async function renderEmailTemplate<K extends TemplateSlug>(
+  slug: K,
+  props: PropsBySlug[K],
 ): Promise<{ html: string; text: string }> {
   const { component: Component } = emailTemplateRegistry[slug];
-  // render expects a React element
-  const element = React.createElement(Component, props);
+  const element = React.createElement(
+    Component as React.ComponentType<Record<string, unknown>>,
+    props as Record<string, unknown>,
+  );
   const html = await render(element);
   const text = await render(element, { plainText: true });
   return { html, text };
@@ -34,18 +36,30 @@ export function interpolateSubject(
   return interpolateTemplateString(template, props);
 }
 
-export function interpolateCopy<T extends Record<string, string>>(
+export function interpolateLayoutCopy<T extends Record<string, unknown>>(
   copy: T,
   props: Record<string, string>,
 ): T {
-  const result = { ...copy };
-  for (const key in result) {
-    if (typeof result[key] === "string") {
-      result[key] = interpolateTemplateString(
-        result[key] as string,
-        props,
-      ) as T[Extract<keyof T, string>];
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(copy)) {
+    if (typeof value === "string") {
+      out[key] = interpolateTemplateString(value, props);
+      continue;
     }
+    if (
+      value &&
+      typeof value === "object" &&
+      "buttonLabel" in value &&
+      "link" in value
+    ) {
+      const button = value as { buttonLabel: string; link: string };
+      out[key] = {
+        buttonLabel: interpolateTemplateString(button.buttonLabel, props),
+        link: interpolateTemplateString(button.link, props),
+      };
+      continue;
+    }
+    out[key] = value;
   }
-  return result;
+  return out as T;
 }

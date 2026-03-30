@@ -1,4 +1,5 @@
-import { QuoteSendEmail as QuoteEmailTemplate } from "~/emails/templates/quote-send";
+import { QuoteSendEmail as QuoteEmailTemplate } from "~/emails/layouts/quote-send";
+import { getDefaultBodyCopyForLayout } from "~/emails/registry";
 import SendEmailModal from "~/components/email/SendEmailModal";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
 
@@ -66,6 +67,7 @@ export default function SendQuoteEmailModal({
           customerName={customer?.displayName || "Customer"}
           total={quote.total || "0.00"}
           paymentLinkUrl={quote.stripePaymentLinkUrl ?? undefined}
+          copy={getDefaultBodyCopyForLayout("quote-send")}
         />
       }
     />
