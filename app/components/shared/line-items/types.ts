@@ -21,6 +21,7 @@ export interface NormalizedPart {
   solidModelUrl?: string;
   cadFileUrl?: string;
   conversionStatus?: string;
+  meshConversionError?: string | null;
 }
 
 export interface NormalizedLineItem {
@@ -61,6 +62,7 @@ type QuotePartInput = {
   tolerance: string | null;
   finish: string | null;
   conversionStatus: string | null;
+  meshConversionError?: string | null;
   partFileUrl?: string | null;
   signedFileUrl?: string;
   signedMeshUrl?: string;
@@ -99,6 +101,7 @@ export function normalizeOrderLineItems(
           solidModelUrl: part.partFileUrl || undefined,
           cadFileUrl: part.partFileUrl || undefined,
           conversionStatus: part.meshConversionStatus || undefined,
+          meshConversionError: part.meshConversionError ?? undefined,
         }
       : undefined,
   }));
@@ -138,6 +141,7 @@ export function normalizeQuoteLineItems(
             solidModelUrl: part.signedFileUrl || undefined,
             cadFileUrl: part.partFileUrl || part.signedFileUrl || undefined,
             conversionStatus: part.conversionStatus || undefined,
+            meshConversionError: part.meshConversionError ?? undefined,
           }
         : undefined,
     };

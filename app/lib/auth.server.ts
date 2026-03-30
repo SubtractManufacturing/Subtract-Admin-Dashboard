@@ -79,6 +79,11 @@ export async function getOptionalAuth(request: Request) {
   return { user, userDetails, supabase, headers };
 }
 
+/** Part asset admin flyout: mesh / CAD history / drawings — Admin and Dev only, no feature flags */
+export function canUsePartAssetAdmin(role?: string | null): boolean {
+  return role === "Admin" || role === "Dev";
+}
+
 // Helper to merge response headers with auth headers
 export function withAuthHeaders(response: Response, headers: Headers): Response {
   headers.forEach((value, key) => {

@@ -451,7 +451,7 @@ export async function deleteQuotePartMesh(
   quotePartId: string,
   userId: string,
   userEmail: string,
-  reason: "revision" | "restore"
+  reason: "revision" | "restore" | "admin"
 ): Promise<void> {
   // Get current mesh and thumbnail URLs
   const [quotePart] = await db

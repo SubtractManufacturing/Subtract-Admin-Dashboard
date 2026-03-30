@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from "react";
+import { PartAssetAdminTrigger } from "~/components/admin/PartAssetAdminFlyout";
 import { IconButton } from "~/components/shared/IconButton";
 import type {
   NormalizedDrawing,
@@ -47,6 +48,8 @@ interface LineItemRowProps {
   onDrawingDelete?: (drawingId: string, partId: string) => void;
   isDrawingUploading?: boolean;
   extraActions?: ReactNode;
+  /** Remix action URL for part asset admin (e.g. /quotes/1). Omit to disable flyout. */
+  partAssetAdminAction?: string;
 }
 
 function formatCurrency(value: string | undefined) {
@@ -85,11 +88,52 @@ export function LineItemRow({
   onDrawingDelete,
   isDrawingUploading,
   extraActions,
+  partAssetAdminAction,
 }: LineItemRowProps) {
   const drawingInputRef = useRef<HTMLInputElement>(null);
   const part = item.part;
   const rowTotal = (item.quantity || 0) * parseFloat(item.unitPrice || "0");
   const totalColumns = showActions ? 7 : 6;
+  const partAssetEntity = entityType === "quote" ? "quote_part" : "part";
+
+  const wrapCadAdmin = (node: ReactNode) => {
+    if (!part || !partAssetAdminAction) return node;
+    return (
+      <PartAssetAdminTrigger
+        action={partAssetAdminAction}
+        context={{
+          surface: "cad3d",
+          entity: partAssetEntity,
+          id: part.id,
+          partName: part.partName,
+          conversionStatus: part.conversionStatus,
+          meshConversionError: part.meshConversionError,
+          cadFileUrl: part.cadFileUrl,
+          onOpen3DViewer: () => onView3DModel(part),
+        }}
+      >
+        {node}
+      </PartAssetAdminTrigger>
+    );
+  };
+
+  const wrapDrawingAdmin = (node: ReactNode, drawing: NormalizedDrawing) => {
+    if (!part || !partAssetAdminAction) return node;
+    return (
+      <PartAssetAdminTrigger
+        action={partAssetAdminAction}
+        context={{
+          surface: "drawing",
+          entity: partAssetEntity,
+          parentPartId: part.id,
+          drawingId: drawing.id,
+          fileName: drawing.fileName,
+        }}
+      >
+        {node}
+      </PartAssetAdminTrigger>
+    );
+  };
 
   const isPartProcessing = part
     ? part.conversionStatus === "in_progress" ||
@@ -121,89 +165,98 @@ export function LineItemRow({
           <div className="flex items-start gap-3 h-full">
             {part ? (
               part.thumbnailUrl ? (
-                <button
-                  onClick={() => onView3DModel(part)}
-                  className={`${
-                    showSpecs ? "h-20 w-20" : "h-10 w-10"
-                  } p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all flex-shrink-0`}
-                  title="Click to view 3D model"
-                  type="button"
-                >
-                  <img
-                    src={part.thumbnailUrl}
-                    alt={`${part.partName || item.name} thumbnail`}
-                    className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
-                  />
-                </button>
-              ) : isPartProcessing ? (
-                <div
-                  className={`${
-                    showSpecs ? "h-20 w-20" : "h-10 w-10"
-                  } border-2 border-gray-300 dark:border-gray-600 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0`}
-                  title="Processing 3D model..."
-                >
-                  <div
-                    className={`animate-spin rounded-full ${
-                      showSpecs ? "h-6 w-6" : "h-4 w-4"
-                    } border-b-2 border-blue-600`}
-                  ></div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => onView3DModel(part)}
-                  className={`${
-                    showSpecs ? "h-20 w-20" : "h-10 w-10"
-                  } bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0`}
-                  title="Click to view 3D model"
-                  type="button"
-                >
-                  <svg
-                    className={`${showSpecs ? "h-6 w-6" : "h-5 w-5"} text-gray-400 dark:text-gray-500`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+                wrapCadAdmin(
+                  <button
+                    onClick={() => onView3DModel(part)}
+                    className={`${
+                      showSpecs ? "h-20 w-20" : "h-10 w-10"
+                    } p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all flex-shrink-0`}
+                    title="Click to view 3D model"
+                    type="button"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                    <img
+                      src={part.thumbnailUrl}
+                      alt={`${part.partName || item.name} thumbnail`}
+                      className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
                     />
-                  </svg>
-                </button>
+                  </button>
+                )
+              ) : isPartProcessing ? (
+                wrapCadAdmin(
+                  <div
+                    className={`${
+                      showSpecs ? "h-20 w-20" : "h-10 w-10"
+                    } border-2 border-gray-300 dark:border-gray-600 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0`}
+                    title="Processing 3D model..."
+                  >
+                    <div
+                      className={`animate-spin rounded-full ${
+                        showSpecs ? "h-6 w-6" : "h-4 w-4"
+                      } border-b-2 border-blue-600`}
+                    ></div>
+                  </div>
+                )
+              ) : (
+                wrapCadAdmin(
+                  <button
+                    onClick={() => onView3DModel(part)}
+                    className={`${
+                      showSpecs ? "h-20 w-20" : "h-10 w-10"
+                    } bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0`}
+                    title="Click to view 3D model"
+                    type="button"
+                  >
+                    <svg
+                      className={`${showSpecs ? "h-6 w-6" : "h-5 w-5"} text-gray-400 dark:text-gray-500`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </button>
+                )
               )
             ) : null}
 
             {part ? (
               part.drawings.length > 0 ? (
-                <button
-                  onClick={() => onViewDrawing(part.drawings[0], part.id)}
-                  className={`relative ${
-                    showSpecs ? "h-20 w-20" : "h-10 w-10"
-                  } border-2 border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden hover:border-blue-500 transition-colors bg-white dark:bg-gray-700 flex items-center justify-center flex-shrink-0`}
-                  title="View drawing"
-                  type="button"
-                >
-                  {part.drawings[0].contentType?.startsWith("image/") ||
-                  part.drawings[0].thumbnailSignedUrl ? (
-                    <img
-                      src={
-                        part.drawings[0].contentType?.startsWith("image/")
-                          ? part.drawings[0].signedUrl
-                          : part.drawings[0].thumbnailSignedUrl || part.drawings[0].signedUrl
-                      }
-                      alt="Drawing thumbnail"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-xs text-red-500 font-bold">PDF</span>
-                  )}
-                  {part.drawings.length > 1 && (
-                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">
-                      {part.drawings.length}
-                    </span>
-                  )}
-                </button>
+                wrapDrawingAdmin(
+                  <button
+                    onClick={() => onViewDrawing(part.drawings[0], part.id)}
+                    className={`relative ${
+                      showSpecs ? "h-20 w-20" : "h-10 w-10"
+                    } border-2 border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden hover:border-blue-500 transition-colors bg-white dark:bg-gray-700 flex items-center justify-center flex-shrink-0`}
+                    title="View drawing"
+                    type="button"
+                  >
+                    {part.drawings[0].contentType?.startsWith("image/") ||
+                    part.drawings[0].thumbnailSignedUrl ? (
+                      <img
+                        src={
+                          part.drawings[0].contentType?.startsWith("image/")
+                            ? part.drawings[0].signedUrl
+                            : part.drawings[0].thumbnailSignedUrl || part.drawings[0].signedUrl
+                        }
+                        alt="Drawing thumbnail"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-xs text-red-500 font-bold">PDF</span>
+                    )}
+                    {part.drawings.length > 1 && (
+                      <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                        {part.drawings.length}
+                      </span>
+                    )}
+                  </button>,
+                  part.drawings[0]
+                )
               ) : readOnly ? null : isDrawingUploading ? (
                 <div
                   className={`${
