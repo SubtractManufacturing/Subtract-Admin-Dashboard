@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.10](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.9...v1.3.10) (2026-03-30)
+
+
+### Bug Fixes
+
+* add admin flyout for modifying part files, thumbnails, and mesh generation ([8b5222c](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/8b5222c7720b372d043504345fb155c4eb43d706))
+
 ## [1.3.9](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.8...v1.3.9) (2026-03-19)
 
 
