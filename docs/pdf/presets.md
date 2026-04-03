@@ -57,16 +57,6 @@ Template files declare a **const array** of options `as const satisfies readonly
 
 ---
 
-## Templates and modals today
-
-| Document | Template (presets + helper) | Modal (state + toolbar) |
-|----------|-----------------------------|-------------------------|
-| Invoice | [`InvoicePdfTemplate.tsx`](../../app/components/orders/InvoicePdfTemplate.tsx) | [`GenerateInvoicePdfModal.tsx`](../../app/components/orders/GenerateInvoicePdfModal.tsx) |
-| Quote | [`QuotePdfTemplate.tsx`](../../app/components/quotes/QuotePdfTemplate.tsx) | [`GenerateQuotePdfModal.tsx`](../../app/components/quotes/GenerateQuotePdfModal.tsx) |
-| Purchase order | [`PurchaseOrderPdfTemplate.tsx`](../../app/components/orders/PurchaseOrderPdfTemplate.tsx) | [`GeneratePurchaseOrderPdfModal.tsx`](../../app/components/orders/GeneratePurchaseOrderPdfModal.tsx) |
-
----
-
 ## How to add a new preset
 
 Follow these steps **in the template file** for that document. Do not put preset-specific business rules inside `PdfGenerationModal`.
@@ -142,7 +132,7 @@ Always respect real **SERP fields** when they exist (e.g. partial payments); the
 
 ## Related code
 
-| Area | File |
-|------|------|
+| Area                           | File                                           |
+| ------------------------------ | ---------------------------------------------- |
 | Modal shell + capture behavior | `app/components/shared/PdfGenerationModal.tsx` |
-| Preset option type | `app/lib/pdf-utils.ts` (`PdfPresetOption`) |
+| Preset option type             | `app/lib/pdf-utils.ts` (`PdfPresetOption`)     |
