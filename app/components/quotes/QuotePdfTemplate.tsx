@@ -1,15 +1,42 @@
 import { useEffect } from "react";
 import type { QuoteWithRelations } from "~/lib/quotes";
-import { formatCurrency, formatDate, commonPdfStyles } from "~/lib/pdf-utils";
+import {
+  formatCurrency,
+  formatDate,
+  commonPdfStyles,
+  type PdfPresetOption,
+} from "~/lib/pdf-utils";
+
+export const QUOTE_PDF_PRESETS = [
+  { id: "default", label: "Default" },
+] as const satisfies readonly PdfPresetOption[];
+
+export type QuotePdfPresetId = (typeof QUOTE_PDF_PRESETS)[number]["id"];
+
+function getQuotePresetFields(
+  presetId: QuotePdfPresetId,
+  ctx: { partsSubtotal: number; grandTotal: number },
+) {
+  switch (presetId) {
+    case "default":
+    default:
+      return {
+        partsSubtotalDisplay: formatCurrency(ctx.partsSubtotal),
+        grandTotalDisplay: formatCurrency(ctx.grandTotal),
+      };
+  }
+}
 
 interface QuotePdfTemplateProps {
   quote: QuoteWithRelations;
   editable?: boolean;
+  presetId?: QuotePdfPresetId;
 }
 
 export function QuotePdfTemplate({
   quote,
   editable = false,
+  presetId = "default",
 }: QuotePdfTemplateProps) {
   const partsLineItems = (quote.lineItems || []).filter(
     (item) => item.quotePartId !== null
@@ -63,7 +90,7 @@ export function QuotePdfTemplate({
         element.removeEventListener("blur", handlePlaceholderBlur);
       });
     };
-  }, [editable]);
+  }, [editable, presetId]);
 
   // Sync widths of subtotal and total boxes
   useEffect(() => {
@@ -125,7 +152,7 @@ export function QuotePdfTemplate({
       clearTimeout(timeout);
       observer?.disconnect();
     };
-  }, [quote, editable]);
+  }, [quote, editable, presetId]);
 
   // Calculate valid until date
   const calculateValidUntil = () => {
@@ -159,6 +186,10 @@ export function QuotePdfTemplate({
   );
 
   const grandTotal = partsSubtotal + serviceTotal;
+  const quotePresetFields = getQuotePresetFields(presetId, {
+    partsSubtotal,
+    grandTotal,
+  });
 
   return (
     <div className="quote-pdf-container">
@@ -469,7 +500,7 @@ export function QuotePdfTemplate({
         `}
       </style>
 
-      <div className="document-container">
+      <div className="document-container" key={presetId}>
         <div className="content-wrapper">
           {/* Header */}
           <div className="header">
@@ -678,7 +709,7 @@ export function QuotePdfTemplate({
                         contentEditable={editable}
                         suppressContentEditableWarning
                       >
-                        {formatCurrency(partsSubtotal)}
+                        {quotePresetFields.partsSubtotalDisplay}
                       </span>
                     </div>
                   </div>
@@ -743,7 +774,7 @@ export function QuotePdfTemplate({
                 contentEditable={editable}
                 suppressContentEditableWarning
               >
-                {formatCurrency(grandTotal)}
+                {quotePresetFields.grandTotalDisplay}
               </span>
             </div>
           </div>

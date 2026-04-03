@@ -7,6 +7,7 @@ interface OrderActionsDropdownProps {
   onDuplicate?: () => void;
   onGenerateInvoice?: () => void;
   onGeneratePO?: () => void;
+  onGeneratePackingSlip?: () => void;
   onManageVendor?: () => void;
   hasVendor?: boolean;
   hasCustomer?: boolean;
@@ -19,6 +20,7 @@ export default function OrderActionsDropdown({
   onDuplicate,
   onGenerateInvoice,
   onGeneratePO,
+  onGeneratePackingSlip,
   onManageVendor,
   hasVendor = false,
   hasCustomer = false,
@@ -129,6 +131,33 @@ export default function OrderActionsDropdown({
           },
         ]
       : []),
+    ...(onGeneratePackingSlip
+      ? [
+          {
+            icon: (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
+                />
+              </svg>
+            ),
+            label: "Packing slip",
+            onClick: () => {
+              onGeneratePackingSlip();
+              onClose();
+            },
+            disabled: !hasCustomer,
+          },
+        ]
+      : []),
     ...(onDuplicate
       ? [
           {
@@ -168,7 +197,10 @@ export default function OrderActionsDropdown({
           const isDisabled = "disabled" in action && action.disabled;
           const isPOButton = action.label === "PO";
           const isInvoiceButton = action.label === "Invoice";
-          const showTooltip = isDisabled && (isPOButton || isInvoiceButton);
+          const isPackingSlipButton = action.label === "Packing slip";
+          const showTooltip =
+            isDisabled &&
+            (isPOButton || isInvoiceButton || isPackingSlipButton);
 
           let tooltipText = "";
           if (showTooltip) {
@@ -176,6 +208,8 @@ export default function OrderActionsDropdown({
               tooltipText = "Purchase Orders require a vendor";
             } else if (isInvoiceButton) {
               tooltipText = "Invoices require a customer";
+            } else if (isPackingSlipButton) {
+              tooltipText = "Packing slips require a customer";
             }
           }
 

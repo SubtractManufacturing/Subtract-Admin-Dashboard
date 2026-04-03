@@ -2,6 +2,12 @@
  * Shared utilities for PDF generation across different document types
  */
 
+/** Dropdown option for PDF template presets (see each *PdfTemplate for its list). */
+export type PdfPresetOption<TId extends string = string> = {
+  id: TId;
+  label: string;
+};
+
 /**
  * Converts an image URL to a base64 data URI for embedding in PDFs
  * This ensures images are baked into the PDF and don't require network access

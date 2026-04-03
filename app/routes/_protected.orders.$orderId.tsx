@@ -47,6 +47,7 @@ import { Notes } from "~/components/shared/Notes";
 import OrderActionsDropdown from "~/components/orders/OrderActionsDropdown";
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
+import GeneratePackingSlipPdfModal from "~/components/orders/GeneratePackingSlipPdfModal";
 import {
   getNotes,
   createNote,
@@ -271,6 +272,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const specialIntents = [
         "generatePurchaseOrder",
         "generateInvoice",
+        "generatePackingSlip",
         "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
       ];
       if (specialIntents.includes(intent)) {
@@ -1049,6 +1051,55 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
 
+      case "generatePackingSlip": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        try {
+          const { attachmentId } = await generateDocumentPdf({
+            entityType: "order",
+            entityId: order.id,
+            htmlContent,
+            filename: `PackingSlip-${order.orderNumber}.pdf`,
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
+
+          const attachment = await db
+            .select()
+            .from(attachments)
+            .where(eq(attachments.id, attachmentId))
+            .limit(1);
+
+          if (!attachment[0]) {
+            throw new Error("Failed to create attachment");
+          }
+
+          const downloadUrl = await getDownloadUrl(attachment[0].s3Key, 3600);
+
+          return json({
+            success: true,
+            downloadUrl,
+            attachmentId,
+            filename: `PackingSlip-${order.orderNumber}.pdf`,
+          });
+        } catch (pdfError) {
+          console.error("PDF generation failed:", pdfError);
+          return json(
+            {
+              error:
+                pdfError instanceof Error
+                  ? pdfError.message
+                  : "Failed to generate PDF",
+            },
+            { status: 500 }
+          );
+        }
+      }
+
       case "addDrawingToPart": {
         const partId = formData.get("partId") as string;
         const drawingCount =
@@ -1357,6 +1408,7 @@ export default function OrderDetails() {
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
   const handleAddLineItem = () => {
     setLineItemModalOpen(true);
   };
@@ -1796,6 +1848,10 @@ export default function OrderDetails() {
     setIsPOModalOpen(true);
   };
 
+  const handleGeneratePackingSlip = () => {
+    setIsPackingSlipModalOpen(true);
+  };
+
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
   const today = new Date();
@@ -1962,6 +2018,7 @@ export default function OrderDetails() {
                 onDuplicate={handleDuplicateOrder}
                 onGenerateInvoice={handleGenerateInvoice}
                 onGeneratePO={handleGeneratePO}
+                onGeneratePackingSlip={handleGeneratePackingSlip}
                 onManageVendor={handleManageVendor}
                 hasVendor={!!order.vendorId}
                 hasCustomer={!!order.customerId}
@@ -2568,6 +2625,15 @@ export default function OrderDetails() {
         isOpen={isInvoiceModalOpen}
         onClose={() => setIsInvoiceModalOpen(false)}
         entity={order}
+        lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
+        parts={lineItems.map((item: LineItemWithPart) => item.part)}
+        autoDownload={pdfAutoDownload}
+      />
+
+      <GeneratePackingSlipPdfModal
+        isOpen={isPackingSlipModalOpen}
+        onClose={() => setIsPackingSlipModalOpen(false)}
+        order={order}
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
         autoDownload={pdfAutoDownload}

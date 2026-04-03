@@ -47,6 +47,8 @@ interface PdfGenerationModalProps {
   title: string;
   apiEndpoint: string;
   children: ReactNode;
+  /** Footer controls grouped with actions on the right — not included in generated PDF HTML */
+  previewToolbar?: ReactNode;
   autoDownload?: boolean;
   intent: string;
 }
@@ -61,6 +63,7 @@ export default function PdfGenerationModal({
   title,
   apiEndpoint,
   children,
+  previewToolbar,
   autoDownload = true,
   intent,
 }: PdfGenerationModalProps) {
@@ -274,21 +277,26 @@ export default function PdfGenerationModal({
           {children}
         </div>
 
-        <div className="flex justify-end gap-3 sticky bottom-0 bg-white dark:bg-gray-800 pt-4 pb-2 -mx-4 px-4 border-t border-gray-200 dark:border-gray-700">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isGenerating || isRefreshing}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={isGenerating || isRefreshing}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 dark:bg-blue-500 rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          >
+        <div className="flex flex-wrap items-center gap-3 sticky bottom-0 bg-white dark:bg-gray-800 pt-4 pb-2 -mx-4 px-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex-1 min-w-0" aria-hidden="true" />
+          <div className="flex flex-wrap items-center justify-end gap-3 shrink-0">
+            {previewToolbar ? (
+              <div className="flex flex-wrap items-center gap-2">{previewToolbar}</div>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isGenerating || isRefreshing}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={isGenerating || isRefreshing}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 dark:bg-blue-500 rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            >
             {isGenerating ? (
               <>
                 <svg
@@ -355,7 +363,8 @@ export default function PdfGenerationModal({
                 Generate PDF
               </>
             )}
-          </button>
+            </button>
+          </div>
         </div>
       </div>
     </Modal>
