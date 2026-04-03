@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.12](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.11...v1.3.12) (2026-04-03)
+
+
+### Bug Fixes
+
+* add global PDF presets and packing slit template ([34f2efa](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/34f2efa75c19cde90c111d05c740c1ea7b7c84e7))
+
 ## [1.3.11](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.10...v1.3.11) (2026-04-03)
 
 
