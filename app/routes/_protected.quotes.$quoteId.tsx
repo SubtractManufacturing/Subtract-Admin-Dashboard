@@ -1036,14 +1036,34 @@ export async function action({ request, params }: ActionFunctionArgs) {
           );
         }
 
-        // Store old status before updating
         const oldStatus = quote.status;
 
-        // Manually update quote status to Draft without triggering automatic status change event
+        // Deactivate existing Stripe payment link if one is active
+        if (quote.stripePaymentLinkId && quote.stripePaymentLinkActive) {
+          const stripeOn = await isStripePaymentLinksEnabled();
+          if (stripeOn) {
+            try {
+              const { deactivateQuotePaymentLink } = await import(
+                "~/lib/stripe.server"
+              );
+              await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
+            } catch (stripeError) {
+              console.error(
+                "Stripe payment link deactivation failed during revision:",
+                stripeError
+              );
+            }
+          }
+        }
+
+        // Manually update quote status to Draft and clear Stripe payment link fields
         await db
           .update(quotes)
           .set({
             status: "Draft",
+            stripePaymentLinkUrl: null,
+            stripePaymentLinkId: null,
+            stripePaymentLinkActive: null,
             updatedAt: new Date(),
           })
           .where(eq(quotes.id, quote.id));
