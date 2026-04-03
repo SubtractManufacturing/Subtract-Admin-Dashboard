@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.11](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.10...v1.3.11) (2026-04-03)
+
+
+### Bug Fixes
+
+* stripe payment links not updating with revised quote ([eebdf03](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/eebdf038a9a913657a661b87b59c63d89f3e4a0f))
+
 ## [1.3.10](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.9...v1.3.10) (2026-03-30)
 
 
