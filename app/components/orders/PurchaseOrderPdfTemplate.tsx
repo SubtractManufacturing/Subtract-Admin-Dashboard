@@ -1,21 +1,48 @@
 import React, { useEffect } from "react";
 import type { OrderWithRelations } from "~/lib/orders";
 import type { Part, OrderLineItem } from "~/lib/db/schema";
-import { formatCurrency, formatDate, commonPdfStyles } from "~/lib/pdf-utils";
+import {
+  formatCurrency,
+  formatDate,
+  commonPdfStyles,
+  type PdfPresetOption,
+} from "~/lib/pdf-utils";
 import { extractShippingAddress, isAddressComplete } from "~/lib/address-utils";
+
+export const PURCHASE_ORDER_PDF_PRESETS = [
+  { id: "default", label: "Default" },
+] as const satisfies readonly PdfPresetOption[];
+
+export type PurchaseOrderPdfPresetId =
+  (typeof PURCHASE_ORDER_PDF_PRESETS)[number]["id"];
+
+function getPurchaseOrderPresetFields(
+  presetId: PurchaseOrderPdfPresetId,
+  ctx: { vendorPay: string | null },
+) {
+  switch (presetId) {
+    case "default":
+    default:
+      return {
+        vendorPayDisplay: formatCurrency(ctx.vendorPay),
+      };
+  }
+}
 
 interface PurchaseOrderPdfTemplateProps {
   order: OrderWithRelations;
   lineItems?: OrderLineItem[];
   parts?: (Part | null)[];
   editable?: boolean;
+  presetId?: PurchaseOrderPdfPresetId;
 }
 
 export function PurchaseOrderPdfTemplate({
   order,
   lineItems = [],
   parts = [],
-  editable = false
+  editable = false,
+  presetId = "default",
 }: PurchaseOrderPdfTemplateProps) {
 
   // Handle placeholder behavior for fields
@@ -60,7 +87,11 @@ export function PurchaseOrderPdfTemplate({
         element.removeEventListener('blur', handlePlaceholderBlur);
       });
     };
-  }, [editable]);
+  }, [editable, presetId]);
+
+  const poPresetFields = getPurchaseOrderPresetFields(presetId, {
+    vendorPay: order.vendorPay,
+  });
 
   return (
     <div className="po-pdf-container">
@@ -328,7 +359,7 @@ export function PurchaseOrderPdfTemplate({
         `}
       </style>
 
-      <div className="document-container">
+      <div className="document-container" key={presetId}>
         <div className="content-wrapper">
           {/* Header */}
           <div className="header">
@@ -819,7 +850,7 @@ export function PurchaseOrderPdfTemplate({
                   contentEditable={editable}
                   suppressContentEditableWarning
                 >
-                  {formatCurrency(order.vendorPay)}
+                  {poPresetFields.vendorPayDisplay}
                 </span>
               </div>
             </div>

@@ -39,7 +39,7 @@
     "@types/archiver": "^6.0.3",
     "archiver": "^7.0.1",
     "dotenv": "^17.2.1",
-    "drizzle-kit": "^0.18.1",
+    "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.44.2",
     "isbot": "^4.1.0",
     "lightningcss": "^1.30.1",

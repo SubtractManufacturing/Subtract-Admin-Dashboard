@@ -2,14 +2,43 @@ import React, { useEffect } from "react";
 import type { OrderWithRelations } from "~/lib/orders";
 import type { QuoteWithRelations } from "~/lib/quotes";
 import type { Part, OrderLineItem, QuoteLineItem } from "~/lib/db/schema";
-import { formatCurrency, formatDate, commonPdfStyles } from "~/lib/pdf-utils";
+import {
+  formatCurrency,
+  formatDate,
+  commonPdfStyles,
+  type PdfPresetOption,
+} from "~/lib/pdf-utils";
 import { extractShippingAddress, isAddressComplete } from "~/lib/address-utils";
+
+export const INVOICE_PDF_PRESETS = [
+  { id: "default", label: "Default" },
+] as const satisfies readonly PdfPresetOption[];
+
+export type InvoicePdfPresetId = (typeof INVOICE_PDF_PRESETS)[number]["id"];
+
+/** Initial field values for a preset; extend with new cases when adding presets. */
+function getInvoicePresetFields(
+  presetId: InvoicePdfPresetId,
+  ctx: { total: number },
+) {
+  switch (presetId) {
+    case "default":
+    default:
+      return {
+        amountPaidDisplay: formatCurrency(0),
+        amountDueDisplay: formatCurrency(ctx.total),
+        amountPaidDefaultText: formatCurrency(0),
+      };
+  }
+}
 
 interface InvoicePdfTemplateProps {
   entity: OrderWithRelations | QuoteWithRelations;
   lineItems?: (OrderLineItem | QuoteLineItem)[];
   parts?: (Part | null)[];
   editable?: boolean;
+  /** Document layout preset; drives initial copy before inline edits. */
+  presetId?: InvoicePdfPresetId;
 }
 
 export function InvoicePdfTemplate({
@@ -17,6 +46,7 @@ export function InvoicePdfTemplate({
   lineItems = [],
   parts = [],
   editable = false,
+  presetId = "default",
 }: InvoicePdfTemplateProps) {
   // Determine if this is an order or quote
   const isOrder = "orderNumber" in entity;
@@ -66,7 +96,7 @@ export function InvoicePdfTemplate({
         element.removeEventListener("blur", handlePlaceholderBlur);
       });
     };
-  }, [editable]);
+  }, [editable, presetId]);
 
   // Calculate total
   const calculateTotal = () => {
@@ -80,6 +110,7 @@ export function InvoicePdfTemplate({
   };
 
   const total = calculateTotal();
+  const invoicePresetFields = getInvoicePresetFields(presetId, { total });
 
   return (
     <div className="invoice-pdf-container">
@@ -372,7 +403,7 @@ export function InvoicePdfTemplate({
         `}
       </style>
 
-      <div className="document-container">
+      <div className="document-container" key={presetId}>
         <div className="content-wrapper">
           {/* Header */}
           <div className="header">
@@ -886,9 +917,11 @@ export function InvoicePdfTemplate({
                 }
                 contentEditable={editable}
                 suppressContentEditableWarning
-                data-default-text="$0.00"
+                data-default-text={
+                  invoicePresetFields.amountPaidDefaultText
+                }
               >
-                $0.00
+                {invoicePresetFields.amountPaidDisplay}
               </span>
             </div>
             <div className="total-row">
@@ -902,7 +935,7 @@ export function InvoicePdfTemplate({
                 contentEditable={editable}
                 suppressContentEditableWarning
               >
-                {formatCurrency(total)}
+                {invoicePresetFields.amountDueDisplay}
               </span>
             </div>
           </div>
