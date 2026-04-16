@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
 import { quoteParts } from "./db/schema";
 import { copyFile, uploadFile } from "./s3.server";
-import { getPlaceholderPartUrlsWithBananaFallback } from "./developerSettings";
+import { getPlaceholderPartUrls } from "./developerSettings";
 import { generatePdfThumbnail, isPdfFile } from "./pdf-thumbnail.server";
 import { contentTypeForDrawingFileName } from "./part-source-files";
 
@@ -32,11 +32,11 @@ export async function ensureDrawingOnlyQuotePartAssets(
   options?: EnsureDrawingOnlyQuotePartAssetsOptions
 ): Promise<void> {
   const { cadUrl: globalCadKey, meshUrl: globalMeshKey } =
-    await getPlaceholderPartUrlsWithBananaFallback();
+    await getPlaceholderPartUrls();
 
   if (!globalCadKey?.trim() || !globalMeshKey?.trim()) {
     throw new PlaceholderPartAssetsMissingError(
-      "Drawing-only parts need placeholder CAD and mesh in Settings → Developer (Placeholder part), or configure the Banana model upload there to use the same assets."
+      "Drawing-only parts require placeholder CAD and mesh to be configured in Settings (Developer)."
     );
   }
 

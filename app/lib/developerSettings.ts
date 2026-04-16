@@ -168,30 +168,6 @@ export async function getPlaceholderPartUrls(): Promise<{
   return { cadUrl, meshUrl, conversionStatus };
 }
 
-/**
- * Keys for drawing-only placeholder copy: dedicated placeholder first, else the dev banana model
- * (same S3-backed pattern) so local/staging environments work without a second upload.
- */
-export async function getPlaceholderPartUrlsWithBananaFallback(): Promise<{
-  cadUrl: string | null;
-  meshUrl: string | null;
-  conversionStatus: string | null;
-}> {
-  const ph = await getPlaceholderPartUrls();
-  if (ph.cadUrl?.trim() && ph.meshUrl?.trim()) {
-    return ph;
-  }
-  const banana = await getBananaModelUrls();
-  if (banana.cadUrl?.trim() && banana.meshUrl?.trim()) {
-    return {
-      cadUrl: banana.cadUrl,
-      meshUrl: banana.meshUrl,
-      conversionStatus: banana.conversionStatus ?? ph.conversionStatus,
-    };
-  }
-  return ph;
-}
-
 export async function setPlaceholderPartUrls(
   urls: {
     cadUrl?: string | null;
