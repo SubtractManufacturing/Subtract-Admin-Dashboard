@@ -47,6 +47,11 @@ import { isFeatureEnabled, FEATURE_FLAGS } from "./featureFlags.js";
 import { uploadFile, copyFile } from "./s3.server.js";
 import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js";
 import { generatePdfThumbnail, isPdfFile } from "./pdf-thumbnail.server.js";
+import {
+  ensureDrawingOnlyQuotePartAssets,
+  PlaceholderPartAssetsMissingError,
+} from "./quote-part-assets.server.js";
+import { contentTypeForDrawingFileName } from "./part-source-files.js";
 import crypto from "crypto";
 
 export type QuoteWithRelations = {
@@ -590,6 +595,7 @@ export async function convertQuoteToOrder(
     }
 
     // Additional validation: Check if any quote parts have pending conversions
+    // Drawing-only parts use copied placeholder CAD with conversionStatus "completed", so they do not block.
     if (quote.parts && quote.parts.length > 0) {
       const pendingConversions = quote.parts.filter(
         (part) =>
@@ -1568,6 +1574,8 @@ export async function createQuoteWithParts(
     quantity: number;
     notes?: string;
     drawings?: Array<{ buffer: Buffer; fileName: string }>;
+    /** When no CAD file: drawing-only line uses placeholder CAD/mesh from settings */
+    mode?: "cad" | "drawing_only" | "cad_with_drawings";
   }>,
   context?: QuoteEventContext
 ): Promise<{ success: boolean; quoteId?: number; error?: string }> {
@@ -1579,6 +1587,31 @@ export async function createQuoteWithParts(
 
     for (let i = 0; i < partsData.length; i++) {
       const part = partsData[i];
+
+      const resolvedMode:
+        | "cad"
+        | "drawing_only"
+        | "cad_with_drawings" =
+        part.mode === "drawing_only" ||
+        part.mode === "cad_with_drawings" ||
+        part.mode === "cad"
+          ? part.mode
+          : part.file && part.fileName
+            ? part.drawings && part.drawings.length > 0
+              ? "cad_with_drawings"
+              : "cad"
+            : part.drawings && part.drawings.length > 0
+              ? "drawing_only"
+              : "cad";
+
+      if (
+        resolvedMode === "drawing_only" &&
+        (!part.drawings || part.drawings.length === 0)
+      ) {
+        throw new Error(
+          "Drawing-only parts require at least one PDF or image drawing file"
+        );
+      }
 
       // Create the quote part first to get its ID
       const [quotePart] = await db
@@ -1595,6 +1628,12 @@ export async function createQuoteWithParts(
           specifications: {
             tolerances: part.tolerances,
             notes: part.notes,
+            primarySource:
+              resolvedMode === "drawing_only"
+                ? "drawing_only"
+                : resolvedMode === "cad_with_drawings"
+                  ? "mixed"
+                  : "cad",
           },
         })
         .returning();
@@ -1643,9 +1682,7 @@ export async function createQuoteWithParts(
           const sanitizedFileName = drawing.fileName
             .replace(/\s+/g, "-")
             .replace(/[^a-zA-Z0-9._-]/g, "");
-          const contentType = drawing.fileName.toLowerCase().endsWith(".pdf")
-            ? "application/pdf"
-            : "image/png";
+          const contentType = contentTypeForDrawingFileName(drawing.fileName);
           const key = `quote-parts/${quotePart.id}/drawings/${timestamp}-${randomString}-${sanitizedFileName}`;
 
           const uploadResult = await uploadFile({
@@ -1703,6 +1740,20 @@ export async function createQuoteWithParts(
             attachmentId: attachment.id,
             version: 1,
           });
+        }
+      }
+
+      if (!partFileUrl && part.drawings && part.drawings.length > 0) {
+        try {
+          await ensureDrawingOnlyQuotePartAssets(quotePart.id, {
+            primaryDrawingBuffer: part.drawings[0].buffer,
+            primaryDrawingFileName: part.drawings[0].fileName,
+          });
+        } catch (e) {
+          if (e instanceof PlaceholderPartAssetsMissingError) {
+            throw e;
+          }
+          throw e;
         }
       }
 

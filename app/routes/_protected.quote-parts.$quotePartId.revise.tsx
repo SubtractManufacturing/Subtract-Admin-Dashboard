@@ -37,6 +37,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       partName: quoteParts.partName,
       quoteId: quoteParts.quoteId,
       partFileUrl: quoteParts.partFileUrl,
+      specifications: quoteParts.specifications,
     })
     .from(quoteParts)
     .where(eq(quoteParts.id, quotePartId))
@@ -69,9 +70,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }, { status: 400 });
     }
 
-    // Backfill existing file as v1 if no version history exists
-    // This preserves files uploaded before version history was implemented
-    if (quotePart.partFileUrl) {
+    const specs = (quotePart.specifications as Record<string, unknown> | null) ?? {};
+    const usesPlaceholderCad = specs.usesPlaceholderCad === true;
+
+    if (quotePart.partFileUrl && !usesPlaceholderCad) {
       const existingFileName = quotePart.partFileUrl.split("/").pop() || "original-file";
       await backfillExistingCadFile("quote_part", quotePartId, {
         s3Key: quotePart.partFileUrl,
@@ -79,7 +81,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
       });
     }
 
-    // Determine next version number (will be 2 if backfill created v1, or 1 if no existing file)
     const currentVersionNumber = await getLatestVersionNumber("quote_part", quotePartId);
     const nextVersion = currentVersionNumber + 1;
 
@@ -123,6 +124,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
       user.id,
       user.email || userDetails?.name || "unknown"
     );
+
+    if (usesPlaceholderCad) {
+      await db
+        .update(quoteParts)
+        .set({
+          specifications: {
+            ...specs,
+            usesPlaceholderCad: false,
+            primarySource: "cad",
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(quoteParts.id, quotePartId));
+    }
 
     // Log event on quote_part
     await createEvent({

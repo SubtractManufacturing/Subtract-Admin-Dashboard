@@ -6,9 +6,14 @@ import { InputField } from "~/components/shared/FormField";
 import SearchableSelect from "~/components/shared/SearchableSelect";
 import { PartConfigForm } from "~/components/shared/PartConfigForm";
 import type { Customer } from "~/lib/customers";
+import {
+  isCadSourceFile,
+  isDrawingSourceFile,
+} from "~/lib/part-source-files";
 
 interface PartConfig {
-  file: File;
+  /** CAD source file when present; omitted for drawing-only parts */
+  file?: File;
   material?: string;
   tolerances?: string;
   quantity?: number;
@@ -26,15 +31,25 @@ interface NewQuoteModalProps {
   onSuccess?: () => void;
 }
 
-type Step = "upload" | "configure" | "customer" | "review";
+function partSummaryLabel(config: PartConfig): string {
+  if (config.file) return config.file.name;
+  if (config.drawings?.length)
+    return `${config.drawings.length} drawing file(s)`;
+  return "Part";
+}
+
+type Step = "upload" | "disambiguate" | "configure" | "customer" | "review";
 
 export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }: NewQuoteModalProps) {
   const fetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [currentStep, setCurrentStep] = useState<Step>("upload");
-  const [partFiles, setPartFiles] = useState<File[]>([]);
   const [partConfigs, setPartConfigs] = useState<PartConfig[]>([]);
+  const [disambiguation, setDisambiguation] = useState<{
+    cad: File[];
+    drawings: File[];
+  } | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [createNewCustomer, setCreateNewCustomer] = useState(false);
   const [newCustomerData, setNewCustomerData] = useState({
@@ -64,8 +79,8 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         setHasHandledSuccess(true);
         // Reset form state first
         setCurrentStep("upload");
-        setPartFiles([]);
         setPartConfigs([]);
+        setDisambiguation(null);
         setSelectedCustomer(null);
         setCreateNewCustomer(false);
         setNewCustomerData({
@@ -89,8 +104,8 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
 
   const handleReset = () => {
     setCurrentStep("upload");
-    setPartFiles([]);
     setPartConfigs([]);
+    setDisambiguation(null);
     setSelectedCustomer(null);
     setCreateNewCustomer(false);
     setNewCustomerData({
@@ -130,31 +145,99 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   const handleFiles = (files: File[]) => {
-    const validFiles = files.filter(file => {
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      return ['step', 'stp', 'sldprt', 'stl', 'obj', 'igs', 'iges', 'x_t', 'x_b', 'sat'].includes(ext || '');
-    });
-
-    if (validFiles.length > 0) {
-      setPartFiles(validFiles);
-      setPartConfigs(validFiles.map((file, index) => ({
-        file,
-        quantity: 1,
-        partName: file.name.split('.').slice(0, -1).join('.'), // Remove extension
-        isExpanded: index === 0 // Expand first part by default
-      })));
-
-      // Add smooth transition effect
-      setIsContentTransitioning(true);
-      setTimeout(() => {
-        setCurrentStep("configure");
-        setTimeout(() => {
-          setIsContentTransitioning(false);
-        }, 300);
-      }, 150);
-    } else {
-      alert("Please upload valid CAD files (STEP, SLDPRT, STL, etc.)");
+    const supported = files.filter(
+      (f) => isCadSourceFile(f.name) || isDrawingSourceFile(f.name)
+    );
+    if (supported.length === 0) {
+      alert(
+        "No supported files. Use CAD (STEP, STL, …) or drawings (PDF, PNG, JPEG, DWG, …)."
+      );
+      return;
     }
+
+    const cad = supported.filter((f) => isCadSourceFile(f.name));
+    const drawings = supported.filter((f) => isDrawingSourceFile(f.name));
+
+    setIsContentTransitioning(true);
+    setTimeout(() => {
+      if (cad.length === 0 && drawings.length > 0) {
+        const base = drawings[0].name.replace(/\.[^.]+$/, "");
+        setPartConfigs([
+          {
+            quantity: 1,
+            partName: base,
+            drawings,
+            isExpanded: true,
+          },
+        ]);
+        setCurrentStep("configure");
+      } else if (cad.length > 0 && drawings.length === 0) {
+        setPartConfigs(
+          cad.map((file, index) => ({
+            file,
+            quantity: 1,
+            partName: file.name.replace(/\.[^.]+$/, ""),
+            isExpanded: index === 0,
+          }))
+        );
+        setCurrentStep("configure");
+      } else if (cad.length === 1) {
+        setPartConfigs([
+          {
+            file: cad[0],
+            drawings,
+            quantity: 1,
+            partName: cad[0].name.replace(/\.[^.]+$/, ""),
+            isExpanded: true,
+          },
+        ]);
+        setCurrentStep("configure");
+      } else {
+        setDisambiguation({ cad, drawings });
+        setCurrentStep("disambiguate");
+      }
+      setTimeout(() => setIsContentTransitioning(false), 300);
+    }, 150);
+  };
+
+  const applyDisambiguationOnePart = () => {
+    if (!disambiguation) return;
+    const { cad, drawings } = disambiguation;
+    setPartConfigs([
+      {
+        file: cad[0],
+        drawings,
+        quantity: 1,
+        partName: cad[0].name.replace(/\.[^.]+$/, ""),
+        isExpanded: true,
+      },
+    ]);
+    setDisambiguation(null);
+    setIsContentTransitioning(true);
+    setTimeout(() => {
+      setCurrentStep("configure");
+      setIsContentTransitioning(false);
+    }, 150);
+  };
+
+  const applyDisambiguationMultiPart = () => {
+    if (!disambiguation) return;
+    const { cad, drawings } = disambiguation;
+    setPartConfigs(
+      cad.map((file, index) => ({
+        file,
+        drawings: index === 0 ? drawings : undefined,
+        quantity: 1,
+        partName: file.name.replace(/\.[^.]+$/, ""),
+        isExpanded: index === 0,
+      }))
+    );
+    setDisambiguation(null);
+    setIsContentTransitioning(true);
+    setTimeout(() => {
+      setCurrentStep("configure");
+      setIsContentTransitioning(false);
+    }, 150);
   };
 
   const updatePartConfig = (index: number, field: keyof PartConfig, value: string | number | File[] | boolean | undefined) => {
@@ -174,22 +257,14 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   const removePart = (index: number) => {
-    setPartFiles(prev => {
+    setPartConfigs((prev) => {
       const updated = [...prev];
       updated.splice(index, 1);
+      if (updated.length === 0 && currentStep === "configure") {
+        setCurrentStep("upload");
+      }
       return updated;
     });
-    setPartConfigs(prev => {
-      const updated = [...prev];
-      updated.splice(index, 1);
-      return updated;
-    });
-
-    // If no parts left and we're in configure step, go back to upload step
-    // If we're in review/customer step, stay there (allow empty quote)
-    if (partFiles.length === 1 && currentStep === 'configure') {
-      setCurrentStep('upload');
-    }
   };
 
 
@@ -221,17 +296,32 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         return;
       }
 
-      // Add parts data
+      formData.append("partsCount", partConfigs.length.toString());
+
       partConfigs.forEach((config, index) => {
-        formData.append(`parts[${index}][file]`, config.file);
-        formData.append(`parts[${index}][name]`, config.partName || config.file.name);
+        if (config.file) {
+          formData.append(`parts[${index}][file]`, config.file);
+        }
+        const defaultName =
+          config.partName ||
+          config.file?.name ||
+          config.drawings?.[0]?.name ||
+          `Part ${index + 1}`;
+        formData.append(`parts[${index}][name]`, defaultName);
         formData.append(`parts[${index}][material]`, config.material || "");
         formData.append(`parts[${index}][tolerances]`, config.tolerances || "");
         formData.append(`parts[${index}][surfaceFinish]`, config.surfaceFinish || "");
         formData.append(`parts[${index}][quantity]`, (config.quantity || 1).toString());
         formData.append(`parts[${index}][notes]`, config.notes || "");
+        if (config.file) {
+          formData.append(
+            `parts[${index}][mode]`,
+            config.drawings?.length ? "cad_with_drawings" : "cad"
+          );
+        } else {
+          formData.append(`parts[${index}][mode]`, "drawing_only");
+        }
 
-        // Add drawings for this part
         if (config.drawings) {
           config.drawings.forEach((drawing, drawingIndex) => {
             formData.append(`parts[${index}][drawings][${drawingIndex}]`, drawing);
@@ -260,7 +350,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         formData.append("customerPhone", newCustomerData.phone || "");
         formData.append("customerZipCode", newCustomerData.zipCode || "");
 
-        // Submit empty parts array
+        formData.append("partsCount", "0");
         fetcher.submit(formData, {
           method: "post",
           action: "/quotes/new",
@@ -287,6 +377,27 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         });
       }
     }
+  };
+
+  const renderDisambiguateStep = () => {
+    if (!disambiguation) return null;
+    const { cad, drawings } = disambiguation;
+    return (
+      <div className="p-6 space-y-4">
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          You uploaded <strong>{cad.length}</strong> CAD file(s) and{" "}
+          <strong>{drawings.length}</strong> drawing file(s). How should we create line items?
+        </p>
+        <div className="flex flex-col gap-3">
+          <Button type="button" variant="primary" onClick={applyDisambiguationOnePart}>
+            One line item — first CAD as solid, all drawings in the drawing section
+          </Button>
+          <Button type="button" variant="secondary" onClick={applyDisambiguationMultiPart}>
+            Separate line items — one per CAD file (drawings attached to the first part only)
+          </Button>
+        </div>
+      </div>
+    );
   };
 
   const renderUploadStep = () => (
@@ -317,16 +428,16 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         </svg>
         <p className="text-lg font-semibold mb-2">Upload Part Files</p>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          Drag and drop your CAD files here, or click to browse
+          Drag and drop CAD and/or drawing files (PDF, images), or click to browse
         </p>
         <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
-          Supported formats: STEP, SLDPRT, STL, OBJ, IGES, Parasolid
+          CAD: STEP, SLDPRT, STL, OBJ, IGES, Parasolid, etc. Drawings: PDF, PNG, JPEG, DWG, DXF
         </p>
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".step,.stp,.sldprt,.stl,.obj,.igs,.iges,.x_t,.x_b,.sat"
+          accept=".step,.stp,.sldprt,.stl,.obj,.gltf,.glb,.igs,.iges,.x_t,.x_b,.sat,.pdf,.png,.jpg,.jpeg,.webp,.dwg,.dxf"
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -362,7 +473,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       <div className="flex flex-col h-full">
         <div className="flex justify-between items-center mb-4 px-6">
           <h3 className="text-lg font-semibold">
-            Configure Parts ({partFiles.length} total)
+            Configure Parts ({partConfigs.length} total)
           </h3>
         </div>
 
@@ -393,18 +504,23 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                     />
                   </svg>
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium truncate">{config.partName || partFiles[index].name}</div>
+                    <div className="font-medium truncate">{config.partName || partSummaryLabel(config)}</div>
                     <div className="text-sm text-gray-500">
                       {config.material && `Material: ${config.material} | `}
                       {config.quantity && `Qty: ${config.quantity}`}
                     </div>
                   </div>
-                  <span className="text-xs text-gray-400 ml-2 truncate max-w-xs flex-shrink-0" title={partFiles[index].name}>{partFiles[index].name}</span>
+                  <span
+                    className="text-xs text-gray-400 ml-2 truncate max-w-xs flex-shrink-0"
+                    title={partSummaryLabel(config)}
+                  >
+                    {partSummaryLabel(config)}
+                  </span>
                 </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
+                    if (confirm(`Remove ${config.partName || partSummaryLabel(config)}?`)) {
                       removePart(index);
                     }
                   }}
@@ -582,7 +698,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
             <div key={index} className="text-sm border-t pt-2 relative">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <p><strong>{config.partName || partFiles[index].name}</strong></p>
+                  <p><strong>{config.partName || partSummaryLabel(config)}</strong></p>
                   <div className="grid grid-cols-2 gap-2 mt-1">
                     <p>Material: {config.material || "Not specified"}</p>
                     <p>Quantity: {config.quantity || 1}</p>
@@ -598,7 +714,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                 </div>
                 <button
                   onClick={() => {
-                    if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
+                    if (confirm(`Remove ${config.partName || partSummaryLabel(config)}?`)) {
                       removePart(index);
                     }
                   }}
@@ -624,6 +740,8 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     switch (currentStep) {
       case "upload":
         return renderUploadStep();
+      case "disambiguate":
+        return renderDisambiguateStep();
       case "configure":
         return renderConfigureStep();
       case "customer":
@@ -639,6 +757,8 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     switch (currentStep) {
       case "upload":
         return "New Quote - Upload Parts";
+      case "disambiguate":
+        return "New Quote - Multiple file types";
       case "configure":
         return "New Quote - Configure Parts";
       case "customer":
@@ -651,7 +771,24 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   const renderFooter = () => {
-    if (currentStep === 'upload') return null;
+    if (currentStep === "upload") return null;
+
+    if (currentStep === "disambiguate") {
+      return (
+        <div className="flex justify-between items-center px-6 py-4 border-t bg-gray-50 dark:bg-gray-800">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setDisambiguation(null);
+              setCurrentStep("upload");
+            }}
+          >
+            Back
+          </Button>
+        </div>
+      );
+    }
 
     return (
       <div className="flex justify-between items-center px-6 py-4 border-t bg-gray-50 dark:bg-gray-800">
@@ -659,12 +796,10 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
           onClick={() => {
             setIsContentTransitioning(true);
             setTimeout(() => {
-              if (currentStep === 'configure') setCurrentStep('upload');
-              else if (currentStep === 'customer') {
-                // If no parts, go back to upload; otherwise go to configure
-                setCurrentStep(partConfigs.length === 0 ? 'upload' : 'configure');
-              }
-              else if (currentStep === 'review') setCurrentStep('customer');
+              if (currentStep === "configure") setCurrentStep("upload");
+              else if (currentStep === "customer") {
+                setCurrentStep(partConfigs.length === 0 ? "upload" : "configure");
+              } else if (currentStep === "review") setCurrentStep("customer");
               setTimeout(() => {
                 setIsContentTransitioning(false);
               }, 300);

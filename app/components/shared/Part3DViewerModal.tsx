@@ -60,6 +60,8 @@ interface Part3DViewerModalProps {
   partAssetAdminAction?: string;
   meshConversionStatus?: string | null;
   meshConversionError?: string | null;
+  /** When true, CAD is a placeholder copy — show upload-first UI and hide revision history */
+  usesPlaceholderCad?: boolean;
 }
 
 export function Part3DViewerModal({
@@ -84,9 +86,11 @@ export function Part3DViewerModal({
   partAssetAdminAction,
   meshConversionStatus,
   meshConversionError,
+  usesPlaceholderCad = false,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const placeholderCadInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Determine entity type and ID for version control routes
@@ -368,8 +372,39 @@ export function Part3DViewerModal({
           </svg>
         </button>
 
+        {entityId && usesPlaceholderCad && canRevise && isQuotePart && (
+          <div className="absolute top-2 right-14 z-20 flex items-center gap-2">
+            <input
+              ref={placeholderCadInputRef}
+              type="file"
+              accept=".step,.stp,.iges,.igs,.brep"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file || !entityId) return;
+                const formData = new FormData();
+                formData.append("file", file);
+                revisionFetcher.submit(formData, {
+                  method: "POST",
+                  action: `/${routePrefix}/${entityId}/revise`,
+                  encType: "multipart/form-data",
+                });
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => placeholderCadInputRef.current?.click()}
+              disabled={isUploading}
+              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isUploading ? "Uploading…" : "Upload CAD file"}
+            </button>
+          </div>
+        )}
+
         {/* Version Control Button - top right, next to close */}
-        {entityId && (
+        {entityId && !usesPlaceholderCad && (
           <div ref={dropdownRef} className="absolute top-2 right-14 z-20">
             <button
               onClick={() => setShowVersionPanel(!showVersionPanel)}

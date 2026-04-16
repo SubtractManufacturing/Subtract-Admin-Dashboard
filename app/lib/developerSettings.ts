@@ -7,6 +7,9 @@ export const DEV_SETTINGS = {
   BANANA_CAD_URL: "banana_cad_url",
   BANANA_MESH_URL: "banana_mesh_url",
   BANANA_CONVERSION_STATUS: "banana_conversion_status",
+  PLACEHOLDER_PART_CAD_URL: "placeholder_part_cad_url",
+  PLACEHOLDER_PART_MESH_URL: "placeholder_part_mesh_url",
+  PLACEHOLDER_PART_CONVERSION_STATUS: "placeholder_part_conversion_status",
 } as const;
 
 export const STRIPE_SETTINGS = {
@@ -148,11 +151,91 @@ export async function setBananaModelUrls(
   }
 }
 
+/**
+ * Placeholder CAD/mesh for drawing-only quote parts (PDF/image primary).
+ */
+export async function getPlaceholderPartUrls(): Promise<{
+  cadUrl: string | null;
+  meshUrl: string | null;
+  conversionStatus: string | null;
+}> {
+  const [cadUrl, meshUrl, conversionStatus] = await Promise.all([
+    getDeveloperSetting(DEV_SETTINGS.PLACEHOLDER_PART_CAD_URL),
+    getDeveloperSetting(DEV_SETTINGS.PLACEHOLDER_PART_MESH_URL),
+    getDeveloperSetting(DEV_SETTINGS.PLACEHOLDER_PART_CONVERSION_STATUS),
+  ]);
+
+  return { cadUrl, meshUrl, conversionStatus };
+}
+
+/**
+ * Keys for drawing-only placeholder copy: dedicated placeholder first, else the dev banana model
+ * (same S3-backed pattern) so local/staging environments work without a second upload.
+ */
+export async function getPlaceholderPartUrlsWithBananaFallback(): Promise<{
+  cadUrl: string | null;
+  meshUrl: string | null;
+  conversionStatus: string | null;
+}> {
+  const ph = await getPlaceholderPartUrls();
+  if (ph.cadUrl?.trim() && ph.meshUrl?.trim()) {
+    return ph;
+  }
+  const banana = await getBananaModelUrls();
+  if (banana.cadUrl?.trim() && banana.meshUrl?.trim()) {
+    return {
+      cadUrl: banana.cadUrl,
+      meshUrl: banana.meshUrl,
+      conversionStatus: banana.conversionStatus ?? ph.conversionStatus,
+    };
+  }
+  return ph;
+}
+
+export async function setPlaceholderPartUrls(
+  urls: {
+    cadUrl?: string | null;
+    meshUrl?: string | null;
+    conversionStatus?: string | null;
+  },
+  updatedBy?: string
+): Promise<boolean> {
+  try {
+    const updates: Promise<boolean>[] = [];
+
+    if (urls.cadUrl !== undefined) {
+      updates.push(
+        setDeveloperSetting(DEV_SETTINGS.PLACEHOLDER_PART_CAD_URL, urls.cadUrl, updatedBy)
+      );
+    }
+    if (urls.meshUrl !== undefined) {
+      updates.push(
+        setDeveloperSetting(DEV_SETTINGS.PLACEHOLDER_PART_MESH_URL, urls.meshUrl, updatedBy)
+      );
+    }
+    if (urls.conversionStatus !== undefined) {
+      updates.push(
+        setDeveloperSetting(
+          DEV_SETTINGS.PLACEHOLDER_PART_CONVERSION_STATUS,
+          urls.conversionStatus,
+          updatedBy
+        )
+      );
+    }
+
+    const results = await Promise.all(updates);
+    return results.every(Boolean);
+  } catch (error) {
+    console.error("Error setting placeholder part URLs:", error);
+    return false;
+  }
+}
+
 export async function pruneStaleDeveloperSettings(): Promise<string[]> {
   const validKeys = [
     ...Object.values(DEV_SETTINGS),
     ...Object.values(STRIPE_SETTINGS),
-  ];
+  ] as string[];
   const stale = await db
     .select({ key: developerSettings.key })
     .from(developerSettings)

@@ -13,10 +13,21 @@ interface AddLineItemModalProps {
   context: "order" | "quote";
   customerId?: number | null;
   existingParts?: Part[];
+  /** When set, modal pre-fills the line item name for promote-to-part flow */
+  promoteLineItemId?: number | null;
+  initialLineItemName?: string | null;
+  /** Pre-fill quantity and pricing when promoting an existing standalone line item */
+  prefillFromLineItem?: {
+    quantity: number;
+    unitPrice: string;
+    totalPrice?: string;
+    description?: string;
+    notes?: string;
+  } | null;
 }
 
 const CAD_ACCEPT =
-  ".step,.stp,.brep,.sldprt,.stl,.obj,.gltf,.glb,.igs,.iges,.x_t,.x_b,.sat";
+  ".step,.stp,.brep,.sldprt,.stl,.obj,.gltf,.glb,.igs,.iges,.x_t,.x_b,.sat,.pdf,.png,.jpg,.jpeg,.webp,.dwg,.dxf";
 
 export function AddLineItemModal({
   isOpen,
@@ -25,6 +36,9 @@ export function AddLineItemModal({
   context,
   customerId,
   existingParts = [],
+  promoteLineItemId = null,
+  initialLineItemName = null,
+  prefillFromLineItem = null,
 }: AddLineItemModalProps) {
   const [cadFile, setCadFile] = useState<File | null>(null);
   const [showPartSelection, setShowPartSelection] = useState(false);
@@ -62,17 +76,25 @@ export function AddLineItemModal({
     setDragActive(false);
     setShowDetails(false);
     setErrors({});
-    setName("");
-    setDescription("");
-    setNotes("");
-    setQuantity("1");
-    setUnitPrice("");
-    setTotalPrice("");
+    setName(initialLineItemName?.trim() || "");
+    if (prefillFromLineItem) {
+      setDescription(prefillFromLineItem.description?.trim() || "");
+      setNotes(prefillFromLineItem.notes?.trim() || "");
+      setQuantity(String(prefillFromLineItem.quantity));
+      setUnitPrice(prefillFromLineItem.unitPrice);
+      setTotalPrice(prefillFromLineItem.totalPrice ?? "");
+    } else {
+      setDescription("");
+      setNotes("");
+      setQuantity("1");
+      setUnitPrice("");
+      setTotalPrice("");
+    }
     setMaterial("");
     setTolerance("");
     setFinish("");
     setDrawings([]);
-  }, [isOpen]);
+  }, [isOpen, initialLineItemName, prefillFromLineItem]);
 
   useEffect(() => {
     if (context !== "quote") return;
@@ -177,6 +199,10 @@ export function AddLineItemModal({
       formData.append("totalPrice", totalPrice || "0");
     }
 
+    if (promoteLineItemId != null) {
+      formData.append("lineItemId", String(promoteLineItemId));
+    }
+
     if (selectedPartId) {
       formData.append("partId", selectedPartId);
     } else if (cadFile) {
@@ -196,7 +222,11 @@ export function AddLineItemModal({
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onClose} title="Add Line Item">
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={promoteLineItemId != null ? "Promote to part line item" : "Add Line Item"}
+      >
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* Upload zone — only shown when no file or part is attached */}
           {!hasPartAttached ? (
@@ -235,7 +265,7 @@ export function AddLineItemModal({
                   Upload your part file
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Drag & drop or click to browse — STEP, SLDPRT, STL, OBJ, IGES
+                  CAD (STEP, SLDPRT, STL, …) or manufacturing drawings (PDF, PNG, …)
                 </p>
                 <input
                   ref={fileInputRef}
@@ -460,7 +490,9 @@ export function AddLineItemModal({
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit">Add Line Item</Button>
+            <Button type="submit">
+              {promoteLineItemId != null ? "Attach part" : "Add Line Item"}
+            </Button>
           </div>
         </form>
       </Modal>

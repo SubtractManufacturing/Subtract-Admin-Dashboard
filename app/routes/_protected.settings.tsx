@@ -22,7 +22,13 @@ import {
   FEATURE_FLAGS,
   pruneStaleFeatureFlags,
 } from "~/lib/featureFlags";
-import { getBananaModelUrls, setBananaModelUrls, pruneStaleDeveloperSettings } from "~/lib/developerSettings";
+import {
+  getBananaModelUrls,
+  setBananaModelUrls,
+  getPlaceholderPartUrls,
+  setPlaceholderPartUrls,
+  pruneStaleDeveloperSettings,
+} from "~/lib/developerSettings";
 import type { FeatureFlag } from "~/lib/db/schema";
 import { getCustomers } from "~/lib/customers";
 import { getVendors } from "~/lib/vendors";
@@ -57,6 +63,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? await getBananaModelUrls()
       : null;
 
+  const placeholderPartStatus =
+    userDetails.role === "Dev" ? await getPlaceholderPartUrls() : null;
+
   // Bulk import/export: customers and vendors for Admin/Dev export UI
   const bulkCustomers =
     userDetails.role === "Admin" || userDetails.role === "Dev"
@@ -76,6 +85,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       featureFlags,
       bananaForScaleEnabled,
       bananaModelStatus,
+      placeholderPartStatus,
       bulkCustomers,
       bulkVendors,
     }),
@@ -276,6 +286,229 @@ export async function action({ request }: ActionFunctionArgs) {
           json({
             error: error instanceof Error ? error.message : "Failed to upload banana model"
           }, { status: 500 }),
+          headers
+        );
+      }
+    }
+
+    if (intent === "uploadPlaceholderPartModel" && userDetails.role === "Dev") {
+      const file = formData.get("file") as File;
+
+      if (!file) {
+        return withAuthHeaders(
+          json({ error: "No file provided" }, { status: 400 }),
+          headers
+        );
+      }
+
+      try {
+        const {
+          detectFileFormat,
+          getRecommendedOutputFormat,
+          validateFileSize,
+          isConversionEnabled,
+          submitConversion,
+          pollForCompletion,
+          downloadConversionResult,
+        } = await import("~/lib/conversion-service.server");
+
+        const { uploadFile, uploadToS3 } = await import("~/lib/s3.server");
+
+        const format = detectFileFormat(file.name);
+        if (format !== "brep") {
+          return withAuthHeaders(
+            json(
+              {
+                error:
+                  "Invalid file format. Please upload a STEP (.step, .stp) or IGES (.iges, .igs) file",
+              },
+              { status: 400 }
+            ),
+            headers
+          );
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const sizeCheck = validateFileSize(buffer.length);
+        if (!sizeCheck.valid) {
+          return withAuthHeaders(
+            json({ error: sizeCheck.message }, { status: 400 }),
+            headers
+          );
+        }
+
+        await setPlaceholderPartUrls({ conversionStatus: "uploading" }, user.email);
+
+        const timestamp = Date.now();
+        const sanitizedFileName = file.name
+          .replace(/\s+/g, "-")
+          .replace(/[^a-zA-Z0-9._-]/g, "");
+        const cadKey = `developer/placeholder/source/${timestamp}-${sanitizedFileName}`;
+
+        await uploadFile({
+          key: cadKey,
+          buffer,
+          contentType: "application/octet-stream",
+          fileName: sanitizedFileName,
+        });
+
+        await setPlaceholderPartUrls(
+          {
+            cadUrl: cadKey,
+            conversionStatus: "converting",
+          },
+          user.email
+        );
+
+        if (!isConversionEnabled()) {
+          await setPlaceholderPartUrls(
+            { conversionStatus: "conversion_unavailable" },
+            user.email
+          );
+          return withAuthHeaders(
+            json(
+              {
+                success: true,
+                cadUrl: cadKey,
+                message: "CAD file uploaded, but conversion service is not available",
+              },
+              { status: 200 }
+            ),
+            headers
+          );
+        }
+
+        const conversionOptions = {
+          output_format: getRecommendedOutputFormat(),
+          deflection: 0.1,
+          angular_deflection: 0.5,
+          async_processing: true,
+        };
+
+        const conversionJob = await submitConversion(
+          buffer,
+          sanitizedFileName,
+          conversionOptions
+        );
+
+        if (!conversionJob) {
+          await setPlaceholderPartUrls(
+            { conversionStatus: "conversion_failed" },
+            user.email
+          );
+          return withAuthHeaders(
+            json(
+              {
+                success: false,
+                error: "Failed to submit file for conversion",
+              },
+              { status: 500 }
+            ),
+            headers
+          );
+        }
+
+        const completedJob = await pollForCompletion(conversionJob.job_id);
+
+        if (!completedJob || completedJob.status === "failed") {
+          const err = completedJob?.error || "Conversion failed";
+          await setPlaceholderPartUrls(
+            { conversionStatus: "conversion_failed" },
+            user.email
+          );
+          return withAuthHeaders(
+            json(
+              {
+                success: false,
+                error: `Conversion failed: ${err}`,
+              },
+              { status: 500 }
+            ),
+            headers
+          );
+        }
+
+        const result = await downloadConversionResult(conversionJob.job_id);
+
+        if (!result) {
+          await setPlaceholderPartUrls(
+            { conversionStatus: "conversion_failed" },
+            user.email
+          );
+          return withAuthHeaders(
+            json(
+              {
+                success: false,
+                error: "Failed to download converted mesh",
+              },
+              { status: 500 }
+            ),
+            headers
+          );
+        }
+
+        const sanitizedMeshFilename = result.filename
+          .replace(/\s+/g, "-")
+          .replace(/[^a-zA-Z0-9._-]/g, "");
+        const meshKey = `developer/placeholder/mesh/${timestamp}-${sanitizedMeshFilename}`;
+
+        const meshContentType = result.filename.endsWith(".glb")
+          ? "model/gltf-binary"
+          : result.filename.endsWith(".gltf")
+            ? "model/gltf+json"
+            : "application/octet-stream";
+
+        const meshUrl = await uploadToS3(result.buffer, meshKey, meshContentType);
+
+        if (!meshUrl) {
+          await setPlaceholderPartUrls(
+            { conversionStatus: "upload_failed" },
+            user.email
+          );
+          return withAuthHeaders(
+            json(
+              {
+                success: false,
+                error: "Failed to upload converted mesh",
+              },
+              { status: 500 }
+            ),
+            headers
+          );
+        }
+
+        await setPlaceholderPartUrls(
+          {
+            meshUrl: meshKey,
+            conversionStatus: "completed",
+          },
+          user.email
+        );
+
+        return withAuthHeaders(
+          json({
+            success: true,
+            cadUrl: cadKey,
+            meshUrl: meshKey,
+            message: "Placeholder CAD and mesh saved for drawing-only quote parts",
+          }),
+          headers
+        );
+      } catch (error) {
+        console.error("Error uploading placeholder part model:", error);
+        await setPlaceholderPartUrls({ conversionStatus: "error" }, user?.email);
+        return withAuthHeaders(
+          json(
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to upload placeholder part model",
+            },
+            { status: 500 }
+          ),
           headers
         );
       }
@@ -764,6 +997,107 @@ function BananaModelUploadSection({
   );
 }
 
+function PlaceholderPartUploadSection({
+  placeholderPartStatus,
+}: {
+  placeholderPartStatus: {
+    cadUrl: string | null;
+    meshUrl: string | null;
+    conversionStatus: string | null;
+  } | null;
+}) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fetcher = useFetcher<{ success?: boolean; error?: string; message?: string }>();
+  const isUploading = fetcher.state !== "idle";
+
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      setSelectedFile(null);
+      const fileInput = document.getElementById(
+        "placeholder-part-file-input"
+      ) as HTMLInputElement;
+      if (fileInput) fileInput.value = "";
+    }
+  }, [fetcher.data]);
+
+  const handleUpload = () => {
+    if (!selectedFile) return;
+    const formData = new FormData();
+    formData.append("intent", "uploadPlaceholderPartModel");
+    formData.append("file", selectedFile);
+    fetcher.submit(formData, { method: "post", encType: "multipart/form-data" });
+  };
+
+  const status = placeholderPartStatus?.conversionStatus;
+  const hasModel = placeholderPartStatus?.meshUrl && status === "completed";
+  const isBusy = status === "converting" || status === "uploading";
+  const hasFailed =
+    status === "conversion_failed" || status === "error" || status === "upload_failed";
+
+  return (
+    <div className="flex items-center gap-3 py-2 px-3">
+      <span className="text-base" aria-hidden>
+        📄
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-900 dark:text-white font-medium">
+            Drawing-only quote parts (placeholder CAD/mesh)
+          </span>
+          {hasModel && (
+            <span className="text-xs text-green-600 dark:text-green-400">Ready</span>
+          )}
+          {isBusy && (
+            <span className="text-xs text-yellow-600 dark:text-yellow-400">
+              {status === "converting" ? "Converting..." : "Uploading..."}
+            </span>
+          )}
+          {hasFailed && (
+            <span className="text-xs text-red-600 dark:text-red-400">Failed</span>
+          )}
+          {!hasModel && !isBusy && !hasFailed && (
+            <span className="text-xs text-gray-400">Not configured</span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          Used when a quote line has PDF/image drawings but no customer CAD. Upload a STEP/IGES
+          file; mesh is generated like the banana model.
+        </p>
+        {selectedFile && (
+          <p className="text-xs text-gray-500 truncate">{selectedFile.name}</p>
+        )}
+        {fetcher.data && "error" in fetcher.data && (
+          <p className="text-xs text-red-600 dark:text-red-400">
+            {(fetcher.data as { error: string }).error}
+          </p>
+        )}
+      </div>
+      <input
+        id="placeholder-part-file-input"
+        type="file"
+        accept=".step,.stp,.iges,.igs"
+        onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+        className="hidden"
+      />
+      <label
+        htmlFor="placeholder-part-file-input"
+        className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer whitespace-nowrap"
+      >
+        Choose file
+      </label>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={handleUpload}
+        disabled={!selectedFile || isUploading}
+      >
+        {isUploading ? "Converting..." : "Upload"}
+      </Button>
+    </div>
+  );
+}
+
 function PruneResultMessage({ data, state }: { data: unknown; state: string }) {
   if (state !== "idle" || !data || typeof data !== "object") return null;
 
@@ -795,6 +1129,7 @@ export default function Settings() {
     featureFlags: initialFeatureFlags,
     bananaForScaleEnabled,
     bananaModelStatus,
+    placeholderPartStatus,
     bulkCustomers = [],
     bulkVendors = [],
   } = useLoaderData<typeof loader>();
@@ -1561,6 +1896,12 @@ export default function Settings() {
                       <BananaModelUploadSection bananaModelStatus={bananaModelStatus} />
                     </div>
                   )}
+
+                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg overflow-hidden">
+                    <PlaceholderPartUploadSection
+                      placeholderPartStatus={placeholderPartStatus}
+                    />
+                  </div>
 
                   {/* Data Maintenance */}
                   <div className="pt-4 border-t border-gray-200 dark:border-gray-700">

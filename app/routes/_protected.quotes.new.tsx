@@ -110,26 +110,42 @@ export async function action({ request }: ActionFunctionArgs) {
       createdById: user?.id,
     };
 
-    const partCount = Array.from(formData.keys())
-      .filter(key => key.startsWith("parts[") && key.includes("][file]"))
-      .length;
+    let partCount = parseInt(String(formData.get("partsCount") ?? ""), 10);
+    if (Number.isNaN(partCount)) {
+      partCount = Array.from(formData.keys()).filter(
+        (key) => key.startsWith("parts[") && key.includes("][file]")
+      ).length;
+    }
 
     const partsData = [];
     for (let i = 0; i < partCount; i++) {
-      const fileKey = formData.get(`parts[${i}][file]`) as string;
-      const file = files.get(fileKey);
+      const fileKey = formData.get(`parts[${i}][file]`) as string | null;
+      const file = fileKey ? files.get(fileKey) : undefined;
 
-      // Get drawings for this part
       const drawings: Array<{ buffer: Buffer; fileName: string }> = [];
       let drawingIndex = 0;
       while (formData.get(`parts[${i}][drawings][${drawingIndex}]`)) {
-        const drawingKey = formData.get(`parts[${i}][drawings][${drawingIndex}]`) as string;
+        const drawingKey = formData.get(
+          `parts[${i}][drawings][${drawingIndex}]`
+        ) as string;
         const drawing = files.get(drawingKey);
         if (drawing) {
           drawings.push(drawing);
         }
         drawingIndex++;
       }
+
+      const modeRaw = formData.get(`parts[${i}][mode]`) as string | null;
+      const mode:
+        | "cad"
+        | "drawing_only"
+        | "cad_with_drawings"
+        | undefined =
+        modeRaw === "drawing_only" ||
+        modeRaw === "cad_with_drawings" ||
+        modeRaw === "cad"
+          ? modeRaw
+          : undefined;
 
       partsData.push({
         file: file?.buffer,
@@ -141,19 +157,25 @@ export async function action({ request }: ActionFunctionArgs) {
         quantity: parseInt(formData.get(`parts[${i}][quantity]`) as string) || 1,
         notes: formData.get(`parts[${i}][notes]`) as string,
         drawings: drawings.length > 0 ? drawings : undefined,
+        mode,
       });
     }
 
     const result = await createQuoteWithParts(quoteData, partsData, context);
 
     if (!result.success) {
-      throw new Error(result.error || "Failed to create quote");
+      return json(
+        { error: result.error || "Failed to create quote" },
+        { status: 400 }
+      );
     }
 
     return json({ success: true, quoteId: result.quoteId });
   } catch (error) {
     console.error("Error creating quote with parts:", error);
-    return json({ error: "Failed to create quote" }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : "Failed to create quote";
+    return json({ error: message }, { status: 500 });
   }
 }
 
