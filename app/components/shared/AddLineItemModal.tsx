@@ -63,7 +63,7 @@ export function AddLineItemModal({
 
   const selectedPart = useMemo(
     () => existingParts.find((p) => p.id === selectedPartId),
-    [existingParts, selectedPartId]
+    [existingParts, selectedPartId],
   );
 
   const hasPartAttached = cadFile !== null || selectedPartId !== null;
@@ -162,7 +162,7 @@ export function AddLineItemModal({
           part.notes || "",
         ]
           .filter(Boolean)
-          .join("\n")
+          .join("\n"),
       );
     }
   };
@@ -225,7 +225,11 @@ export function AddLineItemModal({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title={promoteLineItemId != null ? "Promote to part line item" : "Add Line Item"}
+        title={
+          promoteLineItemId != null
+            ? "Promote to part line item"
+            : "Add Line Item"
+        }
       >
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* Upload zone — only shown when no file or part is attached */}
@@ -245,7 +249,8 @@ export function AddLineItemModal({
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
+                  if (e.key === "Enter" || e.key === " ")
+                    fileInputRef.current?.click();
                 }}
               >
                 <svg
@@ -265,7 +270,8 @@ export function AddLineItemModal({
                   Upload your part file
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  CAD (STEP, SLDPRT, STL, …) or manufacturing drawings (PDF, PNG, …)
+                  Drag & drop or click to browse - STEP, SLDPRT, STL, OBJ, IGES,
+                  PDF
                 </p>
                 <input
                   ref={fileInputRef}
@@ -301,13 +307,25 @@ export function AddLineItemModal({
             /* Attached file / part preview — compact chip */
             <div className="flex items-center gap-3 px-3 py-2.5 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600">
               <div className="flex-shrink-0 w-8 h-8 bg-blue-100 dark:bg-blue-900/30 rounded-md flex items-center justify-center">
-                <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                <svg
+                  className="w-4 h-4 text-blue-600 dark:text-blue-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                  {cadFile ? cadFile.name : selectedPart?.partName || "Selected part"}
+                  {cadFile
+                    ? cadFile.name
+                    : selectedPart?.partName || "Selected part"}
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   {cadFile
@@ -324,8 +342,18 @@ export function AddLineItemModal({
                 }}
                 title="Remove"
               >
-                <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-4 h-4 text-gray-500 dark:text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>
@@ -339,7 +367,11 @@ export function AddLineItemModal({
               setName(e.target.value);
               if (errors.name) setErrors({});
             }}
-            placeholder={hasPartAttached ? "Auto-filled from file name" : "Enter line item name"}
+            placeholder={
+              hasPartAttached
+                ? "Auto-filled from file name"
+                : "Enter line item name"
+            }
             error={errors.name}
           />
 
@@ -388,7 +420,9 @@ export function AddLineItemModal({
                 <InputField
                   label="Tolerance"
                   value={tolerance}
-                  onChange={(e) => setTolerance(formatToleranceValue(e.target.value))}
+                  onChange={(e) =>
+                    setTolerance(formatToleranceValue(e.target.value))
+                  }
                   onFocus={() => setTolerance(initToleranceOnFocus(tolerance))}
                   placeholder="e.g., ±0.005"
                 />
@@ -425,7 +459,7 @@ export function AddLineItemModal({
                           className="ml-2 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-xs"
                           onClick={() =>
                             setDrawings((prev) =>
-                              prev.filter((_, idx) => idx !== i)
+                              prev.filter((_, idx) => idx !== i),
                             )
                           }
                         >
