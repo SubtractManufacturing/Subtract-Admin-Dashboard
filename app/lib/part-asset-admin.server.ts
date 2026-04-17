@@ -16,6 +16,7 @@ import {
 } from "./technical-drawings.server";
 import type { AttachmentEventContext } from "./attachments";
 import { PART_ASSET_ADMIN_INTENT } from "./part-asset-admin.shared";
+import { quotePartUsesPlaceholderCad } from "./quote-part-assets.server";
 
 export type PartAssetAdminRoute =
   | { type: "quote"; quoteId: number }
@@ -93,6 +94,18 @@ export async function tryPartAssetAdminAction(
           if (!qp || qp.quoteId !== route.quoteId) {
             return withAuthHeaders(
               json({ error: "Quote part not found" }, { status: 404 }),
+              bundle.headers
+            );
+          }
+          if (quotePartUsesPlaceholderCad(qp.specifications)) {
+            return withAuthHeaders(
+              json(
+                {
+                  error:
+                    "Preview mesh is managed in Settings. Upload a CAD file to regenerate mesh for this part.",
+                },
+                { status: 400 }
+              ),
               bundle.headers
             );
           }

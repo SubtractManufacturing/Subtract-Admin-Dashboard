@@ -49,7 +49,7 @@ import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.serv
 import { generatePdfThumbnail, isPdfFile } from "./pdf-thumbnail.server.js";
 import {
   ensureDrawingOnlyQuotePartAssets,
-  PlaceholderPartAssetsMissingError,
+  quotePartUsesPlaceholderCad,
 } from "./quote-part-assets.server.js";
 import { contentTypeForDrawingFileName } from "./part-source-files.js";
 import crypto from "crypto";
@@ -595,7 +595,7 @@ export async function convertQuoteToOrder(
     }
 
     // Additional validation: Check if any quote parts have pending conversions
-    // Drawing-only parts use copied placeholder CAD with conversionStatus "completed", so they do not block.
+    // Drawing-only parts with copied placeholder mesh use conversionStatus "completed"; without a global placeholder they use "skipped" and do not block.
     if (quote.parts && quote.parts.length > 0) {
       const pendingConversions = quote.parts.filter(
         (part) =>
@@ -697,6 +697,10 @@ export async function convertQuoteToOrder(
       if (quote.parts && quote.parts.length > 0) {
         for (const quotePart of quote.parts) {
           try {
+            const usesPlaceholder = quotePartUsesPlaceholderCad(
+              quotePart.specifications
+            );
+
             // Create a customer part from the quote part
             // First create with null URLs, then copy files and update
             const [customerPart] = await tx
@@ -710,7 +714,9 @@ export async function convertQuoteToOrder(
                 thumbnailUrl: null, // Will be updated after copying
                 partFileUrl: null, // Will be updated after copying
                 partMeshUrl: null, // Will be updated after copying
-                meshConversionStatus: quotePart.conversionStatus || "pending",
+                meshConversionStatus: usesPlaceholder
+                  ? "skipped"
+                  : quotePart.conversionStatus || "pending",
                 meshConversionError: quotePart.meshConversionError || null,
                 meshConversionJobId: quotePart.meshConversionJobId || null,
                 meshConversionStartedAt:
@@ -757,8 +763,8 @@ export async function convertQuoteToOrder(
               return urlOrPath;
             };
 
-            // Copy CAD source file
-            if (quotePart.partFileUrl) {
+            // Copy CAD source file (never copy Settings placeholder into customer parts)
+            if (!usesPlaceholder && quotePart.partFileUrl) {
               try {
                 const sourceKey = extractS3Key(quotePart.partFileUrl);
                 if (sourceKey) {
@@ -778,7 +784,7 @@ export async function convertQuoteToOrder(
             }
 
             // Copy mesh file
-            if (quotePart.partMeshUrl) {
+            if (!usesPlaceholder && quotePart.partMeshUrl) {
               try {
                 const sourceKey = extractS3Key(quotePart.partMeshUrl);
                 if (sourceKey) {
@@ -1159,6 +1165,10 @@ export async function duplicateQuote(
 
           partIdMap.set(sourcePart.id, newPart.id);
 
+          const usesPlaceholder = quotePartUsesPlaceholderCad(
+            sourcePart.specifications
+          );
+
           // Helper to extract S3 key from URL or path
           const extractS3Key = (urlOrPath: string): string | null => {
             if (!urlOrPath) return null;
@@ -1175,9 +1185,9 @@ export async function duplicateQuote(
             return urlOrPath;
           };
 
-          // Copy CAD source file
+          // Copy CAD source file (placeholder preview uses global Settings; no per-part copy)
           let newPartFileUrl: string | null = null;
-          if (sourcePart.partFileUrl) {
+          if (!usesPlaceholder && sourcePart.partFileUrl) {
             try {
               const sourceKey = extractS3Key(sourcePart.partFileUrl);
               if (sourceKey) {
@@ -1197,7 +1207,7 @@ export async function duplicateQuote(
 
           // Copy mesh file
           let newPartMeshUrl: string | null = null;
-          if (sourcePart.partMeshUrl) {
+          if (!usesPlaceholder && sourcePart.partMeshUrl) {
             try {
               const sourceKey = extractS3Key(sourcePart.partMeshUrl);
               if (sourceKey) {
@@ -1744,17 +1754,10 @@ export async function createQuoteWithParts(
       }
 
       if (!partFileUrl && part.drawings && part.drawings.length > 0) {
-        try {
-          await ensureDrawingOnlyQuotePartAssets(quotePart.id, {
-            primaryDrawingBuffer: part.drawings[0].buffer,
-            primaryDrawingFileName: part.drawings[0].fileName,
-          });
-        } catch (e) {
-          if (e instanceof PlaceholderPartAssetsMissingError) {
-            throw e;
-          }
-          throw e;
-        }
+        await ensureDrawingOnlyQuotePartAssets(quotePart.id, {
+          primaryDrawingBuffer: part.drawings[0].buffer,
+          primaryDrawingFileName: part.drawings[0].fileName,
+        });
       }
 
       await db.insert(quoteLineItems).values({

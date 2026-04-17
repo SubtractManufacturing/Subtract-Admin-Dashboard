@@ -47,8 +47,13 @@ import {
   generateFileKey,
   deleteFile,
   getDownloadUrl,
+  extractS3Key,
 } from "~/lib/s3.server";
-import { getBananaModelUrls } from "~/lib/developerSettings";
+import { getBananaModelUrls, getPlaceholderPartUrls } from "~/lib/developerSettings";
+import {
+  quotePartUsesPlaceholderCad,
+  resolveQuotePartPreviewAssets,
+} from "~/lib/quote-part-assets.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import {
@@ -103,7 +108,6 @@ import {
   type NormalizedLineItem,
   type NormalizedPart,
 } from "~/components/shared/line-items/types";
-import { PlaceholderPartAssetsMissingError } from "~/lib/quote-part-assets.server";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -126,6 +130,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     getVendors(),
   ]);
 
+  const globalPlaceholder = await getPlaceholderPartUrls();
+
   // Generate signed URLs for quote parts with meshes, solid files, thumbnails, and drawings
   const partsWithSignedUrls = await Promise.all(
     (quote.parts || []).map(async (part) => {
@@ -133,36 +139,56 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       let signedFileUrl = undefined;
       let signedThumbnailUrl = undefined;
 
-      // Get signed mesh URL
-      if (part.partMeshUrl && part.conversionStatus === "completed") {
+      const preview = resolveQuotePartPreviewAssets(
+        {
+          specifications: part.specifications,
+          partFileUrl: part.partFileUrl,
+          partMeshUrl: part.partMeshUrl,
+          conversionStatus: part.conversionStatus,
+        },
+        globalPlaceholder
+      );
+
+      // Preview mesh (includes live Settings placeholder when usesPlaceholderCad)
+      if (
+        preview.effectiveConversionStatus === "completed" &&
+        preview.meshKey
+      ) {
         const { getQuotePartMeshUrl } = await import(
           "~/lib/quote-part-mesh-converter.server"
         );
-        const result = await getQuotePartMeshUrl(part.id);
+        const result = await getQuotePartMeshUrl(part.id, globalPlaceholder);
         if ("url" in result) {
           signedMeshUrl = result.url;
         }
       }
 
-      // Get signed solid file URL (STEP, BREP, SLDPRT, etc.)
-      if (part.partFileUrl) {
+      const usesPh = quotePartUsesPlaceholderCad(part.specifications);
+      // Preview solid CAD URL (not included in bulk zip when placeholder-only)
+      if (
+        usesPh &&
+        preview.cadKey &&
+        preview.effectiveConversionStatus === "completed"
+      ) {
         try {
-          // Extract S3 key from the URL
-          let key: string;
-          if (part.partFileUrl.includes("quote-parts/")) {
-            const urlParts = part.partFileUrl.split("/");
-            const quotePartsIndex = urlParts.findIndex(
-              (p) => p === "quote-parts"
-            );
-            if (quotePartsIndex >= 0) {
-              key = urlParts.slice(quotePartsIndex).join("/");
-            } else {
-              key = part.partFileUrl;
-            }
-          } else {
-            key = part.partFileUrl;
-          }
-          signedFileUrl = await getDownloadUrl(key, 3600);
+          signedFileUrl = await getDownloadUrl(
+            extractS3Key(preview.cadKey),
+            3600
+          );
+        } catch (error) {
+          console.error(
+            "Error getting signed file URL for part",
+            part.id,
+            ":",
+            error
+          );
+        }
+      } else if (part.partFileUrl) {
+        try {
+          signedFileUrl = await getDownloadUrl(
+            extractS3Key(part.partFileUrl),
+            3600
+          );
         } catch (error) {
           console.error(
             "Error getting signed file URL for part",
@@ -806,9 +832,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         return redirect(`/quotes/${quoteId}`);
       } catch (error) {
-        if (error instanceof PlaceholderPartAssetsMissingError) {
-          return json({ error: error.message }, { status: 400 });
-        }
         console.error("Error adding line item:", error);
         return json({ error: "Failed to add line item" }, { status: 500 });
       }
@@ -1755,6 +1778,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Quote part not found" }, { status: 404 });
         }
 
+        if (quotePartUsesPlaceholderCad(quotePart.specifications)) {
+          return json(
+            {
+              error:
+                "Preview mesh is managed in Settings. Upload a CAD file to regenerate mesh for this part.",
+            },
+            { status: 400 }
+          );
+        }
+
         if (!quotePart.partFileUrl) {
           return json(
             { error: "No source file available for conversion" },
@@ -2337,8 +2370,13 @@ export default function QuoteDetail() {
     meshConversionError?: string | null;
     usesPlaceholderCad?: boolean;
   }) => {
-    // Open modal if mesh is available OR if CAD file is available (for download/revision)
-    if (part.signedMeshUrl || part.signedFileUrl || part.partFileUrl) {
+    // Open if there is mesh/CAD, or drawing-only placeholder rows (no mesh until CAD is uploaded)
+    if (
+      part.signedMeshUrl ||
+      part.signedFileUrl ||
+      part.partFileUrl ||
+      part.usesPlaceholderCad
+    ) {
       setSelectedPart3D({
         partId: part.id,
         quotePartId: part.id,
@@ -3738,7 +3776,7 @@ export default function QuoteDetail() {
             revalidator.revalidate();
           }}
           onRegenerateMesh={
-            selectedPart3D.quotePartId
+            selectedPart3D.quotePartId && !selectedPart3D.usesPlaceholderCad
               ? () => {
                   const fd = new FormData();
                   fd.append("intent", "regenerateMesh");
