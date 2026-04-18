@@ -28,6 +28,98 @@ interface NewQuoteModalProps {
   onSuccess?: () => void;
 }
 
+type MixedFilePool = {
+  cad: Array<{ id: string; file: File }>;
+  drawings: Array<{ id: string; file: File }>;
+};
+
+type AssignmentSlot = { cadId: string | null; drawingId: string | null };
+
+function baseFileName(file: File): string {
+  return file.name.replace(/\.[^.]+$/, "");
+}
+
+function validateMixedAssignment(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+): string | null {
+  for (let i = 0; i < slots.length; i++) {
+    if (!slots[i].cadId && !slots[i].drawingId) {
+      return `Line item ${i + 1} must have a CAD file or a drawing (or remove the empty row).`;
+    }
+  }
+  const usedCad = new Set(
+    slots.map((s) => s.cadId).filter(Boolean) as string[],
+  );
+  const usedDrw = new Set(
+    slots.map((s) => s.drawingId).filter(Boolean) as string[],
+  );
+  for (const c of pool.cad) {
+    if (!usedCad.has(c.id)) {
+      return `Assign every CAD file: "${c.file.name}" is not assigned to a line item.`;
+    }
+  }
+  for (const d of pool.drawings) {
+    if (!usedDrw.has(d.id)) {
+      return `Assign every drawing file: "${d.file.name}" is not assigned to a line item.`;
+    }
+  }
+  return null;
+}
+
+function partConfigsFromAssignment(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+): PartConfig[] {
+  return slots.map((slot, index) => {
+    const cadFile = slot.cadId
+      ? pool.cad.find((c) => c.id === slot.cadId)?.file
+      : undefined;
+    const drawingFile = slot.drawingId
+      ? pool.drawings.find((d) => d.id === slot.drawingId)?.file
+      : undefined;
+    const partName =
+      (cadFile ? baseFileName(cadFile) : undefined) ??
+      (drawingFile ? baseFileName(drawingFile) : undefined) ??
+      `Part ${index + 1}`;
+    return {
+      file: cadFile,
+      drawings: drawingFile ? [drawingFile] : undefined,
+      quantity: 1,
+      partName,
+      isExpanded: index === 0,
+    };
+  });
+}
+
+function cadOptionsForRow(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+  rowIndex: number,
+) {
+  const taken = new Set<string>();
+  for (let j = 0; j < slots.length; j++) {
+    if (j !== rowIndex && slots[j].cadId) taken.add(slots[j].cadId!);
+  }
+  return pool.cad.filter(
+    (c) => !taken.has(c.id) || slots[rowIndex].cadId === c.id,
+  );
+}
+
+function drawingOptionsForRow(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+  rowIndex: number,
+) {
+  const taken = new Set<string>();
+  for (let j = 0; j < slots.length; j++) {
+    if (j !== rowIndex && slots[j].drawingId) taken.add(slots[j].drawingId!);
+  }
+  return pool.drawings.filter(
+    (d) => !taken.has(d.id) || slots[rowIndex].drawingId === d.id,
+  );
+}
+
 function partSummaryLabel(config: PartConfig): string {
   if (config.file) return config.file.name;
   if (config.drawings?.length)
@@ -35,7 +127,7 @@ function partSummaryLabel(config: PartConfig): string {
   return "Part";
 }
 
-type Step = "upload" | "disambiguate" | "configure" | "customer" | "review";
+type Step = "upload" | "assign" | "configure" | "customer" | "review";
 
 export default function NewQuoteModal({
   isOpen,
@@ -48,10 +140,12 @@ export default function NewQuoteModal({
 
   const [currentStep, setCurrentStep] = useState<Step>("upload");
   const [partConfigs, setPartConfigs] = useState<PartConfig[]>([]);
-  const [disambiguation, setDisambiguation] = useState<{
-    cad: File[];
-    drawings: File[];
-  } | null>(null);
+  const [mixedFilePool, setMixedFilePool] = useState<MixedFilePool | null>(
+    null,
+  );
+  const [assignmentSlots, setAssignmentSlots] = useState<AssignmentSlot[]>([]);
+  const [enforceMaxOneDrawingInConfigure, setEnforceMaxOneDrawingInConfigure] =
+    useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
     null,
   );
@@ -86,7 +180,9 @@ export default function NewQuoteModal({
         // Reset form state first
         setCurrentStep("upload");
         setPartConfigs([]);
-        setDisambiguation(null);
+        setMixedFilePool(null);
+        setAssignmentSlots([]);
+        setEnforceMaxOneDrawingInConfigure(false);
         setSelectedCustomer(null);
         setCreateNewCustomer(false);
         setNewCustomerData({
@@ -111,7 +207,9 @@ export default function NewQuoteModal({
   const handleReset = () => {
     setCurrentStep("upload");
     setPartConfigs([]);
-    setDisambiguation(null);
+    setMixedFilePool(null);
+    setAssignmentSlots([]);
+    setEnforceMaxOneDrawingInConfigure(false);
     setSelectedCustomer(null);
     setCreateNewCustomer(false);
     setNewCustomerData({
@@ -166,6 +264,7 @@ export default function NewQuoteModal({
 
     setIsContentTransitioning(true);
     setTimeout(() => {
+      setEnforceMaxOneDrawingInConfigure(false);
       if (cad.length === 0 && drawings.length > 0) {
         const base = drawings[0].name.replace(/\.[^.]+$/, "");
         setPartConfigs([
@@ -199,26 +298,35 @@ export default function NewQuoteModal({
         ]);
         setCurrentStep("configure");
       } else {
-        setDisambiguation({ cad, drawings });
-        setCurrentStep("disambiguate");
+        const cadEntries = cad.map((file) => ({
+          id: crypto.randomUUID(),
+          file,
+        }));
+        const drawingEntries = drawings.map((file) => ({
+          id: crypto.randomUUID(),
+          file,
+        }));
+        setMixedFilePool({ cad: cadEntries, drawings: drawingEntries });
+        setAssignmentSlots(
+          cadEntries.map((e) => ({ cadId: e.id, drawingId: null })),
+        );
+        setCurrentStep("assign");
       }
       setTimeout(() => setIsContentTransitioning(false), 300);
     }, 150);
   };
 
-  const applyDisambiguationOnePart = () => {
-    if (!disambiguation) return;
-    const { cad, drawings } = disambiguation;
-    setPartConfigs([
-      {
-        file: cad[0],
-        drawings,
-        quantity: 1,
-        partName: cad[0].name.replace(/\.[^.]+$/, ""),
-        isExpanded: true,
-      },
-    ]);
-    setDisambiguation(null);
+  const continueFromAssignment = () => {
+    if (!mixedFilePool) return;
+    const err = validateMixedAssignment(mixedFilePool, assignmentSlots);
+    if (err) {
+      alert(err);
+      return;
+    }
+    setPartConfigs(partConfigsFromAssignment(mixedFilePool, assignmentSlots));
+    setMixedFilePool(null);
+    setAssignmentSlots([]);
+    setEnforceMaxOneDrawingInConfigure(true);
     setIsContentTransitioning(true);
     setTimeout(() => {
       setCurrentStep("configure");
@@ -226,24 +334,26 @@ export default function NewQuoteModal({
     }, 150);
   };
 
-  const applyDisambiguationMultiPart = () => {
-    if (!disambiguation) return;
-    const { cad, drawings } = disambiguation;
-    setPartConfigs(
-      cad.map((file, index) => ({
-        file,
-        drawings: index === 0 ? drawings : undefined,
-        quantity: 1,
-        partName: file.name.replace(/\.[^.]+$/, ""),
-        isExpanded: index === 0,
-      })),
-    );
-    setDisambiguation(null);
-    setIsContentTransitioning(true);
-    setTimeout(() => {
-      setCurrentStep("configure");
-      setIsContentTransitioning(false);
-    }, 150);
+  const updateAssignmentSlot = (
+    index: number,
+    patch: Partial<AssignmentSlot>,
+  ) => {
+    setAssignmentSlots((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
+    });
+  };
+
+  const addAssignmentRow = () => {
+    setAssignmentSlots((prev) => [...prev, { cadId: null, drawingId: null }]);
+  };
+
+  const removeAssignmentRow = (index: number) => {
+    setAssignmentSlots((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, i) => i !== index);
+    });
   };
 
   const updatePartConfig = (
@@ -400,32 +510,121 @@ export default function NewQuoteModal({
     }
   };
 
-  const renderDisambiguateStep = () => {
-    if (!disambiguation) return null;
-    const { cad, drawings } = disambiguation;
+  const renderAssignStep = () => {
+    if (!mixedFilePool) return null;
+    const pool = mixedFilePool;
     return (
-      <div className="p-6 space-y-4">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          You uploaded <strong>{cad.length}</strong> CAD file(s) and{" "}
-          <strong>{drawings.length}</strong> drawing file(s). How should we
-          create line items?
+      <div className="p-6 space-y-4 flex flex-col max-h-[min(70vh,560px)]">
+        <p className="text-sm text-gray-600 dark:text-gray-400 shrink-0">
+          You uploaded <strong>{pool.cad.length}</strong> CAD file(s) and{" "}
+          <strong>{pool.drawings.length}</strong> drawing file(s). Assign each
+          file to exactly one line item. Each line can have one CAD, one
+          drawing, or both. Add rows if you need drawing-only line items.
         </p>
-        <div className="flex flex-col gap-3">
-          <Button
-            type="button"
-            variant="primary"
-            onClick={applyDisambiguationOnePart}
-          >
-            One line item — first CAD as solid, all drawings in the drawing
-            section
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={applyDisambiguationMultiPart}
-          >
-            Separate line items — one per CAD file (drawings attached to the
-            first part only)
+
+        <div className="overflow-y-auto flex-1 min-h-0 border border-gray-200 dark:border-gray-700 rounded-lg">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-gray-800/80 sticky top-0 z-10">
+              <tr>
+                <th className="text-left p-3 font-medium text-gray-700 dark:text-gray-200">
+                  Line item
+                </th>
+                <th className="text-left p-3 font-medium text-gray-700 dark:text-gray-200">
+                  CAD file
+                </th>
+                <th className="text-left p-3 font-medium text-gray-700 dark:text-gray-200">
+                  Drawing
+                </th>
+                <th className="w-10 p-3" aria-hidden />
+              </tr>
+            </thead>
+            <tbody>
+              {assignmentSlots.map((slot, index) => {
+                const cadChoices = cadOptionsForRow(pool, assignmentSlots, index);
+                const drwChoices = drawingOptionsForRow(
+                  pool,
+                  assignmentSlots,
+                  index,
+                );
+                return (
+                  <tr
+                    key={index}
+                    className="border-t border-gray-200 dark:border-gray-700 align-top"
+                  >
+                    <td className="p-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                      {index + 1}
+                    </td>
+                    <td className="p-2">
+                      <select
+                        className="w-full max-w-[220px] rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm"
+                        value={slot.cadId ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateAssignmentSlot(index, {
+                            cadId: v === "" ? null : v,
+                          });
+                        }}
+                      >
+                        <option value="">None</option>
+                        {cadChoices.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.file.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="p-2">
+                      <select
+                        className="w-full max-w-[220px] rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm"
+                        value={slot.drawingId ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateAssignmentSlot(index, {
+                            drawingId: v === "" ? null : v,
+                          });
+                        }}
+                      >
+                        <option value="">None</option>
+                        {drwChoices.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.file.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="p-2">
+                      <button
+                        type="button"
+                        disabled={assignmentSlots.length <= 1}
+                        onClick={() => removeAssignmentRow(index)}
+                        className="text-red-600 hover:text-red-800 dark:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed p-1"
+                        title="Remove line item"
+                      >
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button type="button" variant="secondary" onClick={addAssignmentRow}>
+            Add line item
           </Button>
         </div>
       </div>
@@ -630,6 +829,9 @@ export default function NewQuoteModal({
                       drawings={config.drawings || []}
                       onDrawingsChange={(files) =>
                         updatePartConfig(index, "drawings", files)
+                      }
+                      maxDrawings={
+                        enforceMaxOneDrawingInConfigure ? 1 : undefined
                       }
                     />
                   </div>
@@ -845,8 +1047,8 @@ export default function NewQuoteModal({
     switch (currentStep) {
       case "upload":
         return renderUploadStep();
-      case "disambiguate":
-        return renderDisambiguateStep();
+      case "assign":
+        return renderAssignStep();
       case "configure":
         return renderConfigureStep();
       case "customer":
@@ -862,8 +1064,8 @@ export default function NewQuoteModal({
     switch (currentStep) {
       case "upload":
         return "New Quote - Upload Parts";
-      case "disambiguate":
-        return "New Quote - Multiple file types";
+      case "assign":
+        return "New Quote - Assign files to line items";
       case "configure":
         return "New Quote - Configure Parts";
       case "customer":
@@ -878,18 +1080,26 @@ export default function NewQuoteModal({
   const renderFooter = () => {
     if (currentStep === "upload") return null;
 
-    if (currentStep === "disambiguate") {
+    if (currentStep === "assign") {
       return (
         <div className="flex justify-between items-center px-6 py-4 border-t bg-gray-50 dark:bg-gray-800">
           <Button
             type="button"
             variant="secondary"
             onClick={() => {
-              setDisambiguation(null);
+              setMixedFilePool(null);
+              setAssignmentSlots([]);
               setCurrentStep("upload");
             }}
           >
             Back
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={continueFromAssignment}
+          >
+            Continue to configure parts
           </Button>
         </div>
       );
@@ -901,7 +1111,10 @@ export default function NewQuoteModal({
           onClick={() => {
             setIsContentTransitioning(true);
             setTimeout(() => {
-              if (currentStep === "configure") setCurrentStep("upload");
+              if (currentStep === "configure") {
+                setCurrentStep("upload");
+                setEnforceMaxOneDrawingInConfigure(false);
+              }
               else if (currentStep === "customer") {
                 setCurrentStep(
                   partConfigs.length === 0 ? "upload" : "configure",
