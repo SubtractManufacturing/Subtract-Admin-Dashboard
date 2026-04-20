@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.13](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.12...v1.3.13) (2026-04-20)
+
+
+### Bug Fixes
+
+* make line items wayyy better ([b1af8ea](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/b1af8ea847a5b1ddba70fee70767b54f8ab56801))
+
 ## [1.3.12](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.11...v1.3.12) (2026-04-03)
 
 
