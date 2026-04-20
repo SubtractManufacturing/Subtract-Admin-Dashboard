@@ -93,6 +93,8 @@ export function PurchaseOrderPdfTemplate({
     vendorPay: order.vendorPay,
   });
 
+  const shopPoLineItems = lineItems.filter((item) => item.partId != null);
+
   return (
     <div className="po-pdf-container">
       <style>
@@ -756,7 +758,7 @@ export function PurchaseOrderPdfTemplate({
                 </tr>
               </thead>
               <tbody>
-                {lineItems.map((item, index) => {
+                {shopPoLineItems.map((item, index) => {
                   const part = parts.find((p) => p?.id === item.partId);
                   const notesContent = item.description || item.notes || part?.notes || "";
                   return (

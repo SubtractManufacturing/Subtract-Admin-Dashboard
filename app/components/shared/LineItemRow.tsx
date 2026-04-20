@@ -429,9 +429,10 @@ export function LineItemRow({
         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
           {isEditing("unitPrice") ? (
             <input
-              type="number"
-              min={0}
-              step="0.01"
+              type={part ? "number" : "text"}
+              {...(part
+                ? { min: 0, step: "0.01" }
+                : { inputMode: "decimal" as const })}
               value={editingValue}
               onChange={(e) => onChangeEdit(e.target.value)}
               onKeyDown={(e) => {
@@ -454,9 +455,10 @@ export function LineItemRow({
         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
           {entityType === "quote" && isEditing("totalPrice") ? (
             <input
-              type="number"
-              min={0}
-              step="0.01"
+              type={part ? "number" : "text"}
+              {...(part
+                ? { min: 0, step: "0.01" }
+                : { inputMode: "decimal" as const })}
               value={editingValue}
               onChange={(e) => onChangeEdit(e.target.value)}
               onKeyDown={(e) => {

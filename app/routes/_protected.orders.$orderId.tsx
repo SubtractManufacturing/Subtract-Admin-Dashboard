@@ -71,10 +71,25 @@ import {
 } from "~/lib/parts";
 import { createEvent, getEventsForOrder } from "~/lib/events";
 import { db } from "~/lib/db";
-import { parts, attachments, partDrawings } from "~/lib/db/schema";
+import {
+  parts,
+  attachments,
+  partDrawings,
+  orderLineItems,
+} from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  orderPositiveSubtotalExcluding,
+  parseUnitPriceInput,
+} from "~/lib/lineItemPricing";
 import type { Vendor } from "~/lib/db/schema";
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { EventTimeline } from "~/components/EventTimeline";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
@@ -472,12 +487,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const name = formData.get("name") as string;
         const description = formData.get("description") as string;
         const quantity = parseInt(formData.get("quantity") as string);
-        const unitPrice = formData.get("unitPrice") as string;
+        const unitPriceRaw = formData.get("unitPrice") as string;
         const notes = formData.get("notes") as string;
         const partId = formData.get("partId") as string | null;
 
-        if (!name || !quantity || !unitPrice) {
+        if (!name || !quantity || !unitPriceRaw) {
           return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const partIdVal = partId && partId.trim() ? partId : null;
+        const existingLines = await db
+          .select()
+          .from(orderLineItems)
+          .where(eq(orderLineItems.orderId, order.id));
+        const positiveSub = orderPositiveSubtotalExcluding(existingLines);
+        const unitParsed = parseUnitPriceInput(unitPriceRaw.trim(), {
+          quantity,
+          positiveSubtotal: positiveSub,
+          isPartLinked: !!partIdVal,
+        });
+        if (!unitParsed.ok) {
+          return json({ error: unitParsed.error }, { status: 400 });
         }
 
         const eventContext: LineItemEventContext = {
@@ -485,20 +515,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const lineItem = await createLineItem(
-          {
-            orderId: order.id,
-            name,
-            description,
-            quantity,
-            unitPrice,
-            partId: partId || null,
-            notes: notes || null,
-          },
-          eventContext
-        );
+        try {
+          const lineItem = await createLineItem(
+            {
+              orderId: order.id,
+              name,
+              description,
+              quantity,
+              unitPrice: unitParsed.unitPrice.toFixed(2),
+              partId: partIdVal,
+              notes: notes || null,
+            },
+            eventContext
+          );
 
-        return withAuthHeaders(json({ lineItem }), headers);
+          return withAuthHeaders(json({ lineItem }), headers);
+        } catch (err) {
+          return json(
+            {
+              error:
+                err instanceof Error ? err.message : "Failed to create line item",
+            },
+            { status: 400 }
+          );
+        }
       }
 
       case "createLineItemWithUpload": {
@@ -612,13 +652,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
             userEmail: user?.email || userDetails?.name || undefined,
           };
 
+          const existingLines = await db
+            .select()
+            .from(orderLineItems)
+            .where(eq(orderLineItems.orderId, order.id));
+          const positiveSub = orderPositiveSubtotalExcluding(existingLines);
+          const unitParsed = parseUnitPriceInput(String(unitPrice).trim(), {
+            quantity,
+            positiveSubtotal: positiveSub,
+            isPartLinked: true,
+          });
+          if (!unitParsed.ok) {
+            return json({ error: unitParsed.error }, { status: 400 });
+          }
+
           const lineItem = await createLineItem(
             {
               orderId: order.id,
               name,
               description,
               quantity,
-              unitPrice,
+              unitPrice: unitParsed.unitPrice.toFixed(2),
               partId: part.id,
               notes: notes || null,
             },
@@ -640,12 +694,48 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const name = formData.get("name") as string;
         const description = formData.get("description") as string;
         const quantity = parseInt(formData.get("quantity") as string);
-        const unitPrice = formData.get("unitPrice") as string;
+        const unitPriceRaw = formData.get("unitPrice") as string;
         const notes = formData.get("notes") as string;
-        const partId = formData.get("partId") as string | null;
+        const rawPartId = formData.get("partId") as string | null;
+        const hasPartIdField = formData.has("partId");
+        const partIdVal = hasPartIdField
+          ? rawPartId && String(rawPartId).trim()
+            ? String(rawPartId).trim()
+            : null
+          : undefined;
 
-        if (!lineItemId || !name || !quantity || !unitPrice) {
+        if (!lineItemId || !name || !quantity || !unitPriceRaw) {
           return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const [lineRow] = await db
+          .select()
+          .from(orderLineItems)
+          .where(eq(orderLineItems.id, lineItemId))
+          .limit(1);
+
+        if (!lineRow || lineRow.orderId !== order.id) {
+          return json({ error: "Line item not found" }, { status: 404 });
+        }
+
+        const allOrderLines = await db
+          .select()
+          .from(orderLineItems)
+          .where(eq(orderLineItems.orderId, order.id));
+        const positiveSub = orderPositiveSubtotalExcluding(
+          allOrderLines,
+          lineItemId
+        );
+        const resolvedPartId =
+          partIdVal !== undefined ? partIdVal : lineRow.partId;
+
+        const unitParsed = parseUnitPriceInput(unitPriceRaw.trim(), {
+          quantity,
+          positiveSubtotal: positiveSub,
+          isPartLinked: !!resolvedPartId,
+        });
+        if (!unitParsed.ok) {
+          return json({ error: unitParsed.error }, { status: 400 });
         }
 
         const eventContext: LineItemEventContext = {
@@ -653,20 +743,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const lineItem = await updateLineItem(
-          lineItemId,
-          {
-            name,
-            description,
-            quantity,
-            unitPrice,
-            partId: partId || null,
-            notes: notes || null,
-          },
-          eventContext
-        );
+        try {
+          const lineItem = await updateLineItem(
+            lineItemId,
+            {
+              name,
+              description,
+              quantity,
+              unitPrice: unitParsed.unitPrice.toFixed(2),
+              ...(partIdVal !== undefined ? { partId: partIdVal } : {}),
+              notes: notes || null,
+            },
+            eventContext
+          );
 
-        return withAuthHeaders(json({ lineItem }), headers);
+          return withAuthHeaders(json({ lineItem }), headers);
+        } catch (err) {
+          return json(
+            {
+              error:
+                err instanceof Error ? err.message : "Failed to update line item",
+            },
+            { status: 400 }
+          );
+        }
       }
 
       case "deleteLineItem": {
@@ -1409,6 +1509,19 @@ export default function OrderDetails() {
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
+
+  const orderPositiveSubForAddLineModal = useMemo(
+    () =>
+      orderPositiveSubtotalExcluding(
+        lineItems.map((row: LineItemWithPart) => ({
+          id: row.lineItem.id,
+          quantity: row.lineItem.quantity,
+          unitPrice: row.lineItem.unitPrice ?? "0",
+        }))
+      ),
+    [lineItems]
+  );
+
   const handleAddLineItem = () => {
     setLineItemModalOpen(true);
   };
@@ -1586,17 +1699,43 @@ export default function OrderDetails() {
       )?.lineItem;
       if (!existing) return;
 
+      const qty =
+        field === "quantity"
+          ? parseInt(value, 10) || existing.quantity
+          : existing.quantity;
+
+      let unitPriceStr =
+        field === "unitPrice" ? value.trim() : existing.unitPrice || "0";
+
+      if (field === "unitPrice") {
+        const positiveSub = orderPositiveSubtotalExcluding(
+          lineItems.map((row: LineItemWithPart) => ({
+            id: row.lineItem.id,
+            quantity: row.lineItem.quantity,
+            unitPrice: row.lineItem.unitPrice ?? "0",
+          })),
+          lineItemId
+        );
+        const parsed = parseUnitPriceInput(unitPriceStr, {
+          quantity: qty,
+          positiveSubtotal: positiveSub,
+          isPartLinked: !!existing.partId,
+        });
+        if (!parsed.ok) {
+          alert(parsed.error);
+          return;
+        }
+        unitPriceStr = parsed.unitPrice.toFixed(2);
+      }
+
       const formData = new FormData();
       formData.append("intent", "updateLineItem");
       formData.append("lineItemId", lineItemId.toString());
       formData.append("name", existing.name || "");
       formData.append("description", field === "description" ? value : existing.description || "");
       formData.append("notes", field === "notes" ? value : existing.notes || "");
-      formData.append(
-        "quantity",
-        field === "quantity" ? (parseInt(value, 10) || existing.quantity).toString() : existing.quantity.toString()
-      );
-      formData.append("unitPrice", field === "unitPrice" ? value : existing.unitPrice || "0");
+      formData.append("quantity", qty.toString());
+      formData.append("unitPrice", unitPriceStr);
       if (existing.partId) {
         formData.append("partId", existing.partId);
       }
@@ -2562,6 +2701,7 @@ export default function OrderDetails() {
         onClose={() => setLineItemModalOpen(false)}
         onSubmit={handleAddLineItemSubmit}
         context="order"
+        positiveSubtotalForDiscount={orderPositiveSubForAddLineModal}
         customerId={order.customerId}
         existingParts={parts}
       />

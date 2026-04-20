@@ -78,6 +78,11 @@ import {
   type QuotePart,
 } from "~/lib/db/schema";
 import { eq, inArray, and, or } from "drizzle-orm";
+import {
+  parseLineTotalInput,
+  parseUnitPriceInput,
+  quotePositiveSubtotalExcluding,
+} from "~/lib/lineItemPricing";
 
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -777,13 +782,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         if (isPromote && promoteLineItemId != null) {
           const qty = parseInt(quantity, 10);
-          const unit = parseFloat(unitPrice);
           if (Number.isNaN(qty) || qty <= 0) {
             return json({ error: "Invalid quantity" }, { status: 400 });
           }
-          if (Number.isNaN(unit) || unit < 0) {
-            return json({ error: "Invalid unit price" }, { status: 400 });
+          const unitParsed = parseUnitPriceInput(unitPrice, {
+            quantity: qty,
+            positiveSubtotal: 0,
+            isPartLinked: true,
+          });
+          if (!unitParsed.ok) {
+            return json({ error: unitParsed.error }, { status: 400 });
           }
+          const unit = unitParsed.unitPrice;
           const totalPriceStr = (qty * unit).toFixed(2);
           await db
             .update(quoteLineItems)
@@ -814,13 +824,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
             userEmail: eventContext?.userEmail,
           });
         } else {
+          const qty = parseInt(quantity, 10);
+          if (Number.isNaN(qty) || qty <= 0) {
+            return json({ error: "Invalid quantity" }, { status: 400 });
+          }
+          const existingLines = await db
+            .select()
+            .from(quoteLineItems)
+            .where(eq(quoteLineItems.quoteId, quote.id));
+          const positiveSub = quotePositiveSubtotalExcluding(existingLines);
+          const unitParsed = parseUnitPriceInput(unitPrice, {
+            quantity: qty,
+            positiveSubtotal: positiveSub,
+            isPartLinked: !!quotePartId,
+          });
+          if (!unitParsed.ok) {
+            return json({ error: unitParsed.error }, { status: 400 });
+          }
           await createQuoteLineItem(
             quote.id,
             {
               quotePartId: quotePartId || undefined,
               name: name || undefined,
-              quantity: parseInt(quantity),
-              unitPrice: parseFloat(unitPrice),
+              quantity: qty,
+              unitPrice: unitParsed.unitPrice,
               description: description || undefined,
               notes: notes || undefined,
             },
@@ -1370,6 +1397,31 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
+        const lineItemIdNum = parseInt(lineItemId, 10);
+        if (Number.isNaN(lineItemIdNum)) {
+          return json({ error: "Invalid line item ID" }, { status: 400 });
+        }
+
+        const [lineRow] = await db
+          .select()
+          .from(quoteLineItems)
+          .where(eq(quoteLineItems.id, lineItemIdNum))
+          .limit(1);
+
+        if (!lineRow || lineRow.quoteId !== quote.id) {
+          return json({ error: "Line item not found" }, { status: 404 });
+        }
+
+        const allQuoteLines = await db
+          .select()
+          .from(quoteLineItems)
+          .where(eq(quoteLineItems.quoteId, quote.id));
+
+        const positiveSub = quotePositiveSubtotalExcluding(
+          allQuoteLines,
+          lineItemIdNum
+        );
+
         const { updateQuoteLineItem } = await import("~/lib/quotes");
 
         const updateData: {
@@ -1379,19 +1431,51 @@ export async function action({ request, params }: ActionFunctionArgs) {
           notes?: string;
         } = {};
 
-        // Get all possible updated fields
-        const quantity = formData.get("quantity") as string | null;
-        const unitPrice = formData.get("unitPrice") as string | null;
+        const quantityRaw = formData.get("quantity") as string | null;
+        const unitPriceRaw = formData.get("unitPrice") as string | null;
+        const totalPriceRaw = formData.get("totalPrice") as string | null;
         const description = formData.get("description") as string | null;
         const notes = formData.get("notes") as string | null;
 
-        // Only add fields that were provided (totalPrice is calculated automatically)
-        if (quantity !== null) {
-          updateData.quantity = parseInt(quantity);
+        const qty =
+          quantityRaw !== null && quantityRaw !== ""
+            ? parseInt(quantityRaw, 10)
+            : lineRow.quantity;
+
+        if (quantityRaw !== null && quantityRaw !== "") {
+          if (Number.isNaN(qty) || qty <= 0) {
+            return json({ error: "Invalid quantity" }, { status: 400 });
+          }
+          updateData.quantity = qty;
         }
-        if (unitPrice !== null) {
-          updateData.unitPrice = parseFloat(unitPrice);
+
+        const isPartLinked = lineRow.quotePartId != null;
+
+        if (totalPriceRaw !== null && totalPriceRaw !== "") {
+          const parsedTotal = parseLineTotalInput(totalPriceRaw, {
+            quantity: qty,
+            positiveSubtotal: positiveSub,
+            isPartLinked,
+          });
+          if (!parsedTotal.ok) {
+            return json({ error: parsedTotal.error }, { status: 400 });
+          }
+          if (qty <= 0) {
+            return json({ error: "Invalid quantity" }, { status: 400 });
+          }
+          updateData.unitPrice = parsedTotal.totalPrice / qty;
+        } else if (unitPriceRaw !== null && unitPriceRaw !== "") {
+          const parsedUnit = parseUnitPriceInput(unitPriceRaw, {
+            quantity: qty,
+            positiveSubtotal: positiveSub,
+            isPartLinked,
+          });
+          if (!parsedUnit.ok) {
+            return json({ error: parsedUnit.error }, { status: 400 });
+          }
+          updateData.unitPrice = parsedUnit.unitPrice;
         }
+
         if (description !== null) {
           updateData.description = description || "";
         }
@@ -1399,17 +1483,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           updateData.notes = notes || "";
         }
 
-        await updateQuoteLineItem(
-          parseInt(lineItemId),
-          updateData,
-          eventContext
-        );
+        await updateQuoteLineItem(lineItemIdNum, updateData, eventContext);
 
-        // Totals are already recalculated by updateQuoteLineItem
         const { calculateQuoteTotals } = await import("~/lib/quotes");
         const updatedTotals = await calculateQuoteTotals(quote.id);
 
-        // Return JSON response for fetcher to handle without navigation
         return json({ success: true, totals: updatedTotals });
       }
 
@@ -2152,6 +2230,20 @@ export default function QuoteDetail() {
   const [optimisticLineItems, setOptimisticLineItems] = useState<
     LineItem[] | undefined
   >(quote.lineItems as LineItem[] | undefined);
+
+  const quotePositiveSubForAddLineModal = useMemo(
+    () =>
+      quotePositiveSubtotalExcluding(
+        (optimisticLineItems ?? []).map((li) => ({
+          id: li.id,
+          quantity: li.quantity,
+          unitPrice: li.unitPrice,
+          totalPrice: li.totalPrice,
+        }))
+      ),
+    [optimisticLineItems]
+  );
+
   const [optimisticTotal, setOptimisticTotal] = useState(quote.total || "0.00");
   const [editingExpirationDays, setEditingExpirationDays] = useState(false);
   const [expirationDaysValue, setExpirationDaysValue] = useState(
@@ -2573,6 +2665,18 @@ export default function QuoteDetail() {
       const updatedItem: Partial<LineItem> = {};
       if (field === "description") updatedItem.description = value || null;
       if (field === "notes") updatedItem.notes = value || null;
+
+      const positiveSub = quotePositiveSubtotalExcluding(
+        (optimisticLineItems || []).map((li) => ({
+          id: li.id,
+          quantity: li.quantity,
+          unitPrice: li.unitPrice,
+          totalPrice: li.totalPrice,
+        })),
+        lineItemId
+      );
+      const isPartLinked = currentItem.quotePartId != null;
+
       if (field === "quantity") {
         const qty = parseInt(value, 10);
         if (Number.isNaN(qty) || qty <= 0) return;
@@ -2580,18 +2684,30 @@ export default function QuoteDetail() {
         const unitPrice = parseFloat(currentItem.unitPrice || "0");
         updatedItem.totalPrice = (qty * unitPrice).toFixed(2);
       }
+
       if (field === "unitPrice") {
-        const unitPrice = parseFloat(value);
-        if (Number.isNaN(unitPrice) || unitPrice < 0) return;
-        updatedItem.unitPrice = unitPrice.toFixed(2);
-        updatedItem.totalPrice = (currentItem.quantity * unitPrice).toFixed(2);
+        const qty = updatedItem.quantity ?? currentItem.quantity;
+        const parsed = parseUnitPriceInput(value, {
+          quantity: qty,
+          positiveSubtotal: positiveSub,
+          isPartLinked,
+        });
+        if (!parsed.ok) return;
+        updatedItem.unitPrice = parsed.unitPrice.toFixed(2);
+        updatedItem.totalPrice = (qty * parsed.unitPrice).toFixed(2);
       }
+
       if (field === "totalPrice") {
-        const totalPrice = parseFloat(value);
-        if (Number.isNaN(totalPrice) || totalPrice < 0) return;
-        updatedItem.totalPrice = totalPrice.toFixed(2);
-        if (currentItem.quantity > 0) {
-          updatedItem.unitPrice = (totalPrice / currentItem.quantity).toFixed(2);
+        const qty = updatedItem.quantity ?? currentItem.quantity;
+        const parsed = parseLineTotalInput(value, {
+          quantity: qty,
+          positiveSubtotal: positiveSub,
+          isPartLinked,
+        });
+        if (!parsed.ok) return;
+        updatedItem.totalPrice = parsed.totalPrice.toFixed(2);
+        if (qty > 0) {
+          updatedItem.unitPrice = (parsed.totalPrice / qty).toFixed(2);
         }
       }
 
@@ -3835,6 +3951,7 @@ export default function QuoteDetail() {
             : handleAddLineItemSubmit
         }
         context="quote"
+        positiveSubtotalForDiscount={quotePositiveSubForAddLineModal}
         customerId={quote.customerId}
         promoteLineItemId={promoteLineItemTarget?.id ?? null}
         initialLineItemName={promoteLineItemTarget?.name ?? null}

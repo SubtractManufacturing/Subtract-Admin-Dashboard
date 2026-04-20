@@ -580,10 +580,10 @@ export async function convertQuoteToOrder(
         };
       }
       const unitPrice = parseFloat(item.unitPrice || "0");
-      if (unitPrice < 0) {
+      if (item.quotePartId != null && unitPrice < 0) {
         return {
           success: false,
-          error: `Line item has invalid price: ${unitPrice}`,
+          error: `Part-linked line item has invalid price: ${unitPrice}`,
         };
       }
     }
@@ -1954,6 +1954,13 @@ export async function createQuoteLineItem(
   context?: QuoteEventContext
 ): Promise<QuoteLineItem | null> {
   try {
+    if (itemData.quotePartId && itemData.unitPrice < 0) {
+      console.error(
+        "createQuoteLineItem: part-linked line items cannot have negative unit price"
+      );
+      return null;
+    }
+
     const totalPrice = (itemData.quantity * itemData.unitPrice).toFixed(2);
 
     const [newItem] = await db
@@ -2040,14 +2047,28 @@ export async function updateQuoteLineItem(
 
     // Calculate new total price if quantity or unit price changed
     const quantity = updates.quantity ?? currentItem.quantity;
-    const unitPrice = updates.unitPrice ?? parseFloat(currentItem.unitPrice);
+    const unitPrice =
+      updates.unitPrice !== undefined
+        ? updates.unitPrice
+        : parseFloat(currentItem.unitPrice || "0");
+
+    if (currentItem.quotePartId != null && unitPrice < 0) {
+      console.error(
+        "updateQuoteLineItem: part-linked line items cannot have negative unit price"
+      );
+      return null;
+    }
+
     const totalPrice = (quantity * unitPrice).toFixed(2);
 
     const [updatedItem] = await db
       .update(quoteLineItems)
       .set({
         ...updates,
-        unitPrice: updates.unitPrice ? updates.unitPrice.toFixed(2) : undefined,
+        unitPrice:
+          updates.unitPrice !== undefined
+            ? updates.unitPrice.toFixed(2)
+            : undefined,
         totalPrice,
         updatedAt: new Date(),
       })

@@ -5,12 +5,15 @@ import { InputField, TextareaField } from "~/components/shared/FormField";
 import PartSelectionModal from "~/components/PartSelectionModal";
 import type { Part } from "~/lib/db/schema";
 import { formatToleranceValue, initToleranceOnFocus } from "~/utils/tolerance";
+import { parseUnitPriceInput } from "~/lib/lineItemPricing";
 
 interface AddLineItemModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: FormData) => void;
   context: "order" | "quote";
+  /** Sum of other lines' positive extended amounts; used for %-of-subtotal discount entry */
+  positiveSubtotalForDiscount?: number;
   customerId?: number | null;
   existingParts?: Part[];
   /** When set, modal pre-fills the line item name for promote-to-part flow */
@@ -34,6 +37,7 @@ export function AddLineItemModal({
   onClose,
   onSubmit,
   context,
+  positiveSubtotalForDiscount = 0,
   customerId,
   existingParts = [],
   promoteLineItemId = null,
@@ -45,7 +49,9 @@ export function AddLineItemModal({
   const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [errors, setErrors] = useState<{ name?: string }>({});
+  const [errors, setErrors] = useState<{ name?: string; unitPrice?: string }>(
+    {},
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState("");
@@ -100,7 +106,12 @@ export function AddLineItemModal({
     if (context !== "quote") return;
     const qty = parseFloat(quantity || "0");
     const unit = parseFloat(unitPrice || "0");
-    if (!Number.isNaN(qty) && qty > 0 && !Number.isNaN(unit) && unit >= 0) {
+    if (
+      !Number.isNaN(qty) &&
+      qty > 0 &&
+      unitPrice !== "" &&
+      !Number.isNaN(unit)
+    ) {
       setTotalPrice((qty * unit).toFixed(2));
     } else if (!unitPrice) {
       setTotalPrice("");
@@ -111,7 +122,7 @@ export function AddLineItemModal({
     setTotalPrice(value);
     const qty = parseFloat(quantity || "0");
     const total = parseFloat(value || "0");
-    if (!Number.isNaN(qty) && qty > 0 && !Number.isNaN(total) && total >= 0) {
+    if (!Number.isNaN(qty) && qty > 0 && value !== "" && !Number.isNaN(total)) {
       setUnitPrice((total / qty).toFixed(2));
     }
   };
@@ -186,17 +197,34 @@ export function AddLineItemModal({
       setErrors({ name: "Name is required" });
       return;
     }
+
+    const qty = parseInt(quantity || "1", 10);
+    if (Number.isNaN(qty) || qty <= 0) {
+      setErrors({ name: "Enter a valid quantity (at least 1)" });
+      return;
+    }
+
+    const unitParsed = parseUnitPriceInput(unitPrice || "0", {
+      quantity: qty,
+      positiveSubtotal: positiveSubtotalForDiscount,
+      isPartLinked: hasPartAttached,
+    });
+    if (!unitParsed.ok) {
+      setErrors({ unitPrice: unitParsed.error });
+      return;
+    }
+
     setErrors({});
 
     const formData = new FormData();
     formData.append("name", trimmedName);
     formData.append("description", description);
     formData.append("notes", notes);
-    formData.append("quantity", quantity || "1");
-    formData.append("unitPrice", unitPrice || "0");
+    formData.append("quantity", String(qty));
+    formData.append("unitPrice", unitParsed.unitPrice.toFixed(2));
 
     if (context === "quote") {
-      formData.append("totalPrice", totalPrice || "0");
+      formData.append("totalPrice", (qty * unitParsed.unitPrice).toFixed(2));
     }
 
     if (promoteLineItemId != null) {
@@ -386,20 +414,26 @@ export function AddLineItemModal({
               onChange={(e) => setQuantity(e.target.value)}
             />
             <InputField
-              label="Unit Price ($)"
-              type="number"
-              min="0"
-              step="0.01"
+              label={hasPartAttached ? "Unit Price ($)" : "Unit Price ($)"}
+              type={hasPartAttached ? "number" : "text"}
+              {...(hasPartAttached
+                ? { min: "0", step: "0.01" }
+                : { inputMode: "decimal" as const })}
               value={unitPrice}
-              onChange={(e) => setUnitPrice(e.target.value)}
-              placeholder="0.00"
+              onChange={(e) => {
+                setUnitPrice(e.target.value);
+                if (errors.unitPrice) {
+                  setErrors((prev) => ({ ...prev, unitPrice: undefined }));
+                }
+              }}
+              placeholder={hasPartAttached ? "0.00" : "100"}
+              error={errors.unitPrice}
             />
             {context === "quote" && (
               <InputField
                 label="Total Price ($)"
-                type="number"
-                min="0"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 value={totalPrice}
                 onChange={(e) => handleTotalPriceChange(e.target.value)}
                 placeholder="0.00"
