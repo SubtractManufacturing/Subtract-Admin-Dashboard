@@ -211,28 +211,57 @@ export async function uploadToS3(
 }
 
 /**
+ * Supabase Storage exposes an S3-compatible API where objects live at:
+ *   {endpoint}/storage/v1/s3/{bucket}/{objectKey}
+ * The object key for GetObject must be `{objectKey}` only (e.g. `quote-parts/...`),
+ * not `storage/v1/s3/...` — otherwise signed URLs duplicate the path and return 404.
+ */
+function stripSupabaseStoragePrefix(path: string): string {
+  let p = path.replace(/^\/+/, '');
+  const prefix = `storage/v1/s3/${S3_BUCKET}/`;
+  while (p.startsWith(prefix)) {
+    p = p.slice(prefix.length);
+  }
+  return p;
+}
+
+function stripLeadingBucketIfPresent(key: string): string {
+  if (key.startsWith(`${S3_BUCKET}/`)) {
+    return key.slice(S3_BUCKET.length + 1);
+  }
+  return key;
+}
+
+/**
  * Extract S3 key from a URL or return as-is if already a key.
- * Handles presigned URLs, full S3 URLs, and plain keys.
+ * Handles presigned URLs, full S3 URLs, Supabase storage URLs, and plain keys.
  */
 export function extractS3Key(urlOrKey: string): string {
-  // If it doesn't start with http, it's already a key
-  if (!urlOrKey.startsWith('http')) return urlOrKey;
+  if (!urlOrKey.startsWith('http')) {
+    let k = stripSupabaseStoragePrefix(urlOrKey);
+    k = stripLeadingBucketIfPresent(k);
+    return k;
+  }
 
   try {
     const url = new URL(urlOrKey);
-    const pathParts = url.pathname.split('/');
+    const pathname = url.pathname;
 
-    // Remove leading empty string from split
+    if (pathname.includes('/storage/v1/s3/')) {
+      let k = stripSupabaseStoragePrefix(pathname);
+      k = stripLeadingBucketIfPresent(k);
+      return k;
+    }
+
+    const pathParts = pathname.split('/');
     const cleanParts = pathParts.filter(Boolean);
 
-    // If path contains bucket name, skip it
     if (cleanParts[0] === S3_BUCKET) {
       return cleanParts.slice(1).join('/');
     }
 
     return cleanParts.join('/');
   } catch {
-    // If URL parsing fails, try legacy bucket-split approach
     if (urlOrKey.includes(`${S3_BUCKET}/`)) {
       const parts = urlOrKey.split(`${S3_BUCKET}/`);
       return parts[1] || urlOrKey;

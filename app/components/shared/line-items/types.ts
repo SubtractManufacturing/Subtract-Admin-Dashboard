@@ -22,6 +22,8 @@ export interface NormalizedPart {
   cadFileUrl?: string;
   conversionStatus?: string;
   meshConversionError?: string | null;
+  /** True when CAD slot uses global placeholder (drawing-only part) */
+  usesPlaceholderCad?: boolean;
 }
 
 export interface NormalizedLineItem {
@@ -68,6 +70,7 @@ type QuotePartInput = {
   signedMeshUrl?: string;
   signedThumbnailUrl?: string;
   drawings?: QuoteDrawingInput[];
+  usesPlaceholderCad?: boolean;
 };
 
 export function normalizeOrderLineItems(
@@ -142,6 +145,7 @@ export function normalizeQuoteLineItems(
             cadFileUrl: part.partFileUrl || part.signedFileUrl || undefined,
             conversionStatus: part.conversionStatus || undefined,
             meshConversionError: part.meshConversionError ?? undefined,
+            usesPlaceholderCad: part.usesPlaceholderCad,
           }
         : undefined,
     };

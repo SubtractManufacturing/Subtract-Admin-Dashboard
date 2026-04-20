@@ -6,9 +6,11 @@ import { InputField } from "~/components/shared/FormField";
 import SearchableSelect from "~/components/shared/SearchableSelect";
 import { PartConfigForm } from "~/components/shared/PartConfigForm";
 import type { Customer } from "~/lib/customers";
+import { isCadSourceFile, isDrawingSourceFile } from "~/lib/part-source-files";
 
 interface PartConfig {
-  file: File;
+  /** CAD source file when present; omitted for drawing-only parts */
+  file?: File;
   material?: string;
   tolerances?: string;
   quantity?: number;
@@ -26,22 +28,133 @@ interface NewQuoteModalProps {
   onSuccess?: () => void;
 }
 
-type Step = "upload" | "configure" | "customer" | "review";
+type MixedFilePool = {
+  cad: Array<{ id: string; file: File }>;
+  drawings: Array<{ id: string; file: File }>;
+};
 
-export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }: NewQuoteModalProps) {
+type AssignmentSlot = { cadId: string | null; drawingId: string | null };
+
+function baseFileName(file: File): string {
+  return file.name.replace(/\.[^.]+$/, "");
+}
+
+function validateMixedAssignment(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+): string | null {
+  for (let i = 0; i < slots.length; i++) {
+    if (!slots[i].cadId && !slots[i].drawingId) {
+      return `Line item ${i + 1} must have a CAD file or a drawing (or remove the empty row).`;
+    }
+  }
+  const usedCad = new Set(
+    slots.map((s) => s.cadId).filter(Boolean) as string[],
+  );
+  const usedDrw = new Set(
+    slots.map((s) => s.drawingId).filter(Boolean) as string[],
+  );
+  for (const c of pool.cad) {
+    if (!usedCad.has(c.id)) {
+      return `Assign every CAD file: "${c.file.name}" is not assigned to a line item.`;
+    }
+  }
+  for (const d of pool.drawings) {
+    if (!usedDrw.has(d.id)) {
+      return `Assign every drawing file: "${d.file.name}" is not assigned to a line item.`;
+    }
+  }
+  return null;
+}
+
+function partConfigsFromAssignment(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+): PartConfig[] {
+  return slots.map((slot, index) => {
+    const cadFile = slot.cadId
+      ? pool.cad.find((c) => c.id === slot.cadId)?.file
+      : undefined;
+    const drawingFile = slot.drawingId
+      ? pool.drawings.find((d) => d.id === slot.drawingId)?.file
+      : undefined;
+    const partName =
+      (cadFile ? baseFileName(cadFile) : undefined) ??
+      (drawingFile ? baseFileName(drawingFile) : undefined) ??
+      `Part ${index + 1}`;
+    return {
+      file: cadFile,
+      drawings: drawingFile ? [drawingFile] : undefined,
+      quantity: 1,
+      partName,
+      isExpanded: index === 0,
+    };
+  });
+}
+
+function cadOptionsForRow(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+  rowIndex: number,
+) {
+  const taken = new Set<string>();
+  for (let j = 0; j < slots.length; j++) {
+    if (j !== rowIndex && slots[j].cadId) taken.add(slots[j].cadId!);
+  }
+  return pool.cad.filter(
+    (c) => !taken.has(c.id) || slots[rowIndex].cadId === c.id,
+  );
+}
+
+function drawingOptionsForRow(
+  pool: MixedFilePool,
+  slots: AssignmentSlot[],
+  rowIndex: number,
+) {
+  const taken = new Set<string>();
+  for (let j = 0; j < slots.length; j++) {
+    if (j !== rowIndex && slots[j].drawingId) taken.add(slots[j].drawingId!);
+  }
+  return pool.drawings.filter(
+    (d) => !taken.has(d.id) || slots[rowIndex].drawingId === d.id,
+  );
+}
+
+function partSummaryLabel(config: PartConfig): string {
+  if (config.file) return config.file.name;
+  if (config.drawings?.length)
+    return `${config.drawings.length} drawing file(s)`;
+  return "Part";
+}
+
+type Step = "upload" | "assign" | "configure" | "customer" | "review";
+
+export default function NewQuoteModal({
+  isOpen,
+  onClose,
+  customers,
+  onSuccess,
+}: NewQuoteModalProps) {
   const fetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [currentStep, setCurrentStep] = useState<Step>("upload");
-  const [partFiles, setPartFiles] = useState<File[]>([]);
   const [partConfigs, setPartConfigs] = useState<PartConfig[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [mixedFilePool, setMixedFilePool] = useState<MixedFilePool | null>(
+    null,
+  );
+  const [assignmentSlots, setAssignmentSlots] = useState<AssignmentSlot[]>([]);
+  const [enforceMaxOneDrawingInConfigure, setEnforceMaxOneDrawingInConfigure] =
+    useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
+    null,
+  );
   const [createNewCustomer, setCreateNewCustomer] = useState(false);
   const [newCustomerData, setNewCustomerData] = useState({
     displayName: "",
     email: "",
     phone: "",
-    zipCode: ""
+    zipCode: "",
   });
   const [dragActive, setDragActive] = useState(false);
   const [hasHandledSuccess, setHasHandledSuccess] = useState(false);
@@ -55,24 +168,28 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   }, [isOpen]);
 
   useEffect(() => {
-    const fetcherData = fetcher.data as { success?: boolean; error?: string } | undefined;
+    const fetcherData = fetcher.data as
+      | { success?: boolean; error?: string }
+      | undefined;
 
     // Only process when fetcher is idle (not submitting) and we have data
-    if (fetcher.state === 'idle' && fetcherData) {
+    if (fetcher.state === "idle" && fetcherData) {
       // Handle successful creation
       if (fetcherData.success && !hasHandledSuccess) {
         setHasHandledSuccess(true);
         // Reset form state first
         setCurrentStep("upload");
-        setPartFiles([]);
         setPartConfigs([]);
+        setMixedFilePool(null);
+        setAssignmentSlots([]);
+        setEnforceMaxOneDrawingInConfigure(false);
         setSelectedCustomer(null);
         setCreateNewCustomer(false);
         setNewCustomerData({
           displayName: "",
           email: "",
           phone: "",
-          zipCode: ""
+          zipCode: "",
         });
         // Call onSuccess which will close modal and revalidate
         onSuccess?.();
@@ -84,20 +201,22 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         alert(`Failed to create quote: ${fetcherData.error}`);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.data, fetcher.state, hasHandledSuccess]);
 
   const handleReset = () => {
     setCurrentStep("upload");
-    setPartFiles([]);
     setPartConfigs([]);
+    setMixedFilePool(null);
+    setAssignmentSlots([]);
+    setEnforceMaxOneDrawingInConfigure(false);
     setSelectedCustomer(null);
     setCreateNewCustomer(false);
     setNewCustomerData({
       displayName: "",
       email: "",
       phone: "",
-      zipCode: ""
+      zipCode: "",
     });
     setHasHandledSuccess(false);
     onClose();
@@ -130,35 +249,119 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   const handleFiles = (files: File[]) => {
-    const validFiles = files.filter(file => {
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      return ['step', 'stp', 'sldprt', 'stl', 'obj', 'igs', 'iges', 'x_t', 'x_b', 'sat'].includes(ext || '');
-    });
-
-    if (validFiles.length > 0) {
-      setPartFiles(validFiles);
-      setPartConfigs(validFiles.map((file, index) => ({
-        file,
-        quantity: 1,
-        partName: file.name.split('.').slice(0, -1).join('.'), // Remove extension
-        isExpanded: index === 0 // Expand first part by default
-      })));
-
-      // Add smooth transition effect
-      setIsContentTransitioning(true);
-      setTimeout(() => {
-        setCurrentStep("configure");
-        setTimeout(() => {
-          setIsContentTransitioning(false);
-        }, 300);
-      }, 150);
-    } else {
-      alert("Please upload valid CAD files (STEP, SLDPRT, STL, etc.)");
+    const supported = files.filter(
+      (f) => isCadSourceFile(f.name) || isDrawingSourceFile(f.name),
+    );
+    if (supported.length === 0) {
+      alert(
+        "No supported files. Use CAD (STEP, STL, …) or drawings (PDF, PNG, JPEG, DWG, …).",
+      );
+      return;
     }
+
+    const cad = supported.filter((f) => isCadSourceFile(f.name));
+    const drawings = supported.filter((f) => isDrawingSourceFile(f.name));
+
+    setIsContentTransitioning(true);
+    setTimeout(() => {
+      setEnforceMaxOneDrawingInConfigure(false);
+      if (cad.length === 0 && drawings.length > 0) {
+        const base = drawings[0].name.replace(/\.[^.]+$/, "");
+        setPartConfigs([
+          {
+            quantity: 1,
+            partName: base,
+            drawings,
+            isExpanded: true,
+          },
+        ]);
+        setCurrentStep("configure");
+      } else if (cad.length > 0 && drawings.length === 0) {
+        setPartConfigs(
+          cad.map((file, index) => ({
+            file,
+            quantity: 1,
+            partName: file.name.replace(/\.[^.]+$/, ""),
+            isExpanded: index === 0,
+          })),
+        );
+        setCurrentStep("configure");
+      } else if (cad.length === 1) {
+        setPartConfigs([
+          {
+            file: cad[0],
+            drawings,
+            quantity: 1,
+            partName: cad[0].name.replace(/\.[^.]+$/, ""),
+            isExpanded: true,
+          },
+        ]);
+        setCurrentStep("configure");
+      } else {
+        const cadEntries = cad.map((file) => ({
+          id: crypto.randomUUID(),
+          file,
+        }));
+        const drawingEntries = drawings.map((file) => ({
+          id: crypto.randomUUID(),
+          file,
+        }));
+        setMixedFilePool({ cad: cadEntries, drawings: drawingEntries });
+        setAssignmentSlots(
+          cadEntries.map((e) => ({ cadId: e.id, drawingId: null })),
+        );
+        setCurrentStep("assign");
+      }
+      setTimeout(() => setIsContentTransitioning(false), 300);
+    }, 150);
   };
 
-  const updatePartConfig = (index: number, field: keyof PartConfig, value: string | number | File[] | boolean | undefined) => {
-    setPartConfigs(prev => {
+  const continueFromAssignment = () => {
+    if (!mixedFilePool) return;
+    const err = validateMixedAssignment(mixedFilePool, assignmentSlots);
+    if (err) {
+      alert(err);
+      return;
+    }
+    setPartConfigs(partConfigsFromAssignment(mixedFilePool, assignmentSlots));
+    setMixedFilePool(null);
+    setAssignmentSlots([]);
+    setEnforceMaxOneDrawingInConfigure(true);
+    setIsContentTransitioning(true);
+    setTimeout(() => {
+      setCurrentStep("configure");
+      setIsContentTransitioning(false);
+    }, 150);
+  };
+
+  const updateAssignmentSlot = (
+    index: number,
+    patch: Partial<AssignmentSlot>,
+  ) => {
+    setAssignmentSlots((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
+    });
+  };
+
+  const addAssignmentRow = () => {
+    setAssignmentSlots((prev) => [...prev, { cadId: null, drawingId: null }]);
+  };
+
+  const removeAssignmentRow = (index: number) => {
+    setAssignmentSlots((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const updatePartConfig = (
+    index: number,
+    field: keyof PartConfig,
+    value: string | number | File[] | boolean | undefined,
+  ) => {
+    setPartConfigs((prev) => {
       const updated = [...prev];
       updated[index] = { ...updated[index], [field]: value };
       return updated;
@@ -166,32 +369,26 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   const togglePartExpanded = (index: number) => {
-    setPartConfigs(prev => {
+    setPartConfigs((prev) => {
       const updated = [...prev];
-      updated[index] = { ...updated[index], isExpanded: !updated[index].isExpanded };
+      updated[index] = {
+        ...updated[index],
+        isExpanded: !updated[index].isExpanded,
+      };
       return updated;
     });
   };
 
   const removePart = (index: number) => {
-    setPartFiles(prev => {
+    setPartConfigs((prev) => {
       const updated = [...prev];
       updated.splice(index, 1);
+      if (updated.length === 0 && currentStep === "configure") {
+        setCurrentStep("upload");
+      }
       return updated;
     });
-    setPartConfigs(prev => {
-      const updated = [...prev];
-      updated.splice(index, 1);
-      return updated;
-    });
-
-    // If no parts left and we're in configure step, go back to upload step
-    // If we're in review/customer step, stay there (allow empty quote)
-    if (partFiles.length === 1 && currentStep === 'configure') {
-      setCurrentStep('upload');
-    }
   };
-
 
   const handleSubmit = async () => {
     const formData = new FormData();
@@ -221,20 +418,44 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         return;
       }
 
-      // Add parts data
+      formData.append("partsCount", partConfigs.length.toString());
+
       partConfigs.forEach((config, index) => {
-        formData.append(`parts[${index}][file]`, config.file);
-        formData.append(`parts[${index}][name]`, config.partName || config.file.name);
+        if (config.file) {
+          formData.append(`parts[${index}][file]`, config.file);
+        }
+        const defaultName =
+          config.partName ||
+          config.file?.name ||
+          config.drawings?.[0]?.name ||
+          `Part ${index + 1}`;
+        formData.append(`parts[${index}][name]`, defaultName);
         formData.append(`parts[${index}][material]`, config.material || "");
         formData.append(`parts[${index}][tolerances]`, config.tolerances || "");
-        formData.append(`parts[${index}][surfaceFinish]`, config.surfaceFinish || "");
-        formData.append(`parts[${index}][quantity]`, (config.quantity || 1).toString());
+        formData.append(
+          `parts[${index}][surfaceFinish]`,
+          config.surfaceFinish || "",
+        );
+        formData.append(
+          `parts[${index}][quantity]`,
+          (config.quantity || 1).toString(),
+        );
         formData.append(`parts[${index}][notes]`, config.notes || "");
+        if (config.file) {
+          formData.append(
+            `parts[${index}][mode]`,
+            config.drawings?.length ? "cad_with_drawings" : "cad",
+          );
+        } else {
+          formData.append(`parts[${index}][mode]`, "drawing_only");
+        }
 
-        // Add drawings for this part
         if (config.drawings) {
           config.drawings.forEach((drawing, drawingIndex) => {
-            formData.append(`parts[${index}][drawings][${drawingIndex}]`, drawing);
+            formData.append(
+              `parts[${index}][drawings][${drawingIndex}]`,
+              drawing,
+            );
           });
         }
       });
@@ -242,7 +463,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       fetcher.submit(formData, {
         method: "post",
         action: "/quotes/new",
-        encType: "multipart/form-data"
+        encType: "multipart/form-data",
       });
     } else {
       // Create empty quote
@@ -260,11 +481,11 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         formData.append("customerPhone", newCustomerData.phone || "");
         formData.append("customerZipCode", newCustomerData.zipCode || "");
 
-        // Submit empty parts array
+        formData.append("partsCount", "0");
         fetcher.submit(formData, {
           method: "post",
           action: "/quotes/new",
-          encType: "multipart/form-data"
+          encType: "multipart/form-data",
         });
       } else {
         // Use simpler action on current page for existing customer
@@ -283,10 +504,131 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
 
         // Submit to current page action instead of /quotes/new
         fetcher.submit(formData, {
-          method: "post"
+          method: "post",
         });
       }
     }
+  };
+
+  const renderAssignStep = () => {
+    if (!mixedFilePool) return null;
+    const pool = mixedFilePool;
+    return (
+      <div className="p-6 space-y-4 flex flex-col max-h-[min(70vh,560px)]">
+        <p className="text-sm text-gray-600 dark:text-gray-400 shrink-0">
+          You uploaded <strong>{pool.cad.length}</strong> CAD file(s) and{" "}
+          <strong>{pool.drawings.length}</strong> drawing file(s). Assign each
+          file to exactly one line item. Each line can have one CAD, one
+          drawing, or both. Add rows if you need drawing-only line items.
+        </p>
+
+        <div className="overflow-y-auto flex-1 min-h-0 border border-gray-200 dark:border-gray-700 rounded-lg">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-gray-800/80 sticky top-0 z-10">
+              <tr>
+                <th className="text-left p-3 font-medium text-gray-700 dark:text-gray-200">
+                  Line item
+                </th>
+                <th className="text-left p-3 font-medium text-gray-700 dark:text-gray-200">
+                  CAD file
+                </th>
+                <th className="text-left p-3 font-medium text-gray-700 dark:text-gray-200">
+                  Drawing
+                </th>
+                <th className="w-10 p-3" aria-hidden />
+              </tr>
+            </thead>
+            <tbody>
+              {assignmentSlots.map((slot, index) => {
+                const cadChoices = cadOptionsForRow(pool, assignmentSlots, index);
+                const drwChoices = drawingOptionsForRow(
+                  pool,
+                  assignmentSlots,
+                  index,
+                );
+                return (
+                  <tr
+                    key={index}
+                    className="border-t border-gray-200 dark:border-gray-700 align-top"
+                  >
+                    <td className="p-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                      {index + 1}
+                    </td>
+                    <td className="p-2">
+                      <select
+                        className="w-full max-w-[220px] rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm"
+                        value={slot.cadId ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateAssignmentSlot(index, {
+                            cadId: v === "" ? null : v,
+                          });
+                        }}
+                      >
+                        <option value="">None</option>
+                        {cadChoices.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.file.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="p-2">
+                      <select
+                        className="w-full max-w-[220px] rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm"
+                        value={slot.drawingId ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateAssignmentSlot(index, {
+                            drawingId: v === "" ? null : v,
+                          });
+                        }}
+                      >
+                        <option value="">None</option>
+                        {drwChoices.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.file.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="p-2">
+                      <button
+                        type="button"
+                        disabled={assignmentSlots.length <= 1}
+                        onClick={() => removeAssignmentRow(index)}
+                        className="text-red-600 hover:text-red-800 dark:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed p-1"
+                        title="Remove line item"
+                      >
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button type="button" variant="secondary" onClick={addAssignmentRow}>
+            Add line item
+          </Button>
+        </div>
+      </div>
+    );
   };
 
   const renderUploadStep = () => (
@@ -317,16 +659,16 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
         </svg>
         <p className="text-lg font-semibold mb-2">Upload Part Files</p>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          Drag and drop your CAD files here, or click to browse
+          Drag & drop or click to browse
         </p>
         <p className="text-xs text-gray-500 dark:text-gray-500 mb-4">
-          Supported formats: STEP, SLDPRT, STL, OBJ, IGES, Parasolid
+          STEP, IGES, PDF, etc.
         </p>
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".step,.stp,.sldprt,.stl,.obj,.igs,.iges,.x_t,.x_b,.sat"
+          accept=".step,.stp,.sldprt,.stl,.obj,.gltf,.glb,.igs,.iges,.x_t,.x_b,.sat,.pdf,.png,.jpg,.jpeg,.webp,.dwg,.dxf"
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -342,7 +684,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
             onClick={() => {
               setIsContentTransitioning(true);
               setTimeout(() => {
-                setCurrentStep('customer');
+                setCurrentStep("customer");
                 setTimeout(() => {
                   setIsContentTransitioning(false);
                 }, 300);
@@ -362,7 +704,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       <div className="flex flex-col h-full">
         <div className="flex justify-between items-center mb-4 px-6">
           <h3 className="text-lg font-semibold">
-            Configure Parts ({partFiles.length} total)
+            Configure Parts ({partConfigs.length} total)
           </h3>
         </div>
 
@@ -381,7 +723,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                 >
                   <svg
                     className={`w-5 h-5 text-gray-500 transform transition-transform flex-shrink-0 ${
-                      config.isExpanded ? 'rotate-90' : ''
+                      config.isExpanded ? "rotate-90" : ""
                     }`}
                     fill="currentColor"
                     viewBox="0 0 20 20"
@@ -393,18 +735,29 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                     />
                   </svg>
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium truncate">{config.partName || partFiles[index].name}</div>
+                    <div className="font-medium truncate">
+                      {config.partName || partSummaryLabel(config)}
+                    </div>
                     <div className="text-sm text-gray-500">
                       {config.material && `Material: ${config.material} | `}
                       {config.quantity && `Qty: ${config.quantity}`}
                     </div>
                   </div>
-                  <span className="text-xs text-gray-400 ml-2 truncate max-w-xs flex-shrink-0" title={partFiles[index].name}>{partFiles[index].name}</span>
+                  <span
+                    className="text-xs text-gray-400 ml-2 truncate max-w-xs flex-shrink-0"
+                    title={partSummaryLabel(config)}
+                  >
+                    {partSummaryLabel(config)}
+                  </span>
                 </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
+                    if (
+                      confirm(
+                        `Remove ${config.partName || partSummaryLabel(config)}?`,
+                      )
+                    ) {
                       removePart(index);
                     }
                   }}
@@ -412,8 +765,18 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                   className="ml-3 p-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                   title="Remove part"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
                   </svg>
                 </button>
               </div>
@@ -425,7 +788,9 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                     <InputField
                       label="Part Name"
                       value={config.partName || ""}
-                      onChange={(e) => updatePartConfig(index, "partName", e.target.value)}
+                      onChange={(e) =>
+                        updatePartConfig(index, "partName", e.target.value)
+                      }
                       placeholder="Enter part name"
                     />
 
@@ -434,7 +799,13 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                       type="number"
                       min="1"
                       value={config.quantity?.toString() || "1"}
-                      onChange={(e) => updatePartConfig(index, "quantity", parseInt(e.target.value) || 1)}
+                      onChange={(e) =>
+                        updatePartConfig(
+                          index,
+                          "quantity",
+                          parseInt(e.target.value) || 1,
+                        )
+                      }
                       required
                     />
                   </div>
@@ -446,14 +817,21 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
                       finish={config.surfaceFinish || ""}
                       notes={config.notes || ""}
                       onChange={(field, value) => {
-                        if (field === "material") updatePartConfig(index, "material", value);
-                        if (field === "tolerance") updatePartConfig(index, "tolerances", value);
-                        if (field === "finish") updatePartConfig(index, "surfaceFinish", value);
-                        if (field === "notes") updatePartConfig(index, "notes", value);
+                        if (field === "material")
+                          updatePartConfig(index, "material", value);
+                        if (field === "tolerance")
+                          updatePartConfig(index, "tolerances", value);
+                        if (field === "finish")
+                          updatePartConfig(index, "surfaceFinish", value);
+                        if (field === "notes")
+                          updatePartConfig(index, "notes", value);
                       }}
                       drawings={config.drawings || []}
                       onDrawingsChange={(files) =>
                         updatePartConfig(index, "drawings", files)
+                      }
+                      maxDrawings={
+                        enforceMaxOneDrawingInConfigure ? 1 : undefined
                       }
                     />
                   </div>
@@ -469,84 +847,103 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   const renderCustomerStep = () => (
     <div className="flex flex-col h-full">
       <div className="flex-1 space-y-4 overflow-y-auto px-6 min-h-[450px]">
-      <div className="flex items-center space-x-4 mb-4">
-        <label htmlFor="existing-customer" className="flex items-center">
-          <input
-            id="existing-customer"
-            type="radio"
-            checked={!createNewCustomer}
-            onChange={() => setCreateNewCustomer(false)}
-            className="mr-2"
-          />
-          Select Existing Customer
-        </label>
-        <label htmlFor="new-customer" className="flex items-center">
-          <input
-            id="new-customer"
-            type="radio"
-            checked={createNewCustomer}
-            onChange={() => setCreateNewCustomer(true)}
-            className="mr-2"
-          />
-          Create New Customer
-        </label>
-      </div>
+        <div className="flex items-center space-x-4 mb-4">
+          <label htmlFor="existing-customer" className="flex items-center">
+            <input
+              id="existing-customer"
+              type="radio"
+              checked={!createNewCustomer}
+              onChange={() => setCreateNewCustomer(false)}
+              className="mr-2"
+            />
+            Select Existing Customer
+          </label>
+          <label htmlFor="new-customer" className="flex items-center">
+            <input
+              id="new-customer"
+              type="radio"
+              checked={createNewCustomer}
+              onChange={() => setCreateNewCustomer(true)}
+              className="mr-2"
+            />
+            Create New Customer
+          </label>
+        </div>
 
-      {!createNewCustomer ? (
-        <SearchableSelect
-          label="Customer"
-          value={selectedCustomer?.id.toString() || ""}
-          onChange={(value) => {
-            const customer = customers.find(c => c.id.toString() === value);
-            setSelectedCustomer(customer || null);
-          }}
-          options={customers.map(customer => ({
-            value: customer.id.toString(),
-            label: customer.displayName,
-            secondaryLabel: customer.email || undefined
-          }))}
-          placeholder="Search for a customer..."
-          required
-          emptyMessage="No customers found"
-        />
-      ) : (
-        <div className="space-y-4">
-          <InputField
-            label="Company/Name"
-            value={newCustomerData.displayName}
-            onChange={(e) => setNewCustomerData({ ...newCustomerData, displayName: e.target.value })}
+        {!createNewCustomer ? (
+          <SearchableSelect
+            label="Customer"
+            value={selectedCustomer?.id.toString() || ""}
+            onChange={(value) => {
+              const customer = customers.find((c) => c.id.toString() === value);
+              setSelectedCustomer(customer || null);
+            }}
+            options={customers.map((customer) => ({
+              value: customer.id.toString(),
+              label: customer.displayName,
+              secondaryLabel: customer.email || undefined,
+            }))}
+            placeholder="Search for a customer..."
             required
+            emptyMessage="No customers found"
           />
-
-          <div className="grid grid-cols-2 gap-4">
+        ) : (
+          <div className="space-y-4">
             <InputField
-              label="Email"
-              type="email"
-              value={newCustomerData.email}
-              onChange={(e) => setNewCustomerData({ ...newCustomerData, email: e.target.value })}
+              label="Company/Name"
+              value={newCustomerData.displayName}
+              onChange={(e) =>
+                setNewCustomerData({
+                  ...newCustomerData,
+                  displayName: e.target.value,
+                })
+              }
               required
             />
+
+            <div className="grid grid-cols-2 gap-4">
+              <InputField
+                label="Email"
+                type="email"
+                value={newCustomerData.email}
+                onChange={(e) =>
+                  setNewCustomerData({
+                    ...newCustomerData,
+                    email: e.target.value,
+                  })
+                }
+                required
+              />
+              <InputField
+                label="Phone (Optional)"
+                type="tel"
+                value={newCustomerData.phone}
+                onChange={(e) =>
+                  setNewCustomerData({
+                    ...newCustomerData,
+                    phone: e.target.value,
+                  })
+                }
+              />
+            </div>
+
             <InputField
-              label="Phone (Optional)"
-              type="tel"
-              value={newCustomerData.phone}
-              onChange={(e) => setNewCustomerData({ ...newCustomerData, phone: e.target.value })}
+              label="ZIP Code"
+              value={newCustomerData.zipCode}
+              onChange={(e) =>
+                setNewCustomerData({
+                  ...newCustomerData,
+                  zipCode: e.target.value,
+                })
+              }
+              placeholder="e.g., 10001"
             />
+
+            <p className="text-sm text-gray-500 italic">
+              Full address will be collected at time of payment
+            </p>
           </div>
-
-          <InputField
-            label="ZIP Code"
-            value={newCustomerData.zipCode}
-            onChange={(e) => setNewCustomerData({ ...newCustomerData, zipCode: e.target.value })}
-            placeholder="e.g., 10001"
-          />
-
-          <p className="text-sm text-gray-500 italic">
-            Full address will be collected at time of payment
-          </p>
-        </div>
-      )}
-
+        )}
       </div>
     </div>
   );
@@ -554,68 +951,94 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   const renderReviewStep = () => (
     <div className="flex flex-col h-full">
       <div className="flex-1 space-y-4 overflow-y-auto px-6">
-      <h3 className="text-lg font-semibold mb-4">Review Your Quote Request</h3>
+        <h3 className="text-lg font-semibold mb-4">
+          Review Your Quote Request
+        </h3>
 
-      <div className="border rounded-lg p-4 space-y-3">
-        <h4 className="font-semibold">Customer</h4>
-        {createNewCustomer ? (
-          <div className="text-sm">
-            <p><strong>New Customer:</strong> {newCustomerData.displayName}</p>
-            <p>{newCustomerData.email}</p>
-          </div>
-        ) : (
-          <div className="text-sm">
-            <p>{selectedCustomer?.displayName}</p>
-            <p>{selectedCustomer?.email}</p>
-          </div>
-        )}
-      </div>
-
-      <div className="border rounded-lg p-4 space-y-3">
-        <h4 className="font-semibold">Parts ({partConfigs.length})</h4>
-        {partConfigs.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            No parts added. This will create an empty quote that you can add line items to later.
-          </p>
-        ) : (
-          partConfigs.map((config, index) => (
-            <div key={index} className="text-sm border-t pt-2 relative">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <p><strong>{config.partName || partFiles[index].name}</strong></p>
-                  <div className="grid grid-cols-2 gap-2 mt-1">
-                    <p>Material: {config.material || "Not specified"}</p>
-                    <p>Quantity: {config.quantity || 1}</p>
-                    <p>Tolerances: {config.tolerances || "Not specified"}</p>
-                    <p>Finish: {config.surfaceFinish || "Not specified"}</p>
-                  </div>
-                  {config.drawings && config.drawings.length > 0 && (
-                    <p className="mt-1">Drawings: {config.drawings.length} file(s)</p>
-                  )}
-                  {config.notes && (
-                    <p className="mt-1 text-gray-600">Notes: {config.notes}</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => {
-                    if (confirm(`Remove ${config.partName || partFiles[index].name}?`)) {
-                      removePart(index);
-                    }
-                  }}
-                  type="button"
-                  className="ml-3 p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                  title="Remove part"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
+        <div className="border rounded-lg p-4 space-y-3">
+          <h4 className="font-semibold">Customer</h4>
+          {createNewCustomer ? (
+            <div className="text-sm">
+              <p>
+                <strong>New Customer:</strong> {newCustomerData.displayName}
+              </p>
+              <p>{newCustomerData.email}</p>
             </div>
-          ))
-        )}
-      </div>
+          ) : (
+            <div className="text-sm">
+              <p>{selectedCustomer?.displayName}</p>
+              <p>{selectedCustomer?.email}</p>
+            </div>
+          )}
+        </div>
 
+        <div className="border rounded-lg p-4 space-y-3">
+          <h4 className="font-semibold">Parts ({partConfigs.length})</h4>
+          {partConfigs.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              No parts added. This will create an empty quote that you can add
+              line items to later.
+            </p>
+          ) : (
+            partConfigs.map((config, index) => (
+              <div key={index} className="text-sm border-t pt-2 relative">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <p>
+                      <strong>
+                        {config.partName || partSummaryLabel(config)}
+                      </strong>
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <p>Material: {config.material || "Not specified"}</p>
+                      <p>Quantity: {config.quantity || 1}</p>
+                      <p>Tolerances: {config.tolerances || "Not specified"}</p>
+                      <p>Finish: {config.surfaceFinish || "Not specified"}</p>
+                    </div>
+                    {config.drawings && config.drawings.length > 0 && (
+                      <p className="mt-1">
+                        Drawings: {config.drawings.length} file(s)
+                      </p>
+                    )}
+                    {config.notes && (
+                      <p className="mt-1 text-gray-600">
+                        Notes: {config.notes}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (
+                        confirm(
+                          `Remove ${config.partName || partSummaryLabel(config)}?`,
+                        )
+                      ) {
+                        removePart(index);
+                      }
+                    }}
+                    type="button"
+                    className="ml-3 p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                    title="Remove part"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
@@ -624,6 +1047,8 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     switch (currentStep) {
       case "upload":
         return renderUploadStep();
+      case "assign":
+        return renderAssignStep();
       case "configure":
         return renderConfigureStep();
       case "customer":
@@ -639,6 +1064,8 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
     switch (currentStep) {
       case "upload":
         return "New Quote - Upload Parts";
+      case "assign":
+        return "New Quote - Assign files to line items";
       case "configure":
         return "New Quote - Configure Parts";
       case "customer":
@@ -651,7 +1078,32 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   const renderFooter = () => {
-    if (currentStep === 'upload') return null;
+    if (currentStep === "upload") return null;
+
+    if (currentStep === "assign") {
+      return (
+        <div className="flex justify-between items-center px-6 py-4 border-t bg-gray-50 dark:bg-gray-800">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setMixedFilePool(null);
+              setAssignmentSlots([]);
+              setCurrentStep("upload");
+            }}
+          >
+            Back
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={continueFromAssignment}
+          >
+            Continue to configure parts
+          </Button>
+        </div>
+      );
+    }
 
     return (
       <div className="flex justify-between items-center px-6 py-4 border-t bg-gray-50 dark:bg-gray-800">
@@ -659,12 +1111,15 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
           onClick={() => {
             setIsContentTransitioning(true);
             setTimeout(() => {
-              if (currentStep === 'configure') setCurrentStep('upload');
-              else if (currentStep === 'customer') {
-                // If no parts, go back to upload; otherwise go to configure
-                setCurrentStep(partConfigs.length === 0 ? 'upload' : 'configure');
+              if (currentStep === "configure") {
+                setCurrentStep("upload");
+                setEnforceMaxOneDrawingInConfigure(false);
               }
-              else if (currentStep === 'review') setCurrentStep('customer');
+              else if (currentStep === "customer") {
+                setCurrentStep(
+                  partConfigs.length === 0 ? "upload" : "configure",
+                );
+              } else if (currentStep === "review") setCurrentStep("customer");
               setTimeout(() => {
                 setIsContentTransitioning(false);
               }, 300);
@@ -675,12 +1130,12 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
           Back
         </Button>
         <div className="ml-auto">
-          {currentStep === 'configure' && (
+          {currentStep === "configure" && (
             <Button
               onClick={() => {
                 setIsContentTransitioning(true);
                 setTimeout(() => {
-                  setCurrentStep('customer');
+                  setCurrentStep("customer");
                   setTimeout(() => {
                     setIsContentTransitioning(false);
                   }, 300);
@@ -691,30 +1146,34 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
               Continue to Customer
             </Button>
           )}
-          {currentStep === 'customer' && (
+          {currentStep === "customer" && (
             <Button
               onClick={() => {
                 setIsContentTransitioning(true);
                 setTimeout(() => {
-                  setCurrentStep('review');
+                  setCurrentStep("review");
                   setTimeout(() => {
                     setIsContentTransitioning(false);
                   }, 300);
                 }, 150);
               }}
               variant="primary"
-              disabled={createNewCustomer ? (!newCustomerData.displayName || !newCustomerData.email) : !selectedCustomer}
+              disabled={
+                createNewCustomer
+                  ? !newCustomerData.displayName || !newCustomerData.email
+                  : !selectedCustomer
+              }
             >
               Review Quote
             </Button>
           )}
-          {currentStep === 'review' && (
+          {currentStep === "review" && (
             <Button
               onClick={handleSubmit}
               variant="primary"
-              disabled={fetcher.state === 'submitting'}
+              disabled={fetcher.state === "submitting"}
             >
-              {fetcher.state === 'submitting' ? 'Creating...' : 'Create RFQ'}
+              {fetcher.state === "submitting" ? "Creating..." : "Create RFQ"}
             </Button>
           )}
         </div>
@@ -723,7 +1182,7 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
   };
 
   // Use 2xl size for wider modal with flexible height
-  const modalSize = '2xl';
+  const modalSize = "2xl";
 
   return (
     <Modal
@@ -732,8 +1191,12 @@ export default function NewQuoteModal({ isOpen, onClose, customers, onSuccess }:
       title={getModalTitle()}
       size={modalSize}
     >
-      <div className={`${currentStep === 'upload' ? '' : 'flex flex-col h-full'} transition-opacity duration-300 ${isContentTransitioning ? 'opacity-0' : 'opacity-100'}`}>
-        <div className={currentStep === 'upload' ? '' : 'flex-1 overflow-hidden'}>
+      <div
+        className={`${currentStep === "upload" ? "" : "flex flex-col h-full"} transition-opacity duration-300 ${isContentTransitioning ? "opacity-0" : "opacity-100"}`}
+      >
+        <div
+          className={currentStep === "upload" ? "" : "flex-1 overflow-hidden"}
+        >
           {getStepContent()}
         </div>
         {renderFooter()}

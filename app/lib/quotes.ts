@@ -47,6 +47,11 @@ import { isFeatureEnabled, FEATURE_FLAGS } from "./featureFlags.js";
 import { uploadFile, copyFile } from "./s3.server.js";
 import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js";
 import { generatePdfThumbnail, isPdfFile } from "./pdf-thumbnail.server.js";
+import {
+  ensureDrawingOnlyQuotePartAssets,
+  quotePartUsesPlaceholderCad,
+} from "./quote-part-assets.server.js";
+import { contentTypeForDrawingFileName } from "./part-source-files.js";
 import crypto from "crypto";
 
 export type QuoteWithRelations = {
@@ -575,10 +580,10 @@ export async function convertQuoteToOrder(
         };
       }
       const unitPrice = parseFloat(item.unitPrice || "0");
-      if (unitPrice < 0) {
+      if (item.quotePartId != null && unitPrice < 0) {
         return {
           success: false,
-          error: `Line item has invalid price: ${unitPrice}`,
+          error: `Part-linked line item has invalid price: ${unitPrice}`,
         };
       }
     }
@@ -590,6 +595,7 @@ export async function convertQuoteToOrder(
     }
 
     // Additional validation: Check if any quote parts have pending conversions
+    // Drawing-only parts with copied placeholder mesh use conversionStatus "completed"; without a global placeholder they use "skipped" and do not block.
     if (quote.parts && quote.parts.length > 0) {
       const pendingConversions = quote.parts.filter(
         (part) =>
@@ -691,6 +697,10 @@ export async function convertQuoteToOrder(
       if (quote.parts && quote.parts.length > 0) {
         for (const quotePart of quote.parts) {
           try {
+            const usesPlaceholder = quotePartUsesPlaceholderCad(
+              quotePart.specifications
+            );
+
             // Create a customer part from the quote part
             // First create with null URLs, then copy files and update
             const [customerPart] = await tx
@@ -704,7 +714,9 @@ export async function convertQuoteToOrder(
                 thumbnailUrl: null, // Will be updated after copying
                 partFileUrl: null, // Will be updated after copying
                 partMeshUrl: null, // Will be updated after copying
-                meshConversionStatus: quotePart.conversionStatus || "pending",
+                meshConversionStatus: usesPlaceholder
+                  ? "skipped"
+                  : quotePart.conversionStatus || "pending",
                 meshConversionError: quotePart.meshConversionError || null,
                 meshConversionJobId: quotePart.meshConversionJobId || null,
                 meshConversionStartedAt:
@@ -751,8 +763,8 @@ export async function convertQuoteToOrder(
               return urlOrPath;
             };
 
-            // Copy CAD source file
-            if (quotePart.partFileUrl) {
+            // Copy CAD source file (never copy Settings placeholder into customer parts)
+            if (!usesPlaceholder && quotePart.partFileUrl) {
               try {
                 const sourceKey = extractS3Key(quotePart.partFileUrl);
                 if (sourceKey) {
@@ -772,7 +784,7 @@ export async function convertQuoteToOrder(
             }
 
             // Copy mesh file
-            if (quotePart.partMeshUrl) {
+            if (!usesPlaceholder && quotePart.partMeshUrl) {
               try {
                 const sourceKey = extractS3Key(quotePart.partMeshUrl);
                 if (sourceKey) {
@@ -1153,6 +1165,10 @@ export async function duplicateQuote(
 
           partIdMap.set(sourcePart.id, newPart.id);
 
+          const usesPlaceholder = quotePartUsesPlaceholderCad(
+            sourcePart.specifications
+          );
+
           // Helper to extract S3 key from URL or path
           const extractS3Key = (urlOrPath: string): string | null => {
             if (!urlOrPath) return null;
@@ -1169,9 +1185,9 @@ export async function duplicateQuote(
             return urlOrPath;
           };
 
-          // Copy CAD source file
+          // Copy CAD source file (placeholder preview uses global Settings; no per-part copy)
           let newPartFileUrl: string | null = null;
-          if (sourcePart.partFileUrl) {
+          if (!usesPlaceholder && sourcePart.partFileUrl) {
             try {
               const sourceKey = extractS3Key(sourcePart.partFileUrl);
               if (sourceKey) {
@@ -1191,7 +1207,7 @@ export async function duplicateQuote(
 
           // Copy mesh file
           let newPartMeshUrl: string | null = null;
-          if (sourcePart.partMeshUrl) {
+          if (!usesPlaceholder && sourcePart.partMeshUrl) {
             try {
               const sourceKey = extractS3Key(sourcePart.partMeshUrl);
               if (sourceKey) {
@@ -1568,6 +1584,8 @@ export async function createQuoteWithParts(
     quantity: number;
     notes?: string;
     drawings?: Array<{ buffer: Buffer; fileName: string }>;
+    /** When no CAD file: drawing-only line uses placeholder CAD/mesh from settings */
+    mode?: "cad" | "drawing_only" | "cad_with_drawings";
   }>,
   context?: QuoteEventContext
 ): Promise<{ success: boolean; quoteId?: number; error?: string }> {
@@ -1579,6 +1597,31 @@ export async function createQuoteWithParts(
 
     for (let i = 0; i < partsData.length; i++) {
       const part = partsData[i];
+
+      const resolvedMode:
+        | "cad"
+        | "drawing_only"
+        | "cad_with_drawings" =
+        part.mode === "drawing_only" ||
+        part.mode === "cad_with_drawings" ||
+        part.mode === "cad"
+          ? part.mode
+          : part.file && part.fileName
+            ? part.drawings && part.drawings.length > 0
+              ? "cad_with_drawings"
+              : "cad"
+            : part.drawings && part.drawings.length > 0
+              ? "drawing_only"
+              : "cad";
+
+      if (
+        resolvedMode === "drawing_only" &&
+        (!part.drawings || part.drawings.length === 0)
+      ) {
+        throw new Error(
+          "Drawing-only parts require at least one PDF or image drawing file"
+        );
+      }
 
       // Create the quote part first to get its ID
       const [quotePart] = await db
@@ -1595,6 +1638,12 @@ export async function createQuoteWithParts(
           specifications: {
             tolerances: part.tolerances,
             notes: part.notes,
+            primarySource:
+              resolvedMode === "drawing_only"
+                ? "drawing_only"
+                : resolvedMode === "cad_with_drawings"
+                  ? "mixed"
+                  : "cad",
           },
         })
         .returning();
@@ -1643,9 +1692,7 @@ export async function createQuoteWithParts(
           const sanitizedFileName = drawing.fileName
             .replace(/\s+/g, "-")
             .replace(/[^a-zA-Z0-9._-]/g, "");
-          const contentType = drawing.fileName.toLowerCase().endsWith(".pdf")
-            ? "application/pdf"
-            : "image/png";
+          const contentType = contentTypeForDrawingFileName(drawing.fileName);
           const key = `quote-parts/${quotePart.id}/drawings/${timestamp}-${randomString}-${sanitizedFileName}`;
 
           const uploadResult = await uploadFile({
@@ -1704,6 +1751,13 @@ export async function createQuoteWithParts(
             version: 1,
           });
         }
+      }
+
+      if (!partFileUrl && part.drawings && part.drawings.length > 0) {
+        await ensureDrawingOnlyQuotePartAssets(quotePart.id, {
+          primaryDrawingBuffer: part.drawings[0].buffer,
+          primaryDrawingFileName: part.drawings[0].fileName,
+        });
       }
 
       await db.insert(quoteLineItems).values({
@@ -1900,6 +1954,13 @@ export async function createQuoteLineItem(
   context?: QuoteEventContext
 ): Promise<QuoteLineItem | null> {
   try {
+    if (itemData.quotePartId && itemData.unitPrice < 0) {
+      console.error(
+        "createQuoteLineItem: part-linked line items cannot have negative unit price"
+      );
+      return null;
+    }
+
     const totalPrice = (itemData.quantity * itemData.unitPrice).toFixed(2);
 
     const [newItem] = await db
@@ -1986,14 +2047,28 @@ export async function updateQuoteLineItem(
 
     // Calculate new total price if quantity or unit price changed
     const quantity = updates.quantity ?? currentItem.quantity;
-    const unitPrice = updates.unitPrice ?? parseFloat(currentItem.unitPrice);
+    const unitPrice =
+      updates.unitPrice !== undefined
+        ? updates.unitPrice
+        : parseFloat(currentItem.unitPrice || "0");
+
+    if (currentItem.quotePartId != null && unitPrice < 0) {
+      console.error(
+        "updateQuoteLineItem: part-linked line items cannot have negative unit price"
+      );
+      return null;
+    }
+
     const totalPrice = (quantity * unitPrice).toFixed(2);
 
     const [updatedItem] = await db
       .update(quoteLineItems)
       .set({
         ...updates,
-        unitPrice: updates.unitPrice ? updates.unitPrice.toFixed(2) : undefined,
+        unitPrice:
+          updates.unitPrice !== undefined
+            ? updates.unitPrice.toFixed(2)
+            : undefined,
         totalPrice,
         updatedAt: new Date(),
       })

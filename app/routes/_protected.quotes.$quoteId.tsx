@@ -47,8 +47,13 @@ import {
   generateFileKey,
   deleteFile,
   getDownloadUrl,
+  extractS3Key,
 } from "~/lib/s3.server";
-import { getBananaModelUrls } from "~/lib/developerSettings";
+import { getBananaModelUrls, getPlaceholderPartUrls } from "~/lib/developerSettings";
+import {
+  quotePartUsesPlaceholderCad,
+  resolveQuotePartPreviewAssets,
+} from "~/lib/quote-part-assets.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import {
@@ -73,6 +78,11 @@ import {
   type QuotePart,
 } from "~/lib/db/schema";
 import { eq, inArray, and, or } from "drizzle-orm";
+import {
+  parseLineTotalInput,
+  parseUnitPriceInput,
+  quotePositiveSubtotalExcluding,
+} from "~/lib/lineItemPricing";
 
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -85,6 +95,7 @@ import { EventTimeline } from "~/components/EventTimeline";
 import { AddLineItemModal } from "~/components/shared/AddLineItemModal";
 import { LineItemsSection } from "~/components/shared/LineItemsSection";
 import { IconButton } from "~/components/shared/IconButton";
+import { FilePlusCorner } from "lucide-react";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
@@ -124,6 +135,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     getVendors(),
   ]);
 
+  const globalPlaceholder = await getPlaceholderPartUrls();
+
   // Generate signed URLs for quote parts with meshes, solid files, thumbnails, and drawings
   const partsWithSignedUrls = await Promise.all(
     (quote.parts || []).map(async (part) => {
@@ -131,36 +144,56 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       let signedFileUrl = undefined;
       let signedThumbnailUrl = undefined;
 
-      // Get signed mesh URL
-      if (part.partMeshUrl && part.conversionStatus === "completed") {
+      const preview = resolveQuotePartPreviewAssets(
+        {
+          specifications: part.specifications,
+          partFileUrl: part.partFileUrl,
+          partMeshUrl: part.partMeshUrl,
+          conversionStatus: part.conversionStatus,
+        },
+        globalPlaceholder
+      );
+
+      // Preview mesh (includes live Settings placeholder when usesPlaceholderCad)
+      if (
+        preview.effectiveConversionStatus === "completed" &&
+        preview.meshKey
+      ) {
         const { getQuotePartMeshUrl } = await import(
           "~/lib/quote-part-mesh-converter.server"
         );
-        const result = await getQuotePartMeshUrl(part.id);
+        const result = await getQuotePartMeshUrl(part.id, globalPlaceholder);
         if ("url" in result) {
           signedMeshUrl = result.url;
         }
       }
 
-      // Get signed solid file URL (STEP, BREP, SLDPRT, etc.)
-      if (part.partFileUrl) {
+      const usesPh = quotePartUsesPlaceholderCad(part.specifications);
+      // Preview solid CAD URL (not included in bulk zip when placeholder-only)
+      if (
+        usesPh &&
+        preview.cadKey &&
+        preview.effectiveConversionStatus === "completed"
+      ) {
         try {
-          // Extract S3 key from the URL
-          let key: string;
-          if (part.partFileUrl.includes("quote-parts/")) {
-            const urlParts = part.partFileUrl.split("/");
-            const quotePartsIndex = urlParts.findIndex(
-              (p) => p === "quote-parts"
-            );
-            if (quotePartsIndex >= 0) {
-              key = urlParts.slice(quotePartsIndex).join("/");
-            } else {
-              key = part.partFileUrl;
-            }
-          } else {
-            key = part.partFileUrl;
-          }
-          signedFileUrl = await getDownloadUrl(key, 3600);
+          signedFileUrl = await getDownloadUrl(
+            extractS3Key(preview.cadKey),
+            3600
+          );
+        } catch (error) {
+          console.error(
+            "Error getting signed file URL for part",
+            part.id,
+            ":",
+            error
+          );
+        }
+      } else if (part.partFileUrl) {
+        try {
+          signedFileUrl = await getDownloadUrl(
+            extractS3Key(part.partFileUrl),
+            3600
+          );
         } catch (error) {
           console.error(
             "Error getting signed file URL for part",
@@ -234,12 +267,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
           })
       );
 
+      const spec = part.specifications as Record<string, unknown> | null;
       return {
         ...part,
         signedMeshUrl,
         signedFileUrl,
         signedThumbnailUrl,
         drawings: drawings.filter((d) => d !== null),
+        usesPlaceholderCad: spec?.usesPlaceholderCad === true,
       };
     })
   );
@@ -371,8 +406,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
     formData = await unstable_parseMultipartFormData(request, uploadHandler);
     const intent = formData.get("intent");
 
-    // Handle add line item with file upload
-    if (intent === "addLineItem") {
+    // Handle add line item with file upload (or promote standalone line item to part-backed)
+    if (
+      intent === "addLineItem" ||
+      intent === "promoteLineItemToQuotePart"
+    ) {
+      const isPromote = intent === "promoteLineItemToQuotePart";
       // Auto-convert RFQ to Draft when editing starts
       await autoConvertRFQToDraft();
 
@@ -390,6 +429,41 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ error: "Missing required fields" }, { status: 400 });
       }
 
+      let promoteLineItemId: number | null = null;
+      if (isPromote) {
+        const rawLi = formData.get("lineItemId");
+        if (!rawLi) {
+          return json({ error: "Line item ID is required" }, { status: 400 });
+        }
+        promoteLineItemId = parseInt(String(rawLi), 10);
+        if (Number.isNaN(promoteLineItemId)) {
+          return json({ error: "Invalid line item ID" }, { status: 400 });
+        }
+        const [existingLineItem] = await db
+          .select()
+          .from(quoteLineItems)
+          .where(eq(quoteLineItems.id, promoteLineItemId))
+          .limit(1);
+        if (!existingLineItem || existingLineItem.quoteId !== quote.id) {
+          return json({ error: "Line item not found" }, { status: 404 });
+        }
+        if (existingLineItem.quotePartId) {
+          return json(
+            { error: "This line item already has an attached part" },
+            { status: 400 }
+          );
+        }
+        if (!file || file.size === 0) {
+          return json(
+            {
+              error:
+                "Upload a CAD file or drawing to attach a part to this line item",
+            },
+            { status: 400 }
+          );
+        }
+      }
+
       try {
         let quotePartId: string | null = null;
 
@@ -399,26 +473,178 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const { triggerQuotePartMeshConversion } = await import(
             "~/lib/quote-part-mesh-converter.server"
           );
+          const { isCadSourceFile, isDrawingSourceFile } = await import(
+            "~/lib/part-source-files"
+          );
+          const { ensureDrawingOnlyQuotePartAssets } = await import(
+            "~/lib/quote-part-assets.server"
+          );
           const crypto = await import("crypto");
 
-          // Convert File to Buffer
           const arrayBuffer = await file.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
 
-          // Generate unique part number
           const partNumber = `QP-${Date.now()}-${crypto
             .randomBytes(4)
             .toString("hex")}`;
 
-          // Sanitize filename for S3 (replace spaces and special chars)
-          const sanitizedFileName = file.name
-            .replace(/\s+/g, "-") // Replace spaces with hyphens
-            .replace(/[^a-zA-Z0-9._-]/g, ""); // Remove any other special characters
+          const primaryIsCad = isCadSourceFile(file.name);
+          const primaryIsDrawing = isDrawingSourceFile(file.name);
 
-          // Generate S3 key for the uploaded file
+          if (!primaryIsCad && !primaryIsDrawing) {
+            return json(
+              { error: "Unsupported file type for line item upload" },
+              { status: 400 }
+            );
+          }
+
+          if (primaryIsDrawing && !primaryIsCad) {
+            const [newQuotePart] = await db
+              .insert(quoteParts)
+              .values({
+                quoteId: quote.id,
+                partNumber,
+                partName: name,
+                description: description || null,
+                material,
+                tolerance,
+                finish,
+                partFileUrl: null,
+                conversionStatus: "pending",
+                specifications: { primarySource: "drawing_only" },
+              })
+              .returning();
+
+            quotePartId = newQuotePart.id;
+
+            const sanitizedDrawingName = file.name
+              .replace(/\s+/g, "-")
+              .replace(/[^a-zA-Z0-9._-]/g, "");
+            const timestamp = Date.now();
+            const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-0-${sanitizedDrawingName}`;
+            const { contentTypeForDrawingFileName } = await import(
+              "~/lib/part-source-files"
+            );
+            const drawingContentType = contentTypeForDrawingFileName(file.name);
+            const drawingUploadResult = await uploadFile({
+              key: drawingKey,
+              buffer,
+              contentType: drawingContentType,
+              fileName: sanitizedDrawingName,
+            });
+
+            let thumbnailS3Key: string | null = null;
+            if (isPdfFile(file.type, file.name)) {
+              try {
+                const thumbnail = await generatePdfThumbnail(buffer, 200, 200);
+                const thumbnailKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-0-${sanitizedDrawingName}.thumb.png`;
+                await uploadFile({
+                  key: thumbnailKey,
+                  buffer: thumbnail.buffer,
+                  contentType: "image/png",
+                  fileName: `${sanitizedDrawingName}.thumb.png`,
+                });
+                thumbnailS3Key = thumbnailKey;
+              } catch (thumbnailError) {
+                console.error(
+                  "Failed to generate PDF thumbnail:",
+                  thumbnailError
+                );
+              }
+            }
+
+            const { attachments, quotePartDrawings } = await import(
+              "~/lib/db/schema"
+            );
+            const [attachment] = await db
+              .insert(attachments)
+              .values({
+                s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                s3Key: drawingUploadResult.key,
+                fileName: file.name,
+                contentType: drawingContentType,
+                fileSize: file.size,
+                thumbnailS3Key,
+              })
+              .returning();
+
+            await db.insert(quotePartDrawings).values({
+              quotePartId: newQuotePart.id,
+              attachmentId: attachment.id,
+              version: 1,
+            });
+
+            const drawingCount =
+              parseInt(formData.get("drawingCount") as string) || 0;
+            if (drawingCount > 0) {
+              for (let i = 0; i < drawingCount; i++) {
+                const drawing = formData.get(`drawing_${i}`) as File | null;
+                if (drawing && drawing.size > 0) {
+                  const drawingArrayBuffer = await drawing.arrayBuffer();
+                  const drawingBuffer = Buffer.from(drawingArrayBuffer);
+                  const sanitizedName = drawing.name
+                    .replace(/\s+/g, "-")
+                    .replace(/[^a-zA-Z0-9._-]/g, "");
+                  const ts = Date.now();
+                  const dKey = `quote-parts/${newQuotePart.id}/drawings/${ts}-${i + 1}-${sanitizedName}`;
+                  const ct = contentTypeForDrawingFileName(drawing.name);
+                  const dUpload = await uploadFile({
+                    key: dKey,
+                    buffer: drawingBuffer,
+                    contentType: ct,
+                    fileName: sanitizedName,
+                  });
+                  let dThumb: string | null = null;
+                  if (isPdfFile(drawing.type, drawing.name)) {
+                    try {
+                      const th = await generatePdfThumbnail(
+                        drawingBuffer,
+                        200,
+                        200
+                      );
+                      const thKey = `quote-parts/${newQuotePart.id}/drawings/${ts}-${i + 1}-${sanitizedName}.thumb.png`;
+                      await uploadFile({
+                        key: thKey,
+                        buffer: th.buffer,
+                        contentType: "image/png",
+                        fileName: `${sanitizedName}.thumb.png`,
+                      });
+                      dThumb = thKey;
+                    } catch (e) {
+                      console.error("PDF thumbnail failed:", e);
+                    }
+                  }
+                  const [att2] = await db
+                    .insert(attachments)
+                    .values({
+                      s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                      s3Key: dUpload.key,
+                      fileName: drawing.name,
+                      contentType: ct,
+                      fileSize: drawing.size,
+                      thumbnailS3Key: dThumb,
+                    })
+                    .returning();
+                  await db.insert(quotePartDrawings).values({
+                    quotePartId: newQuotePart.id,
+                    attachmentId: att2.id,
+                    version: 1,
+                  });
+                }
+              }
+            }
+
+            await ensureDrawingOnlyQuotePartAssets(newQuotePart.id, {
+              primaryDrawingBuffer: buffer,
+              primaryDrawingFileName: file.name,
+            });
+          } else {
+          const sanitizedFileName = file.name
+            .replace(/\s+/g, "-")
+            .replace(/[^a-zA-Z0-9._-]/g, "");
+
           const fileKey = `quote-parts/${crypto.randomUUID()}/source/${sanitizedFileName}`;
 
-          // Upload to S3
           const uploadResult = await uploadFile({
             key: fileKey,
             buffer,
@@ -426,7 +652,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
             fileName: sanitizedFileName,
           });
 
-          // Create quote part record with all specs from the modal
           const [newQuotePart] = await db
             .insert(quoteParts)
             .values({
@@ -444,7 +669,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
           quotePartId = newQuotePart.id;
 
-          // Trigger mesh conversion asynchronously
           triggerQuotePartMeshConversion(
             newQuotePart.id,
             uploadResult.key
@@ -548,25 +772,89 @@ export async function action({ request, params }: ActionFunctionArgs) {
               }
             }
           }
+          }
         }
 
-        // Create quote line item with event context
-        const { createQuoteLineItem } = await import("~/lib/quotes");
-        await createQuoteLineItem(
-          quote.id,
-          {
-            quotePartId: quotePartId || undefined,
-            name: name || undefined,
-            quantity: parseInt(quantity),
-            unitPrice: parseFloat(unitPrice),
-            description: description || undefined,
-            notes: notes || undefined,
-          },
-          eventContext
+        // Create or update quote line item
+        const { createQuoteLineItem, calculateQuoteTotals } = await import(
+          "~/lib/quotes"
         );
 
-        // Recalculate totals
-        const { calculateQuoteTotals } = await import("~/lib/quotes");
+        if (isPromote && promoteLineItemId != null) {
+          const qty = parseInt(quantity, 10);
+          if (Number.isNaN(qty) || qty <= 0) {
+            return json({ error: "Invalid quantity" }, { status: 400 });
+          }
+          const unitParsed = parseUnitPriceInput(unitPrice, {
+            quantity: qty,
+            positiveSubtotal: 0,
+            isPartLinked: true,
+          });
+          if (!unitParsed.ok) {
+            return json({ error: unitParsed.error }, { status: 400 });
+          }
+          const unit = unitParsed.unitPrice;
+          const totalPriceStr = (qty * unit).toFixed(2);
+          await db
+            .update(quoteLineItems)
+            .set({
+              quotePartId,
+              name: name.trim() || null,
+              description: description?.trim() || null,
+              notes: notes?.trim() || null,
+              quantity: qty,
+              unitPrice: unit.toFixed(2),
+              totalPrice: totalPriceStr,
+              updatedAt: new Date(),
+            })
+            .where(eq(quoteLineItems.id, promoteLineItemId));
+
+          await createEvent({
+            entityType: "quote",
+            entityId: quote.id.toString(),
+            eventType: "quote_line_item_updated",
+            eventCategory: "financial",
+            title: "Line Item Linked to Part",
+            description: `Attached a manufacturing part to line item ${name.trim() || promoteLineItemId}`,
+            metadata: {
+              lineItemId: promoteLineItemId,
+              quotePartId,
+            },
+            userId: eventContext?.userId,
+            userEmail: eventContext?.userEmail,
+          });
+        } else {
+          const qty = parseInt(quantity, 10);
+          if (Number.isNaN(qty) || qty <= 0) {
+            return json({ error: "Invalid quantity" }, { status: 400 });
+          }
+          const existingLines = await db
+            .select()
+            .from(quoteLineItems)
+            .where(eq(quoteLineItems.quoteId, quote.id));
+          const positiveSub = quotePositiveSubtotalExcluding(existingLines);
+          const unitParsed = parseUnitPriceInput(unitPrice, {
+            quantity: qty,
+            positiveSubtotal: positiveSub,
+            isPartLinked: !!quotePartId,
+          });
+          if (!unitParsed.ok) {
+            return json({ error: unitParsed.error }, { status: 400 });
+          }
+          await createQuoteLineItem(
+            quote.id,
+            {
+              quotePartId: quotePartId || undefined,
+              name: name || undefined,
+              quantity: qty,
+              unitPrice: unitParsed.unitPrice,
+              description: description || undefined,
+              notes: notes || undefined,
+            },
+            eventContext
+          );
+        }
+
         await calculateQuoteTotals(quote.id);
 
         return redirect(`/quotes/${quoteId}`);
@@ -1109,6 +1397,31 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
+        const lineItemIdNum = parseInt(lineItemId, 10);
+        if (Number.isNaN(lineItemIdNum)) {
+          return json({ error: "Invalid line item ID" }, { status: 400 });
+        }
+
+        const [lineRow] = await db
+          .select()
+          .from(quoteLineItems)
+          .where(eq(quoteLineItems.id, lineItemIdNum))
+          .limit(1);
+
+        if (!lineRow || lineRow.quoteId !== quote.id) {
+          return json({ error: "Line item not found" }, { status: 404 });
+        }
+
+        const allQuoteLines = await db
+          .select()
+          .from(quoteLineItems)
+          .where(eq(quoteLineItems.quoteId, quote.id));
+
+        const positiveSub = quotePositiveSubtotalExcluding(
+          allQuoteLines,
+          lineItemIdNum
+        );
+
         const { updateQuoteLineItem } = await import("~/lib/quotes");
 
         const updateData: {
@@ -1118,19 +1431,51 @@ export async function action({ request, params }: ActionFunctionArgs) {
           notes?: string;
         } = {};
 
-        // Get all possible updated fields
-        const quantity = formData.get("quantity") as string | null;
-        const unitPrice = formData.get("unitPrice") as string | null;
+        const quantityRaw = formData.get("quantity") as string | null;
+        const unitPriceRaw = formData.get("unitPrice") as string | null;
+        const totalPriceRaw = formData.get("totalPrice") as string | null;
         const description = formData.get("description") as string | null;
         const notes = formData.get("notes") as string | null;
 
-        // Only add fields that were provided (totalPrice is calculated automatically)
-        if (quantity !== null) {
-          updateData.quantity = parseInt(quantity);
+        const qty =
+          quantityRaw !== null && quantityRaw !== ""
+            ? parseInt(quantityRaw, 10)
+            : lineRow.quantity;
+
+        if (quantityRaw !== null && quantityRaw !== "") {
+          if (Number.isNaN(qty) || qty <= 0) {
+            return json({ error: "Invalid quantity" }, { status: 400 });
+          }
+          updateData.quantity = qty;
         }
-        if (unitPrice !== null) {
-          updateData.unitPrice = parseFloat(unitPrice);
+
+        const isPartLinked = lineRow.quotePartId != null;
+
+        if (totalPriceRaw !== null && totalPriceRaw !== "") {
+          const parsedTotal = parseLineTotalInput(totalPriceRaw, {
+            quantity: qty,
+            positiveSubtotal: positiveSub,
+            isPartLinked,
+          });
+          if (!parsedTotal.ok) {
+            return json({ error: parsedTotal.error }, { status: 400 });
+          }
+          if (qty <= 0) {
+            return json({ error: "Invalid quantity" }, { status: 400 });
+          }
+          updateData.unitPrice = parsedTotal.totalPrice / qty;
+        } else if (unitPriceRaw !== null && unitPriceRaw !== "") {
+          const parsedUnit = parseUnitPriceInput(unitPriceRaw, {
+            quantity: qty,
+            positiveSubtotal: positiveSub,
+            isPartLinked,
+          });
+          if (!parsedUnit.ok) {
+            return json({ error: parsedUnit.error }, { status: 400 });
+          }
+          updateData.unitPrice = parsedUnit.unitPrice;
         }
+
         if (description !== null) {
           updateData.description = description || "";
         }
@@ -1138,17 +1483,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           updateData.notes = notes || "";
         }
 
-        await updateQuoteLineItem(
-          parseInt(lineItemId),
-          updateData,
-          eventContext
-        );
+        await updateQuoteLineItem(lineItemIdNum, updateData, eventContext);
 
-        // Totals are already recalculated by updateQuoteLineItem
         const { calculateQuoteTotals } = await import("~/lib/quotes");
         const updatedTotals = await calculateQuoteTotals(quote.id);
 
-        // Return JSON response for fetcher to handle without navigation
         return json({ success: true, totals: updatedTotals });
       }
 
@@ -1517,6 +1856,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Quote part not found" }, { status: 404 });
         }
 
+        if (quotePartUsesPlaceholderCad(quotePart.specifications)) {
+          return json(
+            {
+              error:
+                "Preview mesh is managed in Settings. Upload a CAD file to regenerate mesh for this part.",
+            },
+            { status: 400 }
+          );
+        }
+
         if (!quotePart.partFileUrl) {
           return json(
             { error: "No source file available for conversion" },
@@ -1852,6 +2201,15 @@ export default function QuoteDetail() {
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [pollCount, setPollCount] = useState(0);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
+  const [promoteLineItemTarget, setPromoteLineItemTarget] = useState<{
+    id: number;
+    name: string;
+    quantity: number;
+    unitPrice: string;
+    totalPrice?: string;
+    description?: string;
+    notes?: string;
+  } | null>(null);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
@@ -1872,6 +2230,20 @@ export default function QuoteDetail() {
   const [optimisticLineItems, setOptimisticLineItems] = useState<
     LineItem[] | undefined
   >(quote.lineItems as LineItem[] | undefined);
+
+  const quotePositiveSubForAddLineModal = useMemo(
+    () =>
+      quotePositiveSubtotalExcluding(
+        (optimisticLineItems ?? []).map((li) => ({
+          id: li.id,
+          quantity: li.quantity,
+          unitPrice: li.unitPrice,
+          totalPrice: li.totalPrice,
+        }))
+      ),
+    [optimisticLineItems]
+  );
+
   const [optimisticTotal, setOptimisticTotal] = useState(quote.total || "0.00");
   const [editingExpirationDays, setEditingExpirationDays] = useState(false);
   const [expirationDaysValue, setExpirationDaysValue] = useState(
@@ -1922,6 +2294,7 @@ export default function QuoteDetail() {
     thumbnailUrl?: string;
     conversionStatus?: string | null;
     meshConversionError?: string | null;
+    usesPlaceholderCad?: boolean;
   } | null>(null);
 
   // Granular locking for different sections
@@ -2034,6 +2407,7 @@ export default function QuoteDetail() {
           signedFileUrl?: string;
           signedMeshUrl?: string;
           signedThumbnailUrl?: string;
+          usesPlaceholderCad?: boolean;
           drawings?: Array<{
             id: string;
             fileName: string;
@@ -2086,9 +2460,15 @@ export default function QuoteDetail() {
     partFileUrl?: string | null;
     conversionStatus?: string | null;
     meshConversionError?: string | null;
+    usesPlaceholderCad?: boolean;
   }) => {
-    // Open modal if mesh is available OR if CAD file is available (for download/revision)
-    if (part.signedMeshUrl || part.signedFileUrl || part.partFileUrl) {
+    // Open if there is mesh/CAD, or drawing-only placeholder rows (no mesh until CAD is uploaded)
+    if (
+      part.signedMeshUrl ||
+      part.signedFileUrl ||
+      part.partFileUrl ||
+      part.usesPlaceholderCad
+    ) {
       setSelectedPart3D({
         partId: part.id,
         quotePartId: part.id,
@@ -2099,6 +2479,7 @@ export default function QuoteDetail() {
         thumbnailUrl: part.signedThumbnailUrl,
         conversionStatus: part.conversionStatus,
         meshConversionError: part.meshConversionError,
+        usesPlaceholderCad: part.usesPlaceholderCad,
       });
       setPart3DModalOpen(true);
     }
@@ -2197,6 +2578,15 @@ export default function QuoteDetail() {
     });
   };
 
+  const handlePromoteLineItemSubmit = (formData: FormData) => {
+    formData.append("intent", "promoteLineItemToQuotePart");
+    fetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
+    setPromoteLineItemTarget(null);
+  };
+
   const handleOpenCalculator = () => {
     if (!canAccessPriceCalculator) return;
     setCalculatorMode("allParts");
@@ -2275,6 +2665,18 @@ export default function QuoteDetail() {
       const updatedItem: Partial<LineItem> = {};
       if (field === "description") updatedItem.description = value || null;
       if (field === "notes") updatedItem.notes = value || null;
+
+      const positiveSub = quotePositiveSubtotalExcluding(
+        (optimisticLineItems || []).map((li) => ({
+          id: li.id,
+          quantity: li.quantity,
+          unitPrice: li.unitPrice,
+          totalPrice: li.totalPrice,
+        })),
+        lineItemId
+      );
+      const isPartLinked = currentItem.quotePartId != null;
+
       if (field === "quantity") {
         const qty = parseInt(value, 10);
         if (Number.isNaN(qty) || qty <= 0) return;
@@ -2282,18 +2684,30 @@ export default function QuoteDetail() {
         const unitPrice = parseFloat(currentItem.unitPrice || "0");
         updatedItem.totalPrice = (qty * unitPrice).toFixed(2);
       }
+
       if (field === "unitPrice") {
-        const unitPrice = parseFloat(value);
-        if (Number.isNaN(unitPrice) || unitPrice < 0) return;
-        updatedItem.unitPrice = unitPrice.toFixed(2);
-        updatedItem.totalPrice = (currentItem.quantity * unitPrice).toFixed(2);
+        const qty = updatedItem.quantity ?? currentItem.quantity;
+        const parsed = parseUnitPriceInput(value, {
+          quantity: qty,
+          positiveSubtotal: positiveSub,
+          isPartLinked,
+        });
+        if (!parsed.ok) return;
+        updatedItem.unitPrice = parsed.unitPrice.toFixed(2);
+        updatedItem.totalPrice = (qty * parsed.unitPrice).toFixed(2);
       }
+
       if (field === "totalPrice") {
-        const totalPrice = parseFloat(value);
-        if (Number.isNaN(totalPrice) || totalPrice < 0) return;
-        updatedItem.totalPrice = totalPrice.toFixed(2);
-        if (currentItem.quantity > 0) {
-          updatedItem.unitPrice = (totalPrice / currentItem.quantity).toFixed(2);
+        const qty = updatedItem.quantity ?? currentItem.quantity;
+        const parsed = parseLineTotalInput(value, {
+          quantity: qty,
+          positiveSubtotal: positiveSub,
+          isPartLinked,
+        });
+        if (!parsed.ok) return;
+        updatedItem.totalPrice = parsed.totalPrice.toFixed(2);
+        if (qty > 0) {
+          updatedItem.unitPrice = (parsed.totalPrice / qty).toFixed(2);
         }
       }
 
@@ -3313,30 +3727,52 @@ export default function QuoteDetail() {
                 partFileUrl: part.cadFileUrl,
                 conversionStatus: part.conversionStatus,
                 meshConversionError: part.meshConversionError,
+                usesPlaceholderCad: part.usesPlaceholderCad,
               });
             }}
             onViewDrawing={(drawing: NormalizedDrawing, quotePartId: string) => {
               setSelectedDrawing({ drawing, quotePartId });
               setDrawingModalOpen(true);
             }}
-            rowExtraActions={(item: NormalizedLineItem) =>
-              item.part && canAccessPriceCalculator ? (
-                <IconButton
-                  icon={
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-                      />
-                    </svg>
-                  }
-                  title="Price Calculator"
-                  onClick={() => handleOpenCalculatorForPart(item.part!.id)}
-                />
-              ) : null
-            }
+            rowExtraActions={(item: NormalizedLineItem) => (
+              <>
+                {item.part && canAccessPriceCalculator ? (
+                  <IconButton
+                    icon={
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                        />
+                      </svg>
+                    }
+                    title="Price Calculator"
+                    onClick={() => handleOpenCalculatorForPart(item.part!.id)}
+                  />
+                ) : null}
+                {!item.part && !isPricingLocked ? (
+                  <IconButton
+                    icon={
+                      <FilePlusCorner className="w-[18px] h-[18px]" strokeWidth={2} />
+                    }
+                    title="Add part files"
+                    onClick={() =>
+                      setPromoteLineItemTarget({
+                        id: item.id,
+                        name: item.name || "Line item",
+                        quantity: item.quantity,
+                        unitPrice: item.unitPrice,
+                        totalPrice: item.totalPrice,
+                        description: item.description,
+                        notes: item.notes,
+                      })
+                    }
+                  />
+                ) : null}
+              </>
+            )}
           />
 
           <AttachmentsSection
@@ -3448,6 +3884,7 @@ export default function QuoteDetail() {
           partAssetAdminAction={partAssetAdminAction}
           meshConversionStatus={selectedPart3D.conversionStatus}
           meshConversionError={selectedPart3D.meshConversionError}
+          usesPlaceholderCad={selectedPart3D.usesPlaceholderCad}
           canRevise={canRevise}
           onRevisionComplete={() => {
             setPart3DModalOpen(false);
@@ -3455,7 +3892,7 @@ export default function QuoteDetail() {
             revalidator.revalidate();
           }}
           onRegenerateMesh={
-            selectedPart3D.quotePartId
+            selectedPart3D.quotePartId && !selectedPart3D.usesPlaceholderCad
               ? () => {
                   const fd = new FormData();
                   fd.append("intent", "regenerateMesh");
@@ -3503,11 +3940,32 @@ export default function QuoteDetail() {
 
       {/* Add Line Item Modal */}
       <AddLineItemModal
-        isOpen={isAddLineItemModalOpen}
-        onClose={() => setIsAddLineItemModalOpen(false)}
-        onSubmit={handleAddLineItemSubmit}
+        isOpen={isAddLineItemModalOpen || promoteLineItemTarget != null}
+        onClose={() => {
+          setIsAddLineItemModalOpen(false);
+          setPromoteLineItemTarget(null);
+        }}
+        onSubmit={
+          promoteLineItemTarget != null
+            ? handlePromoteLineItemSubmit
+            : handleAddLineItemSubmit
+        }
         context="quote"
+        positiveSubtotalForDiscount={quotePositiveSubForAddLineModal}
         customerId={quote.customerId}
+        promoteLineItemId={promoteLineItemTarget?.id ?? null}
+        initialLineItemName={promoteLineItemTarget?.name ?? null}
+        prefillFromLineItem={
+          promoteLineItemTarget
+            ? {
+                quantity: promoteLineItemTarget.quantity,
+                unitPrice: promoteLineItemTarget.unitPrice,
+                totalPrice: promoteLineItemTarget.totalPrice,
+                description: promoteLineItemTarget.description,
+                notes: promoteLineItemTarget.notes,
+              }
+            : null
+        }
       />
 
       {canAccessPriceCalculator && (

@@ -1,6 +1,12 @@
 import { Part3DViewer } from "~/components/shared/Part3DViewer";
 import { PartAssetAdminTrigger } from "~/components/admin/PartAssetAdminFlyout";
-import { useEffect, useRef, useState, useCallback, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  type ReactNode,
+} from "react";
 import { useFetcher } from "@remix-run/react";
 import { useDownload } from "~/hooks/useDownload";
 
@@ -60,6 +66,8 @@ interface Part3DViewerModalProps {
   partAssetAdminAction?: string;
   meshConversionStatus?: string | null;
   meshConversionError?: string | null;
+  /** When true, CAD is a placeholder copy — show upload-first UI and hide revision history */
+  usesPlaceholderCad?: boolean;
 }
 
 export function Part3DViewerModal({
@@ -84,9 +92,11 @@ export function Part3DViewerModal({
   partAssetAdminAction,
   meshConversionStatus,
   meshConversionError,
+  usesPlaceholderCad = false,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const placeholderCadInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Determine entity type and ID for version control routes
@@ -324,6 +334,9 @@ export function Part3DViewerModal({
   if (!isOpen) return null;
 
   const hasCadFile = !!cadFileUrl || !!solidModelUrl;
+  const showDrawingOnlyNoModel = Boolean(
+    usesPlaceholderCad && isQuotePart && !hasCadFile,
+  );
   const displayVersion =
     versions.find((v) => v.isCurrentVersion)?.version || currentVersion;
 
@@ -368,8 +381,39 @@ export function Part3DViewerModal({
           </svg>
         </button>
 
+        {entityId && usesPlaceholderCad && canRevise && isQuotePart && (
+          <div className="absolute top-2 right-14 z-20 flex items-center gap-2">
+            <input
+              ref={placeholderCadInputRef}
+              type="file"
+              accept=".step,.stp,.iges,.igs,.brep"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file || !entityId) return;
+                const formData = new FormData();
+                formData.append("file", file);
+                revisionFetcher.submit(formData, {
+                  method: "POST",
+                  action: `/${routePrefix}/${entityId}/revise`,
+                  encType: "multipart/form-data",
+                });
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => placeholderCadInputRef.current?.click()}
+              disabled={isUploading}
+              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isUploading ? "Uploading…" : "Upload CAD file"}
+            </button>
+          </div>
+        )}
+
         {/* Version Control Button - top right, next to close */}
-        {entityId && (
+        {entityId && !usesPlaceholderCad && (
           <div ref={dropdownRef} className="absolute top-2 right-14 z-20">
             <button
               onClick={() => setShowVersionPanel(!showVersionPanel)}
@@ -609,113 +653,192 @@ export function Part3DViewerModal({
         {(() => {
           const viewerBody: ReactNode = (
             <>
-          {isProcessing ? (
-            // Show processing state during upload/restore to prevent 404 on old mesh
-            <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
-              <p className="text-lg mb-1">
-                {isUploading
-                  ? "Uploading revision..."
-                  : isRestoring
-                  ? "Restoring version..."
-                  : "Processing..."}
-              </p>
-              <p className="text-sm text-gray-400 dark:text-gray-500">
-                The 3D preview will update after processing completes
-              </p>
-            </div>
-          ) : modelUrl ? (
-            <Part3DViewer
-              partName={partName}
-              modelUrl={modelUrl}
-              solidModelUrl={solidModelUrl}
-              partId={partId}
-              quotePartId={quotePartId}
-              onThumbnailUpdate={onThumbnailUpdate}
-              autoGenerateThumbnail={autoGenerateThumbnail}
-              existingThumbnailUrl={existingThumbnailUrl}
-              isQuotePart={isQuotePart}
-              bananaModelUrl={bananaModelUrl}
-            />
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors gap-4">
-              {(() => {
-                const cadExt = getCadFileExtension(cadFileUrl);
-                const conversionSupported = isFormatConversionSupported(cadExt);
-                const extLabel = cadExt?.toUpperCase() ?? "This file format";
-                return (
-                  <>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="48"
-                      height="48"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      className="text-gray-400 dark:text-gray-600"
+              {isProcessing ? (
+                // Show processing state during upload/restore to prevent 404 on old mesh
+                <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
+                  <p className="text-lg mb-1">
+                    {isUploading
+                      ? "Uploading revision..."
+                      : isRestoring
+                        ? "Restoring version..."
+                        : "Processing..."}
+                  </p>
+                  <p className="text-sm text-gray-400 dark:text-gray-500">
+                    The 3D preview will update after processing completes
+                  </p>
+                </div>
+              ) : modelUrl ? (
+                <Part3DViewer
+                  partName={partName}
+                  modelUrl={modelUrl}
+                  solidModelUrl={solidModelUrl}
+                  partId={partId}
+                  quotePartId={quotePartId}
+                  onThumbnailUpdate={onThumbnailUpdate}
+                  autoGenerateThumbnail={autoGenerateThumbnail}
+                  existingThumbnailUrl={existingThumbnailUrl}
+                  isQuotePart={isQuotePart}
+                  bananaModelUrl={bananaModelUrl}
+                />
+              ) : showDrawingOnlyNoModel ? (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-300 transition-colors gap-6 px-8">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="56"
+                    height="56"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    className="text-gray-400 dark:text-gray-500"
+                    aria-hidden
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"
+                    />
+                  </svg>
+                  <div className="text-center max-w-md">
+                    <p className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-2">
+                      No 3D model available
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+                      Upload a CAD file to generate a 3D preview.
+                    </p>
+                  </div>
+                  {entityId && canRevise && isQuotePart ? (
+                    <button
+                      type="button"
+                      onClick={() => placeholderCadInputRef.current?.click()}
+                      disabled={isUploading}
+                      className="px-8 py-3 text-base font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 shadow-lg shadow-blue-600/25 transition-colors"
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
-                    </svg>
-                    <div className="text-center">
-                      {conversionSupported ? (
-                        <>
-                          <p className="text-lg font-medium mb-1">No 3D preview available</p>
-                          <p className="text-sm text-gray-400 dark:text-gray-500">
-                            Mesh conversion may have failed or not yet completed
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-lg font-medium mb-1">{extLabel} viewing is not available</p>
-                          <p className="text-sm text-gray-400 dark:text-gray-500">
-                            This file format is not supported for 3D preview
-                          </p>
-                        </>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {hasCadFile && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const url = quotePartId
-                              ? `/download/quote-part/${quotePartId}`
-                              : partId
-                              ? `/download/part/${partId}`
-                              : null;
-                            if (url) download(url, partName || "part");
-                          }}
-                          className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                      {isUploading ? "Uploading…" : "Upload CAD file"}
+                    </button>
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center max-w-sm">
+                      CAD uploads are restricted for your account. Ask an
+                      administrator to attach a CAD file for this part.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400 transition-colors gap-4">
+                  {(() => {
+                    const cadExt = getCadFileExtension(cadFileUrl);
+                    const conversionSupported =
+                      isFormatConversionSupported(cadExt);
+                    const extLabel =
+                      cadExt?.toUpperCase() ?? "This file format";
+                    return (
+                      <>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="48"
+                          height="48"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          className="text-gray-400 dark:text-gray-600"
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                          </svg>
-                          Download CAD File
-                        </button>
-                      )}
-                      {conversionSupported && onRegenerateMesh && (
-                        <button
-                          type="button"
-                          onClick={onRegenerateMesh}
-                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-lg text-sm text-white transition-colors"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                          Retry Conversion
-                        </button>
-                      )}
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          )}
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={1.5}
+                            d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"
+                          />
+                        </svg>
+                        <div className="text-center">
+                          {conversionSupported ? (
+                            <>
+                              <p className="text-lg font-medium mb-1">
+                                No 3D preview available
+                              </p>
+                              <p className="text-sm text-gray-400 dark:text-gray-500">
+                                Mesh conversion may have failed or not yet
+                                completed
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-lg font-medium mb-1">
+                                {extLabel} viewing is not available
+                              </p>
+                              <p className="text-sm text-gray-400 dark:text-gray-500">
+                                This file format is not supported for 3D preview
+                              </p>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {hasCadFile && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const url = quotePartId
+                                  ? `/download/quote-part/${quotePartId}`
+                                  : partId
+                                    ? `/download/part/${partId}`
+                                    : null;
+                                if (url) download(url, partName || "part");
+                              }}
+                              className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                                />
+                              </svg>
+                              Download CAD File
+                            </button>
+                          )}
+                          {conversionSupported && onRegenerateMesh && (
+                            <button
+                              type="button"
+                              onClick={onRegenerateMesh}
+                              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-lg text-sm text-white transition-colors"
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                                />
+                              </svg>
+                              Retry Conversion
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
             </>
           );
-          const shell = (
-            <div className="w-full h-full">{viewerBody}</div>
-          );
+          const shell = <div className="w-full h-full">{viewerBody}</div>;
           if (
             partAssetAdminAction &&
             entityId &&

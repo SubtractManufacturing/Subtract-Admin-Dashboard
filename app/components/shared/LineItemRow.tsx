@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from "react";
+import { Box } from "lucide-react";
 import { PartAssetAdminTrigger } from "~/components/admin/PartAssetAdminFlyout";
 import { IconButton } from "~/components/shared/IconButton";
 import type {
@@ -143,6 +144,11 @@ export function LineItemRow({
       (part.cadFileUrl && !part.conversionStatus)
     : false;
 
+  /** Raster in part.thumbnailUrl is the mesh/CAD preview, not the drawing PDF (see drawing-only quote parts). */
+  const cadThumbnailImage = Boolean(
+    part?.thumbnailUrl && !part.usesPlaceholderCad
+  );
+
   const startFieldEdit = (
     field: LineItemEditableField,
     value: string | number | undefined
@@ -164,7 +170,7 @@ export function LineItemRow({
         >
           <div className="flex items-start gap-3 h-full">
             {part ? (
-              part.thumbnailUrl ? (
+              cadThumbnailImage ? (
                 wrapCadAdmin(
                   <button
                     onClick={() => onView3DModel(part)}
@@ -195,6 +201,23 @@ export function LineItemRow({
                       } border-b-2 border-blue-600`}
                     ></div>
                   </div>
+                )
+              ) : part.usesPlaceholderCad ? (
+                wrapCadAdmin(
+                  <button
+                    onClick={() => onView3DModel(part)}
+                    className={`${
+                      showSpecs ? "h-20 w-20" : "h-10 w-10"
+                    } bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors border-0 p-0`}
+                    title="Click to view 3D model (placeholder)"
+                    type="button"
+                  >
+                    <Box
+                      className={`${showSpecs ? "h-6 w-6" : "h-5 w-5"} text-gray-400 dark:text-gray-500`}
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                  </button>
                 )
               ) : (
                 wrapCadAdmin(
@@ -406,9 +429,10 @@ export function LineItemRow({
         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
           {isEditing("unitPrice") ? (
             <input
-              type="number"
-              min={0}
-              step="0.01"
+              type={part ? "number" : "text"}
+              {...(part
+                ? { min: 0, step: "0.01" }
+                : { inputMode: "decimal" as const })}
               value={editingValue}
               onChange={(e) => onChangeEdit(e.target.value)}
               onKeyDown={(e) => {
@@ -431,9 +455,10 @@ export function LineItemRow({
         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
           {entityType === "quote" && isEditing("totalPrice") ? (
             <input
-              type="number"
-              min={0}
-              step="0.01"
+              type={part ? "number" : "text"}
+              {...(part
+                ? { min: 0, step: "0.01" }
+                : { inputMode: "decimal" as const })}
               value={editingValue}
               onChange={(e) => onChangeEdit(e.target.value)}
               onKeyDown={(e) => {

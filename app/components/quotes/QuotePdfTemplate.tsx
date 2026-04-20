@@ -185,6 +185,19 @@ export function QuotePdfTemplate({
     0
   );
 
+  /** Prefer stored line total; fall back to qty × unit so discounts are detected reliably. */
+  const nonPartLineExtended = (item: (typeof serviceLineItems)[number]) => {
+    const tpRaw = item.totalPrice?.toString() ?? "";
+    const fromTotal = parseFloat(tpRaw);
+    if (tpRaw !== "" && !Number.isNaN(fromTotal)) return fromTotal;
+    const unit = parseFloat(item.unitPrice?.toString() || "0") || 0;
+    return unit * (item.quantity || 0);
+  };
+
+  const hasDiscountOnServiceLines = serviceLineItems.some(
+    (item) => nonPartLineExtended(item) < 0
+  );
+
   const grandTotal = partsSubtotal + serviceTotal;
   const quotePresetFields = getQuotePresetFields(presetId, {
     partsSubtotal,
@@ -695,7 +708,11 @@ export function QuotePdfTemplate({
           {serviceLineItems.length > 0 && (
             <>
               <div className="services-header">
-                <h2 className="secondary-section-title">Additional Services</h2>
+                <h2 className="secondary-section-title">
+                  {hasDiscountOnServiceLines
+                    ? "Services and adjustments"
+                    : "Additional Services"}
+                </h2>
                 {partsLineItems.length > 0 && (
                   <div className="parts-subtotal-box">
                     <div className="parts-subtotal-row">
