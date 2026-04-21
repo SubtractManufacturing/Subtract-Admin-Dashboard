@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 
-const connectionString = process.env.DATABASE_URL!;
+const connectionString = process.env.DATABASE_URL ?? "";
 
 /** Transaction pooler / PgBouncer (e.g. Supabase :6543) breaks prepared statements for some queries. */
 const useTransactionPool =

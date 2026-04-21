@@ -19,7 +19,7 @@
     "test": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:watch": "vitest --exclude \"**/*.integration.test.ts\"",
     "test:ci": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --exclude \"**/*.integration.test.ts\"",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

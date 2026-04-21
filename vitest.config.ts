@@ -10,6 +10,8 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    // Load .env before each worker's module graph is built
+    setupFiles: ["dotenv/config"],
     include: ["app/**/*.test.ts", "app/**/*.integration.test.ts"],
     exclude: ["**/node_modules/**", "**/build/**"],
     pool: "forks",
