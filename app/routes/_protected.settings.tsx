@@ -2192,24 +2192,11 @@ export default function Settings() {
                       {localFeatureFlags
                         ?.filter(
                           (flag: FeatureFlag) =>
-                            flag.key === "admin_console_access" ||
-                            flag.key === "banana_for_scale" ||
-                            flag.key === "cad_revisions_admin" ||
-                            flag.key === "cad_revisions_all" ||
-                            flag.key === "cad_revisions_dev" ||
-                            flag.key === "display_version_header" ||
                             flag.key === "duplicate_include_attachments" ||
-                            flag.key === "email_example_layouts_dev" ||
                             flag.key === "events_access_all" ||
                             flag.key === "events_nav_visible" ||
-                            flag.key === "mesh_uploads_all" ||
-                            flag.key === "mesh_uploads_dev" ||
-                            flag.key === "outbound_email_enabled" ||
                             flag.key === "pdf_auto_download" ||
-                            flag.key === "price_calculator_all" ||
-                            flag.key === "price_calculator_dev" ||
-                            flag.key === "quote_rejection_reason_required" ||
-                            flag.key === "stripe_payment_links",
+                            flag.key === "quote_rejection_reason_required",
                         )
                         .sort((a: FeatureFlag, b: FeatureFlag) =>
                           a.key.localeCompare(b.key),
@@ -2253,15 +2240,17 @@ export default function Settings() {
                       ?.filter(
                         (flag: FeatureFlag) =>
                           flag.key === "admin_console_access" ||
-                          flag.key === "display_version_header" ||
-                          flag.key === "mesh_uploads_dev" ||
-                          flag.key === "mesh_uploads_all" ||
-                          flag.key === "price_calculator_dev" ||
-                          flag.key === "price_calculator_all" ||
-                          flag.key === "cad_revisions_dev" ||
+                          flag.key === "banana_for_scale" ||
                           flag.key === "cad_revisions_admin" ||
                           flag.key === "cad_revisions_all" ||
-                          flag.key === "banana_for_scale" ||
+                          flag.key === "cad_revisions_dev" ||
+                          flag.key === "display_version_header" ||
+                          flag.key === "email_example_layouts_dev" ||
+                          flag.key === "mesh_uploads_all" ||
+                          flag.key === "mesh_uploads_dev" ||
+                          flag.key === "outbound_email_enabled" ||
+                          flag.key === "price_calculator_all" ||
+                          flag.key === "price_calculator_dev" ||
                           flag.key === "stripe_payment_links",
                       )
                       .sort((a: FeatureFlag, b: FeatureFlag) =>
