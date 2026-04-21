@@ -1,6 +1,10 @@
 import React, { useEffect, useState, Suspense } from "react";
 import { getFileType, formatFileSize } from "~/lib/file-utils";
 import type { FileType } from "~/lib/file-utils";
+import {
+  PartAssetAdminTrigger,
+  type DrawingAdminContext,
+} from "~/components/admin/PartAssetAdminFlyout";
 
 const PDFViewer = React.lazy(() => import("./file-viewers/PDFViewer"));
 const ImageViewer = React.lazy(() => import("./file-viewers/ImageViewer"));
@@ -17,6 +21,11 @@ interface FileViewerModalProps {
   fileSize?: number;
   onDelete?: () => void;
   isDeleting?: boolean;
+  /** Ctrl+Shift drawing admin flyout (Admin/Dev) */
+  partAssetAdmin?: {
+    action: string;
+    context: DrawingAdminContext;
+  };
 }
 
 export default function FileViewerModal({
@@ -28,6 +37,7 @@ export default function FileViewerModal({
   fileSize,
   onDelete,
   isDeleting = false,
+  partAssetAdmin,
 }: FileViewerModalProps) {
   const [fileType, setFileType] = useState<FileType>("unknown");
   const [canView, setCanView] = useState(false);
@@ -165,27 +175,15 @@ export default function FileViewerModal({
     }
   };
 
-  return (
+  const dialog = (
+    /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */
     <div
-      className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-8"
-      onClick={onClose}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          onClose();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-label="Close modal overlay"
+      className="bg-white dark:bg-gray-900 rounded-lg shadow-2xl w-full max-w-6xl h-full ring-1 ring-gray-200 dark:ring-white/10 relative overflow-hidden focus:outline-none flex flex-col"
+      onClick={(e) => e.stopPropagation()}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`File Viewer - ${fileName}`}
     >
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
-      <div
-        className="bg-white dark:bg-gray-900 rounded-lg shadow-2xl w-full max-w-6xl h-full ring-1 ring-gray-200 dark:ring-white/10 relative overflow-hidden focus:outline-none flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`File Viewer - ${fileName}`}
-      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center gap-3 min-w-0">
@@ -273,7 +271,32 @@ export default function FileViewerModal({
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">{renderViewer()}</div>
-      </div>
+    </div>
+  );
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-8"
+      onClick={onClose}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          onClose();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label="Close modal overlay"
+    >
+      {partAssetAdmin ? (
+        <PartAssetAdminTrigger
+          action={partAssetAdmin.action}
+          context={partAssetAdmin.context}
+        >
+          {dialog}
+        </PartAssetAdminTrigger>
+      ) : (
+        dialog
+      )}
     </div>
   );
 }

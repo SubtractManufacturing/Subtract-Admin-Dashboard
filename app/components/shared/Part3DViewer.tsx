@@ -553,6 +553,15 @@ export function Part3DViewer({
   const isLightMode = theme === "light";
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  /** Quote parts live in `quote_parts`; customer parts in `parts`. Wrong route = 0-row update. */
+  const thumbnailUploadUrl =
+    quotePartId != null && quotePartId !== ""
+      ? `/quote-parts/${quotePartId}/thumbnail`
+      : partId != null && partId !== ""
+        ? `/parts/${partId}/thumbnail`
+        : null;
+  const thumbnailLabelId = quotePartId || partId;
+
   const handleLoad = useCallback(() => setIsLoading(false), []);
 
   // Fetch signed URL for mesh model if needed
@@ -601,7 +610,7 @@ export function Part3DViewer({
   }, [modelUrl, partId]);
 
   const generateThumbnailSilently = useCallback(async () => {
-    if (!canvasRef.current || !partId) return;
+    if (!canvasRef.current || !thumbnailUploadUrl || !thumbnailLabelId) return;
 
     setHasGeneratedThumbnail(true);
 
@@ -614,10 +623,10 @@ export function Part3DViewer({
         }
 
         const formData = new FormData();
-        const filename = `thumbnail-${partId}-auto-${Date.now()}.png`;
+        const filename = `thumbnail-${thumbnailLabelId}-auto-${Date.now()}.png`;
         formData.append("file", blob, filename);
 
-        const response = await fetch(`/parts/${partId}/thumbnail`, {
+        const response = await fetch(thumbnailUploadUrl, {
           method: "POST",
           body: formData,
         });
@@ -634,7 +643,7 @@ export function Part3DViewer({
     } catch (error) {
       console.error("Error generating automatic thumbnail:", error);
     }
-  }, [partId, onThumbnailUpdate]);
+  }, [thumbnailUploadUrl, thumbnailLabelId, onThumbnailUpdate]);
 
   // Auto-generate thumbnail after model loads if needed
   useEffect(() => {
@@ -643,7 +652,7 @@ export function Part3DViewer({
       !hasGeneratedThumbnail &&
       autoGenerateThumbnail &&
       !existingThumbnailUrl &&
-      partId &&
+      thumbnailUploadUrl &&
       canvasRef.current
     ) {
       // Wait a bit for the model to render properly
@@ -658,7 +667,7 @@ export function Part3DViewer({
     hasGeneratedThumbnail,
     autoGenerateThumbnail,
     existingThumbnailUrl,
-    partId,
+    thumbnailUploadUrl,
     generateThumbnailSilently,
   ]);
 
@@ -703,8 +712,10 @@ export function Part3DViewer({
   }
 
   const handleCaptureThumbnail = async () => {
-    if (!canvasRef.current || !partId) {
-      console.error("Cannot capture thumbnail: missing canvas or partId");
+    if (!canvasRef.current || !thumbnailUploadUrl || !thumbnailLabelId) {
+      console.error(
+        "Cannot capture thumbnail: missing canvas or upload target"
+      );
       return;
     }
 
@@ -722,11 +733,11 @@ export function Part3DViewer({
 
         // Create FormData for upload
         const formData = new FormData();
-        const filename = `thumbnail-${partId || "part"}-${Date.now()}.png`;
+        const filename = `thumbnail-${thumbnailLabelId}-${Date.now()}.png`;
         formData.append("file", blob, filename);
 
         // Upload the thumbnail using Remix resource route
-        const response = await fetch(`/parts/${partId}/thumbnail`, {
+        const response = await fetch(thumbnailUploadUrl, {
           method: "POST",
           body: formData,
         });
@@ -812,7 +823,7 @@ export function Part3DViewer({
                 <path d="M0 0h5v5H0V0zm6 0h5v5H6V0zm6 0h4v5h-4V0zM0 6h5v5H0V6zm6 0h5v5H6V6zm6 0h4v5h-4V6zM0 12h5v4H0v-4zm6 0h5v4H6v-4zm6 0h4v4h-4v-4z" />
               </svg>
             </button>
-            {partId && !isQuotePart && (
+            {thumbnailUploadUrl && !isQuotePart && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();

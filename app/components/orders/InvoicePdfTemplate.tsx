@@ -2,14 +2,87 @@ import React, { useEffect } from "react";
 import type { OrderWithRelations } from "~/lib/orders";
 import type { QuoteWithRelations } from "~/lib/quotes";
 import type { Part, OrderLineItem, QuoteLineItem } from "~/lib/db/schema";
-import { formatCurrency, formatDate, commonPdfStyles } from "~/lib/pdf-utils";
+import {
+  formatCurrency,
+  formatDate,
+  commonPdfStyles,
+  type PdfPresetOption,
+} from "~/lib/pdf-utils";
 import { extractShippingAddress, isAddressComplete } from "~/lib/address-utils";
+
+export const INVOICE_PDF_PRESETS = [
+  { id: "default", label: "Default" },
+  { id: "paid", label: "Paid" },
+] as const satisfies readonly PdfPresetOption[];
+
+export type InvoicePdfPresetId = (typeof INVOICE_PDF_PRESETS)[number]["id"];
+
+type InvoicePresetFields = {
+  amountPaidDisplay: string;
+  amountDueDisplay: string;
+  amountPaidDefaultText: string | undefined;
+  amountPaidUsePlaceholder: boolean;
+  dueDateDisplay: string;
+  paymentTermsDisplay: string;
+  /** When set, replaces default order-notes / editable hint for this preset. */
+  notesOverride: string | null;
+};
+
+/** Initial field values for a preset; extend with new cases when adding presets. */
+function getInvoicePresetFields(
+  presetId: InvoicePdfPresetId,
+  ctx: {
+    total: number;
+    isOrder: boolean;
+    shipDate: Date | string | null | undefined;
+    customerPaymentTerms: string | null | undefined;
+  },
+): InvoicePresetFields {
+  const shipDueDate =
+    ctx.shipDate == null
+      ? null
+      : ctx.shipDate instanceof Date
+        ? ctx.shipDate
+        : new Date(ctx.shipDate);
+  const defaultDue =
+    ctx.isOrder && shipDueDate
+      ? formatDate(shipDueDate)
+      : "Net 30";
+  const defaultTerms = ctx.customerPaymentTerms || "Net 30";
+
+  switch (presetId) {
+    case "paid":
+      return {
+        amountPaidDisplay: formatCurrency(ctx.total),
+        amountDueDisplay: formatCurrency(0),
+        amountPaidDefaultText: undefined,
+        amountPaidUsePlaceholder: false,
+        dueDateDisplay: "Paid in full",
+        paymentTermsDisplay: "Paid in full",
+        notesOverride:
+          "Thank you for your payment. Your business is greatly appreciated.",
+      };
+    case "default":
+    default:
+      return {
+        amountPaidDisplay: formatCurrency(0),
+        amountDueDisplay: formatCurrency(ctx.total),
+        amountPaidDefaultText: formatCurrency(0),
+        amountPaidUsePlaceholder: true,
+        dueDateDisplay: defaultDue,
+        paymentTermsDisplay: defaultTerms,
+        notesOverride: null,
+      };
+  }
+}
 
 interface InvoicePdfTemplateProps {
   entity: OrderWithRelations | QuoteWithRelations;
   lineItems?: (OrderLineItem | QuoteLineItem)[];
   parts?: (Part | null)[];
   editable?: boolean;
+  /** Document layout preset; drives initial copy before inline edits. */
+  presetId?: InvoicePdfPresetId;
 }
 
 export function InvoicePdfTemplate({
@@ -17,6 +90,7 @@ export function InvoicePdfTemplate({
   lineItems = [],
   parts = [],
   editable = false,
+  presetId = "default",
 }: InvoicePdfTemplateProps) {
   // Determine if this is an order or quote
   const isOrder = "orderNumber" in entity;
@@ -66,7 +140,7 @@ export function InvoicePdfTemplate({
         element.removeEventListener("blur", handlePlaceholderBlur);
       });
     };
-  }, [editable]);
+  }, [editable, presetId]);
 
   // Calculate total
   const calculateTotal = () => {
@@ -80,6 +154,15 @@ export function InvoicePdfTemplate({
   };
 
   const total = calculateTotal();
+  const shipDate = isOrder
+    ? (entity as OrderWithRelations).shipDate
+    : undefined;
+  const invoicePresetFields = getInvoicePresetFields(presetId, {
+    total,
+    isOrder,
+    shipDate,
+    customerPaymentTerms: entity.customer?.paymentTerms ?? undefined,
+  });
 
   return (
     <div className="invoice-pdf-container">
@@ -372,7 +455,7 @@ export function InvoicePdfTemplate({
         `}
       </style>
 
-      <div className="document-container">
+      <div className="document-container" key={presetId}>
         <div className="content-wrapper">
           {/* Header */}
           <div className="header">
@@ -419,9 +502,7 @@ export function InvoicePdfTemplate({
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {isOrder && entity.shipDate
-                      ? formatDate(entity.shipDate)
-                      : "Net 30"}
+                    {invoicePresetFields.dueDateDisplay}
                   </span>
                 </span>
               </div>
@@ -433,7 +514,7 @@ export function InvoicePdfTemplate({
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {entity.customer?.paymentTerms || "Net 30"}
+                    {invoicePresetFields.paymentTermsDisplay}
                   </span>
                 </span>
               </div>
@@ -881,14 +962,20 @@ export function InvoicePdfTemplate({
               <span
                 className={
                   editable
-                    ? "total-value editable invoice-placeholder"
+                    ? `total-value editable${
+                        invoicePresetFields.amountPaidUsePlaceholder
+                          ? " invoice-placeholder"
+                          : ""
+                      }`
                     : "total-value"
                 }
                 contentEditable={editable}
                 suppressContentEditableWarning
-                data-default-text="$0.00"
+                data-default-text={
+                  invoicePresetFields.amountPaidDefaultText ?? undefined
+                }
               >
-                $0.00
+                {invoicePresetFields.amountPaidDisplay}
               </span>
             </div>
             <div className="total-row">
@@ -902,7 +989,7 @@ export function InvoicePdfTemplate({
                 contentEditable={editable}
                 suppressContentEditableWarning
               >
-                {formatCurrency(total)}
+                {invoicePresetFields.amountDueDisplay}
               </span>
             </div>
           </div>
@@ -916,8 +1003,11 @@ export function InvoicePdfTemplate({
             contentEditable={editable}
             suppressContentEditableWarning
           >
-            {(isOrder ? (entity as OrderWithRelations).notes : null) ||
-              (editable ? "Additional notes or payment instructions..." : "")}
+            {invoicePresetFields.notesOverride ??
+              ((isOrder ? (entity as OrderWithRelations).notes : null) ||
+                (editable
+                  ? "Additional notes or payment instructions..."
+                  : ""))}
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 import { LoaderFunctionArgs, ActionFunctionArgs, json, redirect } from "@remix-run/node";
 import { Outlet, useLoaderData, useLocation } from "@remix-run/react";
-import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { requireAuth, withAuthHeaders, canUsePartAssetAdmin } from "~/lib/auth.server";
 import { createServerClient } from "~/lib/supabase";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserAccessAdminConsole, shouldShowEventsInNav, shouldShowVersionInHeader } from "~/lib/featureFlags";
@@ -26,6 +26,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       showEventsLink,
       showVersionInHeader,
       showAdminConsole,
+      canUsePartAssetAdmin: canUsePartAssetAdmin(userDetails.role),
     }),
     headers
   );

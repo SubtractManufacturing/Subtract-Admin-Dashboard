@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.3.13](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.12...v1.3.13) (2026-04-20)
+
+
+### Bug Fixes
+
+* make line items wayyy better ([b1af8ea](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/b1af8ea847a5b1ddba70fee70767b54f8ab56801))
+
+## [1.3.12](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.11...v1.3.12) (2026-04-03)
+
+
+### Bug Fixes
+
+* add global PDF presets and packing slit template ([34f2efa](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/34f2efa75c19cde90c111d05c740c1ea7b7c84e7))
+
+## [1.3.11](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.10...v1.3.11) (2026-04-03)
+
+
+### Bug Fixes
+
+* stripe payment links not updating with revised quote ([eebdf03](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/eebdf038a9a913657a661b87b59c63d89f3e4a0f))
+
+## [1.3.10](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.9...v1.3.10) (2026-03-30)
+
+
+### Bug Fixes
+
+* add admin flyout for modifying part files, thumbnails, and mesh generation ([8b5222c](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/8b5222c7720b372d043504345fb155c4eb43d706))
+
 ## [1.3.9](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.8...v1.3.9) (2026-03-19)
 
 

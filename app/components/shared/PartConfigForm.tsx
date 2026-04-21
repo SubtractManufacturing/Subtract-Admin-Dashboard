@@ -15,6 +15,8 @@ interface PartConfigFormProps {
   drawings: File[];
   onDrawingsChange: (files: File[]) => void;
   acceptedDrawingTypes?: string;
+  /** When set, caps how many drawing files can be attached (e.g. 1 for single-drawing line items). */
+  maxDrawings?: number;
 }
 
 export function PartConfigForm({
@@ -26,13 +28,19 @@ export function PartConfigForm({
   drawings,
   onDrawingsChange,
   acceptedDrawingTypes = ".pdf,.png,.jpg,.jpeg,.dwg,.dxf",
+  maxDrawings,
 }: PartConfigFormProps) {
   const drawingInputRef = useRef<HTMLInputElement>(null);
+
+  const cap = maxDrawings ?? Infinity;
 
   const handleDrawingSelect = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files) return;
-    const next = [...drawings, ...Array.from(files)];
+    const picked = Array.from(files);
+    const merged = [...drawings, ...picked];
+    const next =
+      Number.isFinite(cap) ? merged.slice(0, cap) : merged;
     onDrawingsChange(next);
   };
 
@@ -76,6 +84,12 @@ export function PartConfigForm({
       <div>
         <p className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           Technical Drawings (Optional)
+          {maxDrawings === 1 && (
+            <span className="font-normal text-gray-500 dark:text-gray-400">
+              {" "}
+              — max one file
+            </span>
+          )}
         </p>
 
         {drawings.length > 0 && (
@@ -103,7 +117,7 @@ export function PartConfigForm({
         <input
           ref={drawingInputRef}
           type="file"
-          multiple
+          multiple={maxDrawings !== 1}
           accept={acceptedDrawingTypes}
           onChange={handleDrawingSelect}
           className="hidden"
@@ -112,9 +126,12 @@ export function PartConfigForm({
           type="button"
           variant="secondary"
           size="sm"
+          disabled={Number.isFinite(cap) && drawings.length >= cap}
           onClick={() => drawingInputRef.current?.click()}
         >
-          Add Drawing
+          {maxDrawings === 1 && drawings.length > 0
+            ? "Replace drawing"
+            : "Add Drawing"}
         </Button>
       </div>
     </div>

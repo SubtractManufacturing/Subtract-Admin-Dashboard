@@ -365,7 +365,7 @@ export async function deletePartMesh(
   partId: string,
   userId: string,
   userEmail: string,
-  reason: "revision" | "restore"
+  reason: "revision" | "restore" | "admin"
 ): Promise<void> {
   const [part] = await db
     .select({

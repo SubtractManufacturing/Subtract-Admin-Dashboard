@@ -139,6 +139,9 @@ export async function updatePart(id: string, partData: Partial<PartInput>, event
       .returning()
 
     const updatedPart = result[0]
+    if (!updatedPart) {
+      throw new Error(`Part not found or no row updated for id: ${id}`)
+    }
 
     // Log event
     await createEvent({

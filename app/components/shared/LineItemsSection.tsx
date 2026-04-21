@@ -31,6 +31,7 @@ interface LineItemsSectionProps {
   onView3DModel: (part: NormalizedPart) => void;
   onViewDrawing: (drawing: NormalizedDrawing, partId: string) => void;
   rowExtraActions?: (item: NormalizedLineItem) => ReactNode;
+  partAssetAdminAction?: string;
 }
 
 export function LineItemsSection({
@@ -48,6 +49,7 @@ export function LineItemsSection({
   onView3DModel,
   onViewDrawing,
   rowExtraActions,
+  partAssetAdminAction,
 }: LineItemsSectionProps) {
   const [showSpecs, setShowSpecs] = useState(false);
   const [editingField, setEditingField] = useState<{
@@ -204,6 +206,7 @@ export function LineItemsSection({
                   onDrawingDelete={onDrawingDelete}
                   isDrawingUploading={drawingUploadingPartId === item.part?.id}
                   extraActions={rowExtraActions?.(item)}
+                  partAssetAdminAction={partAssetAdminAction}
                 />
               ))}
             </tbody>

@@ -3,6 +3,7 @@ import { quotes, quoteParts, quotePartDrawings, attachments } from "./db/schema"
 import { eq } from "drizzle-orm";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client, extractS3Key } from "./s3.server";
+import { quotePartUsesPlaceholderCad } from "./quote-part-assets.server";
 import archiver from "archiver";
 
 interface FileToZip {
@@ -69,8 +70,11 @@ export async function downloadQuoteFiles(quoteId: number) {
       .replace(/[^a-zA-Z0-9-_ ]/g, "_");
     const partFolder = `${sanitizedPartName}/`;
 
-    // Download part 3D model file (STEP/CAD file) if exists
-    if (part.partFileUrl) {
+    // Real CAD only — never zip the Settings placeholder preview
+    if (
+      part.partFileUrl &&
+      !quotePartUsesPlaceholderCad(part.specifications)
+    ) {
       downloadPromises.push(
         (async () => {
           try {

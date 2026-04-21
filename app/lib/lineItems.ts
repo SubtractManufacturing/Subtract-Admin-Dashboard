@@ -70,6 +70,20 @@ export async function createLineItem(
   data: NewOrderLineItem,
   eventContext?: LineItemEventContext
 ): Promise<OrderLineItem> {
+  const unitNum =
+    typeof data.unitPrice === "string"
+      ? parseFloat(data.unitPrice)
+      : Number(data.unitPrice);
+  if (
+    data.partId != null &&
+    !Number.isNaN(unitNum) &&
+    unitNum < 0
+  ) {
+    throw new Error(
+      "Part-linked line items cannot have a negative unit price"
+    );
+  }
+
   const [lineItem] = await db.insert(orderLineItems).values(data).returning();
 
   // Update the order's totalPrice
@@ -118,6 +132,26 @@ export async function updateLineItem(
     const itemTotal = parseFloat(item.unitPrice || "0") * (item.quantity || 0);
     return sum + itemTotal;
   }, 0);
+
+  const mergedPartId =
+    data.partId !== undefined ? data.partId : currentLineItem.partId;
+  const mergedUnitRaw =
+    data.unitPrice !== undefined
+      ? data.unitPrice
+      : currentLineItem.unitPrice;
+  const mergedUnit =
+    typeof mergedUnitRaw === "string"
+      ? parseFloat(mergedUnitRaw)
+      : Number(mergedUnitRaw);
+  if (
+    mergedPartId != null &&
+    !Number.isNaN(mergedUnit) &&
+    mergedUnit < 0
+  ) {
+    throw new Error(
+      "Part-linked line items cannot have a negative unit price"
+    );
+  }
 
   const [updated] = await db
     .update(orderLineItems)

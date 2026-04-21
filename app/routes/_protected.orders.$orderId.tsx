@@ -25,6 +25,7 @@ import {
   type AttachmentEventContext,
 } from "~/lib/attachments";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import {
   isFeatureEnabled,
   FEATURE_FLAGS,
@@ -46,6 +47,7 @@ import { Notes } from "~/components/shared/Notes";
 import OrderActionsDropdown from "~/components/orders/OrderActionsDropdown";
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
+import GeneratePackingSlipPdfModal from "~/components/orders/GeneratePackingSlipPdfModal";
 import {
   getNotes,
   createNote,
@@ -69,15 +71,31 @@ import {
 } from "~/lib/parts";
 import { createEvent, getEventsForOrder } from "~/lib/events";
 import { db } from "~/lib/db";
-import { parts, attachments, partDrawings } from "~/lib/db/schema";
+import {
+  parts,
+  attachments,
+  partDrawings,
+  orderLineItems,
+} from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  orderPositiveSubtotalExcluding,
+  parseUnitPriceInput,
+} from "~/lib/lineItemPricing";
 import type { Vendor } from "~/lib/db/schema";
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import { EventTimeline } from "~/components/EventTimeline";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import { AddLineItemModal } from "~/components/shared/AddLineItemModal";
 import { LineItemsSection } from "~/components/shared/LineItemsSection";
+import { usePartAssetAdminAccess } from "~/components/admin/PartAssetAdminFlyout";
 import {
   normalizeOrderLineItems,
   type NormalizedDrawing,
@@ -269,6 +287,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const specialIntents = [
         "generatePurchaseOrder",
         "generateInvoice",
+        "generatePackingSlip",
         "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
       ];
       if (specialIntents.includes(intent)) {
@@ -336,6 +355,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = formData.get("intent");
 
   try {
+    const partAssetAdminResponse = await tryPartAssetAdminAction(
+      formData,
+      {
+        type: "order",
+        orderId: order.id,
+        customerId: order.customerId,
+      },
+      { user: { id: user.id }, userDetails, headers }
+    );
+    if (partAssetAdminResponse) {
+      return partAssetAdminResponse;
+    }
+
     switch (intent) {
       case "getNotes": {
         const notes = await getNotes("order", order.id.toString());
@@ -455,12 +487,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const name = formData.get("name") as string;
         const description = formData.get("description") as string;
         const quantity = parseInt(formData.get("quantity") as string);
-        const unitPrice = formData.get("unitPrice") as string;
+        const unitPriceRaw = formData.get("unitPrice") as string;
         const notes = formData.get("notes") as string;
         const partId = formData.get("partId") as string | null;
 
-        if (!name || !quantity || !unitPrice) {
+        if (!name || !quantity || !unitPriceRaw) {
           return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const partIdVal = partId && partId.trim() ? partId : null;
+        const existingLines = await db
+          .select()
+          .from(orderLineItems)
+          .where(eq(orderLineItems.orderId, order.id));
+        const positiveSub = orderPositiveSubtotalExcluding(existingLines);
+        const unitParsed = parseUnitPriceInput(unitPriceRaw.trim(), {
+          quantity,
+          positiveSubtotal: positiveSub,
+          isPartLinked: !!partIdVal,
+        });
+        if (!unitParsed.ok) {
+          return json({ error: unitParsed.error }, { status: 400 });
         }
 
         const eventContext: LineItemEventContext = {
@@ -468,20 +515,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const lineItem = await createLineItem(
-          {
-            orderId: order.id,
-            name,
-            description,
-            quantity,
-            unitPrice,
-            partId: partId || null,
-            notes: notes || null,
-          },
-          eventContext
-        );
+        try {
+          const lineItem = await createLineItem(
+            {
+              orderId: order.id,
+              name,
+              description,
+              quantity,
+              unitPrice: unitParsed.unitPrice.toFixed(2),
+              partId: partIdVal,
+              notes: notes || null,
+            },
+            eventContext
+          );
 
-        return withAuthHeaders(json({ lineItem }), headers);
+          return withAuthHeaders(json({ lineItem }), headers);
+        } catch (err) {
+          return json(
+            {
+              error:
+                err instanceof Error ? err.message : "Failed to create line item",
+            },
+            { status: 400 }
+          );
+        }
       }
 
       case "createLineItemWithUpload": {
@@ -595,13 +652,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
             userEmail: user?.email || userDetails?.name || undefined,
           };
 
+          const existingLines = await db
+            .select()
+            .from(orderLineItems)
+            .where(eq(orderLineItems.orderId, order.id));
+          const positiveSub = orderPositiveSubtotalExcluding(existingLines);
+          const unitParsed = parseUnitPriceInput(String(unitPrice).trim(), {
+            quantity,
+            positiveSubtotal: positiveSub,
+            isPartLinked: true,
+          });
+          if (!unitParsed.ok) {
+            return json({ error: unitParsed.error }, { status: 400 });
+          }
+
           const lineItem = await createLineItem(
             {
               orderId: order.id,
               name,
               description,
               quantity,
-              unitPrice,
+              unitPrice: unitParsed.unitPrice.toFixed(2),
               partId: part.id,
               notes: notes || null,
             },
@@ -623,12 +694,48 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const name = formData.get("name") as string;
         const description = formData.get("description") as string;
         const quantity = parseInt(formData.get("quantity") as string);
-        const unitPrice = formData.get("unitPrice") as string;
+        const unitPriceRaw = formData.get("unitPrice") as string;
         const notes = formData.get("notes") as string;
-        const partId = formData.get("partId") as string | null;
+        const rawPartId = formData.get("partId") as string | null;
+        const hasPartIdField = formData.has("partId");
+        const partIdVal = hasPartIdField
+          ? rawPartId && String(rawPartId).trim()
+            ? String(rawPartId).trim()
+            : null
+          : undefined;
 
-        if (!lineItemId || !name || !quantity || !unitPrice) {
+        if (!lineItemId || !name || !quantity || !unitPriceRaw) {
           return json({ error: "Missing required fields" }, { status: 400 });
+        }
+
+        const [lineRow] = await db
+          .select()
+          .from(orderLineItems)
+          .where(eq(orderLineItems.id, lineItemId))
+          .limit(1);
+
+        if (!lineRow || lineRow.orderId !== order.id) {
+          return json({ error: "Line item not found" }, { status: 404 });
+        }
+
+        const allOrderLines = await db
+          .select()
+          .from(orderLineItems)
+          .where(eq(orderLineItems.orderId, order.id));
+        const positiveSub = orderPositiveSubtotalExcluding(
+          allOrderLines,
+          lineItemId
+        );
+        const resolvedPartId =
+          partIdVal !== undefined ? partIdVal : lineRow.partId;
+
+        const unitParsed = parseUnitPriceInput(unitPriceRaw.trim(), {
+          quantity,
+          positiveSubtotal: positiveSub,
+          isPartLinked: !!resolvedPartId,
+        });
+        if (!unitParsed.ok) {
+          return json({ error: unitParsed.error }, { status: 400 });
         }
 
         const eventContext: LineItemEventContext = {
@@ -636,20 +743,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const lineItem = await updateLineItem(
-          lineItemId,
-          {
-            name,
-            description,
-            quantity,
-            unitPrice,
-            partId: partId || null,
-            notes: notes || null,
-          },
-          eventContext
-        );
+        try {
+          const lineItem = await updateLineItem(
+            lineItemId,
+            {
+              name,
+              description,
+              quantity,
+              unitPrice: unitParsed.unitPrice.toFixed(2),
+              ...(partIdVal !== undefined ? { partId: partIdVal } : {}),
+              notes: notes || null,
+            },
+            eventContext
+          );
 
-        return withAuthHeaders(json({ lineItem }), headers);
+          return withAuthHeaders(json({ lineItem }), headers);
+        } catch (err) {
+          return json(
+            {
+              error:
+                err instanceof Error ? err.message : "Failed to update line item",
+            },
+            { status: 400 }
+          );
+        }
       }
 
       case "deleteLineItem": {
@@ -1034,6 +1151,55 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
 
+      case "generatePackingSlip": {
+        const htmlContent = formData.get("htmlContent") as string;
+
+        if (!htmlContent) {
+          return json({ error: "Missing HTML content" }, { status: 400 });
+        }
+
+        try {
+          const { attachmentId } = await generateDocumentPdf({
+            entityType: "order",
+            entityId: order.id,
+            htmlContent,
+            filename: `PackingSlip-${order.orderNumber}.pdf`,
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          });
+
+          const attachment = await db
+            .select()
+            .from(attachments)
+            .where(eq(attachments.id, attachmentId))
+            .limit(1);
+
+          if (!attachment[0]) {
+            throw new Error("Failed to create attachment");
+          }
+
+          const downloadUrl = await getDownloadUrl(attachment[0].s3Key, 3600);
+
+          return json({
+            success: true,
+            downloadUrl,
+            attachmentId,
+            filename: `PackingSlip-${order.orderNumber}.pdf`,
+          });
+        } catch (pdfError) {
+          console.error("PDF generation failed:", pdfError);
+          return json(
+            {
+              error:
+                pdfError instanceof Error
+                  ? pdfError.message
+                  : "Failed to generate PDF",
+            },
+            { status: 500 }
+          );
+        }
+      }
+
       case "addDrawingToPart": {
         const partId = formData.get("partId") as string;
         const drawingCount =
@@ -1291,6 +1457,9 @@ export default function OrderDetails() {
     bananaEnabled,
     bananaModelUrl,
   } = useLoaderData<typeof loader>();
+  const partAssetAdminAction = usePartAssetAdminAccess()
+    ? `/orders/${order.orderNumber}`
+    : undefined;
   const revalidator = useRevalidator();
   const [showNotice, setShowNotice] = useState(true);
   const [fileModalOpen, setFileModalOpen] = useState(false);
@@ -1312,6 +1481,8 @@ export default function OrderDetails() {
     solidModelUrl?: string;
     thumbnailUrl?: string;
     cadFileUrl?: string;
+    meshConversionStatus?: string | null;
+    meshConversionError?: string | null;
   } | null>(null);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
   const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
@@ -1337,6 +1508,20 @@ export default function OrderDetails() {
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
+
+  const orderPositiveSubForAddLineModal = useMemo(
+    () =>
+      orderPositiveSubtotalExcluding(
+        lineItems.map((row: LineItemWithPart) => ({
+          id: row.lineItem.id,
+          quantity: row.lineItem.quantity,
+          unitPrice: row.lineItem.unitPrice ?? "0",
+        }))
+      ),
+    [lineItems]
+  );
+
   const handleAddLineItem = () => {
     setLineItemModalOpen(true);
   };
@@ -1514,17 +1699,43 @@ export default function OrderDetails() {
       )?.lineItem;
       if (!existing) return;
 
+      const qty =
+        field === "quantity"
+          ? parseInt(value, 10) || existing.quantity
+          : existing.quantity;
+
+      let unitPriceStr =
+        field === "unitPrice" ? value.trim() : existing.unitPrice || "0";
+
+      if (field === "unitPrice") {
+        const positiveSub = orderPositiveSubtotalExcluding(
+          lineItems.map((row: LineItemWithPart) => ({
+            id: row.lineItem.id,
+            quantity: row.lineItem.quantity,
+            unitPrice: row.lineItem.unitPrice ?? "0",
+          })),
+          lineItemId
+        );
+        const parsed = parseUnitPriceInput(unitPriceStr, {
+          quantity: qty,
+          positiveSubtotal: positiveSub,
+          isPartLinked: !!existing.partId,
+        });
+        if (!parsed.ok) {
+          alert(parsed.error);
+          return;
+        }
+        unitPriceStr = parsed.unitPrice.toFixed(2);
+      }
+
       const formData = new FormData();
       formData.append("intent", "updateLineItem");
       formData.append("lineItemId", lineItemId.toString());
       formData.append("name", existing.name || "");
       formData.append("description", field === "description" ? value : existing.description || "");
       formData.append("notes", field === "notes" ? value : existing.notes || "");
-      formData.append(
-        "quantity",
-        field === "quantity" ? (parseInt(value, 10) || existing.quantity).toString() : existing.quantity.toString()
-      );
-      formData.append("unitPrice", field === "unitPrice" ? value : existing.unitPrice || "0");
+      formData.append("quantity", qty.toString());
+      formData.append("unitPrice", unitPriceStr);
       if (existing.partId) {
         formData.append("partId", existing.partId);
       }
@@ -1557,6 +1768,8 @@ export default function OrderDetails() {
     partMeshUrl?: string | null;
     partFileUrl?: string | null;
     thumbnailUrl?: string | null;
+    meshConversionStatus?: string | null;
+    meshConversionError?: string | null;
   }) => {
     if (part) {
       setSelectedPart3D({
@@ -1567,6 +1780,8 @@ export default function OrderDetails() {
         thumbnailUrl: part.thumbnailUrl || undefined,
         // partFileUrl is the original CAD file used for revisions
         cadFileUrl: part.partFileUrl || undefined,
+        meshConversionStatus: part.meshConversionStatus,
+        meshConversionError: part.meshConversionError,
       });
       setPart3DModalOpen(true);
     }
@@ -1772,6 +1987,10 @@ export default function OrderDetails() {
     setIsPOModalOpen(true);
   };
 
+  const handleGeneratePackingSlip = () => {
+    setIsPackingSlipModalOpen(true);
+  };
+
   // Calculate days until ship date
   const shipDate = order.shipDate ? new Date(order.shipDate) : null;
   const today = new Date();
@@ -1938,6 +2157,7 @@ export default function OrderDetails() {
                 onDuplicate={handleDuplicateOrder}
                 onGenerateInvoice={handleGenerateInvoice}
                 onGeneratePO={handleGeneratePO}
+                onGeneratePackingSlip={handleGeneratePackingSlip}
                 onManageVendor={handleManageVendor}
                 hasVendor={!!order.vendorId}
                 hasCustomer={!!order.customerId}
@@ -2294,6 +2514,7 @@ export default function OrderDetails() {
             onDrawingUpload={(partId, files) => handleDrawingUpload(partId, files)}
             onDrawingDelete={handleDeleteDrawing}
             drawingUploadingPartId={drawingUploadingPartId}
+            partAssetAdminAction={partAssetAdminAction}
             onView3DModel={(part: NormalizedPart) => {
               handleView3DModel({
                 id: part.id,
@@ -2301,6 +2522,8 @@ export default function OrderDetails() {
                 partMeshUrl: part.modelUrl || null,
                 partFileUrl: part.cadFileUrl || null,
                 thumbnailUrl: part.thumbnailUrl || null,
+                meshConversionStatus: part.conversionStatus,
+                meshConversionError: part.meshConversionError,
               });
             }}
             onViewDrawing={(drawing: NormalizedDrawing, partId: string) => {
@@ -2453,6 +2676,22 @@ export default function OrderDetails() {
               : undefined
           }
           isDeleting={drawingDeleteFetcher.state === "submitting"}
+          partAssetAdmin={
+            partAssetAdminAction &&
+            selectedFile.drawingId &&
+            selectedFile.partId
+              ? {
+                  action: partAssetAdminAction,
+                  context: {
+                    surface: "drawing",
+                    entity: "part",
+                    parentPartId: selectedFile.partId,
+                    drawingId: selectedFile.drawingId,
+                    fileName: selectedFile.fileName,
+                  },
+                }
+              : undefined
+          }
         />
       )}
 
@@ -2462,6 +2701,7 @@ export default function OrderDetails() {
         onClose={() => setLineItemModalOpen(false)}
         onSubmit={handleAddLineItemSubmit}
         context="order"
+        positiveSubtotalForDiscount={orderPositiveSubForAddLineModal}
         customerId={order.customerId}
         existingParts={parts}
       />
@@ -2480,6 +2720,9 @@ export default function OrderDetails() {
           partId={selectedPart3D.partId}
           entityType="part"
           cadFileUrl={selectedPart3D.cadFileUrl}
+          partAssetAdminAction={partAssetAdminAction}
+          meshConversionStatus={selectedPart3D.meshConversionStatus}
+          meshConversionError={selectedPart3D.meshConversionError}
           canRevise={canRevise}
           onThumbnailUpdate={() => {
             revalidator.revalidate();
@@ -2522,6 +2765,15 @@ export default function OrderDetails() {
         isOpen={isInvoiceModalOpen}
         onClose={() => setIsInvoiceModalOpen(false)}
         entity={order}
+        lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
+        parts={lineItems.map((item: LineItemWithPart) => item.part)}
+        autoDownload={pdfAutoDownload}
+      />
+
+      <GeneratePackingSlipPdfModal
+        isOpen={isPackingSlipModalOpen}
+        onClose={() => setIsPackingSlipModalOpen(false)}
+        order={order}
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
         autoDownload={pdfAutoDownload}

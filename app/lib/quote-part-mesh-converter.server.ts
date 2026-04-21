@@ -16,7 +16,19 @@ import {
   isConversionEnabled,
   type ConversionOptions,
 } from "./conversion-service.server";
-import { uploadToS3, downloadFromS3, deleteFile, getDownloadUrl } from "./s3.server";
+import {
+  uploadToS3,
+  downloadFromS3,
+  deleteFile,
+  getDownloadUrl,
+  extractS3Key,
+} from "./s3.server";
+import { getPlaceholderPartUrls } from "./developerSettings";
+import {
+  quotePartUsesPlaceholderCad,
+  resolveQuotePartPreviewAssets,
+  type PlaceholderPartUrls,
+} from "./quote-part-assets.server";
 import { createEvent } from "./events";
 import { sendCadConversionJob } from "./queue/producer.server";
 
@@ -322,6 +334,7 @@ export async function getQuotePartConversionStatus(quotePartId: string) {
       partName: quoteParts.partName,
       partFileUrl: quoteParts.partFileUrl,
       partMeshUrl: quoteParts.partMeshUrl,
+      specifications: quoteParts.specifications,
       conversionStatus: quoteParts.conversionStatus,
       meshConversionError: quoteParts.meshConversionError,
       meshConversionJobId: quoteParts.meshConversionJobId,
@@ -335,13 +348,32 @@ export async function getQuotePartConversionStatus(quotePartId: string) {
     return null;
   }
 
+  const globalPlaceholder = await getPlaceholderPartUrls();
+  const preview = resolveQuotePartPreviewAssets(
+    {
+      specifications: quotePart.specifications,
+      partFileUrl: quotePart.partFileUrl,
+      partMeshUrl: quotePart.partMeshUrl,
+      conversionStatus: quotePart.conversionStatus,
+    },
+    globalPlaceholder
+  );
+
+  const usesPh = quotePartUsesPlaceholderCad(quotePart.specifications);
+  const hasMeshFile = usesPh
+    ? preview.effectiveConversionStatus === "completed" && !!preview.meshKey
+    : !!quotePart.partMeshUrl;
+  const hasModelFile = usesPh
+    ? !!preview.cadKey && preview.effectiveConversionStatus === "completed"
+    : !!quotePart.partFileUrl;
+
   return {
     part: {
       id: quotePart.id,
       name: quotePart.partName,
-      hasModelFile: !!quotePart.partFileUrl,
-      hasMeshFile: !!quotePart.partMeshUrl,
-      meshUrl: quotePart.partMeshUrl,
+      hasModelFile,
+      hasMeshFile,
+      meshUrl: preview.meshKey ?? quotePart.partMeshUrl,
     },
     conversion: {
       status: quotePart.conversionStatus,
@@ -356,13 +388,18 @@ export async function getQuotePartConversionStatus(quotePartId: string) {
 /**
  * Get signed URL for quote part mesh file
  */
-export async function getQuotePartMeshUrl(quotePartId: string): Promise<{ url: string } | { error: string }> {
+export async function getQuotePartMeshUrl(
+  quotePartId: string,
+  cachedGlobalPlaceholder?: PlaceholderPartUrls
+): Promise<{ url: string } | { error: string }> {
   try {
-    // Get the quote part from database
     const [quotePart] = await db
       .select({
         id: quoteParts.id,
         partMeshUrl: quoteParts.partMeshUrl,
+        specifications: quoteParts.specifications,
+        partFileUrl: quoteParts.partFileUrl,
+        conversionStatus: quoteParts.conversionStatus,
       })
       .from(quoteParts)
       .where(eq(quoteParts.id, quotePartId));
@@ -371,76 +408,36 @@ export async function getQuotePartMeshUrl(quotePartId: string): Promise<{ url: s
       return { error: "Quote part not found" };
     }
 
-    if (!quotePart.partMeshUrl) {
+    const globalPlaceholder =
+      cachedGlobalPlaceholder ?? (await getPlaceholderPartUrls());
+    const preview = resolveQuotePartPreviewAssets(
+      {
+        specifications: quotePart.specifications,
+        partFileUrl: quotePart.partFileUrl,
+        partMeshUrl: quotePart.partMeshUrl,
+        conversionStatus: quotePart.conversionStatus,
+      },
+      globalPlaceholder
+    );
+
+    const meshSource = preview.meshKey ?? quotePart.partMeshUrl;
+    if (!meshSource?.trim()) {
       return { error: "Quote part has no mesh file" };
     }
 
-    // Import getDownloadUrl here to avoid circular dependencies
-    const { getDownloadUrl } = await import("./s3.server.js");
-
-    // Extract the S3 key from the mesh URL
-    let key: string;
-    const meshUrl = quotePart.partMeshUrl;
-
-    // Handle different URL formats
-    if (meshUrl.includes("/storage/v1/")) {
-      // Supabase storage URL format
-      const urlParts = meshUrl.split("/storage/v1/s3/");
-      if (urlParts[1]) {
-        const bucketAndKey = urlParts[1];
-        // Remove bucket name (testing-bucket/) to get the key
-        key = bucketAndKey.replace(/^[^/]+\//, "");
-      } else {
-        return { error: "Invalid mesh URL format" };
-      }
-    } else if (meshUrl.includes("quote-parts/") && meshUrl.includes("/mesh/")) {
-      // Direct S3 key format
-      const urlParts = meshUrl.split("/");
-      const quotePartsIndex = urlParts.indexOf("quote-parts");
-      if (quotePartsIndex >= 0) {
-        key = urlParts.slice(quotePartsIndex).join("/");
-      } else {
-        key = meshUrl;
-      }
-    } else {
-      // Try to extract key from full URL
-      const urlParts = meshUrl.split("/");
-      const quotePartsIndex = urlParts.findIndex(p => p === "quote-parts");
-      if (quotePartsIndex >= 0) {
-        key = urlParts.slice(quotePartsIndex).join("/");
-      } else {
-        return { error: "Cannot extract key from mesh URL" };
-      }
+    if (preview.effectiveConversionStatus !== "completed") {
+      return { error: "Quote part has no mesh file" };
     }
 
-    // Generate a signed URL for the mesh file
-    const signedUrl = await getDownloadUrl(key, 3600); // 1 hour expiry
+    const { getDownloadUrl } = await import("./s3.server.js");
+    const key = extractS3Key(meshSource.trim());
+    const signedUrl = await getDownloadUrl(key, 3600);
 
     return { url: signedUrl };
   } catch (error) {
     console.error("Error getting quote part mesh URL:", error);
     return { error: "Failed to generate mesh URL" };
   }
-}
-
-/**
- * Extract S3 key from a URL or key string
- */
-function extractS3Key(urlOrKey: string): string {
-  // If it's already a key (starts with quote-parts/ or parts/)
-  if (urlOrKey.startsWith("quote-parts/") || urlOrKey.startsWith("parts/")) {
-    return urlOrKey;
-  }
-
-  // Try to extract key from URL
-  const urlParts = urlOrKey.split("/");
-  const quotePartsIndex = urlParts.findIndex(p => p === "quote-parts" || p === "parts");
-  if (quotePartsIndex >= 0) {
-    return urlParts.slice(quotePartsIndex).join("/");
-  }
-
-  // If we can't parse it, return as-is
-  return urlOrKey;
 }
 
 /**
@@ -451,7 +448,7 @@ export async function deleteQuotePartMesh(
   quotePartId: string,
   userId: string,
   userEmail: string,
-  reason: "revision" | "restore"
+  reason: "revision" | "restore" | "admin"
 ): Promise<void> {
   // Get current mesh and thumbnail URLs
   const [quotePart] = await db

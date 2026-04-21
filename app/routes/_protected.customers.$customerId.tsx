@@ -1,12 +1,13 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactElement } from "react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import { canUserUploadMesh, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl, getDownloadUrl as getS3DownloadUrl } from "~/lib/s3.server";
@@ -19,6 +20,10 @@ import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import ToggleSlider from "~/components/shared/ToggleSlider";
 import PartsModal from "~/components/PartsModal";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import {
+  PartAssetAdminTrigger,
+  usePartAssetAdminAccess,
+} from "~/components/admin/PartAssetAdminFlyout";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { EventTimeline } from "~/components/EventTimeline";
 import { getEventsByEntity } from "~/lib/events";
@@ -482,6 +487,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = formData.get("intent");
 
   try {
+    const partAssetAdminResponse = await tryPartAssetAdminAction(
+      formData,
+      { type: "customer", customerId: customer.id },
+      { user: { id: user.id }, userDetails, headers }
+    );
+    if (partAssetAdminResponse) {
+      return partAssetAdminResponse;
+    }
+
     switch (intent) {
       case "updateCustomer": {
         const displayName = formData.get("displayName") as string;
@@ -694,6 +708,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function CustomerDetails() {
   const { customer, orders, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
+  const partAssetAdminAction = usePartAssetAdminAccess()
+    ? `/customers/${customer.id}`
+    : undefined;
   const revalidator = useRevalidator();
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(false);
@@ -1624,50 +1641,75 @@ export default function CustomerDetails() {
                           (part.meshConversionStatus === "completed" && !part.thumbnailUrl) ||
                           (part.partFileUrl && !part.meshConversionStatus);
 
+                        const wrapCadAdmin = (node: ReactElement) =>
+                          partAssetAdminAction ? (
+                            <PartAssetAdminTrigger
+                              action={partAssetAdminAction}
+                              context={{
+                                surface: "cad3d",
+                                entity: "part",
+                                id: part.id,
+                                partName: part.partName || undefined,
+                                conversionStatus: part.meshConversionStatus ?? undefined,
+                                meshConversionError: part.meshConversionError ?? undefined,
+                                cadFileUrl: part.partFileUrl ?? undefined,
+                                onOpen3DViewer: () => handleView3DPart(part),
+                              }}
+                            >
+                              {node}
+                            </PartAssetAdminTrigger>
+                          ) : (
+                            node
+                          );
+
                         return (
                           <tr key={part.id} className="group">
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center gap-3">
                                 {part.thumbnailUrl ? (
-                                  <button
-                                    onClick={() => handleView3DPart(part)}
-                                    className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
-                                    title="View 3D model"
-                                    type="button"
-                                  >
-                                    <img
-                                      src={part.thumbnailUrl}
-                                      alt={`${part.partName} thumbnail`}
-                                      className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
-                                    />
-                                  </button>
+                                  wrapCadAdmin(
+                                    <button
+                                      onClick={() => handleView3DPart(part)}
+                                      className="h-10 w-10 p-0 border-2 border-gray-300 dark:border-blue-500 bg-white dark:bg-gray-800 rounded-lg cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 hover:shadow-md transition-all"
+                                      title="View 3D model"
+                                      type="button"
+                                    >
+                                      <img
+                                        src={part.thumbnailUrl}
+                                        alt={`${part.partName} thumbnail`}
+                                        className="h-full w-full object-cover rounded-lg hover:opacity-90 transition-opacity"
+                                      />
+                                    </button>
+                                  )
                                 ) : (
-                                  <div className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                                    {isProcessing ? (
-                                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-                                    ) : (
-                                      <button
-                                        onClick={() => handleView3DPart(part)}
-                                        className="h-full w-full flex items-center justify-center cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors rounded-lg border-0 p-0"
-                                        title="View 3D model"
-                                        type="button"
-                                      >
-                                        <svg
-                                          className="h-5 w-5 text-gray-400 dark:text-gray-500"
-                                          fill="none"
-                                          stroke="currentColor"
-                                          viewBox="0 0 24 24"
+                                  wrapCadAdmin(
+                                    <div className="h-10 w-10 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                                      {isProcessing ? (
+                                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                                      ) : (
+                                        <button
+                                          onClick={() => handleView3DPart(part)}
+                                          className="h-full w-full flex items-center justify-center cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors rounded-lg border-0 p-0"
+                                          title="View 3D model"
+                                          type="button"
                                         >
-                                          <path
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                            strokeWidth={2}
-                                            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                                          />
-                                        </svg>
-                                      </button>
-                                    )}
-                                  </div>
+                                          <svg
+                                            className="h-5 w-5 text-gray-400 dark:text-gray-500"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                          >
+                                            <path
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              strokeWidth={2}
+                                              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                            />
+                                          </svg>
+                                        </button>
+                                      )}
+                                    </div>
+                                  )
                                 )}
                                 <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
                                   {part.partName || "--"}
@@ -1747,6 +1789,9 @@ export default function CustomerDetails() {
         partId={selected3DPart?.id}
         entityType="part"
         cadFileUrl={selected3DPart?.partFileUrl || undefined}
+        partAssetAdminAction={partAssetAdminAction}
+        meshConversionStatus={selected3DPart?.meshConversionStatus}
+        meshConversionError={selected3DPart?.meshConversionError}
         canRevise={canRevise}
         onThumbnailUpdate={() => {
           revalidator.revalidate();

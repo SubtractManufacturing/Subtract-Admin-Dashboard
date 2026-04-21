@@ -9,6 +9,8 @@
 import { db } from "./db";
 import { cadFileVersions, type CadFileVersion } from "./db/schema";
 import { eq, and, desc } from "drizzle-orm";
+import { deleteFile, extractS3Key } from "./s3.server";
+import { createEvent } from "./events";
 
 export type CadEntityType = "quote_part" | "part";
 
@@ -169,6 +171,63 @@ export async function getCadVersionById(
     .where(eq(cadFileVersions.id, versionId))
     .limit(1);
   return version;
+}
+
+export type DeleteCadVersionResult =
+  | { ok: true }
+  | { ok: false; error: string; status: number };
+
+/**
+ * Remove a non-current CAD file version row and its S3 object (admin / cleanup).
+ * Current version cannot be deleted — restore another revision first.
+ */
+export async function deleteCadVersion(
+  versionId: string,
+  userId: string,
+  userEmail: string
+): Promise<DeleteCadVersionResult> {
+  const version = await getCadVersionById(versionId);
+  if (!version) {
+    return { ok: false, error: "Version not found", status: 404 };
+  }
+  if (version.isCurrentVersion) {
+    return {
+      ok: false,
+      error: "Cannot delete the current CAD version. Restore another version or upload a revision first.",
+      status: 400,
+    };
+  }
+
+  const key = extractS3Key(version.s3Key);
+  try {
+    await deleteFile(key);
+  } catch (e) {
+    console.error(`deleteCadVersion: S3 delete failed for ${key}:`, e);
+  }
+
+  await db.delete(cadFileVersions).where(eq(cadFileVersions.id, versionId));
+
+  const entityType =
+    version.entityType === "quote_part" ? "quote_part" : "part";
+
+  await createEvent({
+    entityType,
+    entityId: version.entityId,
+    eventType: "cad_version_deleted",
+    eventCategory: "document",
+    title: `CAD version v${version.version} deleted`,
+    description: `Removed historical CAD file: ${version.fileName}`,
+    metadata: {
+      versionId,
+      version: version.version,
+      fileName: version.fileName,
+      s3Key: version.s3Key,
+    },
+    userId,
+    userEmail,
+  });
+
+  return { ok: true };
 }
 
 /**
