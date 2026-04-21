@@ -28,7 +28,13 @@
     "init:feature-flags": "tsx scripts/init-feature-flags.ts",
     "seed:email-config": "tsx scripts/seed-email-config.ts",
     "worker": "tsx scripts/worker.ts",
-    "worker:dev": "tsx watch scripts/worker.ts"
+    "worker:dev": "tsx watch scripts/worker.ts",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "**/*.{ts,tsx}": [
+      "eslint --cache --cache-location ./node_modules/.cache/eslint --fix"
+    ]
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.856.0",
@@ -83,6 +89,8 @@
     "eslint-plugin-jsx-a11y": "^6.8.0",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "postcss": "^8.5.6",
     "remix-flat-routes": "^0.8.5",
     "tailwindcss": "^3.4.17",
