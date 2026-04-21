@@ -32,6 +32,7 @@ import {
 } from "~/lib/email/email-domains.server";
 import { normalizeEmailSnippetKeyInput } from "~/lib/email/email-merge-snippet-key-normalizer";
 import { templatesReferencingSnippetKey } from "~/lib/email/email-merge-snippet-template-references";
+import { RESERVED_MERGE_TOKEN_KEYS } from "~/lib/email/resolve";
 import { findConflictingTemplateForContextKey } from "~/lib/email/templates.server";
 import {
   isExampleEmailLayoutsEnabled,
@@ -58,13 +59,12 @@ const RESERVED_SNIPPET_KEYS = new Set([
   "recipient_override",
 ]);
 
-/** Shown as non-blocking UI hint — per-send context overrides snippets with the same key. */
-const SNIPPET_CONTEXT_COLLISION_KEYS = new Set([
-  "quoteNumber",
-  "customerName",
-  "total",
-  "paymentLinkUrl",
-]);
+/**
+ * Non-blocking UI hint: shown when an admin names a snippet with a key that
+ * the resolver already owns. Driven from the catalog so it never drifts.
+ * See docs/email-template-merge-tokens.md for the full reserved token list.
+ */
+const SNIPPET_CONTEXT_COLLISION_KEYS = RESERVED_MERGE_TOKEN_KEYS;
 
 const SNIPPET_KEY_RE = /^[a-zA-Z]\w*$/;
 

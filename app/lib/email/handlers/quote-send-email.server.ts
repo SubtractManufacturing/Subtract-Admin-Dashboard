@@ -12,6 +12,7 @@ import {
 import type { QuoteEventContext } from "~/lib/quotes";
 import { createEvent } from "~/lib/events";
 import type { EmailSendContextHandler } from "~/lib/email/email-send-context-registry.server";
+import { resolveQuoteTokens } from "~/lib/email/resolve/quote.server";
 
 export type EmailEnqueueAuth = {
   user: User;
@@ -77,22 +78,7 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
   },
 
   async buildMergeProps(entityId) {
-    const quoteId = quoteIdFromEntityId(entityId);
-    const quote = await getQuote(quoteId);
-    if (!quote) {
-      throw new Error("Quote not found");
-    }
-    const customer = quote.customerId
-      ? await getCustomer(quote.customerId)
-      : null;
-    return {
-      quoteNumber: quote.quoteNumber,
-      customerName: customer?.displayName ?? "Customer",
-      total: quote.total ?? "0.00",
-      ...(quote.stripePaymentLinkUrl
-        ? { paymentLinkUrl: quote.stripePaymentLinkUrl }
-        : {}),
-    };
+    return resolveQuoteTokens(entityId);
   },
 
   async verifyAttachmentIds(auth, entityId, attachmentIds) {

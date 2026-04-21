@@ -32,6 +32,7 @@ import {
   type TemplateSlug,
   parseBodyCopyForLayout,
 } from "~/emails/registry";
+import { validateMergeTokens } from "~/lib/email/resolve";
 
 const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ENTITY_THROTTLE_WINDOW_MS = 60_000;
@@ -78,6 +79,28 @@ function fail(
   error: string,
 ): { ok: false; status: number; error: string } {
   return { ok: false, status, error };
+}
+
+/**
+ * Collect every user-authored string from a body copy object that may contain
+ * {{token}} placeholders — plain-string slots and button label/link pairs.
+ */
+function collectBodyCopyStrings(copy: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const value of Object.values(copy)) {
+    if (typeof value === "string") {
+      out.push(value);
+    } else if (
+      value &&
+      typeof value === "object" &&
+      "buttonLabel" in value &&
+      "link" in value
+    ) {
+      const btn = value as { buttonLabel: string; link: string };
+      out.push(btn.buttonLabel, btn.link);
+    }
+  }
+  return out;
 }
 
 export type EnqueueOutboundEmailInput = {
@@ -265,6 +288,18 @@ export async function enqueueOutboundUserEmail(
       400,
       `Email template body is invalid. Fix it in Admin → Email. ${detail}`,
     );
+  }
+
+  // ── Fail-closed token validation (pre-interpolation) ──────────────────
+  // Every {{token}} referenced in the subject or body must be present in
+  // the merged map with a non-empty value. Missing tokens abort the send
+  // before any rendering happens, with a clear error naming each bad token.
+  const tokenValidationError = validateMergeTokens(
+    [subject, ...collectBodyCopyStrings(bodyParse.data as Record<string, unknown>)],
+    stringProps,
+  );
+  if (tokenValidationError) {
+    return fail(400, tokenValidationError);
   }
 
   const interpolatedCopy = interpolateLayoutCopy(bodyParse.data, stringProps);
