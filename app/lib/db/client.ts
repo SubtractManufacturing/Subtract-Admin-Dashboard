@@ -9,9 +9,14 @@ const useTransactionPool =
   /pooler\.supabase\.com/i.test(connectionString) ||
   connectionString.includes(":6543");
 
-// Supabase requires SSL
+// Disable SSL for local/CI Postgres (localhost, 127.0.0.1) or when DATABASE_SSL=false.
+// All remote/Supabase connections still require SSL.
+const isLocalHost = /localhost|127\.0\.0\.1/.test(connectionString);
+const sslMode: "require" | false =
+  isLocalHost || process.env.DATABASE_SSL === "false" ? false : "require";
+
 export const client = postgres(connectionString, {
-  ssl: "require",
+  ssl: sslMode,
   connect_timeout: 60,
   /** Per-session budget for slow networks; host may still enforce a lower cap. */
   connection: {

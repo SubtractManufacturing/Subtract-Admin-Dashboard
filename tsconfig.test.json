@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["@remix-run/node", "vite/client", "vitest/globals"]
+  },
+  "include": [
+    "vitest.config.ts",
+    "app/**/*.test.ts",
+    "app/**/*.integration.test.ts",
+    "app/test/**/*.ts"
+  ]
+}
