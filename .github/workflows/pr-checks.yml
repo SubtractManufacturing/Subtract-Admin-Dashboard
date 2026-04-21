@@ -117,7 +117,7 @@ jobs:
         run: npm ci
 
       - name: Push schema to test database
-        run: npm run db:push
+        run: npx drizzle-kit push --force --verbose
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db
 
