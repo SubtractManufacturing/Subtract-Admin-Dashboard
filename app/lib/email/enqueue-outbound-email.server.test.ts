@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getDefaultBodyCopyForLayout } from "~/emails/registry";
+import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
 
 // ---------------------------------------------------------------------------
 // Hoist mutable fn references so vi.mock factories can close over them.
@@ -106,10 +107,25 @@ import { enqueueOutboundUserEmail } from "./enqueue-outbound-email.server";
 
 const VALID_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
-const baseInput = {
-  auth: {
-    user: { id: "user-1", email: "sender@example.com", name: "Sender" },
+const mockAuth: EmailEnqueueAuth = {
+  user: {
+    id: "user-1",
+    email: "sender@example.com",
+    app_metadata: {},
+    user_metadata: {},
+    aud: "authenticated",
+    created_at: new Date().toISOString(),
+  } as EmailEnqueueAuth["user"],
+  userDetails: {
+    id: "user-1",
+    email: "sender@example.com",
+    name: "Sender",
+    role: "Admin",
   },
+};
+
+const baseInput = {
+  auth: mockAuth,
   contextKey: "quote_send" as const,
   entityType: "quote" as const,
   entityId: "1",
