@@ -921,6 +921,8 @@ export async function convertQuoteToOrder(
                       contentType: record.attachment.contentType,
                       fileSize: record.attachment.fileSize,
                       thumbnailS3Key: newThumbnailS3Key,
+                      source: record.attachment.source ?? "system",
+                      documentKind: record.attachment.documentKind,
                     })
                     .returning();
 
@@ -1339,6 +1341,8 @@ export async function duplicateQuote(
                   contentType: attachment.contentType,
                   fileSize: attachment.fileSize,
                   thumbnailS3Key: newThumbnailS3Key,
+                  source: attachment.source ?? "system",
+                  documentKind: attachment.documentKind,
                 })
                 .returning();
 
@@ -1420,6 +1424,8 @@ export async function duplicateQuote(
                 contentType: attachment.contentType,
                 fileSize: attachment.fileSize,
                 thumbnailS3Key: newThumbnailS3Key,
+                source: attachment.source ?? "system",
+                documentKind: attachment.documentKind,
               })
               .returning();
 
@@ -1741,6 +1747,7 @@ export async function createQuoteWithParts(
               contentType,
               fileSize: drawing.buffer.length,
               thumbnailS3Key,
+              source: "user_upload",
             })
             .returning();
 

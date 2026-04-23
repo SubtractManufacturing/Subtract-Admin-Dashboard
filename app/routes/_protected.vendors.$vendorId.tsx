@@ -122,6 +122,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: uploadResult.fileName,
         contentType: uploadResult.contentType,
         fileSize: uploadResult.size,
+        source: "user_upload",
       }, eventContext);
 
       // Link to vendor

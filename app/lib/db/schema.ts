@@ -68,6 +68,19 @@ export const emailSettingKindEnum = pgEnum("email_setting_kind", [
   "merge",
 ]);
 
+export const attachmentSourceEnum = pgEnum("attachment_source", [
+  "user_upload",
+  "generated",
+  "system",
+]);
+
+export const attachmentDocumentKindEnum = pgEnum("attachment_document_kind", [
+  "quote",
+  "invoice",
+  "purchase_order",
+  "packing_slip",
+]);
+
 export const users = pgTable("users", {
   id: text("id").primaryKey(), // Will match Supabase auth.users.id
   name: text("name"),
@@ -252,6 +265,8 @@ export const attachments = pgTable("attachments", {
   contentType: text("content_type").notNull(),
   fileSize: integer("file_size"),
   thumbnailS3Key: text("thumbnail_s3_key"), // For PDF/document thumbnails
+  source: attachmentSourceEnum("source"), // NULL on pre-migration rows
+  documentKind: attachmentDocumentKindEnum("document_kind"), // NULL for non-classified files (drawings, CAD, generic uploads)
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -573,6 +588,8 @@ export type Part = typeof parts.$inferSelect;
 export type NewPart = typeof parts.$inferInsert;
 export type Attachment = typeof attachments.$inferSelect;
 export type NewAttachment = typeof attachments.$inferInsert;
+export type AttachmentSource = (typeof attachmentSourceEnum.enumValues)[number];
+export type AttachmentDocumentKind = (typeof attachmentDocumentKindEnum.enumValues)[number];
 export type PartDrawing = typeof partDrawings.$inferSelect;
 export type NewPartDrawing = typeof partDrawings.$inferInsert;
 export type QuotePartDrawing = typeof quotePartDrawings.$inferSelect;

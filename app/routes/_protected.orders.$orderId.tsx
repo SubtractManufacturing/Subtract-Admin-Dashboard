@@ -332,6 +332,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             fileName: uploadResult.fileName,
             contentType: uploadResult.contentType,
             fileSize: uploadResult.size,
+            source: "user_upload",
           },
           eventContext
         );
@@ -636,6 +637,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   contentType: drawing.type || "application/pdf",
                   fileSize: drawing.size,
                   thumbnailS3Key,
+                  source: "user_upload",
                 })
                 .returning();
 
@@ -1062,6 +1064,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             entityId: order.id,
             htmlContent,
             filename: `PO-${order.orderNumber}.pdf`,
+            documentKind: "purchase_order",
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
           });
@@ -1113,6 +1116,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             entityId: order.id,
             htmlContent,
             filename: `Invoice-${order.orderNumber}.pdf`,
+            documentKind: "invoice",
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
           });
@@ -1164,6 +1168,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             entityId: order.id,
             htmlContent,
             filename: `PackingSlip-${order.orderNumber}.pdf`,
+            documentKind: "packing_slip",
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
           });
@@ -1285,6 +1290,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   contentType: drawing.type || "application/pdf",
                   fileSize: drawing.size,
                   thumbnailS3Key,
+                  source: "user_upload",
                 })
                 .returning();
 

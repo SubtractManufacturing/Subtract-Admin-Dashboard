@@ -5,7 +5,7 @@ import {
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
 } from "@remix-run/node";
-import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
+import { useFetcher, useLoaderData } from "@remix-run/react";
 import { and, desc, eq } from "drizzle-orm";
 import { matchSorter } from "match-sorter";
 import Button from "~/components/admin/Button";
@@ -51,6 +51,9 @@ import { bodyCopyFromFormData } from "~/lib/email/parse-template-body.server";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** Post body must target this route so fetchers do not hit a parent `action` by mistake. */
+const ADMIN_EMAIL_ACTION = "/admin/email";
+
 type EmailSnippetRow = { key: string; value: string };
 
 /** Snippet keys cannot use reserved operational setting names. */
@@ -67,7 +70,6 @@ const RESERVED_SNIPPET_KEYS = new Set([
 const SNIPPET_CONTEXT_COLLISION_KEYS = RESERVED_MERGE_TOKEN_KEYS;
 
 const SNIPPET_KEY_RE = /^[a-zA-Z]\w*$/;
-
 
 function normalizeContextKey(
   raw: FormDataEntryValue | null,
@@ -91,23 +93,25 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return withAuthHeaders(redirect("/admin"), headers);
   }
 
-  const [settingsRows, snippetsRows, identities, templates, exampleEmailLayoutsEnabled] =
-    await Promise.all([
-      db
-        .select()
-        .from(emailSettings)
-        .where(eq(emailSettings.kind, "operational")),
-      db
-        .select()
-        .from(emailSettings)
-        .where(eq(emailSettings.kind, "merge")),
-      db.select().from(emailIdentities).orderBy(desc(emailIdentities.id)),
-      db
-        .select()
-        .from(emailTemplates)
-        .where(eq(emailTemplates.isArchived, false)),
-      isExampleEmailLayoutsEnabled(),
-    ]);
+  const [
+    settingsRows,
+    snippetsRows,
+    identities,
+    templates,
+    exampleEmailLayoutsEnabled,
+  ] = await Promise.all([
+    db
+      .select()
+      .from(emailSettings)
+      .where(eq(emailSettings.kind, "operational")),
+    db.select().from(emailSettings).where(eq(emailSettings.kind, "merge")),
+    db.select().from(emailIdentities).orderBy(desc(emailIdentities.id)),
+    db
+      .select()
+      .from(emailTemplates)
+      .where(eq(emailTemplates.isArchived, false)),
+    isExampleEmailLayoutsEnabled(),
+  ]);
 
   const settingsMap = new Map<string, string>();
   for (const row of settingsRows) {
@@ -242,9 +246,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === "updateSnippet") {
-    const originalKey = (
-      (formData.get("originalKey") as string) ?? ""
-    ).trim();
+    const originalKey = ((formData.get("originalKey") as string) ?? "").trim();
     const newKey = normalizeEmailSnippetKeyInput(
       (formData.get("key") as string) ?? "",
     );
@@ -377,9 +379,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     await db
       .delete(emailSettings)
-      .where(
-        and(eq(emailSettings.key, key), eq(emailSettings.kind, "merge")),
-      );
+      .where(and(eq(emailSettings.key, key), eq(emailSettings.kind, "merge")));
     return withAuthHeaders(json({ success: true }), headers);
   }
 
@@ -423,21 +423,48 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (intent === "createIdentity") {
       const setDefault = formData.get("setDefault") === "on";
-      await db.transaction(async (tx) => {
-        if (setDefault) {
-          await tx
-            .update(emailIdentities)
-            .set({ isDefault: false, updatedAt: new Date(), updatedBy })
-            .where(eq(emailIdentities.isArchived, false));
-        }
-        await tx.insert(emailIdentities).values({
-          fromEmail,
-          fromDisplayName,
-          replyToEmail,
-          isDefault: setDefault,
-          updatedBy,
+      try {
+        await db.transaction(async (tx) => {
+          if (setDefault) {
+            await tx
+              .update(emailIdentities)
+              .set({ isDefault: false, updatedAt: new Date(), updatedBy })
+              .where(eq(emailIdentities.isArchived, false));
+          }
+          await tx.insert(emailIdentities).values({
+            fromEmail,
+            fromDisplayName,
+            replyToEmail,
+            isDefault: setDefault,
+            updatedBy,
+          });
         });
-      });
+      } catch (err: unknown) {
+        const code = (err as { code?: string; message?: string }).code;
+        if (code === "23505") {
+          return withAuthHeaders(
+            json(
+              {
+                error:
+                  "A sender identity with this from-address already exists (or another unique constraint was violated).",
+              },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+        console.error("[admin email] createIdentity failed", err);
+        return withAuthHeaders(
+          json(
+            {
+              error:
+                "Could not save sender identity. Check server logs for details, or try again in a few seconds.",
+            },
+            { status: 500 },
+          ),
+          headers,
+        );
+      }
     } else {
       if (!id || isNaN(id)) {
         return withAuthHeaders(
@@ -445,21 +472,58 @@ export async function action({ request }: ActionFunctionArgs) {
           headers,
         );
       }
-      await db
-        .update(emailIdentities)
-        .set({
-          fromEmail,
-          fromDisplayName,
-          replyToEmail,
-          updatedAt: new Date(),
-          updatedBy,
-        })
-        .where(
-          and(
-            eq(emailIdentities.id, id),
-            eq(emailIdentities.isArchived, false),
+      try {
+        const updated = await db
+          .update(emailIdentities)
+          .set({
+            fromEmail,
+            fromDisplayName,
+            replyToEmail,
+            updatedAt: new Date(),
+            updatedBy,
+          })
+          .where(
+            and(
+              eq(emailIdentities.id, id),
+              eq(emailIdentities.isArchived, false),
+            ),
+          )
+          .returning({ id: emailIdentities.id });
+        if (updated.length === 0) {
+          return withAuthHeaders(
+            json(
+              { error: "That sender identity is archived or was removed." },
+              { status: 404 },
+            ),
+            headers,
+          );
+        }
+      } catch (err: unknown) {
+        const code = (err as { code?: string }).code;
+        if (code === "23505") {
+          return withAuthHeaders(
+            json(
+              {
+                error:
+                  "Another identity already uses this from-address, or a unique field conflicts.",
+              },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+        console.error("[admin email] updateIdentity failed", err);
+        return withAuthHeaders(
+          json(
+            {
+              error:
+                "Could not update sender identity. Check server logs for details, or try again in a few seconds.",
+            },
+            { status: 500 },
           ),
+          headers,
         );
+      }
     }
     return withAuthHeaders(json({ success: true }), headers);
   }
@@ -607,10 +671,7 @@ export async function action({ request }: ActionFunctionArgs) {
         .select({ layoutSlug: emailTemplates.layoutSlug })
         .from(emailTemplates)
         .where(
-          and(
-            eq(emailTemplates.id, id!),
-            eq(emailTemplates.isArchived, false),
-          ),
+          and(eq(emailTemplates.id, id!), eq(emailTemplates.isArchived, false)),
         )
         .limit(1);
       if (!existingRow) {
@@ -623,7 +684,9 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     if (intent === "createTemplate") {
-      if (!isSelectableEmailLayoutSlug(layoutSlug, exampleEmailLayoutsEnabled)) {
+      if (
+        !isSelectableEmailLayoutSlug(layoutSlug, exampleEmailLayoutsEnabled)
+      ) {
         return withAuthHeaders(
           json(
             { error: "This layout is not available for new templates." },
@@ -687,10 +750,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const layoutDef = getLayoutDefinition(layoutSlug);
     const rawBody = bodyCopyFromFormData(formData, layoutDef);
-    const bodyParsed = parseBodyCopyForLayout(
-      layoutSlug,
-      rawBody,
-    );
+    const bodyParsed = parseBodyCopyForLayout(layoutSlug, rawBody);
     if (!bodyParsed.ok) {
       const mergedErrors = { ...bodyParsed.errors };
       const message =
@@ -800,8 +860,18 @@ export default function AdminEmail() {
     error?: string;
     slotErrors?: Record<string, string>;
   }>();
-  const revalidator = useRevalidator();
-  const isSaving = fetcher.state !== "idle";
+  /** True while the action runs (POST). */
+  const fetcherIsSubmitting = fetcher.state === "submitting";
+  /** True while loaders revalidate after a successful mutation (not the HTTP POST itself). */
+  const fetcherIsRevalidating = fetcher.state === "loading";
+  /** Block competing actions until the full fetcher cycle completes. */
+  const fetcherIsBusy = fetcher.state !== "idle";
+
+  function saveProgressLabel(idle: string) {
+    if (fetcherIsSubmitting) return "Saving...";
+    if (fetcherIsRevalidating) return "Updating…";
+    return idle;
+  }
 
   const [templateSearch, setTemplateSearch] = useState("");
   const [identityModalOpen, setIdentityModalOpen] = useState(false);
@@ -825,7 +895,6 @@ export default function AdminEmail() {
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success) {
-      revalidator.revalidate();
       setIdentityModalOpen(false);
       setEditingIdentity(null);
       setSnippetModalOpen(false);
@@ -833,7 +902,7 @@ export default function AdminEmail() {
       setTemplateModalOpen(false);
       setEditingTemplate(null);
     }
-  }, [fetcher.state, fetcher.data, revalidator]);
+  }, [fetcher.state, fetcher.data]);
 
   useEffect(() => {
     if (!templateModalOpen) {
@@ -904,11 +973,7 @@ export default function AdminEmail() {
   const templateLayoutOptions = useMemo((): TemplateSlug[] => {
     const base = [...getSelectableEmailLayoutSlugs(exampleEmailLayoutsEnabled)];
     const cur = editingTemplate?.layoutSlug;
-    if (
-      cur &&
-      isRegisteredEmailLayoutSlug(cur) &&
-      !base.includes(cur)
-    ) {
+    if (cur && isRegisteredEmailLayoutSlug(cur) && !base.includes(cur)) {
       return [cur, ...base];
     }
     return base;
@@ -978,14 +1043,14 @@ export default function AdminEmail() {
     const formData = new FormData();
     formData.set("intent", "archiveIdentity");
     formData.set("id", String(id));
-    fetcher.submit(formData, { method: "post" });
+    fetcher.submit(formData, { method: "post", action: ADMIN_EMAIL_ACTION });
   }
 
   function handleSetDefault(id: number) {
     const formData = new FormData();
     formData.set("intent", "setDefaultIdentity");
     formData.set("id", String(id));
-    fetcher.submit(formData, { method: "post" });
+    fetcher.submit(formData, { method: "post", action: ADMIN_EMAIL_ACTION });
   }
 
   function handleArchiveTemplate(id: number) {
@@ -993,7 +1058,7 @@ export default function AdminEmail() {
     const formData = new FormData();
     formData.set("intent", "archiveTemplate");
     formData.set("id", String(id));
-    fetcher.submit(formData, { method: "post" });
+    fetcher.submit(formData, { method: "post", action: ADMIN_EMAIL_ACTION });
   }
 
   const anyModalOpen =
@@ -1010,7 +1075,7 @@ export default function AdminEmail() {
     const formData = new FormData();
     formData.set("intent", "deleteSnippet");
     formData.set("key", key);
-    fetcher.submit(formData, { method: "post" });
+    fetcher.submit(formData, { method: "post", action: ADMIN_EMAIL_ACTION });
   }
 
   const inputClass =
@@ -1059,7 +1124,11 @@ export default function AdminEmail() {
                 Global Settings
               </h2>
             </div>
-            <fetcher.Form method="post" className="space-y-5">
+            <fetcher.Form
+              method="post"
+              action={ADMIN_EMAIL_ACTION}
+              className="space-y-5"
+            >
               <input type="hidden" name="intent" value="saveSettings" />
               <div className="grid gap-5 sm:grid-cols-2">
                 <div>
@@ -1092,8 +1161,12 @@ export default function AdminEmail() {
                 </div>
               </div>
               <div className="flex justify-end border-t border-gray-200 pt-4 dark:border-gray-600">
-                <Button type="submit" variant="primary" disabled={isSaving}>
-                  {isSaving ? "Saving..." : "Save Settings"}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={fetcherIsBusy}
+                >
+                  {saveProgressLabel("Save Settings")}
                 </Button>
               </div>
             </fetcher.Form>
@@ -1176,7 +1249,7 @@ export default function AdminEmail() {
                               variant="danger"
                               title="Delete snippet"
                               onClick={() => handleDeleteSnippet(s.key)}
-                              disabled={isSaving}
+                              disabled={fetcherIsBusy}
                             />
                           </div>
                         </td>
@@ -1280,7 +1353,7 @@ export default function AdminEmail() {
                               type="button"
                               className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
                               onClick={() => handleSetDefault(identity.id)}
-                              disabled={isSaving}
+                              disabled={fetcherIsBusy}
                             >
                               Set as default
                             </button>
@@ -1302,7 +1375,7 @@ export default function AdminEmail() {
                               variant="danger"
                               title="Archive identity"
                               onClick={() => handleArchiveIdentity(identity.id)}
-                              disabled={isSaving}
+                              disabled={fetcherIsBusy}
                             />
                           </div>
                         </td>
@@ -1434,7 +1507,7 @@ export default function AdminEmail() {
                               variant="danger"
                               title="Archive template"
                               onClick={() => handleArchiveTemplate(template.id)}
-                              disabled={isSaving}
+                              disabled={fetcherIsBusy}
                             />
                           </div>
                         </td>
@@ -1462,6 +1535,7 @@ export default function AdminEmail() {
         )}
         <fetcher.Form
           method="post"
+          action={ADMIN_EMAIL_ACTION}
           key={editingIdentity?.id ?? "new-identity"}
           className="space-y-4"
         >
@@ -1532,12 +1606,10 @@ export default function AdminEmail() {
             >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={isSaving}>
-              {isSaving
-                ? "Saving..."
-                : editingIdentity
-                  ? "Save Changes"
-                  : "Add Identity"}
+            <Button type="submit" variant="primary" disabled={fetcherIsBusy}>
+              {saveProgressLabel(
+                editingIdentity ? "Save Changes" : "Add Identity",
+              )}
             </Button>
           </div>
         </fetcher.Form>
@@ -1557,6 +1629,7 @@ export default function AdminEmail() {
         )}
         <fetcher.Form
           method="post"
+          action={ADMIN_EMAIL_ACTION}
           key={editingSnippet?.key ?? "new-snippet"}
           className="space-y-4"
         >
@@ -1708,12 +1781,10 @@ export default function AdminEmail() {
             >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={isSaving}>
-              {isSaving
-                ? "Saving..."
-                : editingSnippet
-                  ? "Save Changes"
-                  : "Add Snippet"}
+            <Button type="submit" variant="primary" disabled={fetcherIsBusy}>
+              {saveProgressLabel(
+                editingSnippet ? "Save Changes" : "Add Snippet",
+              )}
             </Button>
           </div>
         </fetcher.Form>
@@ -1734,6 +1805,7 @@ export default function AdminEmail() {
         )}
         <fetcher.Form
           method="post"
+          action={ADMIN_EMAIL_ACTION}
           key={`tpl-${editingTemplate?.id ?? "new"}-${templateLayoutSlug}`}
           className="space-y-4"
         >
@@ -1805,13 +1877,6 @@ export default function AdminEmail() {
                   </option>
                 ))}
               </select>
-              {!exampleEmailLayoutsEnabled ? (
-                <p className={helperClass}>
-                  Example layouts are hidden. Users with the Dev role can enable
-                  &quot;Show Example Email Layouts (Admin)&quot; under Settings →
-                  Developer → Developer Feature Flags, then save.
-                </p>
-              ) : null}
             </div>
             <div>
               <label className={labelClass}>Sender Identity</label>
@@ -1947,12 +2012,10 @@ export default function AdminEmail() {
             >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={isSaving}>
-              {isSaving
-                ? "Saving..."
-                : editingTemplate
-                  ? "Save Changes"
-                  : "Create Template"}
+            <Button type="submit" variant="primary" disabled={fetcherIsBusy}>
+              {saveProgressLabel(
+                editingTemplate ? "Save Changes" : "Create Template",
+              )}
             </Button>
           </div>
         </fetcher.Form>
