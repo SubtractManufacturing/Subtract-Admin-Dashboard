@@ -69,7 +69,10 @@ function buildCityStateZip(
   const z = postalCode?.trim();
   if (!c && !s && !z) return null;
   const cityState = [c, s].filter(Boolean).join(", ");
-  return z ? (cityState ? `${cityState} ${z}` : z) : cityState || null;
+  if (z) {
+    return cityState ? `${cityState} ${z}` : z;
+  }
+  return cityState;
 }
 
 // ── Parts ─────────────────────────────────────────────────────────────

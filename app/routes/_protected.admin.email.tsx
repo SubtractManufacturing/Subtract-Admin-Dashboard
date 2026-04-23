@@ -38,7 +38,6 @@ import {
   isExampleEmailLayoutsEnabled,
   isOutboundEmailEnabled,
 } from "~/lib/featureFlags";
-import type { EmailLayoutDefinition } from "~/emails/layout-definition";
 import {
   getDefaultBodyCopyForLayout,
   getLayoutDefinition,
@@ -48,6 +47,7 @@ import {
   parseBodyCopyForLayout,
   type TemplateSlug,
 } from "~/emails/registry";
+import { bodyCopyFromFormData } from "~/lib/email/parse-template-body.server";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -68,25 +68,6 @@ const SNIPPET_CONTEXT_COLLISION_KEYS = RESERVED_MERGE_TOKEN_KEYS;
 
 const SNIPPET_KEY_RE = /^[a-zA-Z]\w*$/;
 
-function bodyCopyFromFormData(
-  formData: FormData,
-  definition: EmailLayoutDefinition,
-): Record<string, unknown> {
-  const obj: Record<string, unknown> = {};
-  for (const slot of definition.slots) {
-    if (slot.type === "button") {
-      obj[slot.id] = {
-        buttonLabel: String(
-          formData.get(`slot.${slot.id}.buttonLabel`) ?? "",
-        ),
-        link: String(formData.get(`slot.${slot.id}.link`) ?? ""),
-      };
-    } else {
-      obj[slot.id] = String(formData.get(`slot.${slot.id}`) ?? "");
-    }
-  }
-  return obj;
-}
 
 function normalizeContextKey(
   raw: FormDataEntryValue | null,

@@ -121,6 +121,10 @@ describe("formatAddress", () => {
     expect(result).toBe("10001");
   });
 
+  it("returns postal code alone when city and state are empty but zip is present", () => {
+    expect(formatAddress({ city: "", state: "", postalCode: "55105" })).toBe("55105");
+  });
+
   it("includes line2 when present", () => {
     const result = formatAddress({
       line1: "100 Main St",
