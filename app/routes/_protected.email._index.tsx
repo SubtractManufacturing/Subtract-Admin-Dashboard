@@ -33,6 +33,9 @@ const INTENT_PREVIEW = "emailPreviewToSelf";
 
 const EMAIL_LIST_PAGE_SIZE = 25;
 
+/** While sends are in flight, refresh list/summary on an interval (worker is async). */
+const IN_FLIGHT_POLL_MS = 2_000;
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { userDetails, headers } = await requireAuth(request);
 
@@ -724,6 +727,18 @@ export default function EmailIndexPage() {
     emailListPageSize,
   } = useLoaderData<typeof loader>();
   const location = useLocation();
+  const revalidator = useRevalidator();
+
+  const inFlightCount = counts.inFlight;
+  useEffect(() => {
+    if (inFlightCount <= 0) {
+      return;
+    }
+    const id = setInterval(() => {
+      revalidator.revalidate();
+    }, IN_FLIGHT_POLL_MS);
+    return () => clearInterval(id);
+  }, [inFlightCount, revalidator]);
 
   return (
     <div className="p-6 md:p-8">

@@ -63,6 +63,7 @@ import {
   parseEmailTemplatesImportJson,
 } from "~/lib/email/email-templates-bulk-import.server";
 import { sendDraftTemplateTestEmail } from "~/lib/email/send-draft-template-test-email.server";
+import { parseOutboundListMaxAgeHoursInput } from "~/lib/email/parse-outbound-list-max-age-hours-input";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -216,20 +217,16 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    const listHoursRaw = (formData.get("emailListMaxAgeHours") as string) ?? "0";
-    const listHours = parseInt(listHoursRaw, 10);
-    if (Number.isNaN(listHours) || listHours < 0 || listHours > 100_000) {
+    const listHoursRaw =
+      (formData.get("emailListMaxAgeHours") as string) ?? "0";
+    const listHoursParsed = parseOutboundListMaxAgeHoursInput(listHoursRaw);
+    if (!listHoursParsed.ok) {
       return withAuthHeaders(
-        json(
-          {
-            error:
-              "Email list window must be between 0 and 100000 hours (0 = no limit).",
-          },
-          { status: 400 },
-        ),
+        json({ error: listHoursParsed.error }, { status: 400 }),
         headers,
       );
     }
+    const listHours = listHoursParsed.hours;
 
     const recipientOverride = (
       (formData.get("recipientOverride") as string) ?? ""
@@ -1503,19 +1500,27 @@ export default function AdminEmail() {
                 </div>
                 <div>
                   <label className={labelClass}>
-                    Outbound list — max age (hours)
+                    Outbound list — max age
                   </label>
                   <input
-                    type="number"
+                    type="text"
                     name="emailListMaxAgeHours"
                     defaultValue={settings.emailListMaxAgeHours}
-                    min={0}
-                    max={100000}
+                    placeholder="e.g. 96, 4d, 1w"
+                    autoComplete="off"
                     className={inputClass}
                   />
                   <p className={helperClass}>
-                    On /emails, only show sends from the last N hours (e.g. 96 =
-                    4 days). 0 = no time limit.
+                    Hours, or suffix{" "}
+                    <code className="rounded bg-gray-100 px-1 text-xs dark:bg-slate-700">
+                      d
+                    </code>{" "}
+                    (days) or{" "}
+                    <code className="rounded bg-gray-100 px-1 text-xs dark:bg-slate-700">
+                      w
+                    </code>{" "}
+                    (weeks). Examples: 96, 4d, 1w. On /emails, only sends from
+                    this window are listed. 0 = no limit.
                   </p>
                 </div>
               </div>
