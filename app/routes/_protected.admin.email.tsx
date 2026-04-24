@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { EllipsisVertical } from "lucide-react";
 import {
   json,
@@ -51,6 +57,10 @@ import {
   type TemplateSlug,
 } from "~/emails/registry";
 import { bodyCopyFromFormData } from "~/lib/email/parse-template-body.server";
+import {
+  importEmailTemplatesFromPayload,
+  parseEmailTemplatesImportJson,
+} from "~/lib/email/email-templates-bulk-import.server";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -843,6 +853,64 @@ export async function action({ request }: ActionFunctionArgs) {
     return withAuthHeaders(json({ success: true }), headers);
   }
 
+  if (intent === "importEmailTemplates") {
+    // Prefer plain `payload` string: `useFetcher` + `?_data=` can drop multipart file
+    // parts before they reach the action; reading the file in the client avoids that.
+    const payloadField = formData.get("payload");
+    let text: string | null =
+      typeof payloadField === "string" && payloadField.length > 0
+        ? payloadField
+        : null;
+
+    if (text === null) {
+      const file = formData.get("file");
+      const isUploadPart =
+        file instanceof Blob ||
+        (typeof file === "object" &&
+          file !== null &&
+          typeof (file as Blob).size === "number" &&
+          typeof (file as Blob).text === "function");
+      if (isUploadPart && (file as Blob).size > 0) {
+        text = await (file as Blob).text();
+      }
+    }
+
+    if (text === null || text.trim() === "") {
+      return withAuthHeaders(
+        json(
+          { error: "Choose a non-empty JSON file to import." },
+          { status: 400 },
+        ),
+        headers,
+      );
+    }
+    const parsed = parseEmailTemplatesImportJson(text);
+    if (!parsed.ok) {
+      return withAuthHeaders(
+        json({ error: parsed.error }, { status: 400 }),
+        headers,
+      );
+    }
+    const exampleEmailLayoutsEnabled = await isExampleEmailLayoutsEnabled();
+    const result = await importEmailTemplatesFromPayload(parsed.payload, {
+      updatedBy,
+      exampleEmailLayoutsEnabled,
+    });
+    if (!result.ok) {
+      return withAuthHeaders(
+        json({ error: result.error }, { status: result.status ?? 400 }),
+        headers,
+      );
+    }
+    return withAuthHeaders(
+      json({
+        success: true as const,
+        importedCount: result.importedCount,
+      }),
+      headers,
+    );
+  }
+
   return withAuthHeaders(
     json({ error: "Invalid action." }, { status: 400 }),
     headers,
@@ -863,12 +931,19 @@ export default function AdminEmail() {
     error?: string;
     slotErrors?: Record<string, string>;
   }>();
+  const templateImportFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+    importedCount?: number;
+  }>();
+  const templateImportFileRef = useRef<HTMLInputElement>(null);
   /** True while the action runs (POST). */
   const fetcherIsSubmitting = fetcher.state === "submitting";
   /** True while loaders revalidate after a successful mutation (not the HTTP POST itself). */
   const fetcherIsRevalidating = fetcher.state === "loading";
   /** Block competing actions until the full fetcher cycle completes. */
   const fetcherIsBusy = fetcher.state !== "idle";
+  const templateImportBusy = templateImportFetcher.state !== "idle";
 
   function saveProgressLabel(idle: string) {
     if (fetcherIsSubmitting) return "Saving...";
@@ -1067,6 +1142,82 @@ export default function AdminEmail() {
     formData.set("intent", "archiveTemplate");
     formData.set("id", String(id));
     fetcher.submit(formData, { method: "post", action: ADMIN_EMAIL_ACTION });
+  }
+
+  function handleExportEmailTemplates() {
+    const exported: Array<{
+      slug: string;
+      name: string;
+      layoutSlug: string;
+      contextKey: string | null;
+      fromEmail: string;
+      subjectTemplate: string;
+      bodyCopy: unknown;
+    }> = [];
+
+    for (const t of templates) {
+      const identity = identities.find(
+        (i: EmailIdentity) => i.id === t.emailIdentityId,
+      );
+      if (!identity || identity.isArchived) {
+        window.alert(
+          `Cannot export: template "${t.slug}" uses a missing or archived sender identity.`,
+        );
+        return;
+      }
+      exported.push({
+        slug: t.slug,
+        name: t.name,
+        layoutSlug: t.layoutSlug,
+        contextKey: t.contextKey,
+        fromEmail: identity.fromEmail,
+        subjectTemplate: t.subjectTemplate,
+        bodyCopy: t.bodyCopy,
+      });
+    }
+
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      templates: exported,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    a.href = url;
+    a.download = `email-templates-${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function openTemplateImportPicker() {
+    templateImportFileRef.current?.click();
+  }
+
+  function handleTemplateImportFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    void (async () => {
+      const text = await file.text();
+      if (text.trim() === "") return;
+
+      const formData = new FormData();
+      formData.set("intent", "importEmailTemplates");
+      formData.set("payload", text);
+      templateImportFetcher.submit(formData, {
+        method: "post",
+        action: ADMIN_EMAIL_ACTION,
+      });
+    })();
   }
 
   const anyModalOpen =
@@ -1400,7 +1551,31 @@ export default function AdminEmail() {
 
           {/* ── Email Templates ── */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-700 dark:bg-slate-800">
+            <input
+              ref={templateImportFileRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              aria-hidden
+              onChange={handleTemplateImportFileChange}
+            />
             <div className="mb-5 flex flex-col gap-3">
+              {templateImportFetcher.state === "idle" &&
+                templateImportFetcher.data?.success === true && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100">
+                    {(templateImportFetcher.data.importedCount ?? 0) === 0
+                      ? "File contained no templates to import."
+                      : `Successfully imported ${templateImportFetcher.data.importedCount} template(s).`}
+                  </div>
+                )}
+              {templateImportFetcher.state === "idle" &&
+                templateImportFetcher.data &&
+                "error" in templateImportFetcher.data &&
+                templateImportFetcher.data.error && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+                    {templateImportFetcher.data.error}
+                  </div>
+                )}
               <div className="flex items-start justify-between gap-3">
                 <h2 className="min-w-0 pr-2 text-lg font-semibold text-gray-900 dark:text-white">
                   Email Templates
@@ -1433,6 +1608,9 @@ export default function AdminEmail() {
                       onViewMergeTokenDocs={() =>
                         setMergeTokensReferenceOpen(true)
                       }
+                      onExportTemplates={handleExportEmailTemplates}
+                      onImportTemplates={openTemplateImportPicker}
+                      importBusy={templateImportBusy}
                     />
                   </div>
                   <IconButton
