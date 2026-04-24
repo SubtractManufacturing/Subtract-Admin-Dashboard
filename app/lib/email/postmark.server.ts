@@ -29,6 +29,8 @@ export type PostmarkTransactionalPayload = {
   /** When set, replaces To. Intentionally omitted for admin template test sends. */
   recipientOverride?: string | null;
   ccAddresses?: string[] | null;
+  /** Hidden copy; does not change the primary To recipient. */
+  globalBcc?: string | null;
   attachments?: PostmarkAttachment[];
 };
 
@@ -58,12 +60,25 @@ export async function sendPostmarkTransactionalEmail(
       ? input.ccAddresses.join(", ")
       : undefined;
 
+  const bccRaw = (input.globalBcc ?? "").trim();
+  const toLower = to.toLowerCase();
+  const bccLower = bccRaw.toLowerCase();
+  const duplicatesEnvelope =
+    !bccRaw ||
+    bccLower === toLower ||
+    input.toAddresses.some((a) => a.toLowerCase() === bccLower) ||
+    Boolean(
+      input.ccAddresses?.some((a) => a.toLowerCase() === bccLower),
+    );
+  const bccFinal = duplicatesEnvelope ? undefined : bccRaw;
+
   const attachmentBuffers = input.attachments ?? [];
 
   const payload = {
     From: from,
     To: to,
     ...(cc ? { Cc: cc } : {}),
+    ...(bccFinal ? { Bcc: bccFinal } : {}),
     ...(input.replyTo ? { ReplyTo: input.replyTo } : {}),
     ...(MESSAGE_STREAM ? { MessageStream: MESSAGE_STREAM } : {}),
     Subject: input.subject,
@@ -102,6 +117,7 @@ export async function sendPostmarkTransactionalEmail(
 export async function sendViaPostmark(
   row: SentEmail,
   attachmentBuffers: PostmarkAttachment[],
+  options?: { globalBcc?: string | null },
 ) {
   return sendPostmarkTransactionalEmail({
     fromEmail: row.fromEmail,
@@ -113,6 +129,7 @@ export async function sendViaPostmark(
     textBody: row.textBody ?? "",
     recipientOverride: row.recipientOverride,
     ccAddresses: row.ccAddresses,
+    globalBcc: options?.globalBcc ?? null,
     attachments: attachmentBuffers,
   });
 }

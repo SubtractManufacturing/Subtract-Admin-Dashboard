@@ -3,6 +3,7 @@ import { sentEmails, sentEmailAttachments, attachments } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { downloadFile } from "../s3.server";
 import { isOutboundEmailEnabled } from "../featureFlags";
+import { getEmailSettings } from "./templates.server";
 import { sendViaPostmark } from "./postmark.server";
 
 export async function sendOutboundEmail(sentEmailId: number): Promise<string> {
@@ -40,5 +41,8 @@ export async function sendOutboundEmail(sentEmailId: number): Promise<string> {
     }))
   );
 
-  return sendViaPostmark(row, postmarkAttachments);
+  const { outboundGlobalBcc } = await getEmailSettings();
+  return sendViaPostmark(row, postmarkAttachments, {
+    globalBcc: outboundGlobalBcc,
+  });
 }

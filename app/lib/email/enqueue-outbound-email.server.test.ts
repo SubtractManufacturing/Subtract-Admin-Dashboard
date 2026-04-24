@@ -164,6 +164,8 @@ beforeEach(() => {
   mockGetSettings.mockResolvedValue({
     outboundDelayMinutes: 0,
     recipientOverride: null,
+    outboundGlobalBcc: null,
+    emailListMaxAgeHours: 0,
     approvalRequired: false,
     approvalRoleSlugs: [],
   });
@@ -383,6 +385,8 @@ describe("enqueueOutboundUserEmail — approval gate", () => {
     mockGetSettings.mockResolvedValue({
       outboundDelayMinutes: 0,
       recipientOverride: null,
+      outboundGlobalBcc: null,
+      emailListMaxAgeHours: 0,
       approvalRequired: true,
       approvalRoleSlugs: ["Admin"],
     });
@@ -398,6 +402,8 @@ describe("enqueueOutboundUserEmail — approval gate", () => {
     mockGetSettings.mockResolvedValue({
       outboundDelayMinutes: 0,
       recipientOverride: null,
+      outboundGlobalBcc: null,
+      emailListMaxAgeHours: 0,
       approvalRequired: false,
       approvalRoleSlugs: [],
     });
@@ -440,6 +446,8 @@ describe("enqueueOutboundUserEmail — bodyCopyOverrides", () => {
     mockGetSettings.mockResolvedValue({
       outboundDelayMinutes: 0,
       recipientOverride: null,
+      outboundGlobalBcc: null,
+      emailListMaxAgeHours: 0,
       approvalRequired: false,
       approvalRoleSlugs: [],
     });

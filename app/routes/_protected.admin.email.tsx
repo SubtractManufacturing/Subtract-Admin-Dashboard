@@ -75,6 +75,8 @@ type EmailSnippetRow = { key: string; value: string };
 const RESERVED_SNIPPET_KEYS = new Set([
   "outbound_delay_minutes",
   "recipient_override",
+  "outbound_global_bcc",
+  "email_list_max_age_hours",
   "outbound_approval_required",
   "outbound_approval_role_slugs",
 ]);
@@ -145,6 +147,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       settings: {
         outboundDelayMinutes: settingsMap.get("outbound_delay_minutes") || "0",
         recipientOverride: settingsMap.get("recipient_override") || "",
+        globalBccArchive: settingsMap.get("outbound_global_bcc") || "",
+        emailListMaxAgeHours:
+          settingsMap.get("email_list_max_age_hours") ?? "0",
         approvalRequired:
           settingsMap.get("outbound_approval_required") === "true",
         approvalRoleSlugs: (() => {
@@ -211,11 +216,52 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
+    const listHoursRaw = (formData.get("emailListMaxAgeHours") as string) ?? "0";
+    const listHours = parseInt(listHoursRaw, 10);
+    if (Number.isNaN(listHours) || listHours < 0 || listHours > 100_000) {
+      return withAuthHeaders(
+        json(
+          {
+            error:
+              "Email list window must be between 0 and 100000 hours (0 = no limit).",
+          },
+          { status: 400 },
+        ),
+        headers,
+      );
+    }
+
+    const recipientOverride = (
+      (formData.get("recipientOverride") as string) ?? ""
+    ).trim();
+    const globalBccArchive = (
+      (formData.get("globalBccArchive") as string) ?? ""
+    ).trim();
+    const emailLooksValid = (v: string) =>
+      v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+    if (!emailLooksValid(recipientOverride) || !emailLooksValid(globalBccArchive)) {
+      return withAuthHeaders(
+        json(
+          { error: "Enter valid email addresses or leave the fields blank." },
+          { status: 400 },
+        ),
+        headers,
+      );
+    }
+
     const updates = [
       { key: "outbound_delay_minutes", value: String(delay) },
       {
         key: "recipient_override",
-        value: ((formData.get("recipientOverride") as string) ?? "").trim(),
+        value: recipientOverride,
+      },
+      {
+        key: "outbound_global_bcc",
+        value: globalBccArchive,
+      },
+      {
+        key: "email_list_max_age_hours",
+        value: String(listHours),
       },
       {
         key: "outbound_approval_required",
@@ -1056,6 +1102,13 @@ export default function AdminEmail() {
   const templateImportBusy = templateImportFetcher.state !== "idle";
   const testTemplateBusy = testTemplateFetcher.state !== "idle";
 
+  const [approvalRequired, setApprovalRequired] = useState(
+    settings.approvalRequired,
+  );
+  useEffect(() => {
+    setApprovalRequired(settings.approvalRequired);
+  }, [settings.approvalRequired]);
+
   function saveProgressLabel(idle: string) {
     if (fetcherIsSubmitting) return "Saving...";
     if (fetcherIsRevalidating) return "Updating…";
@@ -1449,95 +1502,128 @@ export default function AdminEmail() {
                   </p>
                 </div>
                 <div>
-                  <label className={labelClass}>Recipient Override</label>
+                  <label className={labelClass}>
+                    Outbound list — max age (hours)
+                  </label>
+                  <input
+                    type="number"
+                    name="emailListMaxAgeHours"
+                    defaultValue={settings.emailListMaxAgeHours}
+                    min={0}
+                    max={100000}
+                    className={inputClass}
+                  />
+                  <p className={helperClass}>
+                    On /emails, only show sends from the last N hours (e.g. 96 =
+                    4 days). 0 = no time limit.
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass}>Test recipient override</label>
                   <input
                     type="email"
                     name="recipientOverride"
                     defaultValue={settings.recipientOverride}
-                    placeholder="test@example.com"
+                    placeholder="Optional — send all To: here"
                     className={inputClass}
                   />
-                  <p className={helperClass}>
-                    Routes all outbound email to this address instead. For
-                    testing.
-                  </p>
+                </div>
+                <div>
+                  <label className={labelClass}>Global BCC (archive copy)</label>
+                  <input
+                    type="email"
+                    name="globalBccArchive"
+                    defaultValue={settings.globalBccArchive}
+                    placeholder="Optional — hidden copy of every send"
+                    className={inputClass}
+                  />
                 </div>
               </div>
+              <p className={`${helperClass} -mt-1`}>
+                Override replaces the visible recipient for testing. Global BCC
+                adds a hidden copy without changing who receives the message.
+              </p>
               <div className="space-y-3 border-t border-gray-200 pt-5 dark:border-gray-600">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="approvalRequired"
-                      name="approvalRequired"
-                      defaultChecked={settings.approvalRequired}
-                      className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"
-                    />
-                    <label
-                      htmlFor="approvalRequired"
-                      className="text-sm font-medium text-gray-900 dark:text-gray-100"
-                    >
-                      Require approval before sending outbound email
-                    </label>
-                  </div>
-                  <p className={`${helperClass} mt-1`}>
-                    Applies to all outbound user sends. Approvers use the
-                    Outbound email list to approve, reject, or email themselves
-                    a preview.
-                  </p>
-                </div>
-                <div>
-                  <label className={labelClass}>Approver roles</label>
-                  <details className="relative group">
-                    <summary
-                      className={`${inputClass} cursor-pointer list-none flex items-center justify-between gap-2 marker:content-none [&::-webkit-details-marker]:hidden`}
-                    >
-                      <span className="truncate text-left">
-                        {settings.approvalRoleSlugs.length > 0
-                          ? settings.approvalRoleSlugs.join(", ")
-                          : "Select roles…"}
-                      </span>
-                      <svg
-                        className="h-4 w-4 shrink-0 text-gray-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        aria-hidden
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-6">
+                  <div className="shrink-0 sm:max-w-xs">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="approvalRequired"
+                        name="approvalRequired"
+                        checked={approvalRequired}
+                        onChange={(e) => setApprovalRequired(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"
+                      />
+                      <label
+                        htmlFor="approvalRequired"
+                        className="text-sm font-medium text-gray-900 dark:text-gray-100"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 9l-7 7-7-7"
-                        />
-                      </svg>
-                    </summary>
-                    <div className="absolute z-20 mt-1 w-full min-w-0 max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
-                      {USER_ROLES.map((role) => (
-                        <label
-                          key={role}
-                          className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-slate-700"
-                        >
-                          <input
-                            type="checkbox"
-                            name="approvalRoleSlug"
-                            value={role}
-                            defaultChecked={settings.approvalRoleSlugs.includes(
-                              role,
-                            )}
-                            className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"
-                          />
-                          <span className="text-gray-800 dark:text-gray-200">
-                            {role}
-                          </span>
-                        </label>
-                      ))}
+                        Require approval before sending
+                      </label>
                     </div>
-                  </details>
-                  <p className={helperClass}>
-                    Users with these roles can approve, reject, or request a
-                    copy to their registered email from the list.
-                  </p>
+                    <p className={`${helperClass} mt-1 pl-7`}>
+                      Approvers use the outbound email list to approve, reject,
+                      or request a preview.
+                    </p>
+                  </div>
+                  <div
+                    className={`min-w-0 flex-1 ${approvalRequired ? "" : "hidden"}`}
+                  >
+                    <label className={labelClass}>Approver roles</label>
+                    <details className="relative group">
+                      <summary
+                        className={`${inputClass} cursor-pointer list-none flex items-center justify-between gap-2 marker:content-none [&::-webkit-details-marker]:hidden`}
+                      >
+                        <span className="truncate text-left">
+                          {settings.approvalRoleSlugs.length > 0
+                            ? settings.approvalRoleSlugs.join(", ")
+                            : "Select roles…"}
+                        </span>
+                        <svg
+                          className="h-4 w-4 shrink-0 text-gray-400"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 9l-7 7-7-7"
+                          />
+                        </svg>
+                      </summary>
+                      <div className="absolute z-20 mt-1 w-full min-w-0 max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                        {USER_ROLES.map((role) => (
+                          <label
+                            key={role}
+                            className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-slate-700"
+                          >
+                            <input
+                              type="checkbox"
+                              name="approvalRoleSlug"
+                              value={role}
+                              defaultChecked={settings.approvalRoleSlugs.includes(
+                                role,
+                              )}
+                              className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"
+                            />
+                            <span className="text-gray-800 dark:text-gray-200">
+                              {role}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </details>
+                    <p className={helperClass}>
+                      These roles can approve, reject, or email themselves a
+                      copy from the list.
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="flex justify-end border-t border-gray-200 pt-4 dark:border-gray-600">

@@ -1,7 +1,13 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { and, eq } from "drizzle-orm";
-import { useFetcher, useLoaderData, useRevalidator, Link } from "@remix-run/react";
+import {
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useRevalidator,
+  Link,
+} from "@remix-run/react";
 import { useState, useEffect, useRef } from "react";
 
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
@@ -15,6 +21,7 @@ import {
   listRecentSentEmails,
   listPendingApprovalEmails,
   getSentEmailStatusCounts,
+  countSentEmailsInListWindow,
   type SentEmailListItem,
   type SentEmailStatusCounts,
 } from "~/lib/sent-emails.server";
@@ -24,6 +31,8 @@ import { revertQuoteAfterPendingEmailRejection } from "~/lib/quotes.server";
 const INTENT_REVIEW = "reviewOutboundEmail";
 const INTENT_PREVIEW = "emailPreviewToSelf";
 
+const EMAIL_LIST_PAGE_SIZE = 25;
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { userDetails, headers } = await requireAuth(request);
 
@@ -31,12 +40,35 @@ export async function loader({ request }: LoaderFunctionArgs) {
     throw new Response("Access Denied", { status: 403 });
   }
 
-  const [pendingApprovalEmails, emails, counts, settings] = await Promise.all([
-    listPendingApprovalEmails(),
-    listRecentSentEmails({ limit: 50 }),
-    getSentEmailStatusCounts(),
-    getEmailSettings(),
+  const url = new URL(request.url);
+  const pageParam = Math.max(
+    1,
+    parseInt(url.searchParams.get("page") ?? "1", 10) || 1,
+  );
+
+  const settings = await getEmailSettings();
+  const maxAgeHours = settings.emailListMaxAgeHours;
+  const minCreatedAt =
+    maxAgeHours > 0
+      ? new Date(Date.now() - maxAgeHours * 60 * 60 * 1000)
+      : null;
+
+  const [pendingApprovalEmails, counts, totalInWindow] = await Promise.all([
+    listPendingApprovalEmails(minCreatedAt),
+    getSentEmailStatusCounts(minCreatedAt),
+    countSentEmailsInListWindow(minCreatedAt),
   ]);
+  const totalPages = Math.max(
+    1,
+    Math.ceil(totalInWindow / EMAIL_LIST_PAGE_SIZE),
+  );
+  const page = Math.min(pageParam, totalPages);
+
+  const emails = await listRecentSentEmails({
+    limit: EMAIL_LIST_PAGE_SIZE,
+    offset: (page - 1) * EMAIL_LIST_PAGE_SIZE,
+    minCreatedAt,
+  });
 
   const isApprover = settings.approvalRoleSlugs.includes(userDetails.role);
   const hasRegisteredEmail = Boolean(
@@ -58,6 +90,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       counts,
       isApprover,
       hasRegisteredEmail,
+      emailListPage: page,
+      emailListTotalPages: totalPages,
+      emailListTotalInWindow: totalInWindow,
+      emailListMaxAgeHours: maxAgeHours,
+      emailListPageSize: EMAIL_LIST_PAGE_SIZE,
     }),
     headers,
   );
@@ -662,6 +699,17 @@ function EmailRow({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+function emailListPageHref(pathname: string, search: string, page: number) {
+  const params = new URLSearchParams(search);
+  if (page <= 1) {
+    params.delete("page");
+  } else {
+    params.set("page", String(page));
+  }
+  const qs = params.toString();
+  return qs ? `${pathname}?${qs}` : pathname;
+}
+
 export default function EmailIndexPage() {
   const {
     pendingApprovalEmails,
@@ -669,7 +717,13 @@ export default function EmailIndexPage() {
     counts,
     isApprover,
     hasRegisteredEmail,
+    emailListPage,
+    emailListTotalPages,
+    emailListTotalInWindow,
+    emailListMaxAgeHours,
+    emailListPageSize,
   } = useLoaderData<typeof loader>();
+  const location = useLocation();
 
   return (
     <div className="p-6 md:p-8">
@@ -703,13 +757,34 @@ export default function EmailIndexPage() {
         </div>
       )}
 
-      <h2 className="mb-3 text-sm font-medium text-gray-500 dark:text-gray-400">
-        Recent activity
-      </h2>
+      <div className="mb-3">
+        <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">
+          Recent activity
+        </h2>
+        <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+          {emailListMaxAgeHours > 0 ? (
+            <>
+              Showing sends from the last {emailListMaxAgeHours} hours (
+              {emailListTotalInWindow} in range). {emailListPageSize} per page.
+              Adjust the window in Admin → Email.
+            </>
+          ) : (
+            <>
+              {emailListTotalInWindow} record
+              {emailListTotalInWindow === 1 ? "" : "s"} total,{" "}
+              {emailListPageSize} per page.
+            </>
+          )}
+        </p>
+      </div>
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
         {emails.length === 0 ? (
           <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
-            No outbound email has been recorded yet.
+            {emailListTotalInWindow === 0
+              ? emailListMaxAgeHours > 0
+                ? "No outbound email in this time window."
+                : "No outbound email has been recorded yet."
+              : "No rows on this page."}
           </p>
         ) : (
           <ul className="divide-y-0">
@@ -723,6 +798,43 @@ export default function EmailIndexPage() {
             ))}
           </ul>
         )}
+        {emailListTotalPages > 1 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-4 py-3 text-sm dark:border-slate-700">
+            <Link
+              to={emailListPageHref(
+                location.pathname,
+                location.search,
+                emailListPage - 1,
+              )}
+              className={
+                emailListPage <= 1
+                  ? "pointer-events-none text-gray-300 dark:text-slate-600"
+                  : "font-medium text-[#840606] no-underline hover:underline dark:text-red-400"
+              }
+              aria-disabled={emailListPage <= 1}
+            >
+              Previous
+            </Link>
+            <span className="text-gray-600 dark:text-gray-400">
+              Page {emailListPage} of {emailListTotalPages}
+            </span>
+            <Link
+              to={emailListPageHref(
+                location.pathname,
+                location.search,
+                emailListPage + 1,
+              )}
+              className={
+                emailListPage >= emailListTotalPages
+                  ? "pointer-events-none text-gray-300 dark:text-slate-600"
+                  : "font-medium text-[#840606] no-underline hover:underline dark:text-red-400"
+              }
+              aria-disabled={emailListPage >= emailListTotalPages}
+            >
+              Next
+            </Link>
+          </div>
+        ) : null}
       </div>
     </div>
   );

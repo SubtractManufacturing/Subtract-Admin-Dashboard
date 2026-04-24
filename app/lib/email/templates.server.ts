@@ -33,9 +33,25 @@ export async function getEmailSettings() {
     approvalRoleSlugs = [];
   }
 
+  const rawListHours = map.get("email_list_max_age_hours");
+  let emailListMaxAgeHours = 0;
+  if (rawListHours != null && rawListHours !== "") {
+    const n = parseInt(rawListHours, 10);
+    if (!Number.isNaN(n) && n >= 0) {
+      emailListMaxAgeHours = Math.min(n, 100_000);
+    }
+  }
+
+  const outboundGlobalBccRaw = (map.get("outbound_global_bcc") ?? "").trim();
+  const outboundGlobalBcc = outboundGlobalBccRaw.length > 0
+    ? outboundGlobalBccRaw
+    : null;
+
   return {
     outboundDelayMinutes: parseInt(map.get("outbound_delay_minutes") || "0", 10) || 0,
     recipientOverride: map.get("recipient_override") || null,
+    outboundGlobalBcc,
+    emailListMaxAgeHours,
     approvalRequired: map.get("outbound_approval_required") === "true",
     approvalRoleSlugs,
   };
