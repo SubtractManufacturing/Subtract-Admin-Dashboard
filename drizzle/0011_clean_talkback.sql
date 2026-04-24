@@ -1,0 +1,1 @@
+ALTER TABLE "email_templates" ADD COLUMN "required_attachment_document_kinds" jsonb DEFAULT '[]'::jsonb NOT NULL;

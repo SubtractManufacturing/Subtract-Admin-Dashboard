@@ -1,6 +1,6 @@
 {
-  "id": "7d3ac312-497d-490f-bbfc-8d81c7a2fa7b",
-  "prevId": "8f830f4b-2feb-4680-aa5b-5eb36935bf07",
+  "id": "1a22d691-c4ef-424d-978d-62cf0addfa71",
+  "prevId": "7d3ac312-497d-490f-bbfc-8d81c7a2fa7b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -746,6 +746,13 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "required_attachment_document_kinds": {
+          "name": "required_attachment_document_kinds",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "is_archived": {
           "name": "is_archived",
