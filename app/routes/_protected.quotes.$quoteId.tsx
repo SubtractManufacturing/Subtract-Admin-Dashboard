@@ -80,6 +80,7 @@ import {
   cadFileVersions,
   partDrawings,
   type QuotePart,
+  type AttachmentDocumentKind,
 } from "~/lib/db/schema";
 import { eq, inArray, and, or } from "drizzle-orm";
 import {
@@ -334,6 +335,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   let quoteSendEmailReady = false;
   let quoteSendEmailDefaultSubject: string | null = null;
+  let quoteSendRequiredAttachmentDocumentKinds: AttachmentDocumentKind[] = [];
   type QuoteSendEditableSlot = {
     id: string;
     type: "plainText" | "markdown";
@@ -356,6 +358,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     ]);
     if (resolved) {
       quoteSendEmailReady = true;
+      quoteSendRequiredAttachmentDocumentKinds =
+        resolved.template.requiredAttachmentDocumentKinds ?? [];
       quoteSendEmailDefaultSubject = interpolateTemplateString(
         resolved.template.subjectTemplate,
         {
@@ -430,6 +434,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       quoteSendEmailReady,
       quoteSendEmailDefaultSubject,
       quoteSendEditableSlots,
+      quoteSendRequiredAttachmentDocumentKinds,
     }),
     headers,
   );
@@ -2197,6 +2202,7 @@ export default function QuoteDetail() {
     quoteSendEmailReady,
     quoteSendEmailDefaultSubject,
     quoteSendEditableSlots,
+    quoteSendRequiredAttachmentDocumentKinds,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/quotes/${quote.id}`
@@ -4138,6 +4144,9 @@ export default function QuoteDetail() {
           attachments={attachments}
           defaultSubject={quoteSendEmailDefaultSubject ?? undefined}
           editableSlots={quoteSendEditableSlots}
+          requiredAttachmentDocumentKinds={
+            quoteSendRequiredAttachmentDocumentKinds
+          }
         />
       )}
 

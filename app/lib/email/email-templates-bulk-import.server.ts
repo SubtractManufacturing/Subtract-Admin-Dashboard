@@ -1,10 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "~/lib/db";
 import {
+  attachmentDocumentKindEnum,
   emailIdentities,
   emailTemplates,
+  type AttachmentDocumentKind,
 } from "~/lib/db/schema";
 import {
+  EMAIL_CONTEXT,
   isEmailContextKey,
   type EmailContextKey,
 } from "~/lib/email/email-context-registry";
@@ -66,6 +69,7 @@ export async function importEmailTemplatesFromPayload(
     subjectTemplate: string;
     bodyCopy: Record<string, unknown>;
     emailIdentityId: number;
+    requiredAttachmentDocumentKinds: AttachmentDocumentKind[];
   };
   const parsed: ParsedRow[] = [];
 
@@ -229,6 +233,32 @@ export async function importEmailTemplatesFromPayload(
       };
     }
 
+    const reqKeysRaw = row.requiredAttachmentDocumentKinds;
+    let requiredAttachmentDocumentKinds: AttachmentDocumentKind[] = [];
+    if (reqKeysRaw !== undefined && reqKeysRaw !== null) {
+      if (!Array.isArray(reqKeysRaw)) {
+        return {
+          ok: false,
+          error: `Template "${slug}": requiredAttachmentDocumentKinds must be an array of strings or omitted.`,
+        };
+      }
+      const allowed = new Set<string>(attachmentDocumentKindEnum.enumValues);
+      for (const v of reqKeysRaw) {
+        if (typeof v !== "string" || !allowed.has(v)) {
+          return {
+            ok: false,
+            error: `Template "${slug}": invalid requiredAttachmentDocumentKinds entry.`,
+          };
+        }
+        const k = v as AttachmentDocumentKind;
+        if (!requiredAttachmentDocumentKinds.includes(k)) {
+          requiredAttachmentDocumentKinds.push(k);
+        }
+      }
+    } else if (contextKey === EMAIL_CONTEXT.QUOTE_SEND) {
+      requiredAttachmentDocumentKinds = ["quote"];
+    }
+
     parsed.push({
       slug,
       name,
@@ -237,6 +267,7 @@ export async function importEmailTemplatesFromPayload(
       subjectTemplate,
       bodyCopy: bodyParsed.data as Record<string, unknown>,
       emailIdentityId: identity.id,
+      requiredAttachmentDocumentKinds,
     });
   }
 
@@ -281,6 +312,7 @@ export async function importEmailTemplatesFromPayload(
               emailIdentityId: p.emailIdentityId,
               subjectTemplate: p.subjectTemplate,
               bodyCopy: p.bodyCopy,
+              requiredAttachmentDocumentKinds: p.requiredAttachmentDocumentKinds,
               updatedAt: new Date(),
               updatedBy: opts.updatedBy,
             })
@@ -300,6 +332,7 @@ export async function importEmailTemplatesFromPayload(
               emailIdentityId: p.emailIdentityId,
               subjectTemplate: p.subjectTemplate,
               bodyCopy: p.bodyCopy,
+              requiredAttachmentDocumentKinds: p.requiredAttachmentDocumentKinds,
               isArchived: false,
               updatedAt: new Date(),
               updatedBy: opts.updatedBy,
@@ -314,6 +347,7 @@ export async function importEmailTemplatesFromPayload(
             emailIdentityId: p.emailIdentityId,
             subjectTemplate: p.subjectTemplate,
             bodyCopy: p.bodyCopy,
+            requiredAttachmentDocumentKinds: p.requiredAttachmentDocumentKinds,
             updatedBy: opts.updatedBy,
           });
         }

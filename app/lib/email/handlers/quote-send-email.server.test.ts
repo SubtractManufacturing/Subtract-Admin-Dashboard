@@ -35,6 +35,14 @@ vi.mock("~/lib/events", () => ({
   createEvent: vi.fn(() => Promise.resolve()),
 }));
 
+const { mockResolveEmailTemplateForContext } = vi.hoisted(() => ({
+  mockResolveEmailTemplateForContext: vi.fn(),
+}));
+
+vi.mock("~/lib/email/templates.server", () => ({
+  resolveEmailTemplateForContext: mockResolveEmailTemplateForContext,
+}));
+
 // Import after mocks
 import { quoteSendEmailHandler } from "./quote-send-email.server";
 import type { EmailEnqueueAuth } from "./quote-send-email.server";
@@ -79,18 +87,29 @@ function makeDbChain(rows: unknown[]) {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
+const templateWithKinds = (kinds: string[]) => ({
+  template: {
+    requiredAttachmentDocumentKinds: kinds,
+  },
+  identity: {} as { id: number },
+  layoutSlug: "quote-send" as const,
+});
+
 describe("quoteSendEmailHandler.verifyAttachmentIds — quote PDF requirement", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveEmailTemplateForContext.mockResolvedValue(
+      templateWithKinds(["quote"]),
+    );
   });
 
-  it("throws when no attachment IDs are provided", async () => {
+  it("throws when no attachment IDs are provided and template requires quote", async () => {
     await expect(
       quoteSendEmailHandler.verifyAttachmentIds(mockAuth, ENTITY_ID, []),
-    ).rejects.toThrow(/quote PDF is required/i);
+    ).rejects.toThrow(/requires at least one attachment/i);
   });
 
-  it("throws when no selected attachment has documentKind 'quote'", async () => {
+  it("throws when no selected attachment has documentKind 'quote' but template requires it", async () => {
     mockDbSelect.mockReturnValue(
       makeDbChain([
         { id: ATTACHMENT_ID_OTHER, documentKind: "invoice" },
@@ -101,7 +120,7 @@ describe("quoteSendEmailHandler.verifyAttachmentIds — quote PDF requirement", 
       quoteSendEmailHandler.verifyAttachmentIds(mockAuth, ENTITY_ID, [
         ATTACHMENT_ID_OTHER,
       ]),
-    ).rejects.toThrow(/quote PDF is required/i);
+    ).rejects.toThrow(/requires a quote PDF attachment/i);
   });
 
   it("throws when the attachment list length does not match (invalid attachment)", async () => {
@@ -143,5 +162,29 @@ describe("quoteSendEmailHandler.verifyAttachmentIds — quote PDF requirement", 
         ATTACHMENT_ID_OTHER,
       ]),
     ).resolves.toBeUndefined();
+  });
+
+  it("succeeds with no attachments when template requires none", async () => {
+    mockResolveEmailTemplateForContext.mockResolvedValue(
+      templateWithKinds([]),
+    );
+    await expect(
+      quoteSendEmailHandler.verifyAttachmentIds(mockAuth, ENTITY_ID, []),
+    ).resolves.toBeUndefined();
+    expect(mockDbSelect).not.toHaveBeenCalled();
+  });
+
+  it("requires each configured kind", async () => {
+    mockResolveEmailTemplateForContext.mockResolvedValue(
+      templateWithKinds(["quote", "invoice"]),
+    );
+    mockDbSelect.mockReturnValue(
+      makeDbChain([{ id: ATTACHMENT_ID_PDF, documentKind: "quote" }]),
+    );
+    await expect(
+      quoteSendEmailHandler.verifyAttachmentIds(mockAuth, ENTITY_ID, [
+        ATTACHMENT_ID_PDF,
+      ]),
+    ).rejects.toThrow(/Invoice/i);
   });
 });

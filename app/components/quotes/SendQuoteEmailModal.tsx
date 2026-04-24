@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
 } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
 import Modal from "~/components/shared/Modal";
@@ -10,6 +11,8 @@ import Button from "~/components/shared/Button";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
+import { ATTACHMENT_DOCUMENT_KIND_LABELS } from "~/lib/email/attachment-document-kind-labels";
+import type { AttachmentDocumentKind } from "~/lib/db/schema";
 import type { QuoteWithRelations } from "~/lib/quotes";
 import { emailPreviewInlineEditCss } from "~/lib/pdf-utils";
 
@@ -51,6 +54,8 @@ interface SendQuoteEmailModalProps {
   attachments: AttachmentData[];
   defaultSubject?: string;
   editableSlots: EditableSlot[];
+  /** From email template: classified attachment kinds to require and pre-select; empty = none required */
+  requiredAttachmentDocumentKinds: AttachmentDocumentKind[];
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -164,6 +169,7 @@ export default function SendQuoteEmailModal({
   attachments,
   defaultSubject,
   editableSlots,
+  requiredAttachmentDocumentKinds,
 }: SendQuoteEmailModalProps) {
   const submitFetcher = useFetcher<{
     success?: boolean;
@@ -201,21 +207,16 @@ export default function SendQuoteEmailModal({
 
   // ── Attachment state ──
   const quoteUpdatedAt = new Date(quote.updatedAt as string);
-
-  const quotePdfs = attachments
-    .filter((a) => a.documentKind === "quote")
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const latestQuotePdf = quotePdfs[0] ?? null;
-
-  const isPdfStale =
-    latestQuotePdf != null &&
-    new Date(latestQuotePdf.createdAt) < quoteUpdatedAt;
-  const hasFreshPdf = latestQuotePdf != null && !isPdfStale;
-
-  const [selectedQuotePdfId, setSelectedQuotePdfId] = useState<string | null>(
-    () => (hasFreshPdf ? latestQuotePdf.id : latestQuotePdf?.id ?? null),
+  const requiredKindSet = useMemo(
+    () => new Set(requiredAttachmentDocumentKinds),
+    [requiredAttachmentDocumentKinds],
   );
-  const [stalePdfAcknowledged, setStalePdfAcknowledged] = useState(false);
+
+  const [selectedPrimaryByKind, setSelectedPrimaryByKind] = useState<
+    Partial<Record<AttachmentDocumentKind, string | null>>
+  >({});
+  const [staleQuotePdfAcknowledged, setStaleQuotePdfAcknowledged] =
+    useState(false);
   const [selectedOptionalIds, setSelectedOptionalIds] = useState<string[]>([]);
 
   // ── PDF generation modal ──
@@ -241,7 +242,7 @@ export default function SendQuoteEmailModal({
       setCc("");
       setShowCc(false);
       setSlotOverrides(Object.fromEntries(editableSlots.map((s) => [s.id, s.templateValue])));
-      setStalePdfAcknowledged(false);
+      setStaleQuotePdfAcknowledged(false);
       setSelectedOptionalIds([]);
       setSubmitError(null);
       setEditableHtml(null);
@@ -249,21 +250,31 @@ export default function SendQuoteEmailModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // ── Re-evaluate PDF selection when attachments change (e.g. after generate) ──
+  // ── Re-evaluate required primary selections when attachments or template config change ──
   useEffect(() => {
-    const pdfs = attachments
-      .filter((a) => a.documentKind === "quote")
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const latest = pdfs[0] ?? null;
-    if (latest) {
-      setSelectedQuotePdfId(latest.id);
-      const stale = new Date(latest.createdAt) < quoteUpdatedAt;
-      if (!stale) setStalePdfAcknowledged(false);
-    } else {
-      setSelectedQuotePdfId(null);
+    const next: Partial<Record<AttachmentDocumentKind, string | null>> = {};
+    for (const kind of requiredAttachmentDocumentKinds) {
+      const list = attachments
+        .filter((a) => a.documentKind === kind)
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+      const latest = list[0] ?? null;
+      next[kind] = latest?.id ?? null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attachments]);
+    setSelectedPrimaryByKind(next);
+    const qid = next.quote;
+    if (qid) {
+      const att = attachments.find((a) => a.id === qid);
+      if (att) {
+        const stale = new Date(att.createdAt) < quoteUpdatedAt;
+        if (!stale) setStaleQuotePdfAcknowledged(false);
+      }
+    } else {
+      setStaleQuotePdfAcknowledged(false);
+    }
+  }, [attachments, requiredAttachmentDocumentKinds, quoteUpdatedAt]);
 
   // ── Upload success → revalidate ──
   useEffect(() => {
@@ -330,26 +341,42 @@ export default function SendQuoteEmailModal({
   }, [submitFetcher.data, onClose, onSendSuccess, revalidator]);
 
   // ── Size calculations ──
-  const allSelectedIds = [
-    ...(selectedQuotePdfId ? [selectedQuotePdfId] : []),
-    ...selectedOptionalIds,
-  ];
+  const primaryAttachmentIds = useMemo(
+    () =>
+      requiredAttachmentDocumentKinds
+        .map((k) => selectedPrimaryByKind[k])
+        .filter((id): id is string => id != null && id.length > 0),
+    [requiredAttachmentDocumentKinds, selectedPrimaryByKind],
+  );
+  const allSelectedIds = useMemo(
+    () => [
+      ...new Set([...primaryAttachmentIds, ...selectedOptionalIds]),
+    ],
+    [primaryAttachmentIds, selectedOptionalIds],
+  );
   const totalSize = attachments
     .filter((a) => allSelectedIds.includes(a.id))
     .reduce((sum, a) => sum + (a.fileSize ?? 0), 0);
   const isOverSizeLimit = totalSize > MAX_EMAIL_ATTACHMENT_BYTES;
 
   // ── Validation ──
-  const selectedPdf = selectedQuotePdfId
-    ? attachments.find((a) => a.id === selectedQuotePdfId)
-    : null;
-  const pdfIsSelected = selectedPdf != null;
-  const pdfIsStale = pdfIsSelected && new Date(selectedPdf.createdAt) < quoteUpdatedAt;
-  const needsStalePdfAck = pdfIsStale && !stalePdfAcknowledged;
+  const selectedQuoteAtt =
+    requiredKindSet.has("quote") && selectedPrimaryByKind.quote
+      ? attachments.find((a) => a.id === selectedPrimaryByKind.quote)
+      : null;
+  const quotePrimaryIsStale =
+    selectedQuoteAtt != null && new Date(selectedQuoteAtt.createdAt) < quoteUpdatedAt;
+  const needsStaleQuotePrimaryAck = quotePrimaryIsStale && !staleQuotePdfAcknowledged;
+
+  const allRequiredPrimariesSelected =
+    requiredAttachmentDocumentKinds.length === 0 ||
+    requiredAttachmentDocumentKinds.every(
+      (k) => (selectedPrimaryByKind[k] ?? null) != null,
+    );
 
   const canSend =
-    pdfIsSelected &&
-    !needsStalePdfAck &&
+    allRequiredPrimariesSelected &&
+    !needsStaleQuotePrimaryAck &&
     !isOverSizeLimit &&
     submitFetcher.state === "idle" &&
     subject.trim().length > 0;
@@ -367,15 +394,18 @@ export default function SendQuoteEmailModal({
     formData.set("contextKey", EMAIL_CONTEXT.QUOTE_SEND);
     formData.set("entityType", "quote");
     formData.set("entityId", String(quote.id));
-    if (selectedQuotePdfId) formData.append("attachmentId", selectedQuotePdfId);
-    for (const id of selectedOptionalIds) formData.append("attachmentId", id);
+    for (const id of allSelectedIds) {
+      formData.append("attachmentId", id);
+    }
     for (const [id, value] of Object.entries(slotOverrides)) {
       formData.set(`slot.${id}`, value);
     }
     submitFetcher.submit(formData, { method: "post", action: "/email/queue" });
   };
 
-  const optionalAttachments = attachments.filter((a) => a.documentKind !== "quote");
+  const optionalAttachments = attachments.filter(
+    (a) => a.documentKind == null || !requiredKindSet.has(a.documentKind as AttachmentDocumentKind),
+  );
 
   const toggleOptional = (id: string) => {
     setSelectedOptionalIds((prev) =>
@@ -383,9 +413,25 @@ export default function SendQuoteEmailModal({
     );
   };
 
-  // ─── Shared PDF chip ──────────────────────────────────────────────────────
-  const renderPdfChip = (pdf: AttachmentData, isStale: boolean) => {
-    const viewUrl = `/download/attachment/${pdf.id}?inline`;
+  // ─── Primary document chip (required template kinds) ─────────────────────
+  const setPrimaryIdForKind = (kind: AttachmentDocumentKind, id: string) => {
+    setSelectedPrimaryByKind((p) => ({ ...p, [kind]: id }));
+    if (kind === "quote") {
+      setStaleQuotePdfAcknowledged(false);
+    }
+  };
+
+  const clearPrimaryForKind = (kind: AttachmentDocumentKind) => {
+    setSelectedPrimaryByKind((p) => ({ ...p, [kind]: null }));
+    if (kind === "quote") setStaleQuotePdfAcknowledged(false);
+  };
+
+  const renderPrimaryChip = (
+    kind: AttachmentDocumentKind,
+    file: AttachmentData,
+    isStale: boolean,
+  ) => {
+    const viewUrl = `/download/attachment/${file.id}?inline`;
     return (
       <div
         className={`flex items-center gap-2.5 px-3 py-2 rounded-md border ${
@@ -394,7 +440,6 @@ export default function SendQuoteEmailModal({
             : "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700"
         }`}
       >
-        {/* Status icon */}
         {isStale ? (
           <svg className="h-4 w-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
@@ -405,10 +450,14 @@ export default function SendQuoteEmailModal({
           </svg>
         )}
 
-        {/* Clickable filename → view PDF */}
         <button
           type="button"
-          onClick={() => setViewingAttachment({ ...pdf, contentType: "application/pdf" })}
+          onClick={() =>
+            setViewingAttachment({
+              ...file,
+              contentType: file.contentType ?? "application/pdf",
+            })
+          }
           title="Click to preview"
           className={`flex-1 min-w-0 truncate text-sm font-medium text-left underline underline-offset-2 decoration-dotted ${
             isStale
@@ -416,11 +465,10 @@ export default function SendQuoteEmailModal({
               : "text-blue-800 dark:text-blue-200 hover:text-blue-900 dark:hover:text-blue-100"
           }`}
         >
-          {pdf.fileName}
+          {file.fileName}
         </button>
 
-        {/* Stale label + regenerate */}
-        {isStale && (
+        {isStale && kind === "quote" && (
           <>
             <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">outdated</span>
             <button
@@ -433,18 +481,17 @@ export default function SendQuoteEmailModal({
           </>
         )}
 
-        {/* Size */}
+        {isStale && kind !== "quote" && (
+          <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">outdated</span>
+        )}
+
         <span className={`shrink-0 text-xs ${isStale ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"}`}>
-          {formatBytes(pdf.fileSize)}
+          {formatBytes(file.fileSize)}
         </span>
 
-        {/* Remove (deselect) button */}
         <button
           type="button"
-          onClick={() => {
-            setSelectedQuotePdfId(null);
-            setStalePdfAcknowledged(false);
-          }}
+          onClick={() => clearPrimaryForKind(kind)}
           title="Remove from email"
           className={`shrink-0 rounded p-0.5 transition-colors ${
             isStale
@@ -457,8 +504,7 @@ export default function SendQuoteEmailModal({
           </svg>
         </button>
 
-        {/* Hidden input so the URL is accessible for the viewer */}
-        <input type="hidden" name={`__viewUrl_${pdf.id}`} value={viewUrl} />
+        <input type="hidden" name={`__viewUrl_${file.id}`} value={viewUrl} />
       </div>
     );
   };
@@ -584,98 +630,132 @@ export default function SendQuoteEmailModal({
                 Attachments
               </p>
 
-              {/* Quote PDF row */}
-              {selectedQuotePdfId && selectedPdf ? (
-                <div className="mb-3">
-                  {renderPdfChip(selectedPdf, pdfIsStale)}
+              {requiredAttachmentDocumentKinds.map((kind) => {
+                const label = ATTACHMENT_DOCUMENT_KIND_LABELS[kind];
+                const forKind = attachments
+                  .filter((a) => a.documentKind === kind)
+                  .sort(
+                    (a, b) =>
+                      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+                  );
+                const selectedId = selectedPrimaryByKind[kind] ?? null;
+                const selected = selectedId
+                  ? attachments.find((a) => a.id === selectedId) ?? null
+                  : null;
+                const isStaleForKind =
+                  selected != null &&
+                  (kind === "quote"
+                    ? new Date(selected.createdAt) < quoteUpdatedAt
+                    : false);
+                return (
+                  <div key={kind} className="mb-3">
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 font-medium">
+                      {label}
+                    </p>
+                    {selected ? (
+                      <>
+                        {renderPrimaryChip(kind, selected, isStaleForKind)}
 
-                  {/* Stale acknowledge */}
-                  {pdfIsStale && (
-                    <label className="flex items-center gap-2 mt-1.5 ml-1 text-sm text-amber-700 dark:text-amber-300 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={stalePdfAcknowledged}
-                        onChange={(e) => setStalePdfAcknowledged(e.target.checked)}
-                        className="rounded border-amber-400"
-                      />
-                      Send anyway — I&apos;ve confirmed the PDF is correct
-                    </label>
-                  )}
-
-                  {/* Other versions (rarely needed) */}
-                  {quotePdfs.length > 1 && (
-                    <div className="mt-1.5 pl-1">
-                      <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Other versions:</p>
-                      <div className="space-y-1">
-                        {quotePdfs.slice(1).map((pdf) => (
-                          <label key={pdf.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                        {isStaleForKind && kind === "quote" && (
+                          <label className="flex items-center gap-2 mt-1.5 ml-1 text-sm text-amber-700 dark:text-amber-300 cursor-pointer select-none">
                             <input
-                              type="radio"
-                              name="quotePdfId"
-                              checked={selectedQuotePdfId === pdf.id}
-                              onChange={() => {
-                                setSelectedQuotePdfId(pdf.id);
-                                setStalePdfAcknowledged(false);
-                              }}
+                              type="checkbox"
+                              checked={staleQuotePdfAcknowledged}
+                              onChange={(e) => setStaleQuotePdfAcknowledged(e.target.checked)}
+                              className="rounded border-amber-400"
                             />
-                            <button
-                              type="button"
-                              onClick={() => setViewingAttachment({ ...pdf, contentType: "application/pdf" })}
-                              className="flex-1 truncate text-left text-gray-500 dark:text-gray-400 underline underline-offset-2 decoration-dotted hover:text-blue-500"
-                            >
-                              {pdf.fileName}
-                            </button>
-                            <span className="text-gray-400">{formatBytes(pdf.fileSize)}</span>
+                            Send anyway — I&apos;ve confirmed the PDF is correct
                           </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                /* No PDF selected — show generate / re-select CTA */
-                <div className="mb-3 space-y-2">
-                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-md border-2 border-dashed border-gray-300 dark:border-gray-600">
-                    <svg className="h-4 w-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-500 dark:text-gray-400">No quote PDF selected</p>
-                      <p className="text-xs text-gray-400 dark:text-gray-500">Required — customers receive it as an attachment</p>
-                    </div>
-                    <Button type="button" variant="secondary" onClick={() => setIsPdfModalOpen(true)}>
-                      Generate PDF
-                    </Button>
-                  </div>
+                        )}
 
-                  {/* Re-select from existing if any exist */}
-                  {quotePdfs.length > 0 && (
-                    <div className="pl-1 space-y-1">
-                      {quotePdfs.map((pdf) => (
-                        <label key={pdf.id} className="flex items-center gap-2 text-xs cursor-pointer">
-                          <input
-                            type="radio"
-                            name="quotePdfId"
-                            checked={false}
-                            onChange={() => {
-                              setSelectedQuotePdfId(pdf.id);
-                              setStalePdfAcknowledged(false);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setViewingAttachment({ ...pdf, contentType: "application/pdf" })}
-                            className="flex-1 truncate text-left text-gray-500 dark:text-gray-400 underline underline-offset-2 decoration-dotted hover:text-blue-500"
-                          >
-                            {pdf.fileName}
-                          </button>
-                          <span className="text-gray-400">{formatBytes(pdf.fileSize)}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                        {forKind.filter((f) => f.id !== selectedId).length > 0 && (
+                          <div className="mt-1.5 pl-1">
+                            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">Other versions:</p>
+                            <div className="space-y-1">
+                              {forKind
+                                .filter((f) => f.id !== selectedId)
+                                .map((f) => (
+                                <label key={f.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                                  <input
+                                    type="radio"
+                                    name={`primaryDoc_${kind}`}
+                                    checked={selectedId === f.id}
+                                    onChange={() => setPrimaryIdForKind(kind, f.id)}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setViewingAttachment({
+                                        ...f,
+                                        contentType: f.contentType ?? "application/pdf",
+                                      })
+                                    }
+                                    className="flex-1 truncate text-left text-gray-500 dark:text-gray-400 underline underline-offset-2 decoration-dotted hover:text-blue-500"
+                                  >
+                                    {f.fileName}
+                                  </button>
+                                  <span className="text-gray-400">{formatBytes(f.fileSize)}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="mb-1 space-y-2">
+                        <div className="flex items-center gap-3 px-3 py-2.5 rounded-md border-2 border-dashed border-gray-300 dark:border-gray-600">
+                          <svg className="h-4 w-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">No {label} selected</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">
+                              Required for this email template
+                            </p>
+                          </div>
+                          {kind === "quote" && (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => setIsPdfModalOpen(true)}
+                            >
+                              Generate PDF
+                            </Button>
+                          )}
+                        </div>
+
+                        {forKind.length > 0 && (
+                          <div className="pl-1 space-y-1">
+                            {forKind.map((f) => (
+                              <label key={f.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name={`primaryDoc_empty_${kind}`}
+                                  checked={false}
+                                  onChange={() => setPrimaryIdForKind(kind, f.id)}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setViewingAttachment({
+                                      ...f,
+                                      contentType: f.contentType ?? "application/pdf",
+                                    })
+                                  }
+                                  className="flex-1 truncate text-left text-gray-500 dark:text-gray-400 underline underline-offset-2 decoration-dotted hover:text-blue-500"
+                                >
+                                  {f.fileName}
+                                </button>
+                                <span className="text-gray-400">{formatBytes(f.fileSize)}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
               {/* Optional additional files + upload */}
               <div className="rounded-md border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -780,10 +860,10 @@ export default function SendQuoteEmailModal({
               variant="primary"
               disabled={!canSend}
               title={
-                !pdfIsSelected
-                  ? "Generate a quote PDF first"
-                  : needsStalePdfAck
-                    ? "Confirm you've reviewed the PDF above"
+                !allRequiredPrimariesSelected
+                  ? "Add every required document type for this email template"
+                  : needsStaleQuotePrimaryAck
+                    ? "Confirm you've reviewed the quote PDF above"
                     : isOverSizeLimit
                       ? "Attachments exceed 10 MB limit"
                       : undefined

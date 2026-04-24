@@ -13,6 +13,8 @@ import type { QuoteEventContext } from "~/lib/quotes";
 import { createEvent } from "~/lib/events";
 import type { EmailSendContextHandler } from "~/lib/email/email-send-context-registry.server";
 import { resolveQuoteTokens } from "~/lib/email/resolve/quote.server";
+import { resolveEmailTemplateForContext } from "~/lib/email/templates.server";
+import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
 
 export type EmailEnqueueAuth = {
   user: User;
@@ -84,11 +86,22 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
   async verifyAttachmentIds(_auth, entityId, attachmentIds) {
     const quoteId = quoteIdFromEntityId(entityId);
 
-    // A quote PDF is always required
-    if (attachmentIds.length === 0) {
+    const resolved = await resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND);
+    if (!resolved) {
       throw new Error(
-        "A quote PDF is required. Generate a quote PDF and attach it before sending.",
+        "No active email template is configured for sending quotes. Set one in Admin → Email.",
       );
+    }
+
+    const required =
+      resolved.template.requiredAttachmentDocumentKinds ?? [];
+    if (required.length > 0 && attachmentIds.length === 0) {
+      throw new Error(
+        "This email template requires at least one attachment. Add the required file(s) before sending.",
+      );
+    }
+    if (required.length === 0 && attachmentIds.length === 0) {
+      return;
     }
 
     // Verify all attachment IDs belong to this quote and fetch documentKind
@@ -113,11 +126,19 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
       throw new Error("Invalid attachment selection");
     }
 
-    const hasQuotePdf = owned.some((r) => r.documentKind === "quote");
-    if (!hasQuotePdf) {
-      throw new Error(
-        "A quote PDF is required. Generate a quote PDF and attach it before sending.",
-      );
+    for (const kind of required) {
+      const hasKind = owned.some((r) => r.documentKind === kind);
+      if (!hasKind) {
+        const label =
+          kind === "quote"
+            ? "quote PDF"
+            : kind === "purchase_order"
+              ? "purchase order"
+              : kind.replace(/_/g, " ");
+        throw new Error(
+          `This email template requires a ${label} attachment. Add one before sending.`,
+        );
+      }
     }
   },
 

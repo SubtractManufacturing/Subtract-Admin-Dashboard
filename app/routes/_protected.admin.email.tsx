@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ChangeEvent,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { EllipsisVertical } from "lucide-react";
 import {
   json,
@@ -24,6 +18,7 @@ import Modal from "~/components/shared/Modal";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { db } from "~/lib/db";
 import {
+  attachmentDocumentKindEnum,
   emailIdentities,
   emailSettings,
   emailTemplates,
@@ -31,6 +26,8 @@ import {
   type EmailIdentity,
   type EmailTemplate,
 } from "~/lib/db/schema";
+import { ATTACHMENT_DOCUMENT_KIND_LABELS } from "~/lib/email/attachment-document-kind-labels";
+import { parseRequiredAttachmentDocumentKindsFromForm } from "~/lib/email/required-attachment-kinds.server";
 import {
   EMAIL_CONTEXTS,
   isEmailContextKey,
@@ -202,7 +199,9 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const approvalRequired = formData.get("approvalRequired") === "on";
-    const approvalRoleSlugValues = formData.getAll("approvalRoleSlug") as string[];
+    const approvalRoleSlugValues = formData.getAll(
+      "approvalRoleSlug",
+    ) as string[];
 
     if (approvalRequired && approvalRoleSlugValues.length === 0) {
       return withAuthHeaders(
@@ -236,7 +235,10 @@ export async function action({ request }: ActionFunctionArgs) {
     ).trim();
     const emailLooksValid = (v: string) =>
       v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-    if (!emailLooksValid(recipientOverride) || !emailLooksValid(globalBccArchive)) {
+    if (
+      !emailLooksValid(recipientOverride) ||
+      !emailLooksValid(globalBccArchive)
+    ) {
       return withAuthHeaders(
         json(
           { error: "Enter valid email addresses or leave the fields blank." },
@@ -924,6 +926,8 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
     const bodyCopy = bodyParsed.data;
+    const requiredAttachmentDocumentKinds =
+      parseRequiredAttachmentDocumentKindsFromForm(formData);
 
     try {
       if (intent === "createTemplate") {
@@ -935,6 +939,7 @@ export async function action({ request }: ActionFunctionArgs) {
           emailIdentityId,
           subjectTemplate,
           bodyCopy,
+          requiredAttachmentDocumentKinds,
           updatedBy,
         });
       } else {
@@ -947,6 +952,7 @@ export async function action({ request }: ActionFunctionArgs) {
             emailIdentityId,
             subjectTemplate,
             bodyCopy,
+            requiredAttachmentDocumentKinds,
             updatedAt: new Date(),
             updatedBy,
           })
@@ -1086,9 +1092,7 @@ export default function AdminEmail() {
   const templateTestAwaitingResult = useRef(false);
   const templateImportFileRef = useRef<HTMLInputElement>(null);
   const [templateTestFeedback, setTemplateTestFeedback] = useState<
-    | { kind: "ok"; text: string }
-    | { kind: "err"; text: string }
-    | null
+    { kind: "ok"; text: string } | { kind: "err"; text: string } | null
   >(null);
   /** True while the action runs (POST). */
   const fetcherIsSubmitting = fetcher.state === "submitting";
@@ -1344,6 +1348,7 @@ export default function AdminEmail() {
       fromEmail: string;
       subjectTemplate: string;
       bodyCopy: unknown;
+      requiredAttachmentDocumentKinds: string[];
     }> = [];
 
     for (const t of templates) {
@@ -1364,6 +1369,8 @@ export default function AdminEmail() {
         fromEmail: identity.fromEmail,
         subjectTemplate: t.subjectTemplate,
         bodyCopy: t.bodyCopy,
+        requiredAttachmentDocumentKinds:
+          t.requiredAttachmentDocumentKinds ?? [],
       });
     }
 
@@ -1392,7 +1399,9 @@ export default function AdminEmail() {
     templateImportFileRef.current?.click();
   }
 
-  function handleTemplateImportFileChange(event: ChangeEvent<HTMLInputElement>) {
+  function handleTemplateImportFileChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
@@ -1499,9 +1508,7 @@ export default function AdminEmail() {
                   </p>
                 </div>
                 <div>
-                  <label className={labelClass}>
-                    Outbound list — max age
-                  </label>
+                  <label className={labelClass}>Outbound list — max age</label>
                   <input
                     type="text"
                     name="emailListMaxAgeHours"
@@ -1536,7 +1543,9 @@ export default function AdminEmail() {
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Global BCC (archive copy)</label>
+                  <label className={labelClass}>
+                    Global BCC (archive copy)
+                  </label>
                   <input
                     type="email"
                     name="globalBccArchive"
@@ -1890,7 +1899,10 @@ export default function AdminEmail() {
                   Email Templates
                 </h2>
                 <div className="flex shrink-0 items-center gap-1">
-                  <div className="relative shrink-0" ref={emailTemplatesMenuTriggerRef}>
+                  <div
+                    className="relative shrink-0"
+                    ref={emailTemplatesMenuTriggerRef}
+                  >
                     <IconButton
                       type="button"
                       icon={
@@ -2458,6 +2470,69 @@ export default function AdminEmail() {
               Binds this template to an application event. Only one template per
               context.
             </p>
+          </div>
+
+          <div>
+            <label className={labelClass}>Required attachments</label>
+            <details className="relative group">
+              <summary
+                className={`${inputClass} cursor-pointer list-none flex items-center justify-between gap-2 marker:content-none [&::-webkit-details-marker]:hidden`}
+              >
+                <span className="truncate text-left">
+                  {editingTemplate
+                    ? (editingTemplate.requiredAttachmentDocumentKinds
+                        ?.length ?? 0) > 0
+                      ? (editingTemplate.requiredAttachmentDocumentKinds ?? [])
+                          .map((k) => ATTACHMENT_DOCUMENT_KIND_LABELS[k] ?? k)
+                          .join(", ")
+                      : "None (optional only)"
+                    : templateLayoutSlug === "quote-send"
+                      ? "Quote PDF"
+                      : "None (optional only)"}
+                </span>
+                <svg
+                  className="h-4 w-4 shrink-0 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </summary>
+              <div className="absolute z-20 mt-1 w-full min-w-0 max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                {attachmentDocumentKindEnum.enumValues.map((kind) => (
+                  <label
+                    key={kind}
+                    className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      name="requiredAttachmentDocumentKind"
+                      value={kind}
+                      defaultChecked={
+                        editingTemplate
+                          ? (
+                              editingTemplate.requiredAttachmentDocumentKinds ??
+                              []
+                            ).includes(kind)
+                          : templateLayoutSlug === "quote-send" &&
+                            kind === "quote"
+                      }
+                      className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"
+                    />
+                    <span className="text-gray-800 dark:text-gray-200">
+                      {ATTACHMENT_DOCUMENT_KIND_LABELS[kind]}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </details>
           </div>
 
           <div>

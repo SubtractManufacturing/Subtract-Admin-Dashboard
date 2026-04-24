@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   serial,
@@ -774,6 +775,11 @@ export const emailTemplates = pgTable("email_templates", {
   emailIdentityId: integer("email_identity_id").references(() => emailIdentities.id).notNull(),
   subjectTemplate: text("subject_template").notNull(),
   bodyCopy: jsonb("body_copy").notNull(),
+  /** Classified document kinds that must be included when sending; empty = none required */
+  requiredAttachmentDocumentKinds: jsonb("required_attachment_document_kinds")
+    .$type<AttachmentDocumentKind[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
