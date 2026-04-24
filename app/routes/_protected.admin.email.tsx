@@ -61,6 +61,7 @@ import {
   importEmailTemplatesFromPayload,
   parseEmailTemplatesImportJson,
 } from "~/lib/email/email-templates-bulk-import.server";
+import { sendDraftTemplateTestEmail } from "~/lib/email/send-draft-template-test-email.server";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -612,6 +613,65 @@ export async function action({ request }: ActionFunctionArgs) {
     return withAuthHeaders(json({ success: true }), headers);
   }
 
+  if (intent === "testTemplateDraft") {
+    const layoutSlug = (formData.get("layoutSlug") as string)?.trim();
+    const emailIdentityId = parseInt(
+      formData.get("emailIdentityId") as string,
+      10,
+    );
+
+    if (!isRegisteredEmailLayoutSlug(layoutSlug)) {
+      return withAuthHeaders(
+        json({ error: "Invalid layout slug." }, { status: 400 }),
+        headers,
+      );
+    }
+
+    if (isNaN(emailIdentityId)) {
+      return withAuthHeaders(
+        json({ error: "Select a sender identity." }, { status: 400 }),
+        headers,
+      );
+    }
+
+    const [identity] = await db
+      .select()
+      .from(emailIdentities)
+      .where(
+        and(
+          eq(emailIdentities.id, emailIdentityId),
+          eq(emailIdentities.isArchived, false),
+        ),
+      )
+      .limit(1);
+    if (!identity) {
+      return withAuthHeaders(
+        json(
+          { error: "Selected sender identity is invalid." },
+          { status: 400 },
+        ),
+        headers,
+      );
+    }
+
+    const recipientEmail = userDetails.email?.trim() ?? "";
+    const result = await sendDraftTemplateTestEmail({
+      formData,
+      recipientEmail,
+      identity,
+    });
+    if (!result.ok) {
+      return withAuthHeaders(
+        json({ error: result.error }, { status: result.status }),
+        headers,
+      );
+    }
+    return withAuthHeaders(
+      json({ success: true as const, testTemplateSent: true as const }),
+      headers,
+    );
+  }
+
   if (intent === "createTemplate" || intent === "updateTemplate") {
     const id =
       intent === "updateTemplate"
@@ -936,7 +996,19 @@ export default function AdminEmail() {
     error?: string;
     importedCount?: number;
   }>();
+  const testTemplateFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+    testTemplateSent?: boolean;
+  }>();
+  const templateFormRef = useRef<HTMLFormElement>(null);
+  const templateTestAwaitingResult = useRef(false);
   const templateImportFileRef = useRef<HTMLInputElement>(null);
+  const [templateTestFeedback, setTemplateTestFeedback] = useState<
+    | { kind: "ok"; text: string }
+    | { kind: "err"; text: string }
+    | null
+  >(null);
   /** True while the action runs (POST). */
   const fetcherIsSubmitting = fetcher.state === "submitting";
   /** True while loaders revalidate after a successful mutation (not the HTTP POST itself). */
@@ -944,6 +1016,7 @@ export default function AdminEmail() {
   /** Block competing actions until the full fetcher cycle completes. */
   const fetcherIsBusy = fetcher.state !== "idle";
   const templateImportBusy = templateImportFetcher.state !== "idle";
+  const testTemplateBusy = testTemplateFetcher.state !== "idle";
 
   function saveProgressLabel(idle: string) {
     if (fetcherIsSubmitting) return "Saving...";
@@ -986,6 +1059,36 @@ export default function AdminEmail() {
       setEditingTemplate(null);
     }
   }, [fetcher.state, fetcher.data]);
+
+  useEffect(() => {
+    if (testTemplateFetcher.state !== "idle") {
+      return;
+    }
+    if (!templateTestAwaitingResult.current) {
+      return;
+    }
+    templateTestAwaitingResult.current = false;
+    if (testTemplateFetcher.data?.error) {
+      setTemplateTestFeedback({
+        kind: "err",
+        text: testTemplateFetcher.data.error,
+      });
+      return;
+    }
+    if (testTemplateFetcher.data?.testTemplateSent) {
+      setTemplateTestFeedback({
+        kind: "ok",
+        text: "Test email sent. Check your inbox.",
+      });
+    }
+  }, [testTemplateFetcher.state, testTemplateFetcher.data]);
+
+  useEffect(() => {
+    if (!templateModalOpen) {
+      setTemplateTestFeedback(null);
+      templateTestAwaitingResult.current = false;
+    }
+  }, [templateModalOpen]);
 
   useEffect(() => {
     if (!templateModalOpen) {
@@ -2023,7 +2126,20 @@ export default function AdminEmail() {
         {templateModalOpen && errorBanner && (
           <div className="mb-4">{errorBanner}</div>
         )}
+        {templateModalOpen && templateTestFeedback && (
+          <div
+            className={
+              templateTestFeedback.kind === "ok"
+                ? "mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-900/50 dark:bg-green-950/40 dark:text-green-200"
+                : "mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200"
+            }
+          >
+            {templateTestFeedback.text}
+          </div>
+        )}
         <fetcher.Form
+          ref={templateFormRef}
+          id="admin-email-template-form"
           method="post"
           action={ADMIN_EMAIL_ACTION}
           key={`tpl-${editingTemplate?.id ?? "new"}-${templateLayoutSlug}`}
@@ -2221,7 +2337,7 @@ export default function AdminEmail() {
               })
             : null}
 
-          <div className="flex justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-600">
+          <div className="flex flex-wrap justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-600">
             <Button
               type="button"
               variant="secondary"
@@ -2232,7 +2348,37 @@ export default function AdminEmail() {
             >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={fetcherIsBusy}>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={fetcherIsBusy || testTemplateBusy}
+              onClick={() => {
+                const el =
+                  templateFormRef.current ??
+                  (typeof document !== "undefined"
+                    ? (document.getElementById(
+                        "admin-email-template-form",
+                      ) as HTMLFormElement | null)
+                    : null);
+                if (!el) {
+                  return;
+                }
+                const fd = new FormData(el);
+                fd.set("intent", "testTemplateDraft");
+                templateTestAwaitingResult.current = true;
+                testTemplateFetcher.submit(fd, {
+                  method: "post",
+                  action: ADMIN_EMAIL_ACTION,
+                });
+              }}
+            >
+              {testTemplateBusy ? "Sending…" : "Test template"}
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={fetcherIsBusy || testTemplateBusy}
+            >
               {saveProgressLabel(
                 editingTemplate ? "Save Changes" : "Create Template",
               )}

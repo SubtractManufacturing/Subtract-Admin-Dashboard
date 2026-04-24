@@ -41,7 +41,7 @@ function fail(status: number, error: string): BuildEmailContentResult {
   return { ok: false, status, error };
 }
 
-function collectBodyCopyStrings(copy: Record<string, unknown>): string[] {
+export function collectBodyCopyStrings(copy: Record<string, unknown>): string[] {
   const out: string[] = [];
   for (const value of Object.values(copy)) {
     if (typeof value === "string") {
@@ -59,7 +59,7 @@ function collectBodyCopyStrings(copy: Record<string, unknown>): string[] {
   return out;
 }
 
-function buildEmailLayoutProps(
+export function buildEmailLayoutProps(
   layoutSlug: TemplateSlug,
   copy: unknown,
   stringProps: Record<string, string>,

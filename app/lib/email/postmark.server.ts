@@ -18,33 +18,57 @@ export interface PostmarkAttachment {
 
 type PermanentError = Error & { permanent?: boolean };
 
-export async function sendViaPostmark(
-  row: SentEmail,
-  attachmentBuffers: PostmarkAttachment[]
-) {
+export type PostmarkTransactionalPayload = {
+  fromEmail: string;
+  fromDisplayName: string | null;
+  toAddresses: string[];
+  replyTo: string | null;
+  subject: string;
+  htmlBody: string;
+  textBody: string;
+  /** When set, replaces To. Intentionally omitted for admin template test sends. */
+  recipientOverride?: string | null;
+  ccAddresses?: string[] | null;
+  attachments?: PostmarkAttachment[];
+};
+
+/**
+ * Sends one message via Postmark. Prefer this for ad-hoc sends; queued mail uses
+ * {@link sendViaPostmark} with a `sent_emails` row.
+ */
+export async function sendPostmarkTransactionalEmail(
+  input: PostmarkTransactionalPayload,
+): Promise<string> {
   if (!SERVER_TOKEN) {
     throw new Error(
-      "POSTMARK_SERVER_TOKEN or POSTMARK_API_TOKEN must be set to send emails"
+      "POSTMARK_SERVER_TOKEN or POSTMARK_API_TOKEN must be set to send emails",
     );
   }
 
-  const from = row.fromDisplayName ? `${row.fromDisplayName} <${row.fromEmail}>` : row.fromEmail;
+  const from = input.fromDisplayName
+    ? `${input.fromDisplayName} <${input.fromEmail}>`
+    : input.fromEmail;
 
-  // Recipient override logic
-  const isOverride = !!row.recipientOverride;
-  const to = isOverride ? row.recipientOverride! : row.toAddresses.join(", ");
-  // Do not send CC if override is active
-  const cc = (!isOverride && row.ccAddresses?.length) ? row.ccAddresses.join(", ") : undefined;
+  const isOverride = !!input.recipientOverride;
+  const to = isOverride
+    ? input.recipientOverride!
+    : input.toAddresses.join(", ");
+  const cc =
+    !isOverride && input.ccAddresses?.length
+      ? input.ccAddresses.join(", ")
+      : undefined;
+
+  const attachmentBuffers = input.attachments ?? [];
 
   const payload = {
     From: from,
     To: to,
     ...(cc ? { Cc: cc } : {}),
-    ...(row.replyTo ? { ReplyTo: row.replyTo } : {}),
+    ...(input.replyTo ? { ReplyTo: input.replyTo } : {}),
     ...(MESSAGE_STREAM ? { MessageStream: MESSAGE_STREAM } : {}),
-    Subject: row.subject,
-    HtmlBody: row.htmlBody,
-    TextBody: row.textBody ?? "",
+    Subject: input.subject,
+    HtmlBody: input.htmlBody,
+    TextBody: input.textBody ?? "",
     Attachments: attachmentBuffers,
   };
 
@@ -59,18 +83,36 @@ export async function sendViaPostmark(
   });
 
   if (response.status === 429) {
-    // Throw a retryable error — pg-boss will back off and retry
     throw new Error("Postmark rate limit (429) — will retry");
   }
   if (!response.ok) {
     const body = await response.text();
-    // 4xx (except 429): permanent failure — don't retry
     const isPermanent = response.status >= 400 && response.status < 500;
-    const err: PermanentError = new Error(`Postmark error ${response.status}: ${body}`);
+    const err: PermanentError = new Error(
+      `Postmark error ${response.status}: ${body}`,
+    );
     err.permanent = isPermanent;
     throw err;
   }
 
   const data = (await response.json()) as { MessageID: string };
   return data.MessageID;
+}
+
+export async function sendViaPostmark(
+  row: SentEmail,
+  attachmentBuffers: PostmarkAttachment[],
+) {
+  return sendPostmarkTransactionalEmail({
+    fromEmail: row.fromEmail,
+    fromDisplayName: row.fromDisplayName,
+    toAddresses: row.toAddresses,
+    replyTo: row.replyTo,
+    subject: row.subject,
+    htmlBody: row.htmlBody,
+    textBody: row.textBody ?? "",
+    recipientOverride: row.recipientOverride,
+    ccAddresses: row.ccAddresses,
+    attachments: attachmentBuffers,
+  });
 }
