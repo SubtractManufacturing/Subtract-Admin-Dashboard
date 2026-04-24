@@ -18,6 +18,14 @@ export interface EmailSendContextHandler {
     attachmentIds: string[],
   ): Promise<void>;
   beforeEnqueue?(entityId: string, auth: EmailEnqueueAuth): Promise<void>;
+  /**
+   * After the outbound is persisted with pending_approval and attachments.
+   * Used to advance domain state (e.g. quote to Sent) without waiting for actual delivery.
+   */
+  afterPendingApprovalQueued?(
+    row: SentEmail,
+    auth: EmailEnqueueAuth,
+  ): Promise<void>;
   afterSent(row: SentEmail): Promise<void>;
 }
 

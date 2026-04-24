@@ -132,6 +132,42 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
     }
   },
 
+  async afterPendingApprovalQueued(row, auth) {
+    const quoteId = row.quoteId ?? quoteIdFromEntityId(row.entityId);
+    const before = await getQuote(quoteId);
+    if (!before) {
+      throw new Error("Quote not found");
+    }
+    const previousStatus = before.status;
+    if (previousStatus !== "RFQ" && previousStatus !== "Draft") {
+      throw new Error("Quote is not in a sendable state for approval flow");
+    }
+
+    const ctx = eventContextFromAuth(auth);
+    const transition = await transitionQuoteToSent(quoteId, ctx);
+    if (!transition.success) {
+      throw new Error(
+        transition.error ?? "Could not move quote to Sent (approval queue)",
+      );
+    }
+
+    await createEvent({
+      entityType: "quote",
+      entityId: quoteId.toString(),
+      eventType: "quote_email_awaiting_approval",
+      eventCategory: "communication",
+      title: "Quote email pending approval",
+      description:
+        "The quote is marked as sent; outbound email is waiting for approval before delivery.",
+      metadata: {
+        sentEmailId: row.id,
+        previousStatus,
+      },
+      userId: row.sentByUserId ?? undefined,
+      userEmail: row.sentByUserEmail ?? undefined,
+    });
+  },
+
   async afterSent(row) {
     const quoteId =
       row.quoteId ?? quoteIdFromEntityId(row.entityId);
@@ -151,6 +187,12 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
       userId: row.sentByUserId ?? undefined,
       userEmail: row.sentByUserEmail ?? undefined,
     });
+
+    const quote = await getQuote(quoteId);
+    if (quote?.status === "Sent") {
+      // Already moved when the message was queued for approval; delivery event only.
+      return;
+    }
 
     const result = await transitionQuoteToSent(quoteId, {
       userId: row.sentByUserId ?? undefined,

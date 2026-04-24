@@ -310,6 +310,14 @@ export async function updateQuote(
       }
     }
 
+    if (
+      updates.status &&
+      oldQuote.status === "Sent" &&
+      updates.status !== "Sent"
+    ) {
+      updateData.sentAt = null;
+    }
+
     if (updates.status === "Accepted" && oldQuote.status !== "Accepted") {
       updateData.acceptedAt = new Date();
     }

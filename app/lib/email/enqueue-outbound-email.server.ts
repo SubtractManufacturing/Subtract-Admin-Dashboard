@@ -269,6 +269,17 @@ export async function enqueueOutboundUserEmail(
     throw err;
   }
 
+  if (settings.approvalRequired && handler.afterPendingApprovalQueued) {
+    const [fullRow] = await db
+      .select()
+      .from(sentEmails)
+      .where(eq(sentEmails.id, sentEmailId))
+      .limit(1);
+    if (fullRow) {
+      await handler.afterPendingApprovalQueued(fullRow, auth);
+    }
+  }
+
   if (!settings.approvalRequired) {
     try {
       await sendEmailJob(

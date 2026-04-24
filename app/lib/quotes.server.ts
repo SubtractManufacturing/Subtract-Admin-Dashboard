@@ -1,5 +1,9 @@
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getQuote, updateQuote, type QuoteEventContext } from "./quotes";
+import { db } from "./db";
+import { eventLogs } from "./db/schema";
 import { isStripePaymentLinksEnabled } from "./featureFlags";
+import { getEventsByEntity } from "./events";
 
 export type TransitionResult =
   | { success: true }
@@ -138,6 +142,72 @@ export async function transitionQuoteToSent(
     quoteId,
     { status: "Sent", rejectionReason: null },
     eventContext
+  );
+  return { success: true };
+}
+
+/**
+ * When a quote outbound is rejected while still pending_approval, restore the quote
+ * to the status it had before the approval-queue send (RFQ or Draft) and clear send-only fields.
+ */
+export async function revertQuoteAfterPendingEmailRejection(
+  quoteId: number,
+  sentEmailId: number,
+  eventContext: QuoteEventContext,
+): Promise<TransitionResult> {
+  const quote = await getQuote(quoteId);
+  if (!quote) return { success: false, error: "Quote not found" };
+  if (quote.status !== "Sent") {
+    return { success: true };
+  }
+
+  const [fromAwaiting] = await db
+    .select()
+    .from(eventLogs)
+    .where(
+      and(
+        eq(eventLogs.entityType, "quote"),
+        eq(eventLogs.entityId, String(quoteId)),
+        eq(eventLogs.eventType, "quote_email_awaiting_approval"),
+        sql`(${eventLogs.metadata}->>'sentEmailId')::int = ${sentEmailId}`,
+      ),
+    )
+    .orderBy(desc(eventLogs.createdAt))
+    .limit(1);
+
+  let previousStatus: "RFQ" | "Draft" | null = null;
+  const m = fromAwaiting?.metadata as
+    | { previousStatus?: string }
+    | null
+    | undefined;
+  if (m?.previousStatus === "RFQ" || m?.previousStatus === "Draft") {
+    previousStatus = m.previousStatus;
+  }
+
+  if (!previousStatus) {
+    const recent = await getEventsByEntity("quote", String(quoteId), 30);
+    const toSent = recent.find(
+      (e) =>
+        e.eventType === "quote_status_changed" &&
+        (e.metadata as { newStatus?: string } | null)?.newStatus === "Sent",
+    );
+    const old = (toSent?.metadata as { oldStatus?: string } | null)?.oldStatus;
+    if (old === "RFQ" || old === "Draft") {
+      previousStatus = old;
+    }
+  }
+
+  if (!previousStatus) {
+    previousStatus = "Draft";
+  }
+
+  await updateQuote(
+    quoteId,
+    {
+      status: previousStatus,
+      validUntil: null,
+    },
+    eventContext,
   );
   return { success: true };
 }

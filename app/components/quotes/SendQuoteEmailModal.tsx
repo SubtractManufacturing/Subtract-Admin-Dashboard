@@ -36,10 +36,16 @@ type EditableSlot = {
   templateValue: string;
 };
 
+type SendQueueDelivery = "queued" | "awaiting_approval";
+
 interface SendQuoteEmailModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onQueued?: () => void;
+  /**
+   * Called when the server accepted the send. Use `delivery` to decide whether
+   * to wait on async delivery (only for immediate queue sends).
+   */
+  onSendSuccess?: (result: { delivery: SendQueueDelivery }) => void;
   quote: QuoteWithRelations & { updatedAt: string | Date };
   customer: CustomerData | null;
   attachments: AttachmentData[];
@@ -152,14 +158,18 @@ d.querySelectorAll("[data-slot-id]").forEach(function(el){
 export default function SendQuoteEmailModal({
   isOpen,
   onClose,
-  onQueued,
+  onSendSuccess,
   quote,
   customer,
   attachments,
   defaultSubject,
   editableSlots,
 }: SendQuoteEmailModalProps) {
-  const submitFetcher = useFetcher<{ success?: boolean; error?: string }>();
+  const submitFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+    delivery?: SendQueueDelivery;
+  }>();
   const previewFetcher = useFetcher<{ subject?: string; html?: string; error?: string }>();
   const uploadFetcher = useFetcher<{ success?: boolean; attachmentId?: string; error?: string }>();
   const revalidator = useRevalidator();
@@ -310,13 +320,14 @@ export default function SendQuoteEmailModal({
   // ── Submit handling ──
   useEffect(() => {
     if (submitFetcher.data?.success) {
-      onQueued?.();
+      const delivery = submitFetcher.data.delivery ?? "queued";
+      onSendSuccess?.({ delivery });
       onClose();
       revalidator.revalidate();
     } else if (submitFetcher.data?.error) {
       setSubmitError(submitFetcher.data.error);
     }
-  }, [submitFetcher.data, onClose, onQueued, revalidator]);
+  }, [submitFetcher.data, onClose, onSendSuccess, revalidator]);
 
   // ── Size calculations ──
   const allSelectedIds = [

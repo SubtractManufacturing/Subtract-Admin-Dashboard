@@ -4128,7 +4128,11 @@ export default function QuoteDetail() {
         <SendQuoteEmailModal
           isOpen={isSendEmailModalOpen}
           onClose={() => setSendEmailModalOpen(false)}
-          onQueued={() => setIsWaitingForSentStatus(true)}
+          onSendSuccess={({ delivery }) => {
+            if (delivery === "queued") {
+              setIsWaitingForSentStatus(true);
+            }
+          }}
           quote={quote}
           customer={customer}
           attachments={attachments}

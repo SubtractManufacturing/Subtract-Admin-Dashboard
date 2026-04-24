@@ -1,8 +1,8 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { and, eq } from "drizzle-orm";
-import { useFetcher, useLoaderData, Link } from "@remix-run/react";
-import { useState } from "react";
+import { useFetcher, useLoaderData, useRevalidator, Link } from "@remix-run/react";
+import { useState, useEffect, useRef } from "react";
 
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { isOutboundEmailEnabled } from "~/lib/featureFlags";
@@ -19,6 +19,7 @@ import {
   type SentEmailStatusCounts,
 } from "~/lib/sent-emails.server";
 import { sanitizeEmailHtml } from "~/lib/email/sanitize-email-html";
+import { revertQuoteAfterPendingEmailRejection } from "~/lib/quotes.server";
 
 const INTENT_REVIEW = "reviewOutboundEmail";
 const INTENT_PREVIEW = "emailPreviewToSelf";
@@ -78,9 +79,10 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const intent = (formData.get("intent") as string) || "";
   const sentEmailIdRaw = formData.get("sentEmailId") as string | null;
-  const sentEmailId = sentEmailIdRaw != null && sentEmailIdRaw !== ""
-    ? parseInt(sentEmailIdRaw, 10)
-    : NaN;
+  const sentEmailId =
+    sentEmailIdRaw != null && sentEmailIdRaw !== ""
+      ? parseInt(sentEmailIdRaw, 10)
+      : NaN;
   if (!Number.isFinite(sentEmailId)) {
     return withAuthHeaders(
       json({ error: "Missing or invalid sent email id." }, { status: 400 }),
@@ -126,7 +128,10 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     if (row.status !== "pending_approval") {
       return withAuthHeaders(
-        json({ error: "This message is not awaiting approval." }, { status: 409 }),
+        json(
+          { error: "This message is not awaiting approval." },
+          { status: 409 },
+        ),
         headers,
       );
     }
@@ -172,7 +177,10 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     if (row.status !== "pending_approval") {
       return withAuthHeaders(
-        json({ error: "This message is not awaiting approval." }, { status: 409 }),
+        json(
+          { error: "This message is not awaiting approval." },
+          { status: 409 },
+        ),
         headers,
       );
     }
@@ -243,6 +251,16 @@ export async function action({ request }: ActionFunctionArgs) {
         ),
         headers,
       );
+    }
+    if (row.entityType === "quote" && row.quoteId != null) {
+      try {
+        await revertQuoteAfterPendingEmailRejection(row.quoteId, sentEmailId, {
+          userId: user.id,
+          userEmail: user.email ?? userDetails.email ?? undefined,
+        });
+      } catch (e) {
+        console.error("[reviewOutboundEmail:reject] revertQuote", e);
+      }
     }
     return withAuthHeaders(
       json({ success: true, result: "rejected" as const }),
@@ -350,7 +368,7 @@ function SummaryStrip({ counts }: { counts: SentEmailStatusCounts }) {
       className: "text-orange-700 dark:text-orange-400",
     },
     {
-      label: "Rejected (QA)",
+      label: "Rejected",
       value: counts.rejected,
       className: "text-gray-600 dark:text-gray-400",
     },
@@ -505,6 +523,20 @@ function EmailRow({
     error?: string;
     result?: string;
   }>();
+  const revalidator = useRevalidator();
+  const lastRevalidatedKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (reviewFetcher.state !== "idle" || !reviewFetcher.data?.success) {
+      return;
+    }
+    const key = `${email.id}-${reviewFetcher.data.result ?? "ok"}`;
+    if (lastRevalidatedKey.current === key) {
+      return;
+    }
+    lastRevalidatedKey.current = key;
+    revalidator.revalidate();
+  }, [email.id, revalidator, reviewFetcher.data, reviewFetcher.state]);
 
   const entityLink =
     email.entityType === "quote" && email.quoteId
@@ -517,8 +549,7 @@ function EmailRow({
     timeStyle: "short",
   });
 
-  const showApproverBar =
-    isApprover && email.status === "pending_approval";
+  const showApproverBar = isApprover && email.status === "pending_approval";
   const busy = reviewFetcher.state !== "idle";
 
   return (
@@ -579,11 +610,7 @@ function EmailRow({
           <reviewFetcher.Form method="post" className="inline">
             <input type="hidden" name="intent" value={INTENT_REVIEW} />
             <input type="hidden" name="decision" value="approve" />
-            <input
-              type="hidden"
-              name="sentEmailId"
-              value={String(email.id)}
-            />
+            <input type="hidden" name="sentEmailId" value={String(email.id)} />
             <button
               type="submit"
               className={approverFormClass(busy)}
@@ -595,11 +622,7 @@ function EmailRow({
           <reviewFetcher.Form method="post" className="inline">
             <input type="hidden" name="intent" value={INTENT_REVIEW} />
             <input type="hidden" name="decision" value="reject" />
-            <input
-              type="hidden"
-              name="sentEmailId"
-              value={String(email.id)}
-            />
+            <input type="hidden" name="sentEmailId" value={String(email.id)} />
             <button
               type="submit"
               className={rejectFormClass(busy)}
@@ -610,11 +633,7 @@ function EmailRow({
           </reviewFetcher.Form>
           <reviewFetcher.Form method="post" className="inline">
             <input type="hidden" name="intent" value={INTENT_PREVIEW} />
-            <input
-              type="hidden"
-              name="sentEmailId"
-              value={String(email.id)}
-            />
+            <input type="hidden" name="sentEmailId" value={String(email.id)} />
             <button
               type="submit"
               className={previewFormClass(busy || !hasRegisteredEmail)}
@@ -644,8 +663,13 @@ function EmailRow({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmailIndexPage() {
-  const { pendingApprovalEmails, emails, counts, isApprover, hasRegisteredEmail } =
-    useLoaderData<typeof loader>();
+  const {
+    pendingApprovalEmails,
+    emails,
+    counts,
+    isApprover,
+    hasRegisteredEmail,
+  } = useLoaderData<typeof loader>();
 
   return (
     <div className="p-6 md:p-8">
@@ -653,10 +677,6 @@ export default function EmailIndexPage() {
         <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
           Outbound email
         </h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          All outbound messages (including those awaiting send). Open a row to
-          preview the rendered HTML, or use the list to track delivery.
-        </p>
       </header>
 
       <SummaryStrip counts={counts} />
