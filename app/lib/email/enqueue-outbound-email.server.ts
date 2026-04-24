@@ -52,7 +52,7 @@ export type EnqueueOutboundEmailInput = {
 };
 
 export type EnqueueOutboundEmailResult =
-  | { ok: true }
+  | { ok: true; delivery: "queued" | "awaiting_approval" }
   | { ok: false; status: number; error: string };
 
 export async function enqueueOutboundUserEmail(
@@ -136,7 +136,12 @@ export async function enqueueOutboundUserEmail(
       and(
         eq(sentEmails.entityType, entityType),
         eq(sentEmails.entityId, entityId),
-        inArray(sentEmails.status, ["queued", "sending", "sent"]),
+        inArray(sentEmails.status, [
+          "queued",
+          "sending",
+          "sent",
+          "pending_approval",
+        ]),
         gte(sentEmails.createdAt, throttleSince),
       ),
     )
@@ -210,6 +215,10 @@ export async function enqueueOutboundUserEmail(
     return fail(400, "Invalid quote id");
   }
 
+  const initialStatus = settings.approvalRequired
+    ? "pending_approval"
+    : "queued";
+
   let sentEmailId: number;
   try {
     sentEmailId = await db.transaction(async (tx) => {
@@ -236,7 +245,7 @@ export async function enqueueOutboundUserEmail(
           source: "user",
           sentByUserId: user.id,
           sentByUserEmail: user.email ?? undefined,
-          status: "queued",
+          status: initialStatus,
         })
         .returning({ id: sentEmails.id });
       if (!row) {
@@ -260,14 +269,19 @@ export async function enqueueOutboundUserEmail(
     throw err;
   }
 
-  try {
-    await sendEmailJob(
-      { sentEmailId },
-      settings.outboundDelayMinutes,
-    );
-  } catch (e) {
-    console.error("[enqueueOutboundUserEmail] sendEmailJob failed", e);
+  if (!settings.approvalRequired) {
+    try {
+      await sendEmailJob(
+        { sentEmailId },
+        settings.outboundDelayMinutes,
+      );
+    } catch (e) {
+      console.error("[enqueueOutboundUserEmail] sendEmailJob failed", e);
+    }
   }
 
-  return { ok: true };
+  return {
+    ok: true,
+    delivery: settings.approvalRequired ? "awaiting_approval" : "queued",
+  };
 }

@@ -1,39 +1,257 @@
 import { json } from "@remix-run/node";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Link } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { and, eq } from "drizzle-orm";
+import { useFetcher, useLoaderData, Link } from "@remix-run/react";
 import { useState } from "react";
 
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { isOutboundEmailEnabled } from "~/lib/featureFlags";
+import { getEmailSettings } from "~/lib/email/templates.server";
+import { sendApprovalPreviewToApproverInbox } from "~/lib/email/send-approval-preview-to-self.server";
+import { sendEmailJob } from "~/lib/queue/producer.server";
+import { db } from "~/lib/db";
+import { sentEmails } from "~/lib/db/schema";
 import {
   listRecentSentEmails,
+  listPendingApprovalEmails,
   getSentEmailStatusCounts,
   type SentEmailListItem,
   type SentEmailStatusCounts,
 } from "~/lib/sent-emails.server";
 import { sanitizeEmailHtml } from "~/lib/email/sanitize-email-html";
 
+const INTENT_REVIEW = "reviewOutboundEmail";
+const INTENT_PREVIEW = "emailPreviewToSelf";
+
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { headers } = await requireAuth(request);
+  const { userDetails, headers } = await requireAuth(request);
 
   if (!(await isOutboundEmailEnabled())) {
     throw new Response("Access Denied", { status: 403 });
   }
 
-  const [emails, counts] = await Promise.all([
+  const [pendingApprovalEmails, emails, counts, settings] = await Promise.all([
+    listPendingApprovalEmails(),
     listRecentSentEmails({ limit: 50 }),
     getSentEmailStatusCounts(),
+    getEmailSettings(),
   ]);
+
+  const isApprover = settings.approvalRoleSlugs.includes(userDetails.role);
+  const hasRegisteredEmail = Boolean(
+    (userDetails.email || "").trim().length > 0,
+  );
 
   return withAuthHeaders(
     json({
+      pendingApprovalEmails: pendingApprovalEmails.map((e) => ({
+        ...e,
+        createdAt: e.createdAt.toISOString(),
+        sentAt: e.sentAt ? e.sentAt.toISOString() : null,
+      })),
       emails: emails.map((e) => ({
         ...e,
         createdAt: e.createdAt.toISOString(),
         sentAt: e.sentAt ? e.sentAt.toISOString() : null,
       })),
       counts,
+      isApprover,
+      hasRegisteredEmail,
     }),
+    headers,
+  );
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed" }, { status: 405 });
+  }
+
+  const { user, userDetails, headers } = await requireAuth(request);
+  if (!(await isOutboundEmailEnabled())) {
+    return withAuthHeaders(
+      json({ error: "Outbound email is disabled." }, { status: 403 }),
+      headers,
+    );
+  }
+
+  const formData = await request.formData();
+  const intent = (formData.get("intent") as string) || "";
+  const sentEmailIdRaw = formData.get("sentEmailId") as string | null;
+  const sentEmailId = sentEmailIdRaw != null && sentEmailIdRaw !== ""
+    ? parseInt(sentEmailIdRaw, 10)
+    : NaN;
+  if (!Number.isFinite(sentEmailId)) {
+    return withAuthHeaders(
+      json({ error: "Missing or invalid sent email id." }, { status: 400 }),
+      headers,
+    );
+  }
+
+  const settings = await getEmailSettings();
+  if (!settings.approvalRoleSlugs.includes(userDetails.role)) {
+    return withAuthHeaders(
+      json(
+        { error: "You are not authorized to review outbound email." },
+        { status: 403 },
+      ),
+      headers,
+    );
+  }
+
+  if (intent === INTENT_PREVIEW) {
+    const to = (user.email || userDetails.email || "").trim();
+    if (!to) {
+      return withAuthHeaders(
+        json(
+          {
+            error:
+              "No email on your account. Add an email in your profile before using this.",
+          },
+          { status: 400 },
+        ),
+        headers,
+      );
+    }
+    const [row] = await db
+      .select()
+      .from(sentEmails)
+      .where(eq(sentEmails.id, sentEmailId))
+      .limit(1);
+    if (!row) {
+      return withAuthHeaders(
+        json({ error: "Email not found." }, { status: 404 }),
+        headers,
+      );
+    }
+    if (row.status !== "pending_approval") {
+      return withAuthHeaders(
+        json({ error: "This message is not awaiting approval." }, { status: 409 }),
+        headers,
+      );
+    }
+    try {
+      await sendApprovalPreviewToApproverInbox(row, to);
+    } catch (e) {
+      console.error("[emailPreviewToSelf]", e);
+      return withAuthHeaders(
+        json(
+          {
+            error:
+              "Could not send preview. Try again or contact an administrator.",
+          },
+          { status: 502 },
+        ),
+        headers,
+      );
+    }
+    return withAuthHeaders(
+      json({ success: true, result: "previewEmailed" as const }),
+      headers,
+    );
+  }
+
+  if (intent === INTENT_REVIEW) {
+    const decision = (formData.get("decision") as string) || "";
+    if (decision !== "approve" && decision !== "reject") {
+      return withAuthHeaders(
+        json({ error: "Invalid decision." }, { status: 400 }),
+        headers,
+      );
+    }
+    const [row] = await db
+      .select()
+      .from(sentEmails)
+      .where(eq(sentEmails.id, sentEmailId))
+      .limit(1);
+    if (!row) {
+      return withAuthHeaders(
+        json({ error: "Email not found." }, { status: 404 }),
+        headers,
+      );
+    }
+    if (row.status !== "pending_approval") {
+      return withAuthHeaders(
+        json({ error: "This message is not awaiting approval." }, { status: 409 }),
+        headers,
+      );
+    }
+
+    const now = new Date();
+    if (decision === "approve") {
+      const approved = await db
+        .update(sentEmails)
+        .set({
+          status: "queued",
+          approvedByUserId: user.id,
+          approvedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(sentEmails.id, sentEmailId),
+            eq(sentEmails.status, "pending_approval"),
+          ),
+        )
+        .returning({ id: sentEmails.id });
+      if (approved.length === 0) {
+        return withAuthHeaders(
+          json(
+            {
+              error:
+                "This message is not awaiting approval (it may have changed).",
+            },
+            { status: 409 },
+          ),
+          headers,
+        );
+      }
+      try {
+        await sendEmailJob({ sentEmailId }, settings.outboundDelayMinutes);
+      } catch (e) {
+        console.error("[reviewOutboundEmail:approve] sendEmailJob", e);
+      }
+      return withAuthHeaders(
+        json({ success: true, result: "approved" as const }),
+        headers,
+      );
+    }
+
+    const rejected = await db
+      .update(sentEmails)
+      .set({
+        status: "rejected",
+        rejectedByUserId: user.id,
+        rejectedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(sentEmails.id, sentEmailId),
+          eq(sentEmails.status, "pending_approval"),
+        ),
+      )
+      .returning({ id: sentEmails.id });
+    if (rejected.length === 0) {
+      return withAuthHeaders(
+        json(
+          {
+            error:
+              "This message is not awaiting approval (it may have changed).",
+          },
+          { status: 409 },
+        ),
+        headers,
+      );
+    }
+    return withAuthHeaders(
+      json({ success: true, result: "rejected" as const }),
+      headers,
+    );
+  }
+
+  return withAuthHeaders(
+    json({ error: "Invalid action." }, { status: 400 }),
     headers,
   );
 }
@@ -45,7 +263,7 @@ type EmailStatus = SentEmailListItem["status"];
 const STATUS_CONFIG: Record<EmailStatus, { label: string; className: string }> =
   {
     queued: {
-      label: "Pending",
+      label: "Pending send",
       className:
         "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
     },
@@ -68,6 +286,16 @@ const STATUS_CONFIG: Record<EmailStatus, { label: string; className: string }> =
       className:
         "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
     },
+    pending_approval: {
+      label: "Needs approval",
+      className:
+        "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+    },
+    rejected: {
+      label: "Rejected",
+      className:
+        "bg-gray-100 text-gray-600 dark:bg-gray-800/60 dark:text-gray-400",
+    },
   };
 
 function StatusBadge({ status }: { status: EmailStatus }) {
@@ -89,6 +317,14 @@ function StatusBadge({ status }: { status: EmailStatus }) {
 function SummaryStrip({ counts }: { counts: SentEmailStatusCounts }) {
   const items = [
     {
+      label: "Needs approval",
+      value: counts.pendingApproval,
+      className:
+        counts.pendingApproval > 0
+          ? "text-purple-700 dark:text-purple-400"
+          : "text-gray-400 dark:text-gray-500",
+    },
+    {
       label: "Total",
       value: counts.total,
       className: "text-gray-900 dark:text-gray-100",
@@ -99,7 +335,7 @@ function SummaryStrip({ counts }: { counts: SentEmailStatusCounts }) {
       className: "text-green-700 dark:text-green-400",
     },
     {
-      label: "Pending",
+      label: "Pending send",
       value: counts.inFlight,
       className: "text-yellow-700 dark:text-yellow-400",
     },
@@ -112,6 +348,11 @@ function SummaryStrip({ counts }: { counts: SentEmailStatusCounts }) {
       label: "Bounced",
       value: counts.bounced,
       className: "text-orange-700 dark:text-orange-400",
+    },
+    {
+      label: "Rejected (QA)",
+      value: counts.rejected,
+      className: "text-gray-600 dark:text-gray-400",
     },
   ];
 
@@ -220,12 +461,50 @@ function EmailPreview({
 
 // ─── Row ─────────────────────────────────────────────────────────────────────
 
+type RowEmail = SentEmailListItem & {
+  createdAt: string;
+  sentAt: string | null;
+};
+
+function approverFormClass(disabled: boolean) {
+  return `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+    disabled
+      ? "cursor-not-allowed bg-gray-100 text-gray-400 dark:bg-slate-700 dark:text-slate-500"
+      : "bg-[#840606] text-white hover:bg-[#6a0505] dark:bg-red-700 dark:hover:bg-red-600"
+  }`;
+}
+
+function rejectFormClass(disabled: boolean) {
+  return `rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+    disabled
+      ? "cursor-not-allowed border-gray-200 text-gray-400 dark:border-slate-600"
+      : "border-gray-300 text-gray-800 hover:bg-gray-50 dark:border-slate-600 dark:text-gray-200 dark:hover:bg-slate-700"
+  }`;
+}
+
+function previewFormClass(disabled: boolean) {
+  return `rounded-md border border-purple-200 bg-purple-50 px-3 py-1.5 text-sm font-medium text-purple-900 transition-colors dark:border-purple-800 dark:bg-purple-900/30 dark:text-purple-200 ${
+    disabled
+      ? "cursor-not-allowed opacity-50"
+      : "hover:bg-purple-100 dark:hover:bg-purple-900/50"
+  }`;
+}
+
 function EmailRow({
   email,
+  isApprover,
+  hasRegisteredEmail,
 }: {
-  email: SentEmailListItem & { createdAt: string; sentAt: string | null };
+  email: RowEmail;
+  isApprover: boolean;
+  hasRegisteredEmail: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const reviewFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+    result?: string;
+  }>();
 
   const entityLink =
     email.entityType === "quote" && email.quoteId
@@ -238,6 +517,10 @@ function EmailRow({
     timeStyle: "short",
   });
 
+  const showApproverBar =
+    isApprover && email.status === "pending_approval";
+  const busy = reviewFetcher.state !== "idle";
+
   return (
     <li className="border-b border-gray-200 last:border-0 dark:border-slate-700">
       <button
@@ -246,7 +529,6 @@ function EmailRow({
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        {/* Expand chevron */}
         <span className="mt-0.5 flex-shrink-0 text-gray-400 dark:text-gray-500">
           <svg
             className={`h-4 w-4 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
@@ -263,12 +545,10 @@ function EmailRow({
           </svg>
         </span>
 
-        {/* Status badge */}
         <span className="mt-0.5 flex-shrink-0">
           <StatusBadge status={email.status} />
         </span>
 
-        {/* Main content */}
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium text-gray-900 dark:text-gray-100">
             {email.subject}
@@ -278,7 +558,6 @@ function EmailRow({
           </span>
         </span>
 
-        {/* Right meta */}
         <span className="flex flex-shrink-0 flex-col items-end gap-1">
           <span className="text-xs text-gray-400 dark:text-gray-500">
             {dateLabel}
@@ -295,6 +574,68 @@ function EmailRow({
         </span>
       </button>
 
+      {showApproverBar && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-4 pb-3 dark:border-slate-700/80">
+          <reviewFetcher.Form method="post" className="inline">
+            <input type="hidden" name="intent" value={INTENT_REVIEW} />
+            <input type="hidden" name="decision" value="approve" />
+            <input
+              type="hidden"
+              name="sentEmailId"
+              value={String(email.id)}
+            />
+            <button
+              type="submit"
+              className={approverFormClass(busy)}
+              disabled={busy}
+            >
+              Approve
+            </button>
+          </reviewFetcher.Form>
+          <reviewFetcher.Form method="post" className="inline">
+            <input type="hidden" name="intent" value={INTENT_REVIEW} />
+            <input type="hidden" name="decision" value="reject" />
+            <input
+              type="hidden"
+              name="sentEmailId"
+              value={String(email.id)}
+            />
+            <button
+              type="submit"
+              className={rejectFormClass(busy)}
+              disabled={busy}
+            >
+              Reject
+            </button>
+          </reviewFetcher.Form>
+          <reviewFetcher.Form method="post" className="inline">
+            <input type="hidden" name="intent" value={INTENT_PREVIEW} />
+            <input
+              type="hidden"
+              name="sentEmailId"
+              value={String(email.id)}
+            />
+            <button
+              type="submit"
+              className={previewFormClass(busy || !hasRegisteredEmail)}
+              disabled={busy || !hasRegisteredEmail}
+              title={
+                hasRegisteredEmail
+                  ? "Send a copy to your registered account email to open in your own mail app"
+                  : "Add an email to your account to use this"
+              }
+            >
+              Email me a preview
+            </button>
+          </reviewFetcher.Form>
+          {reviewFetcher.data?.error && (
+            <p className="w-full text-sm text-red-600 dark:text-red-400">
+              {reviewFetcher.data.error}
+            </p>
+          )}
+        </div>
+      )}
+
       {expanded && <EmailPreview email={email} />}
     </li>
   );
@@ -303,7 +644,8 @@ function EmailRow({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmailIndexPage() {
-  const { emails, counts } = useLoaderData<typeof loader>();
+  const { pendingApprovalEmails, emails, counts, isApprover, hasRegisteredEmail } =
+    useLoaderData<typeof loader>();
 
   return (
     <div className="p-6 md:p-8">
@@ -312,21 +654,52 @@ export default function EmailIndexPage() {
           Outbound email
         </h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          All outbound emails. Click any row to preview the rendered message.
+          All outbound messages (including those awaiting send). Open a row to
+          preview the rendered HTML, or use the list to track delivery.
         </p>
       </header>
 
       <SummaryStrip counts={counts} />
 
+      {pendingApprovalEmails.length > 0 && (
+        <div className="mb-8">
+          <h2 className="mb-3 text-base font-semibold text-purple-700 dark:text-purple-400">
+            Awaiting approval ({pendingApprovalEmails.length})
+          </h2>
+          <div className="overflow-hidden rounded-lg border-2 border-purple-300 bg-white shadow-sm dark:border-purple-800 dark:bg-slate-800">
+            {pendingApprovalEmails.length === 0 ? null : (
+              <ul className="divide-y-0">
+                {pendingApprovalEmails.map((email: RowEmail) => (
+                  <EmailRow
+                    key={email.id}
+                    email={email}
+                    isApprover={isApprover}
+                    hasRegisteredEmail={hasRegisteredEmail}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      <h2 className="mb-3 text-sm font-medium text-gray-500 dark:text-gray-400">
+        Recent activity
+      </h2>
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
         {emails.length === 0 ? (
           <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
-            No outbound emails have been recorded yet.
+            No outbound email has been recorded yet.
           </p>
         ) : (
           <ul className="divide-y-0">
-            {emails.map((email: SentEmailListItem & { createdAt: string; sentAt: string | null }) => (
-              <EmailRow key={email.id} email={email} />
+            {emails.map((email: RowEmail) => (
+              <EmailRow
+                key={email.id}
+                email={email}
+                isApprover={isApprover}
+                hasRegisteredEmail={hasRegisteredEmail}
+              />
             ))}
           </ul>
         )}
