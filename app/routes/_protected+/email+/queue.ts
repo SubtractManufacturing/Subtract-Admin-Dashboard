@@ -79,5 +79,5 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: result.error }, { status: result.status });
   }
 
-  return json({ success: true });
+  return json({ success: true, delivery: result.delivery });
 }

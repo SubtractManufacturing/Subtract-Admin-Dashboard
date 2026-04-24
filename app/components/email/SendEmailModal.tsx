@@ -6,6 +6,8 @@ import Button from "~/components/shared/Button";
 export type SendEmailModalData = {
   success?: boolean;
   error?: string;
+  /** Present when `success` — from `/email/queue` after outbound enqueue */
+  delivery?: "queued" | "awaiting_approval";
 };
 
 export type SendEmailAttachmentItem = {

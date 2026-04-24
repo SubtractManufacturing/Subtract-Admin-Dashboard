@@ -40,6 +40,8 @@ export const orderStatusEnum = pgEnum("order_status", [
   "Archived",
 ]);
 export const userRoleEnum = pgEnum("user_role", ["User", "Admin", "Dev"]);
+export const USER_ROLES = userRoleEnum.enumValues;
+export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export const userStatusEnum = pgEnum("user_status", [
   "pending",
   "active",
@@ -52,6 +54,8 @@ export const sentEmailStatusEnum = pgEnum("sent_email_status", [
   "sent",
   "failed",
   "bounced",
+  "pending_approval",
+  "rejected",
 ]);
 export const sentEmailEntityTypeEnum = pgEnum("sent_email_entity_type", [
   "quote",
@@ -818,6 +822,11 @@ export const sentEmails = pgTable(
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
+
+    approvedByUserId: text("approved_by_user_id").references(() => users.id),
+    approvedAt: timestamp("approved_at"),
+    rejectedByUserId: text("rejected_by_user_id").references(() => users.id),
+    rejectedAt: timestamp("rejected_at"),
   },
   (table) => ({
     quoteIdx: index("sent_emails_quote_idx").on(table.quoteId),

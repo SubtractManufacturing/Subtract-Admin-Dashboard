@@ -27,6 +27,7 @@ import {
   emailIdentities,
   emailSettings,
   emailTemplates,
+  USER_ROLES,
   type EmailIdentity,
   type EmailTemplate,
 } from "~/lib/db/schema";
@@ -74,6 +75,8 @@ type EmailSnippetRow = { key: string; value: string };
 const RESERVED_SNIPPET_KEYS = new Set([
   "outbound_delay_minutes",
   "recipient_override",
+  "outbound_approval_required",
+  "outbound_approval_role_slugs",
 ]);
 
 /**
@@ -142,6 +145,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
       settings: {
         outboundDelayMinutes: settingsMap.get("outbound_delay_minutes") || "0",
         recipientOverride: settingsMap.get("recipient_override") || "",
+        approvalRequired:
+          settingsMap.get("outbound_approval_required") === "true",
+        approvalRoleSlugs: (() => {
+          try {
+            return JSON.parse(
+              settingsMap.get("outbound_approval_role_slugs") ?? "[]",
+            ) as string[];
+          } catch {
+            return [] as string[];
+          }
+        })(),
       },
       snippets,
       identities,
@@ -181,11 +195,35 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
+    const approvalRequired = formData.get("approvalRequired") === "on";
+    const approvalRoleSlugValues = formData.getAll("approvalRoleSlug") as string[];
+
+    if (approvalRequired && approvalRoleSlugValues.length === 0) {
+      return withAuthHeaders(
+        json(
+          {
+            error:
+              "Select at least one approver role before enabling approval.",
+          },
+          { status: 400 },
+        ),
+        headers,
+      );
+    }
+
     const updates = [
       { key: "outbound_delay_minutes", value: String(delay) },
       {
         key: "recipient_override",
         value: ((formData.get("recipientOverride") as string) ?? "").trim(),
+      },
+      {
+        key: "outbound_approval_required",
+        value: approvalRequired ? "true" : "false",
+      },
+      {
+        key: "outbound_approval_role_slugs",
+        value: JSON.stringify(approvalRoleSlugValues),
       },
     ];
 
@@ -1422,6 +1460,83 @@ export default function AdminEmail() {
                   <p className={helperClass}>
                     Routes all outbound email to this address instead. For
                     testing.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3 border-t border-gray-200 pt-5 dark:border-gray-600">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id="approvalRequired"
+                      name="approvalRequired"
+                      defaultChecked={settings.approvalRequired}
+                      className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"
+                    />
+                    <label
+                      htmlFor="approvalRequired"
+                      className="text-sm font-medium text-gray-900 dark:text-gray-100"
+                    >
+                      Require approval before sending outbound email
+                    </label>
+                  </div>
+                  <p className={`${helperClass} mt-1`}>
+                    Applies to all outbound user sends. Approvers use the
+                    Outbound email list to approve, reject, or email themselves
+                    a preview.
+                  </p>
+                </div>
+                <div>
+                  <label className={labelClass}>Approver roles</label>
+                  <details className="relative group">
+                    <summary
+                      className={`${inputClass} cursor-pointer list-none flex items-center justify-between gap-2 marker:content-none [&::-webkit-details-marker]:hidden`}
+                    >
+                      <span className="truncate text-left">
+                        {settings.approvalRoleSlugs.length > 0
+                          ? settings.approvalRoleSlugs.join(", ")
+                          : "Select roles…"}
+                      </span>
+                      <svg
+                        className="h-4 w-4 shrink-0 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 9l-7 7-7-7"
+                        />
+                      </svg>
+                    </summary>
+                    <div className="absolute z-20 mt-1 w-full min-w-0 max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                      {USER_ROLES.map((role) => (
+                        <label
+                          key={role}
+                          className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-slate-700"
+                        >
+                          <input
+                            type="checkbox"
+                            name="approvalRoleSlug"
+                            value={role}
+                            defaultChecked={settings.approvalRoleSlugs.includes(
+                              role,
+                            )}
+                            className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"
+                          />
+                          <span className="text-gray-800 dark:text-gray-200">
+                            {role}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                  <p className={helperClass}>
+                    Users with these roles can approve, reject, or request a
+                    copy to their registered email from the list.
                   </p>
                 </div>
               </div>

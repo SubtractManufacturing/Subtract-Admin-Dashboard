@@ -22,9 +22,22 @@ export async function getEmailSettings() {
       map.set(s.key, s.value);
     }
   }
+  let approvalRoleSlugs: string[] = [];
+  try {
+    const raw = map.get("outbound_approval_role_slugs") ?? "[]";
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      approvalRoleSlugs = parsed.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    approvalRoleSlugs = [];
+  }
+
   return {
     outboundDelayMinutes: parseInt(map.get("outbound_delay_minutes") || "0", 10) || 0,
     recipientOverride: map.get("recipient_override") || null,
+    approvalRequired: map.get("outbound_approval_required") === "true",
+    approvalRoleSlugs,
   };
 }
 

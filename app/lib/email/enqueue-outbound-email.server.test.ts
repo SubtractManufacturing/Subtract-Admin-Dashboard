@@ -162,8 +162,10 @@ const mockTemplateBase = {
 
 beforeEach(() => {
   mockGetSettings.mockResolvedValue({
-    outboundDelayMinutes: "0",
-    recipientOverride: "",
+    outboundDelayMinutes: 0,
+    recipientOverride: null,
+    approvalRequired: false,
+    approvalRoleSlugs: [],
   });
   mockGetMergeFields.mockResolvedValue({});
   mockBuildMergeProps.mockResolvedValue({});
@@ -343,8 +345,68 @@ describe("enqueueOutboundUserEmail — valid send", () => {
 
     const result = await enqueueOutboundUserEmail(baseInput);
     expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.delivery).toBe("queued");
+    }
     expect(mockRenderEmailTemplate).toHaveBeenCalledOnce();
     expect(mockSendEmailJob).toHaveBeenCalledOnce();
+  });
+});
+
+describe("enqueueOutboundUserEmail — approval gate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveTemplate.mockResolvedValue({
+      template: {
+        ...mockTemplateBase,
+        layoutSlug: "quote-send",
+        bodyCopy: {
+          greeting: "Hi Acme Corp,",
+          intro: "Your quote is attached.",
+          totalLabel: "Total:",
+          payNowButton: { buttonLabel: "", link: "" },
+          signOff: "Best regards",
+          signature: "Subtract Manufacturing",
+          footer: "Footer.",
+        },
+      },
+      identity: mockIdentity,
+      layoutSlug: "quote-send" as const,
+    });
+    mockGetMergeFields.mockResolvedValue({});
+    mockBuildMergeProps.mockResolvedValue({});
+    mockRenderEmailTemplate.mockResolvedValue({ html: "<p>Hello</p>", text: "Hello" });
+    mockSendEmailJob.mockResolvedValue(undefined);
+  });
+
+  it("returns delivery=awaiting_approval and does not call sendEmailJob when approvalRequired is true", async () => {
+    mockGetSettings.mockResolvedValue({
+      outboundDelayMinutes: 0,
+      recipientOverride: null,
+      approvalRequired: true,
+      approvalRoleSlugs: ["Admin"],
+    });
+    const result = await enqueueOutboundUserEmail(baseInput);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.delivery).toBe("awaiting_approval");
+    }
+    expect(mockSendEmailJob).not.toHaveBeenCalled();
+  });
+
+  it("returns delivery=queued and calls sendEmailJob when approvalRequired is false", async () => {
+    mockGetSettings.mockResolvedValue({
+      outboundDelayMinutes: 0,
+      recipientOverride: null,
+      approvalRequired: false,
+      approvalRoleSlugs: [],
+    });
+    const result = await enqueueOutboundUserEmail(baseInput);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.delivery).toBe("queued");
+    }
+    expect(mockSendEmailJob).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -375,7 +437,12 @@ describe("enqueueOutboundUserEmail — bodyCopyOverrides", () => {
     vi.clearAllMocks();
     mockResolveTemplate.mockResolvedValue(validTemplateMock);
     mockGetMergeFields.mockResolvedValue({});
-    mockGetSettings.mockResolvedValue({ outboundDelayMinutes: 0, recipientOverride: "" });
+    mockGetSettings.mockResolvedValue({
+      outboundDelayMinutes: 0,
+      recipientOverride: null,
+      approvalRequired: false,
+      approvalRoleSlugs: [],
+    });
     mockBuildMergeProps.mockResolvedValue({
       customerName: "Acme",
       quoteNumber: "26Q00001",
