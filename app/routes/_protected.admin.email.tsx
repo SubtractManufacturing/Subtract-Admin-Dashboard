@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { EllipsisVertical } from "lucide-react";
 import {
   json,
   redirect,
@@ -9,6 +10,8 @@ import { useFetcher, useLoaderData } from "@remix-run/react";
 import { and, desc, eq } from "drizzle-orm";
 import { matchSorter } from "match-sorter";
 import Button from "~/components/admin/Button";
+import { EmailMergeTokensReferenceModal } from "~/components/admin/EmailMergeTokensReferenceModal";
+import { EmailTemplatesToolbarMenu } from "~/components/admin/EmailTemplatesToolbarMenu";
 import AdminPageHeader from "~/components/admin/PageHeader";
 import { IconButton } from "~/components/shared/IconButton";
 import Modal from "~/components/shared/Modal";
@@ -892,6 +895,11 @@ export default function AdminEmail() {
   );
   const [templateLayoutSlug, setTemplateLayoutSlug] =
     useState<TemplateSlug>("quote-send");
+  const [mergeTokensReferenceOpen, setMergeTokensReferenceOpen] =
+    useState(false);
+  const [emailTemplatesToolbarMenuOpen, setEmailTemplatesToolbarMenuOpen] =
+    useState(false);
+  const emailTemplatesMenuTriggerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success) {
@@ -1062,7 +1070,10 @@ export default function AdminEmail() {
   }
 
   const anyModalOpen =
-    identityModalOpen || snippetModalOpen || templateModalOpen;
+    identityModalOpen ||
+    snippetModalOpen ||
+    templateModalOpen ||
+    mergeTokensReferenceOpen;
 
   function handleDeleteSnippet(key: string) {
     if (
@@ -1394,19 +1405,50 @@ export default function AdminEmail() {
                 <h2 className="min-w-0 pr-2 text-lg font-semibold text-gray-900 dark:text-white">
                   Email Templates
                 </h2>
-                <IconButton
-                  type="button"
-                  icon={plusIcon}
-                  variant="default"
-                  className={addSectionIconButtonClass}
-                  title="Add email template"
-                  aria-label="Add email template"
-                  onClick={() => {
-                    setEditingTemplate(null);
-                    setTemplateLayoutSlug("quote-send");
-                    setTemplateModalOpen(true);
-                  }}
-                />
+                <div className="flex shrink-0 items-center gap-1">
+                  <div className="relative shrink-0" ref={emailTemplatesMenuTriggerRef}>
+                    <IconButton
+                      type="button"
+                      icon={
+                        <EllipsisVertical
+                          className="h-[18px] w-[18px]"
+                          strokeWidth={2}
+                          aria-hidden
+                        />
+                      }
+                      variant="default"
+                      className={addSectionIconButtonClass}
+                      title="Email template options"
+                      aria-label="Email template options"
+                      aria-haspopup="menu"
+                      aria-expanded={emailTemplatesToolbarMenuOpen}
+                      onClick={() =>
+                        setEmailTemplatesToolbarMenuOpen((o) => !o)
+                      }
+                    />
+                    <EmailTemplatesToolbarMenu
+                      isOpen={emailTemplatesToolbarMenuOpen}
+                      onClose={() => setEmailTemplatesToolbarMenuOpen(false)}
+                      excludeRef={emailTemplatesMenuTriggerRef}
+                      onViewMergeTokenDocs={() =>
+                        setMergeTokensReferenceOpen(true)
+                      }
+                    />
+                  </div>
+                  <IconButton
+                    type="button"
+                    icon={plusIcon}
+                    variant="default"
+                    className={addSectionIconButtonClass}
+                    title="Add email template"
+                    aria-label="Add email template"
+                    onClick={() => {
+                      setEditingTemplate(null);
+                      setTemplateLayoutSlug("quote-send");
+                      setTemplateModalOpen(true);
+                    }}
+                  />
+                </div>
               </div>
               <div className="relative max-w-md">
                 <svg
@@ -2020,6 +2062,11 @@ export default function AdminEmail() {
           </div>
         </fetcher.Form>
       </Modal>
+
+      <EmailMergeTokensReferenceModal
+        isOpen={mergeTokensReferenceOpen}
+        onClose={() => setMergeTokensReferenceOpen(false)}
+      />
     </div>
   );
 }
