@@ -1,6 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 import { db } from "~/lib/db";
-import { quoteAttachments } from "~/lib/db/schema";
+import { attachments, quoteAttachments } from "~/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { getQuote } from "~/lib/quotes";
 import { getCustomer } from "~/lib/customers";
@@ -81,20 +81,43 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
     return resolveQuoteTokens(entityId);
   },
 
-  async verifyAttachmentIds(auth, entityId, attachmentIds) {
-    if (attachmentIds.length === 0) return;
+  async verifyAttachmentIds(_auth, entityId, attachmentIds) {
     const quoteId = quoteIdFromEntityId(entityId);
+
+    // A quote PDF is always required
+    if (attachmentIds.length === 0) {
+      throw new Error(
+        "A quote PDF is required. Generate a quote PDF and attach it before sending.",
+      );
+    }
+
+    // Verify all attachment IDs belong to this quote and fetch documentKind
     const owned = await db
-      .select({ id: quoteAttachments.attachmentId })
+      .select({
+        id: quoteAttachments.attachmentId,
+        documentKind: attachments.documentKind,
+      })
       .from(quoteAttachments)
+      .leftJoin(
+        attachments,
+        eq(quoteAttachments.attachmentId, attachments.id),
+      )
       .where(
         and(
           eq(quoteAttachments.quoteId, quoteId),
           inArray(quoteAttachments.attachmentId, attachmentIds),
         ),
       );
+
     if (owned.length !== attachmentIds.length) {
       throw new Error("Invalid attachment selection");
+    }
+
+    const hasQuotePdf = owned.some((r) => r.documentKind === "quote");
+    if (!hasQuotePdf) {
+      throw new Error(
+        "A quote PDF is required. Generate a quote PDF and attach it before sending.",
+      );
     }
   },
 

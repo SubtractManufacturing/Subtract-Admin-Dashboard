@@ -77,7 +77,7 @@ export default function Modal({ isOpen, onClose, title, children, zIndex = 50, s
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
     '2xl': 'max-w-6xl',
-    full: 'max-w-[95vw]'
+    full: 'w-[95vw] max-w-[1400px]'
   }
 
   const heightClasses = {

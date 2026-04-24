@@ -347,3 +347,74 @@ describe("enqueueOutboundUserEmail — valid send", () => {
     expect(mockSendEmailJob).toHaveBeenCalledOnce();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Per-send body copy overrides
+// ---------------------------------------------------------------------------
+
+describe("enqueueOutboundUserEmail — bodyCopyOverrides", () => {
+  const validTemplateMock = {
+    template: {
+      ...mockTemplateBase,
+      layoutSlug: "quote-send",
+      bodyCopy: {
+        greeting: "Hi {{customerName}},",
+        intro: "Your quote **{{quoteNumber}}** is attached.",
+        totalLabel: "Total:",
+        payNowButton: { buttonLabel: "", link: "" },
+        signOff: "Best regards",
+        signature: "Subtract Manufacturing",
+        footer: "Footer text.",
+      },
+    },
+    identity: mockIdentity,
+    layoutSlug: "quote-send" as const,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveTemplate.mockResolvedValue(validTemplateMock);
+    mockGetMergeFields.mockResolvedValue({});
+    mockGetSettings.mockResolvedValue({ outboundDelayMinutes: 0, recipientOverride: "" });
+    mockBuildMergeProps.mockResolvedValue({
+      customerName: "Acme",
+      quoteNumber: "26Q00001",
+      total: "100.00",
+    });
+    mockRenderEmailTemplate.mockResolvedValue({ html: "<p>Hello</p>", text: "Hello" });
+    mockSendEmailJob.mockResolvedValue(undefined);
+  });
+
+  it("applies per-send greeting override to allowPerSendEdit slots", async () => {
+    const result = await enqueueOutboundUserEmail({
+      ...baseInput,
+      bodyCopyOverrides: { greeting: "Hey Acme," },
+    });
+    expect(result.ok).toBe(true);
+    // Rendered content should include the override (renderEmailTemplate was called)
+    expect(mockRenderEmailTemplate).toHaveBeenCalledOnce();
+    const callArgs = mockRenderEmailTemplate.mock.calls[0];
+    const props = callArgs[1] as { copy: { greeting: string } };
+    expect(props.copy.greeting).toBe("Hey Acme,");
+  });
+
+  it("silently ignores overrides for slots not flagged allowPerSendEdit", async () => {
+    const result = await enqueueOutboundUserEmail({
+      ...baseInput,
+      bodyCopyOverrides: { footer: "HACKED FOOTER" },
+    });
+    expect(result.ok).toBe(true);
+    const callArgs = mockRenderEmailTemplate.mock.calls[0];
+    const props = callArgs[1] as { copy: { footer: string } };
+    // footer is NOT allowPerSendEdit — original template value preserved
+    expect(props.copy.footer).toBe("Footer text.");
+  });
+
+  it("allows empty bodyCopyOverrides without error", async () => {
+    const result = await enqueueOutboundUserEmail({
+      ...baseInput,
+      bodyCopyOverrides: {},
+    });
+    expect(result.ok).toBe(true);
+  });
+});

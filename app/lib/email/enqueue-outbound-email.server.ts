@@ -6,33 +6,15 @@ import {
   sentEmailAttachments,
   type SentEmailEntityType,
 } from "~/lib/db/schema";
-import {
-  getEmailMergeFieldsMap,
-  getEmailSettings,
-  resolveEmailTemplateForContext,
-} from "~/lib/email/templates.server";
-import {
-  interpolateLayoutCopy,
-  interpolateTemplateString,
-  renderEmailTemplate,
-} from "~/emails/render.server";
-import { sanitizeEmailHtml } from "~/lib/email/sanitize.server";
+import { getEmailSettings } from "~/lib/email/templates.server";
 import { getEmailSendHandler } from "~/lib/email/email-send-context-registry.server";
 import {
   EMAIL_CONTEXT,
-  getEmailContextMeta,
   type EmailContextKey,
 } from "~/lib/email/email-context-registry";
 import { sendEmailJob } from "~/lib/queue/producer.server";
 import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
-import { validateInterpolatedButtonLinksInCopy } from "~/emails/layout-definition";
-import {
-  getLayoutDefinition,
-  type PropsBySlug,
-  type TemplateSlug,
-  parseBodyCopyForLayout,
-} from "~/emails/registry";
-import { validateMergeTokens } from "~/lib/email/resolve";
+import { buildEmailContent } from "~/lib/email/build-email-content.server";
 
 const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ENTITY_THROTTLE_WINDOW_MS = 60_000;
@@ -49,58 +31,11 @@ function isSentEmailEntityType(x: string): x is SentEmailEntityType {
   return (ENTITY_TYPES as readonly string[]).includes(x);
 }
 
-function buildEmailLayoutProps(
-  layoutSlug: TemplateSlug,
-  copy: unknown,
-  stringProps: Record<string, string>,
-): PropsBySlug[TemplateSlug] {
-  if (layoutSlug === "quote-send") {
-    return {
-      quoteNumber: stringProps.quoteNumber,
-      customerName: stringProps.customerName,
-      total: stringProps.total,
-      ...(stringProps.paymentLinkUrl
-        ? { paymentLinkUrl: stringProps.paymentLinkUrl }
-        : {}),
-      copy: copy as PropsBySlug["quote-send"]["copy"],
-    };
-  }
-  if (layoutSlug === "example-kitchen-sink") {
-    return {
-      copy: copy as PropsBySlug["example-kitchen-sink"]["copy"],
-    };
-  }
-  const _exhaustive: never = layoutSlug;
-  return _exhaustive;
-}
-
 function fail(
   status: number,
   error: string,
 ): { ok: false; status: number; error: string } {
   return { ok: false, status, error };
-}
-
-/**
- * Collect every user-authored string from a body copy object that may contain
- * {{token}} placeholders — plain-string slots and button label/link pairs.
- */
-function collectBodyCopyStrings(copy: Record<string, unknown>): string[] {
-  const out: string[] = [];
-  for (const value of Object.values(copy)) {
-    if (typeof value === "string") {
-      out.push(value);
-    } else if (
-      value &&
-      typeof value === "object" &&
-      "buttonLabel" in value &&
-      "link" in value
-    ) {
-      const btn = value as { buttonLabel: string; link: string };
-      out.push(btn.buttonLabel, btn.link);
-    }
-  }
-  return out;
 }
 
 export type EnqueueOutboundEmailInput = {
@@ -112,6 +47,8 @@ export type EnqueueOutboundEmailInput = {
   cc: string;
   attachmentIds: string[];
   idempotencyKey: string;
+  /** Per-send body overrides: only slots with allowPerSendEdit will be applied */
+  bodyCopyOverrides?: Record<string, string>;
 };
 
 export type EnqueueOutboundEmailResult =
@@ -130,6 +67,7 @@ export async function enqueueOutboundUserEmail(
     cc: ccRaw,
     attachmentIds,
     idempotencyKey,
+    bodyCopyOverrides,
   } = input;
 
   const user = auth.user;
@@ -233,27 +171,9 @@ export async function enqueueOutboundUserEmail(
     }
   }
 
-  const [templateData, settings, mergeFields] = await Promise.all([
-    resolveEmailTemplateForContext(contextKey),
-    getEmailSettings(),
-    getEmailMergeFieldsMap(),
-  ]);
+  const settings = await getEmailSettings();
 
-  if (!templateData) {
-    const label = getEmailContextMeta(contextKey).label;
-    return fail(
-      400,
-      `${label} is not configured. In Admin → Email, assign a template to this context.`,
-    );
-  }
-
-  const fromEmail = templateData.identity.fromEmail;
-  const fromDisplayName = templateData.identity.fromDisplayName || null;
-  const replyToEmail = templateData.identity.replyToEmail || null;
-  if (!fromEmail) {
-    return fail(400, "Email sending is not configured (no identity found)");
-  }
-
+  // Resolve recipient email
   let recipientEmail: string;
   try {
     recipientEmail = await handler.getRecipientEmail(auth, entityId);
@@ -262,85 +182,27 @@ export async function enqueueOutboundUserEmail(
     return fail(400, msg);
   }
 
-  let mergeProps: Record<string, string>;
-  try {
-    mergeProps = await handler.buildMergeProps(entityId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return fail(400, msg);
+  // Build rendered email content (shared with preview endpoint)
+  const contentResult = await buildEmailContent({
+    auth,
+    contextKey,
+    entityId,
+    subject,
+    bodyCopyOverrides,
+  });
+
+  if (!contentResult.ok) {
+    return fail(contentResult.status, contentResult.error);
   }
 
-  const stringProps: Record<string, string> = {
-    ...mergeFields,
-    ...mergeProps,
-  };
-
-  const layoutSlug = templateData.layoutSlug;
-  const bodyParse = parseBodyCopyForLayout(
-    layoutSlug,
-    templateData.template.bodyCopy ?? {},
-  );
-  if (!bodyParse.ok) {
-    const detail = Object.entries(bodyParse.errors)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join("; ");
-    return fail(
-      400,
-      `Email template body is invalid. Fix it in Admin → Email. ${detail}`,
-    );
-  }
-
-  // ── Fail-closed token validation (pre-interpolation) ──────────────────
-  // Every {{token}} referenced in the subject or body must be present in
-  // the merged map with a non-empty value. Missing tokens abort the send
-  // before any rendering happens, with a clear error naming each bad token.
-  const tokenValidationError = validateMergeTokens(
-    [subject, ...collectBodyCopyStrings(bodyParse.data as Record<string, unknown>)],
-    stringProps,
-  );
-  if (tokenValidationError) {
-    return fail(400, tokenValidationError);
-  }
-
-  const interpolatedCopy = interpolateLayoutCopy(bodyParse.data, stringProps);
-
-  const linkPolicyError = validateInterpolatedButtonLinksInCopy(
-    getLayoutDefinition(layoutSlug),
-    interpolatedCopy as Record<string, unknown>,
-  );
-  if (linkPolicyError) {
-    return fail(400, linkPolicyError);
-  }
-
-  const props = buildEmailLayoutProps(
-    layoutSlug,
-    interpolatedCopy,
-    stringProps,
-  );
-
-  let { html: rawHtml, text: textBody } = await renderEmailTemplate(
-    layoutSlug,
-    props,
-  );
-
-  rawHtml = interpolateTemplateString(rawHtml, stringProps);
-  textBody = interpolateTemplateString(textBody, stringProps);
-
-  const subjectResolved = interpolateTemplateString(subject, stringProps);
-  const unresolvedInBody = [
-    ...(rawHtml.match(/\{\{\w+\}\}/g) ?? []),
-    ...(textBody.match(/\{\{\w+\}\}/g) ?? []),
-    ...(subjectResolved.match(/\{\{\w+\}\}/g) ?? []),
-  ];
-  if (unresolvedInBody.length > 0) {
-    const unique = [...new Set(unresolvedInBody)];
-    return fail(
-      400,
-      `Email contains unresolved placeholders: ${unique.join(", ")}`,
-    );
-  }
-
-  const htmlBody = sanitizeEmailHtml(rawHtml);
+  const {
+    subjectResolved,
+    htmlBody,
+    textBody,
+    fromEmail,
+    fromDisplayName,
+    replyToEmail,
+  } = contentResult;
 
   const quoteIdForRow =
     entityType === "quote" ? Number.parseInt(entityId, 10) : null;

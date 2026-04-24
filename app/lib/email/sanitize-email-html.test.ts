@@ -45,6 +45,19 @@ describe("sanitizeEmailHtml — allowed tags pass through", () => {
     expect(result).toContain('class="email-body"');
   });
 
+  it("preserves data-slot-id for send-email preview binding", () => {
+    const html = `<p data-slot-id="greeting">Hi</p><div data-slot-id="intro"><strong>x</strong></div>`;
+    const result = sanitizeEmailHtml(html);
+    expect(result).toContain('data-slot-id="greeting"');
+    expect(result).toContain('data-slot-id="intro"');
+  });
+
+  it("strips data-slot (only data-slot-id is allowlisted)", () => {
+    const html = `<p data-slot="legacy">x</p>`;
+    const result = sanitizeEmailHtml(html);
+    expect(result).not.toContain("data-slot");
+  });
+
   it("preserves standard anchor tags with https href", () => {
     const html = `<a href="https://example.com">Click here</a>`;
     const result = sanitizeEmailHtml(html);

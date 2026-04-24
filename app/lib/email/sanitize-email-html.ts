@@ -16,7 +16,7 @@ export function sanitizeEmailHtml(html: string): string {
     allowedAttributes: {
       ...sanitizeHtml.defaults.allowedAttributes,
       img: ["src", "alt", "width", "height"],
-      "*": ["style", "class"],
+      "*": ["style", "class", "data-slot-id"],
     },
     allowedSchemes: ["https", "http", "mailto", "data"],
     // strips all on* handlers, <script>, <iframe>, <form>, javascript: href

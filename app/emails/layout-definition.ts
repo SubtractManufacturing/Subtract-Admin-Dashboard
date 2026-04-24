@@ -9,6 +9,12 @@ type BaseSlot<TType extends EmailSlotType> = {
   adminLabel: string;
   adminHelpText?: string;
   placeholder?: string;
+  /**
+   * When true, the send-email UI exposes this slot for one-off editing before
+   * the email is sent. The edit applies only to that send; the stored template
+   * is never modified. Only supported for plainText and markdown slots.
+   */
+  allowPerSendEdit?: boolean;
 };
 
 export type PlainTextSlot = BaseSlot<"plainText"> & { defaultValue?: string };

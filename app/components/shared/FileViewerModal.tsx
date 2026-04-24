@@ -21,6 +21,11 @@ interface FileViewerModalProps {
   fileSize?: number;
   onDelete?: () => void;
   isDeleting?: boolean;
+  /**
+   * Z-index for the overlay. Defaults to 65 so it stacks above the send-email
+   * modal (55) and the PDF-generation modal (60). Set higher if needed.
+   */
+  zIndex?: number;
   /** Ctrl+Shift drawing admin flyout (Admin/Dev) */
   partAssetAdmin?: {
     action: string;
@@ -37,6 +42,7 @@ export default function FileViewerModal({
   fileSize,
   onDelete,
   isDeleting = false,
+  zIndex = 65,
   partAssetAdmin,
 }: FileViewerModalProps) {
   const [fileType, setFileType] = useState<FileType>("unknown");
@@ -51,9 +57,16 @@ export default function FileViewerModal({
       // Prevent body scroll when modal is open
       document.body.style.overflow = "hidden";
 
-      // Add escape key listener
+      // Add escape key listener — only close if this overlay is the topmost one
       const handleEscape = (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
+        if (e.key !== "Escape") return;
+        const allOverlays = document.querySelectorAll(".modal-overlay");
+        let highestZ = -1;
+        allOverlays.forEach((el) => {
+          const z = parseInt((el as HTMLElement).style.zIndex || "50");
+          if (z > highestZ) highestZ = z;
+        });
+        if (highestZ <= zIndex) {
           onClose();
         }
       };
@@ -67,7 +80,7 @@ export default function FileViewerModal({
       // Re-enable body scroll when modal is closed
       document.body.style.overflow = "unset";
     }
-  }, [isOpen, onClose, fileName, contentType]);
+  }, [isOpen, onClose, fileName, contentType, zIndex]);
 
   if (!isOpen) return null;
 
@@ -276,7 +289,8 @@ export default function FileViewerModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-8"
+      className="modal-overlay fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-8"
+      style={{ zIndex }}
       onClick={onClose}
       onKeyDown={(e) => {
         if (e.key === "Escape") {

@@ -183,3 +183,44 @@ export const commonPdfStyles = `
     }
   }
 `;
+
+/**
+ * PDF-matching inline-edit affordance for the send-email preview iframe.
+ * The injected script sets `class="editable"` and `contentEditable` on
+ * [data-slot-id] for plainText slots, and `class="email-md-slot"` for markdown.
+ */
+export const emailPreviewInlineEditCss = `
+  [data-slot-id].editable {
+    transition: background-color 0.15s ease;
+    border-radius: 3px;
+    padding: 2px 4px;
+    min-width: 8px;
+    min-height: 1.1em;
+    box-sizing: border-box;
+  }
+  p[data-slot-id].editable,
+  div[data-slot-id].editable {
+    display: block;
+  }
+  span[data-slot-id].editable {
+    display: inline;
+  }
+  [data-slot-id].editable:hover {
+    background-color: #fff3cd;
+    cursor: text;
+    outline: 1px dashed #ffc107;
+    outline-offset: 1px;
+  }
+  [data-slot-id].editable:focus {
+    background-color: #fff8dc;
+    outline: 2px solid #ffc107;
+    outline-offset: 1px;
+  }
+  .email-md-slot { border-radius: 3px; }
+  .email-md-slot:hover {
+    background-color: #fff3cd;
+    cursor: pointer;
+    outline: 1px dashed #ffc107;
+    outline-offset: 1px;
+  }
+`;

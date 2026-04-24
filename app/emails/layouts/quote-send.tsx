@@ -29,6 +29,7 @@ export const quoteSendLayoutDefinition = {
       emptyBehavior: "renderEmpty",
       adminLabel: "Greeting",
       defaultValue: "Hi {{customerName}},",
+      allowPerSendEdit: true,
     },
     {
       id: "intro",
@@ -39,6 +40,7 @@ export const quoteSendLayoutDefinition = {
       adminHelpText: "Supports headings, bold, italic, lists, and links.",
       defaultValue:
         "Please find your quote **{{quoteNumber}}** attached.",
+      allowPerSendEdit: true,
     },
     {
       id: "totalLabel",
@@ -118,12 +120,18 @@ export const QuoteSendEmail: React.FC<QuoteSendEmailProps> = ({
 
   return (
     <div style={{ fontFamily: "sans-serif", color: "#333" }}>
-      {copy.greeting.trim().length > 0 ? <p>{copy.greeting}</p> : null}
-      {copy.intro.trim().length > 0 ? (
-        <div dangerouslySetInnerHTML={{ __html: introHtml }} />
-      ) : null}
+      <p data-slot-id="greeting">{copy.greeting}</p>
+      <div
+        data-slot-id="intro"
+        dangerouslySetInnerHTML={{
+          __html: copy.intro.trim().length > 0 ? introHtml : "",
+        }}
+      />
       <p>
-        <strong>{copy.totalLabel}</strong> {total}
+        <span data-slot-id="totalLabel" style={{ fontWeight: 700 }}>
+          {copy.totalLabel}
+        </span>{" "}
+        {total}
       </p>
       {showPayButton ? (
         <p>
@@ -142,18 +150,17 @@ export const QuoteSendEmail: React.FC<QuoteSendEmailProps> = ({
           </a>
         </p>
       ) : null}
-      <p>
-        {copy.signOff.split("\n").map((line, i) => (
-          <React.Fragment key={i}>
-            {line}
-            <br />
-          </React.Fragment>
-        ))}
+      <p data-slot-id="signOff" style={{ whiteSpace: "pre-wrap" }}>
+        {copy.signOff}
       </p>
-      <div style={{ marginTop: "20px", whiteSpace: "pre-wrap" }}>
+      <div
+        data-slot-id="signature"
+        style={{ marginTop: "20px", whiteSpace: "pre-wrap" }}
+      >
         {copy.signature}
       </div>
       <div
+        data-slot-id="footer"
         style={{
           marginTop: "20px",
           fontSize: "12px",

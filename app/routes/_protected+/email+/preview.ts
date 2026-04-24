@@ -6,18 +6,7 @@ import {
   isEmailContextKey,
   type EmailContextKey,
 } from "~/lib/email/email-context-registry";
-import { enqueueOutboundUserEmail } from "~/lib/email/enqueue-outbound-email.server";
-import type { SentEmailEntityType } from "~/lib/db/schema";
-
-const ENTITY_TYPES: readonly SentEmailEntityType[] = [
-  "quote",
-  "order",
-  "invoice",
-];
-
-function isSentEmailEntityType(x: string): x is SentEmailEntityType {
-  return (ENTITY_TYPES as readonly string[]).includes(x);
-}
+import { buildEmailContent } from "~/lib/email/build-email-content.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
@@ -37,21 +26,12 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   const contextKey = contextKeyRaw as EmailContextKey;
 
-  const entityTypeRaw = (formData.get("entityType") as string)?.trim() ?? "";
-  if (!isSentEmailEntityType(entityTypeRaw)) {
-    return json({ error: "Invalid or missing entityType" }, { status: 400 });
-  }
-  const entityType = entityTypeRaw;
-
   const entityId = (formData.get("entityId") as string)?.trim() ?? "";
   if (!entityId) {
     return json({ error: "Missing entityId" }, { status: 400 });
   }
 
   const subject = (formData.get("subject") as string) ?? "";
-  const cc = (formData.get("cc") as string | null) ?? "";
-  const idempotencyKey = (formData.get("idempotencyKey") as string) ?? "";
-  const attachmentIds = formData.getAll("attachmentId") as string[];
 
   // Collect slot.* overrides for per-send editable fields
   const bodyCopyOverrides: Record<string, string> = {};
@@ -61,23 +41,17 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  const result = await enqueueOutboundUserEmail({
+  const result = await buildEmailContent({
     auth: { user, userDetails },
     contextKey,
-    entityType,
     entityId,
     subject,
-    cc,
-    attachmentIds,
-    idempotencyKey,
-    bodyCopyOverrides: Object.keys(bodyCopyOverrides).length > 0
-      ? bodyCopyOverrides
-      : undefined,
+    bodyCopyOverrides,
   });
 
   if (!result.ok) {
     return json({ error: result.error }, { status: result.status });
   }
 
-  return json({ success: true });
+  return json({ subject: result.subjectResolved, html: result.htmlBody });
 }

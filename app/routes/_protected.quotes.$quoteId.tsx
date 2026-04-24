@@ -334,14 +334,22 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   let quoteSendEmailReady = false;
   let quoteSendEmailDefaultSubject: string | null = null;
+  type QuoteSendEditableSlot = {
+    id: string;
+    type: "plainText" | "markdown";
+    adminLabel: string;
+    templateValue: string;
+  };
+  let quoteSendEditableSlots: QuoteSendEditableSlot[] = [];
   if (outboundEmailEnabled) {
     const { resolveEmailTemplateForContext, getEmailMergeFieldsMap } =
       await import("~/lib/email/templates.server");
     const { interpolateTemplateString } =
       await import("~/emails/render.server");
-    // Email context: quote_send — register in lib/email/email-context-registry.ts
     const { EMAIL_CONTEXT } =
       await import("~/lib/email/email-context-registry");
+    const { getLayoutDefinition, parseBodyCopyForLayout } =
+      await import("~/emails/registry");
     const [resolved, mergeFields] = await Promise.all([
       resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND),
       getEmailMergeFieldsMap(),
@@ -357,6 +365,26 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
           total: quote.total ?? "0.00",
         },
       );
+      const definition = getLayoutDefinition(resolved.layoutSlug);
+      const bodyParseResult = parseBodyCopyForLayout(
+        resolved.layoutSlug,
+        resolved.template.bodyCopy ?? {},
+      );
+      if (bodyParseResult.ok) {
+        quoteSendEditableSlots = definition.slots
+          .filter(
+            (s): s is Extract<typeof s, { type: "plainText" | "markdown" }> =>
+              !!s.allowPerSendEdit && s.type !== "button",
+          )
+          .map((s) => ({
+            id: s.id,
+            type: s.type as "plainText" | "markdown",
+            adminLabel: s.adminLabel,
+            templateValue: String(
+              (bodyParseResult.data as Record<string, unknown>)[s.id] ?? "",
+            ),
+          }));
+      }
     }
   }
 
@@ -401,6 +429,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       outboundEmailEnabled,
       quoteSendEmailReady,
       quoteSendEmailDefaultSubject,
+      quoteSendEditableSlots,
     }),
     headers,
   );
@@ -1036,6 +1065,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
           quoteId: quote.id,
           attachmentId: attachment.id,
         });
+
+        // Fetcher-based uploads request JSON so they don't navigate away
+        if (formData.get("_noRedirect")) {
+          return withAuthHeaders(
+            json({ success: true, attachmentId: attachment.id }),
+            headers,
+          );
+        }
 
         // Return a redirect to refresh the page
         return redirect(`/quotes/${quoteId}`);
@@ -2159,6 +2196,7 @@ export default function QuoteDetail() {
     outboundEmailEnabled,
     quoteSendEmailReady,
     quoteSendEmailDefaultSubject,
+    quoteSendEditableSlots,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/quotes/${quote.id}`
@@ -4095,6 +4133,7 @@ export default function QuoteDetail() {
           customer={customer}
           attachments={attachments}
           defaultSubject={quoteSendEmailDefaultSubject ?? undefined}
+          editableSlots={quoteSendEditableSlots}
         />
       )}
 

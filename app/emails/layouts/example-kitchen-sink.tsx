@@ -28,6 +28,7 @@ export const exampleKitchenSinkLayoutDefinition = {
       emptyBehavior: "hideBlock",
       adminLabel: "Optional (hidden when empty)",
       defaultValue: "",
+      allowPerSendEdit: true,
     },
     {
       id: "optionalShowEmpty",
@@ -36,6 +37,7 @@ export const exampleKitchenSinkLayoutDefinition = {
       emptyBehavior: "renderEmpty",
       adminLabel: "Optional (empty paragraph shown)",
       defaultValue: "",
+      allowPerSendEdit: true,
     },
     {
       id: "requiredReject",
@@ -53,6 +55,7 @@ export const exampleKitchenSinkLayoutDefinition = {
       adminLabel: "Markdown block",
       defaultValue:
         "## Kitchen sink\n\n- **bold** and *italic*\n- [link](https://example.com)",
+      allowPerSendEdit: true,
     },
     {
       id: "cta",
@@ -79,19 +82,17 @@ export const ExampleKitchenSinkEmail: React.FC<
   return (
     <div style={{ fontFamily: "sans-serif", color: "#222" }}>
       <h1 style={{ fontSize: "20px" }}>Example layout (kitchen sink)</h1>
-      {copy.optionalHide.trim().length > 0 ? (
-        <p data-slot="optionalHide">{copy.optionalHide}</p>
-      ) : null}
-      <p data-slot="optionalShowEmpty">{copy.optionalShowEmpty}</p>
-      <p data-slot="requiredReject">
+      <p data-slot-id="optionalHide">{copy.optionalHide}</p>
+      <p data-slot-id="optionalShowEmpty">{copy.optionalShowEmpty}</p>
+      <p data-slot-id="requiredReject">
         <strong>{copy.requiredReject}</strong>
       </p>
-      {copy.prose.trim().length > 0 ? (
-        <div
-          data-slot="prose"
-          dangerouslySetInnerHTML={{ __html: proseHtml }}
-        />
-      ) : null}
+      <div
+        data-slot-id="prose"
+        dangerouslySetInnerHTML={{
+          __html: copy.prose.trim().length > 0 ? proseHtml : "",
+        }}
+      />
       {showCta ? (
         <p>
           <a
