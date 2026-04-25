@@ -9,8 +9,12 @@ interface OrderActionsDropdownProps {
   onGeneratePO?: () => void;
   onGeneratePackingSlip?: () => void;
   onManageVendor?: () => void;
+  /** Order confirmation email (in-menu when not on Pending) */
+  onSendOrderConfirmation?: () => void;
   hasVendor?: boolean;
   hasCustomer?: boolean;
+  showOrderConfirmationInMenu?: boolean;
+  orderConfirmationMenuDisabled?: boolean;
 }
 
 export default function OrderActionsDropdown({
@@ -22,8 +26,11 @@ export default function OrderActionsDropdown({
   onGeneratePO,
   onGeneratePackingSlip,
   onManageVendor,
+  onSendOrderConfirmation,
   hasVendor = false,
   hasCustomer = false,
+  showOrderConfirmationInMenu = false,
+  orderConfirmationMenuDisabled = false,
 }: OrderActionsDropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -50,6 +57,33 @@ export default function OrderActionsDropdown({
   if (!isOpen) return null;
 
   const actionButtons = [
+    ...(onSendOrderConfirmation && showOrderConfirmationInMenu
+      ? [
+          {
+            icon: (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                />
+              </svg>
+            ),
+            label: "Confirmation",
+            onClick: () => {
+              onSendOrderConfirmation();
+              onClose();
+            },
+            disabled: orderConfirmationMenuDisabled,
+          },
+        ]
+      : []),
     ...(onManageVendor
       ? [
           {
@@ -198,9 +232,13 @@ export default function OrderActionsDropdown({
           const isPOButton = action.label === "PO";
           const isInvoiceButton = action.label === "Invoice";
           const isPackingSlipButton = action.label === "Packing slip";
+          const isConfirmationButton = action.label === "Confirmation";
           const showTooltip =
             isDisabled &&
-            (isPOButton || isInvoiceButton || isPackingSlipButton);
+            (isPOButton ||
+              isInvoiceButton ||
+              isPackingSlipButton ||
+              isConfirmationButton);
 
           let tooltipText = "";
           if (showTooltip) {
@@ -210,6 +248,9 @@ export default function OrderActionsDropdown({
               tooltipText = "Invoices require a customer";
             } else if (isPackingSlipButton) {
               tooltipText = "Packing slips require a customer";
+            } else if (isConfirmationButton) {
+              tooltipText =
+                "Customer confirmation is unavailable: missing customer email, email template, or a send already completed.";
             }
           }
 

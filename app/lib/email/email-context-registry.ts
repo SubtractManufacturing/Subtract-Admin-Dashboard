@@ -16,6 +16,12 @@ export const EMAIL_CONTEXTS = [
     description:
       "Used when sending a quote to the customer from the quote page.",
   },
+  {
+    key: "order_confirmation",
+    label: "Order confirmation",
+    description:
+      "Customer-facing confirmation for a new order, before board / shop handoff.",
+  },
 ] as const;
 
 export type EmailContextDefinition = (typeof EMAIL_CONTEXTS)[number];
@@ -23,6 +29,7 @@ export type EmailContextKey = EmailContextDefinition["key"];
 
 export const EMAIL_CONTEXT = {
   QUOTE_SEND: "quote_send",
+  ORDER_CONFIRMATION: "order_confirmation",
 } as const satisfies Record<string, EmailContextKey>;
 
 export function isEmailContextKey(value: string): value is EmailContextKey {

@@ -206,6 +206,19 @@ describe("enqueueOutboundUserEmail — input validation", () => {
     if (!result.ok) expect(result.status).toBe(400);
   });
 
+  it("returns 400 when order_confirmation is paired with a non-order entity", async () => {
+    const result = await enqueueOutboundUserEmail({
+      ...baseInput,
+      contextKey: "order_confirmation",
+      entityType: "quote",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(400);
+      expect(result.error).toContain("order");
+    }
+  });
+
   it("returns 400 for an empty subject", async () => {
     const result = await enqueueOutboundUserEmail({ ...baseInput, subject: "" });
     expect(result.ok).toBe(false);

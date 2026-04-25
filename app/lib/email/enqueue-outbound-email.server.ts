@@ -87,6 +87,13 @@ export async function enqueueOutboundUserEmail(
     return fail(400, "quote_send requires entity type quote");
   }
 
+  if (
+    contextKey === EMAIL_CONTEXT.ORDER_CONFIRMATION &&
+    entityType !== "order"
+  ) {
+    return fail(400, "order_confirmation requires entity type order");
+  }
+
   const subject = subjectRaw?.trim() ?? "";
   const cc = ccRaw?.trim() ?? "";
   if (!subject || /[\r\n]/.test(subject) || /[\r\n]/.test(cc)) {

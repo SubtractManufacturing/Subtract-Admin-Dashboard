@@ -28,9 +28,13 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import {
   isFeatureEnabled,
+  isOutboundEmailEnabled,
   FEATURE_FLAGS,
   canUserUploadCadRevision,
 } from "~/lib/featureFlags";
+import { hasBlockingOrderContextSend } from "~/lib/sent-emails.server";
+import type { AttachmentDocumentKind , Attachment, Vendor } from "~/lib/db/schema";
+import { formatCurrency } from "~/lib/email/resolve/formatters";
 import { getBananaModelUrls } from "~/lib/developerSettings";
 import {
   uploadFile,
@@ -45,6 +49,7 @@ import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { Notes } from "~/components/shared/Notes";
 import OrderActionsDropdown from "~/components/orders/OrderActionsDropdown";
+import SendOrderConfirmationModal from "~/components/orders/SendOrderConfirmationModal";
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import GeneratePackingSlipPdfModal from "~/components/orders/GeneratePackingSlipPdfModal";
@@ -82,7 +87,7 @@ import {
   orderPositiveSubtotalExcluding,
   parseUnitPriceInput,
 } from "~/lib/lineItemPricing";
-import type { Vendor } from "~/lib/db/schema";
+
 import {
   useState,
   useRef,
@@ -216,11 +221,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     events,
     canRevise,
     bananaEnabled,
+    outboundEmailEnabled,
   ] = await Promise.all([
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsForOrder(order.id, 10),
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
+    isOutboundEmailEnabled(),
   ]);
 
   // Get banana model URL if feature is enabled
@@ -229,6 +236,76 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     const bananaUrls = await getBananaModelUrls();
     if (bananaUrls.meshUrl && bananaUrls.conversionStatus === "completed") {
       bananaModelUrl = await getDownloadUrl(bananaUrls.meshUrl);
+    }
+  }
+
+  let orderConfirmationEmailReady = false;
+  let orderConfirmationEmailDefaultSubject: string | null = null;
+  let orderConfirmationRequiredAttachmentDocumentKinds: AttachmentDocumentKind[] =
+    [];
+  type OrderConfSlot = {
+    id: string;
+    type: "plainText" | "markdown";
+    adminLabel: string;
+    templateValue: string;
+  };
+  let orderConfirmationEditableSlots: OrderConfSlot[] = [];
+  let orderConfirmationSendBlocked = false;
+
+  if (outboundEmailEnabled) {
+    const { resolveEmailTemplateForContext, getEmailMergeFieldsMap } =
+      await import("~/lib/email/templates.server");
+    const { interpolateTemplateString } =
+      await import("~/emails/render.server");
+    const { EMAIL_CONTEXT } =
+      await import("~/lib/email/email-context-registry");
+    const { getLayoutDefinition, parseBodyCopyForLayout } =
+      await import("~/emails/registry");
+    const totalForSubject = formatCurrency(order.totalPrice) ?? "0.00";
+    const [resolved, mergeFields, blocked] = await Promise.all([
+      resolveEmailTemplateForContext(EMAIL_CONTEXT.ORDER_CONFIRMATION),
+      getEmailMergeFieldsMap(),
+      hasBlockingOrderContextSend(
+        String(order.id),
+        EMAIL_CONTEXT.ORDER_CONFIRMATION,
+      ),
+    ]);
+    orderConfirmationSendBlocked = blocked;
+    if (resolved) {
+      orderConfirmationEmailReady = true;
+      orderConfirmationRequiredAttachmentDocumentKinds =
+        resolved.template.requiredAttachmentDocumentKinds ?? [];
+      orderConfirmationEmailDefaultSubject = interpolateTemplateString(
+        resolved.template.subjectTemplate,
+        {
+          ...mergeFields,
+          orderNumber: order.orderNumber,
+          quoteNumber: order.orderNumber,
+          documentNumber: order.orderNumber,
+          customerName: customer?.displayName ?? "Customer",
+          total: totalForSubject,
+        },
+      );
+      const definition = getLayoutDefinition(resolved.layoutSlug);
+      const bodyParseResult = parseBodyCopyForLayout(
+        resolved.layoutSlug,
+        resolved.template.bodyCopy ?? {},
+      );
+      if (bodyParseResult.ok) {
+        orderConfirmationEditableSlots = definition.slots
+          .filter(
+            (s): s is Extract<typeof s, { type: "plainText" | "markdown" }> =>
+              !!s.allowPerSendEdit && s.type !== "button",
+          )
+          .map((s) => ({
+            id: s.id,
+            type: s.type as "plainText" | "markdown",
+            adminLabel: s.adminLabel,
+            templateValue: String(
+              (bodyParseResult.data as Record<string, unknown>)[s.id] ?? "",
+            ),
+          }));
+      }
     }
   }
 
@@ -248,6 +325,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       canRevise,
       bananaEnabled,
       bananaModelUrl,
+      outboundEmailEnabled,
+      orderConfirmationEmailReady,
+      orderConfirmationEmailDefaultSubject,
+      orderConfirmationEditableSlots,
+      orderConfirmationRequiredAttachmentDocumentKinds,
+      orderConfirmationSendBlocked,
     }),
     headers
   );
@@ -284,6 +367,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
     // If there's no file, check if this is an intent that handles files differently
     if (!file) {
+      if (intent === "uploadAttachment") {
+        return json({ error: "No file provided" }, { status: 400 });
+      }
       const specialIntents = [
         "generatePurchaseOrder",
         "generateInvoice",
@@ -339,6 +425,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Link to order
         await linkAttachmentToOrder(order.id, attachment.id, eventContext);
+
+        if (formData.get("_noRedirect")) {
+          return withAuthHeaders(
+            json({ success: true, attachmentId: attachment.id }),
+            headers,
+          );
+        }
 
         // Return a redirect to refresh the page
         return redirect(`/orders/${orderNumber}`);
@@ -1462,6 +1555,12 @@ export default function OrderDetails() {
     canRevise,
     bananaEnabled,
     bananaModelUrl,
+    outboundEmailEnabled,
+    orderConfirmationEmailReady,
+    orderConfirmationEmailDefaultSubject,
+    orderConfirmationEditableSlots,
+    orderConfirmationRequiredAttachmentDocumentKinds,
+    orderConfirmationSendBlocked,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/orders/${order.orderNumber}`
@@ -1515,6 +1614,30 @@ export default function OrderDetails() {
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
+  const [isSendOrderConfirmationModalOpen, setSendOrderConfirmationModalOpen] =
+    useState(false);
+
+  const canSendOrderConfirmation =
+    outboundEmailEnabled &&
+    orderConfirmationEmailReady &&
+    !orderConfirmationSendBlocked &&
+    Boolean(customer?.email?.trim());
+
+  const orderEmailModalAttachments = useMemo(
+    () =>
+      (order.attachments ?? []).map((a: Attachment) => ({
+        id: a.id,
+        fileName: a.fileName,
+        fileSize: a.fileSize,
+        documentKind: a.documentKind,
+        createdAt:
+          typeof a.createdAt === "string"
+            ? a.createdAt
+            : (a.createdAt as Date).toISOString(),
+        contentType: a.contentType,
+      })),
+    [order.attachments],
+  );
 
   const orderPositiveSubForAddLineModal = useMemo(
     () =>
@@ -2165,10 +2288,31 @@ export default function OrderDetails() {
                 onGeneratePO={handleGeneratePO}
                 onGeneratePackingSlip={handleGeneratePackingSlip}
                 onManageVendor={handleManageVendor}
+                onSendOrderConfirmation={() =>
+                  setSendOrderConfirmationModalOpen(true)
+                }
                 hasVendor={!!order.vendorId}
                 hasCustomer={!!order.customerId}
+                showOrderConfirmationInMenu={
+                  outboundEmailEnabled &&
+                  orderConfirmationEmailReady &&
+                  order.status !== "Pending"
+                }
+                orderConfirmationMenuDisabled={
+                  !canSendOrderConfirmation
+                }
               />
             </div>
+            {order.status === "Pending" &&
+              canSendOrderConfirmation && (
+                <Button
+                  onClick={() => setSendOrderConfirmationModalOpen(true)}
+                  variant="primary"
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                >
+                  Send customer confirmation
+                </Button>
+              )}
             {order.status === "Pending" &&
               (order.vendorId ? (
                 <Button
@@ -2784,6 +2928,46 @@ export default function OrderDetails() {
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
         autoDownload={pdfAutoDownload}
       />
+
+      {outboundEmailEnabled && isSendOrderConfirmationModalOpen && (
+        <SendOrderConfirmationModal
+          isOpen={isSendOrderConfirmationModalOpen}
+          onClose={() => setSendOrderConfirmationModalOpen(false)}
+          onSendSuccess={() => {
+            revalidator.revalidate();
+          }}
+          order={{
+            id: order.id,
+            orderNumber: order.orderNumber,
+            updatedAt: order.updatedAt,
+          }}
+          customer={customer}
+          attachments={orderEmailModalAttachments}
+          defaultSubject={
+            orderConfirmationEmailDefaultSubject ?? undefined
+          }
+          editableSlots={orderConfirmationEditableSlots}
+          requiredAttachmentDocumentKinds={
+            orderConfirmationRequiredAttachmentDocumentKinds
+          }
+          onRequestGenerateForDocumentKind={(kind) => {
+            if (kind === "invoice") {
+              setIsInvoiceModalOpen(true);
+              return;
+            }
+            if (kind === "purchase_order") {
+              setIsPOModalOpen(true);
+              return;
+            }
+            if (kind === "packing_slip") {
+              setIsPackingSlipModalOpen(true);
+            }
+          }}
+          invoiceGenerateDisabled={!order.customerId}
+          purchaseOrderGenerateDisabled={!order.vendorId}
+          packingSlipGenerateDisabled={!order.customerId}
+        />
+      )}
 
       {/* Assign Shop Modal */}
       {assignShopModalOpen && (

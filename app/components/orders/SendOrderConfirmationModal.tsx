@@ -8,13 +8,11 @@ import {
 import { useFetcher, useRevalidator } from "@remix-run/react";
 import Modal from "~/components/shared/Modal";
 import Button from "~/components/shared/Button";
-import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import { RequiredAttachmentKindEmptyDashedBox } from "~/components/shared/RequiredAttachmentKindEmptyDashedBox";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
 import { ATTACHMENT_DOCUMENT_KIND_LABELS } from "~/lib/email/attachment-document-kind-labels";
 import type { AttachmentDocumentKind } from "~/lib/db/schema";
-import type { QuoteWithRelations } from "~/lib/quotes";
 import { emailPreviewInlineEditCss } from "~/lib/pdf-utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -42,21 +40,55 @@ type EditableSlot = {
 
 type SendQueueDelivery = "queued" | "awaiting_approval";
 
-interface SendQuoteEmailModalProps {
+/** Kinds the order page can create via PDF modals (see Generate*PdfModal on order route). */
+const ORDER_PDF_GENERATABLE_KINDS: readonly AttachmentDocumentKind[] = [
+  "invoice",
+  "purchase_order",
+  "packing_slip",
+];
+
+function isGeneratableOnOrderPage(
+  kind: AttachmentDocumentKind,
+): kind is (typeof ORDER_PDF_GENERATABLE_KINDS)[number] {
+  return (ORDER_PDF_GENERATABLE_KINDS as readonly string[]).includes(kind);
+}
+
+function generateButtonText(
+  kind: (typeof ORDER_PDF_GENERATABLE_KINDS)[number],
+): string {
+  switch (kind) {
+    case "invoice":
+      return "Generate invoice";
+    case "purchase_order":
+      return "Generate purchase order";
+    case "packing_slip":
+      return "Generate packing slip";
+  }
+  return "Generate";
+}
+
+/** Outbound order confirmation: registry ~/lib/email/email-context-registry (ORDER_CONFIRMATION) */
+interface SendOrderConfirmationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /**
-   * Called when the server accepted the send. Use `delivery` to decide whether
-   * to wait on async delivery (only for immediate queue sends).
-   */
   onSendSuccess?: (result: { delivery: SendQueueDelivery }) => void;
-  quote: QuoteWithRelations & { updatedAt: string | Date };
+  order: { id: number; orderNumber: string; updatedAt: string | Date };
   customer: CustomerData | null;
   attachments: AttachmentData[];
   defaultSubject?: string;
   editableSlots: EditableSlot[];
-  /** From email template: classified attachment kinds to require and pre-select; empty = none required */
   requiredAttachmentDocumentKinds: AttachmentDocumentKind[];
+  /**
+   * Opens the matching in-app PDF flow (invoice, purchase order, packing slip).
+   * Quote PDFs are not generated on the order page — use upload or existing attachments.
+   */
+  onRequestGenerateForDocumentKind?: (kind: AttachmentDocumentKind) => void;
+  /** No customer — invoice / packing slip generation unavailable */
+  invoiceGenerateDisabled?: boolean;
+  /** No vendor — purchase order generation unavailable */
+  purchaseOrderGenerateDisabled?: boolean;
+  /** No customer — packing slip generation unavailable */
+  packingSlipGenerateDisabled?: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -161,17 +193,21 @@ d.querySelectorAll("[data-slot-id]").forEach(function(el){
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function SendQuoteEmailModal({
+export default function SendOrderConfirmationModal({
   isOpen,
   onClose,
   onSendSuccess,
-  quote,
+  order,
   customer,
   attachments,
   defaultSubject,
   editableSlots,
   requiredAttachmentDocumentKinds,
-}: SendQuoteEmailModalProps) {
+  onRequestGenerateForDocumentKind,
+  invoiceGenerateDisabled = false,
+  purchaseOrderGenerateDisabled = false,
+  packingSlipGenerateDisabled = false,
+}: SendOrderConfirmationModalProps) {
   const submitFetcher = useFetcher<{
     success?: boolean;
     error?: string;
@@ -207,10 +243,6 @@ export default function SendQuoteEmailModal({
   }, [slotOverrides]);
 
   // ── Attachment state ──
-  const quoteUpdatedAt = useMemo(
-    () => new Date(quote.updatedAt as string),
-    [quote.updatedAt],
-  );
   const requiredKindSet = useMemo(
     () => new Set(requiredAttachmentDocumentKinds),
     [requiredAttachmentDocumentKinds],
@@ -219,12 +251,7 @@ export default function SendQuoteEmailModal({
   const [selectedPrimaryByKind, setSelectedPrimaryByKind] = useState<
     Partial<Record<AttachmentDocumentKind, string | null>>
   >({});
-  const [staleQuotePdfAcknowledged, setStaleQuotePdfAcknowledged] =
-    useState(false);
   const [selectedOptionalIds, setSelectedOptionalIds] = useState<string[]>([]);
-
-  // ── PDF generation modal ──
-  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
 
   // ── Attachment viewer ──
   const [viewingAttachment, setViewingAttachment] = useState<AttachmentData | null>(null);
@@ -246,7 +273,6 @@ export default function SendQuoteEmailModal({
       setCc("");
       setShowCc(false);
       setSlotOverrides(Object.fromEntries(editableSlots.map((s) => [s.id, s.templateValue])));
-      setStaleQuotePdfAcknowledged(false);
       setSelectedOptionalIds([]);
       setSubmitError(null);
       setEditableHtml(null);
@@ -268,17 +294,7 @@ export default function SendQuoteEmailModal({
       next[kind] = latest?.id ?? null;
     }
     setSelectedPrimaryByKind(next);
-    const qid = next.quote;
-    if (qid) {
-      const att = attachments.find((a) => a.id === qid);
-      if (att) {
-        const stale = new Date(att.createdAt) < quoteUpdatedAt;
-        if (!stale) setStaleQuotePdfAcknowledged(false);
-      }
-    } else {
-      setStaleQuotePdfAcknowledged(false);
-    }
-  }, [attachments, requiredAttachmentDocumentKinds, quoteUpdatedAt]);
+  }, [attachments, requiredAttachmentDocumentKinds]);
 
   // ── Upload success → revalidate ──
   useEffect(() => {
@@ -291,14 +307,14 @@ export default function SendQuoteEmailModal({
   const refreshPreview = useCallback(() => {
     if (!isOpen) return;
     const fd = new FormData();
-    fd.set("contextKey", EMAIL_CONTEXT.QUOTE_SEND);
-    fd.set("entityId", String(quote.id));
+    fd.set("contextKey", EMAIL_CONTEXT.ORDER_CONFIRMATION);
+    fd.set("entityId", String(order.id));
     fd.set("subject", subject);
     for (const [id, value] of Object.entries(slotOverrides)) {
       fd.set(`slot.${id}`, value);
     }
     previewFetcher.submit(fd, { method: "post", action: "/email/preview" });
-  }, [isOpen, quote.id, subject, slotOverrides, previewFetcher]);
+  }, [isOpen, order.id, subject, slotOverrides, previewFetcher]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -364,14 +380,6 @@ export default function SendQuoteEmailModal({
   const isOverSizeLimit = totalSize > MAX_EMAIL_ATTACHMENT_BYTES;
 
   // ── Validation ──
-  const selectedQuoteAtt =
-    requiredKindSet.has("quote") && selectedPrimaryByKind.quote
-      ? attachments.find((a) => a.id === selectedPrimaryByKind.quote)
-      : null;
-  const quotePrimaryIsStale =
-    selectedQuoteAtt != null && new Date(selectedQuoteAtt.createdAt) < quoteUpdatedAt;
-  const needsStaleQuotePrimaryAck = quotePrimaryIsStale && !staleQuotePdfAcknowledged;
-
   const allRequiredPrimariesSelected =
     requiredAttachmentDocumentKinds.length === 0 ||
     requiredAttachmentDocumentKinds.every(
@@ -380,7 +388,6 @@ export default function SendQuoteEmailModal({
 
   const canSend =
     allRequiredPrimariesSelected &&
-    !needsStaleQuotePrimaryAck &&
     !isOverSizeLimit &&
     submitFetcher.state === "idle" &&
     subject.trim().length > 0;
@@ -395,9 +402,9 @@ export default function SendQuoteEmailModal({
     formData.set("idempotencyKey", idempotencyKeyRef.current);
     formData.set("subject", subject);
     if (cc) formData.set("cc", cc);
-    formData.set("contextKey", EMAIL_CONTEXT.QUOTE_SEND);
-    formData.set("entityType", "quote");
-    formData.set("entityId", String(quote.id));
+    formData.set("contextKey", EMAIL_CONTEXT.ORDER_CONFIRMATION);
+    formData.set("entityType", "order");
+    formData.set("entityId", String(order.id));
     for (const id of allSelectedIds) {
       formData.append("attachmentId", id);
     }
@@ -411,6 +418,37 @@ export default function SendQuoteEmailModal({
     (a) => a.documentKind == null || !requiredKindSet.has(a.documentKind as AttachmentDocumentKind),
   );
 
+  const isGenerateDisabled = useCallback(
+    (kind: AttachmentDocumentKind) => {
+      if (!isGeneratableOnOrderPage(kind) || !onRequestGenerateForDocumentKind) {
+        return true;
+      }
+      if (kind === "invoice" && invoiceGenerateDisabled) return true;
+      if (kind === "purchase_order" && purchaseOrderGenerateDisabled) return true;
+      if (kind === "packing_slip" && packingSlipGenerateDisabled) return true;
+      return false;
+    },
+    [
+      onRequestGenerateForDocumentKind,
+      invoiceGenerateDisabled,
+      purchaseOrderGenerateDisabled,
+      packingSlipGenerateDisabled,
+    ],
+  );
+
+  const generateDisabledTitle = (kind: AttachmentDocumentKind) => {
+    if (kind === "invoice" && invoiceGenerateDisabled) {
+      return "Invoices require a customer on the order";
+    }
+    if (kind === "purchase_order" && purchaseOrderGenerateDisabled) {
+      return "Purchase orders require a vendor on the order";
+    }
+    if (kind === "packing_slip" && packingSlipGenerateDisabled) {
+      return "Packing slips require a customer on the order";
+    }
+    return undefined;
+  };
+
   const toggleOptional = (id: string) => {
     setSelectedOptionalIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -420,39 +458,22 @@ export default function SendQuoteEmailModal({
   // ─── Primary document chip (required template kinds) ─────────────────────
   const setPrimaryIdForKind = (kind: AttachmentDocumentKind, id: string) => {
     setSelectedPrimaryByKind((p) => ({ ...p, [kind]: id }));
-    if (kind === "quote") {
-      setStaleQuotePdfAcknowledged(false);
-    }
   };
 
   const clearPrimaryForKind = (kind: AttachmentDocumentKind) => {
     setSelectedPrimaryByKind((p) => ({ ...p, [kind]: null }));
-    if (kind === "quote") setStaleQuotePdfAcknowledged(false);
   };
 
   const renderPrimaryChip = (
     kind: AttachmentDocumentKind,
     file: AttachmentData,
-    isStale: boolean,
   ) => {
     const viewUrl = `/download/attachment/${file.id}?inline`;
     return (
-      <div
-        className={`flex items-center gap-2.5 px-3 py-2 rounded-md border ${
-          isStale
-            ? "bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-600"
-            : "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700"
-        }`}
-      >
-        {isStale ? (
-          <svg className="h-4 w-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-          </svg>
-        ) : (
-          <svg className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-        )}
+      <div className="flex items-center gap-2.5 px-3 py-2 rounded-md border bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700">
+        <svg className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
 
         <button
           type="button"
@@ -463,33 +484,12 @@ export default function SendQuoteEmailModal({
             })
           }
           title="Click to preview"
-          className={`flex-1 min-w-0 truncate text-sm font-medium text-left underline underline-offset-2 decoration-dotted ${
-            isStale
-              ? "text-amber-800 dark:text-amber-200 hover:text-amber-900 dark:hover:text-amber-100"
-              : "text-blue-800 dark:text-blue-200 hover:text-blue-900 dark:hover:text-blue-100"
-          }`}
+          className="flex-1 min-w-0 truncate text-sm font-medium text-left underline underline-offset-2 decoration-dotted text-blue-800 dark:text-blue-200 hover:text-blue-900 dark:hover:text-blue-100"
         >
           {file.fileName}
         </button>
 
-        {isStale && kind === "quote" && (
-          <>
-            <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">outdated</span>
-            <button
-              type="button"
-              onClick={() => setIsPdfModalOpen(true)}
-              className="shrink-0 text-xs font-medium text-amber-700 dark:text-amber-300 underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100"
-            >
-              Regenerate
-            </button>
-          </>
-        )}
-
-        {isStale && kind !== "quote" && (
-          <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">outdated</span>
-        )}
-
-        <span className={`shrink-0 text-xs ${isStale ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"}`}>
+        <span className="shrink-0 text-xs text-blue-600 dark:text-blue-400">
           {formatBytes(file.fileSize)}
         </span>
 
@@ -497,11 +497,7 @@ export default function SendQuoteEmailModal({
           type="button"
           onClick={() => clearPrimaryForKind(kind)}
           title="Remove from email"
-          className={`shrink-0 rounded p-0.5 transition-colors ${
-            isStale
-              ? "text-amber-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/40"
-              : "text-blue-300 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900/40"
-          }`}
+          className="shrink-0 rounded p-0.5 transition-colors text-blue-300 hover:text-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900/40"
         >
           <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -519,7 +515,7 @@ export default function SendQuoteEmailModal({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title="Send Quote Email"
+        title="Send order confirmation"
         size="full"
         zIndex={55}
       >
@@ -646,11 +642,9 @@ export default function SendQuoteEmailModal({
                 const selected = selectedId
                   ? attachments.find((a) => a.id === selectedId) ?? null
                   : null;
-                const isStaleForKind =
-                  selected != null &&
-                  (kind === "quote"
-                    ? new Date(selected.createdAt) < quoteUpdatedAt
-                    : false);
+                const showGenerate =
+                  onRequestGenerateForDocumentKind &&
+                  isGeneratableOnOrderPage(kind);
                 return (
                   <div key={kind} className="mb-3">
                     <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 font-medium">
@@ -658,19 +652,7 @@ export default function SendQuoteEmailModal({
                     </p>
                     {selected ? (
                       <>
-                        {renderPrimaryChip(kind, selected, isStaleForKind)}
-
-                        {isStaleForKind && kind === "quote" && (
-                          <label className="flex items-center gap-2 mt-1.5 ml-1 text-sm text-amber-700 dark:text-amber-300 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={staleQuotePdfAcknowledged}
-                              onChange={(e) => setStaleQuotePdfAcknowledged(e.target.checked)}
-                              className="rounded border-amber-400"
-                            />
-                            Send anyway — I&apos;ve confirmed the PDF is correct
-                          </label>
-                        )}
+                        {renderPrimaryChip(kind, selected)}
 
                         {forKind.filter((f) => f.id !== selectedId).length > 0 && (
                           <div className="mt-1.5 pl-1">
@@ -710,13 +692,20 @@ export default function SendQuoteEmailModal({
                         <RequiredAttachmentKindEmptyDashedBox
                           kindLabel={label}
                           trailingAction={
-                            kind === "quote" ? (
+                            showGenerate ? (
                               <Button
                                 type="button"
                                 variant="secondary"
-                                onClick={() => setIsPdfModalOpen(true)}
+                                disabled={isGenerateDisabled(kind)}
+                                title={
+                                  generateDisabledTitle(kind) ??
+                                  "Create a new PDF and attach it to the order"
+                                }
+                                onClick={() =>
+                                  onRequestGenerateForDocumentKind!(kind)
+                                }
                               >
-                                Generate PDF
+                                {generateButtonText(kind)}
                               </Button>
                             ) : null
                           }
@@ -801,7 +790,7 @@ export default function SendQuoteEmailModal({
                         fd.append("_noRedirect", "1");
                         uploadFetcher.submit(fd, {
                           method: "post",
-                          action: `/quotes/${quote.id}`,
+                          action: `/orders/${order.orderNumber}`,
                           encType: "multipart/form-data",
                         });
                         // Reset input so the same file can be re-uploaded
@@ -860,28 +849,16 @@ export default function SendQuoteEmailModal({
               title={
                 !allRequiredPrimariesSelected
                   ? "Add every required document type for this email template"
-                  : needsStaleQuotePrimaryAck
-                    ? "Confirm you've reviewed the quote PDF above"
-                    : isOverSizeLimit
-                      ? "Attachments exceed 10 MB limit"
-                      : undefined
+                  : isOverSizeLimit
+                    ? "Attachments exceed 10 MB limit"
+                    : undefined
               }
             >
-              {submitFetcher.state !== "idle" ? "Sending…" : "Send quote email"}
+              {submitFetcher.state !== "idle" ? "Sending…" : "Send confirmation email"}
             </Button>
           </div>
         </form>
       </Modal>
-
-      {/* PDF generation modal — autoDownload always off in this context */}
-      {isPdfModalOpen && (
-        <GenerateQuotePdfModal
-          isOpen={isPdfModalOpen}
-          onClose={() => setIsPdfModalOpen(false)}
-          quote={quote as QuoteWithRelations}
-          autoDownload={false}
-        />
-      )}
 
       {/* Attachment viewer — stacks above all other modals */}
       {viewingAttachment && (

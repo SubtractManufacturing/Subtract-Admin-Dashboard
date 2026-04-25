@@ -1,7 +1,40 @@
 import { db } from "./db";
 import { sentEmails } from "./db/schema";
-import { and, asc, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { SentEmail } from "./db/schema";
+import type { EmailContextKey } from "./email/email-context-registry";
+
+/** Blocks a new send while one of these rows exists for (order, context). */
+const ORDER_CONTEXT_BLOCKING_STATUSES = [
+  "queued",
+  "sending",
+  "pending_approval",
+  "sent",
+  "bounced",
+] as const;
+
+/**
+ * True if a non-terminal send already exists for this order and context
+ * (in flight, delivered, or bounced). Failed / rejected allows retry.
+ */
+export async function hasBlockingOrderContextSend(
+  orderEntityId: string,
+  contextKey: EmailContextKey,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: sentEmails.id })
+    .from(sentEmails)
+    .where(
+      and(
+        eq(sentEmails.entityType, "order"),
+        eq(sentEmails.entityId, orderEntityId),
+        eq(sentEmails.contextKey, contextKey),
+        inArray(sentEmails.status, [...ORDER_CONTEXT_BLOCKING_STATUSES]),
+      ),
+    )
+    .limit(1);
+  return row != null;
+}
 
 export type SentEmailListItem = Pick<
   SentEmail,
