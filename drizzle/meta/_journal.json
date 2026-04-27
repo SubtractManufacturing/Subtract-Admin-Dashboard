@@ -75,15 +75,8 @@
     {
       "idx": 10,
       "version": "7",
-      "when": 1777006002808,
-      "tag": "0011_unusual_starfox",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1777058211363,
-      "tag": "0011_clean_talkback",
+      "when": 1777333538582,
+      "tag": "0010_fancy_inertia",
       "breakpoints": true
     }
   ]

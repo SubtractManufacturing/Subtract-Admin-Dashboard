@@ -10,6 +10,10 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    env: {
+      // CI has no .env; email layout rendering requires a base URL for assets
+      PUBLIC_APP_URL: "http://localhost:3000",
+    },
     // Load .env before each worker's module graph is built
     setupFiles: ["dotenv/config"],
     include: ["app/**/*.test.ts", "app/**/*.integration.test.ts"],

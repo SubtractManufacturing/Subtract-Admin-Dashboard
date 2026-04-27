@@ -1,6 +1,6 @@
 {
-  "id": "1a22d691-c4ef-424d-978d-62cf0addfa71",
-  "prevId": "7d3ac312-497d-490f-bbfc-8d81c7a2fa7b",
+  "id": "7c187eeb-e4e3-4b8a-af69-d79308a56883",
+  "prevId": "8f830f4b-2feb-4680-aa5b-5eb36935bf07",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -721,7 +721,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'quote-send'"
+          "default": "'styled-quote'"
         },
         "context_key": {
           "name": "context_key",
