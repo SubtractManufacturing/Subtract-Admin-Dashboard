@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { useFetcher } from "@remix-run/react";
-import type { Note } from "~/lib/db/schema";
+import type { NoteWithAuthor } from "~/lib/notes";
 import { NoteComponent } from "./Note";
 import Button from "./Button";
 
 interface NotesProps {
   entityType: string;
   entityId: string;
-  initialNotes?: Note[];
+  initialNotes?: NoteWithAuthor[];
   currentUserId: string;
   currentUserName: string;
   showHeader?: boolean;
@@ -29,12 +29,12 @@ export function Notes({
   externalControl = false,
   readOnly = false
 }: NotesProps) {
-  const [notes, setNotes] = useState<Note[]>(initialNotes);
+  const [notes, setNotes] = useState<NoteWithAuthor[]>(initialNotes);
   const [internalIsAddingNote, setInternalIsAddingNote] = useState(false);
 
   const isAddingNote = externalControl ? externalIsAddingNote || false : internalIsAddingNote;
   const [newNoteContent, setNewNoteContent] = useState("");
-  const fetcher = useFetcher<{ notes?: Note[] }>();
+  const fetcher = useFetcher<{ notes?: NoteWithAuthor[] }>();
 
   useEffect(() => {
     if (fetcher.data?.notes) {
