@@ -291,13 +291,17 @@ export default function SendQuoteEmailModal({
   const refreshPreview = useCallback(() => {
     if (!isOpen) return;
     const fd = new FormData();
+    fd.set("intent", "emailPreview");
     fd.set("contextKey", EMAIL_CONTEXT.QUOTE_SEND);
     fd.set("entityId", String(quote.id));
     fd.set("subject", subject);
     for (const [id, value] of Object.entries(slotOverrides)) {
       fd.set(`slot.${id}`, value);
     }
-    previewFetcher.submit(fd, { method: "post", action: "/email/preview" });
+    previewFetcher.submit(fd, {
+      method: "post",
+      action: `/quotes/${quote.id}`,
+    });
   }, [isOpen, quote.id, subject, slotOverrides, previewFetcher]);
 
   useEffect(() => {
@@ -392,6 +396,7 @@ export default function SendQuoteEmailModal({
     setSubmitError(null);
 
     const formData = new FormData();
+    formData.set("intent", "emailQueue");
     formData.set("idempotencyKey", idempotencyKeyRef.current);
     formData.set("subject", subject);
     if (cc) formData.set("cc", cc);
@@ -404,7 +409,10 @@ export default function SendQuoteEmailModal({
     for (const [id, value] of Object.entries(slotOverrides)) {
       formData.set(`slot.${id}`, value);
     }
-    submitFetcher.submit(formData, { method: "post", action: "/email/queue" });
+    submitFetcher.submit(formData, {
+      method: "post",
+      action: `/quotes/${quote.id}`,
+    });
   };
 
   const optionalAttachments = attachments.filter(

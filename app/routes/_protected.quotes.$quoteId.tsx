@@ -43,6 +43,11 @@ import {
   isStripePaymentLinksEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
+import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
+import {
+  handleEmailPreviewAction,
+  handleEmailQueueAction,
+} from "~/lib/email/outbound-email-route-actions.server";
 import {
   uploadFile,
   generateFileKey,
@@ -1089,11 +1094,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
     // If we get here with multipart data but unhandled intent, check if it's a PDF generation
     // PDF generation uses FormData but doesn't include files, so let it fall through
-    const pdfGenerationIntents = ["generateQuote", "generateInvoice"];
-    if (!pdfGenerationIntents.includes(intent as string)) {
+    const filelessMultipartIntents = [
+      "generateQuote",
+      "generateInvoice",
+      "emailPreview",
+      "emailQueue",
+    ];
+    if (!filelessMultipartIntents.includes(intent as string)) {
       return json({ error: "Invalid multipart request" }, { status: 400 });
     }
-    // Fall through to regular form handling for PDF generation
+    // Fall through to regular form handling for file-less multipart intents
   } else {
     // Not multipart, parse as regular FormData
     formData = await request.formData();
@@ -1113,6 +1123,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
 
     switch (intent) {
+      case "emailPreview": {
+        return withAuthHeaders(
+          await handleEmailPreviewAction({
+            auth: { user, userDetails },
+            formData,
+            expected: {
+              contextKey: EMAIL_CONTEXT.QUOTE_SEND,
+              entityId: String(quote.id),
+            },
+          }),
+          headers,
+        );
+      }
+
+      case "emailQueue": {
+        return withAuthHeaders(
+          await handleEmailQueueAction({
+            auth: { user, userDetails },
+            formData,
+            expected: {
+              contextKey: EMAIL_CONTEXT.QUOTE_SEND,
+              entityType: "quote",
+              entityId: String(quote.id),
+            },
+          }),
+          headers,
+        );
+      }
+
       case "updateStatus": {
         const status = formData.get("status") as
           | "RFQ"

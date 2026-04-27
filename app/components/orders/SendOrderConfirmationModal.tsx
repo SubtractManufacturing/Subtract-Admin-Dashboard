@@ -307,14 +307,18 @@ export default function SendOrderConfirmationModal({
   const refreshPreview = useCallback(() => {
     if (!isOpen) return;
     const fd = new FormData();
+    fd.set("intent", "emailPreview");
     fd.set("contextKey", EMAIL_CONTEXT.ORDER_CONFIRMATION);
     fd.set("entityId", String(order.id));
     fd.set("subject", subject);
     for (const [id, value] of Object.entries(slotOverrides)) {
       fd.set(`slot.${id}`, value);
     }
-    previewFetcher.submit(fd, { method: "post", action: "/email/preview" });
-  }, [isOpen, order.id, subject, slotOverrides, previewFetcher]);
+    previewFetcher.submit(fd, {
+      method: "post",
+      action: `/orders/${order.orderNumber}`,
+    });
+  }, [isOpen, order.id, order.orderNumber, subject, slotOverrides, previewFetcher]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -399,6 +403,7 @@ export default function SendOrderConfirmationModal({
     setSubmitError(null);
 
     const formData = new FormData();
+    formData.set("intent", "emailQueue");
     formData.set("idempotencyKey", idempotencyKeyRef.current);
     formData.set("subject", subject);
     if (cc) formData.set("cc", cc);
@@ -411,7 +416,10 @@ export default function SendOrderConfirmationModal({
     for (const [id, value] of Object.entries(slotOverrides)) {
       formData.set(`slot.${id}`, value);
     }
-    submitFetcher.submit(formData, { method: "post", action: "/email/queue" });
+    submitFetcher.submit(formData, {
+      method: "post",
+      action: `/orders/${order.orderNumber}`,
+    });
   };
 
   const optionalAttachments = attachments.filter(

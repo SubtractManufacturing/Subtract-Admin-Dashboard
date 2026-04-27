@@ -6,7 +6,7 @@ import Button from "~/components/shared/Button";
 export type SendEmailModalData = {
   success?: boolean;
   error?: string;
-  /** Present when `success` — from `/email/queue` after outbound enqueue */
+  /** Present when `success` after outbound enqueue */
   delivery?: "queued" | "awaiting_approval";
 };
 
@@ -25,7 +25,7 @@ type SendEmailModalProps = {
   defaultSubject?: string;
   attachments: SendEmailAttachmentItem[];
   preview: ReactNode;
-  /** POST target (e.g. `/email/queue`) */
+  /** POST target for the parent route action */
   action?: string;
   /** Appended as hidden inputs on submit */
   hiddenFields: Record<string, string>;
@@ -44,7 +44,7 @@ export default function SendEmailModal({
   defaultSubject,
   attachments,
   preview,
-  action = "/email/queue",
+  action = ".",
   hiddenFields,
   subjectResetKey = "",
 }: SendEmailModalProps) {

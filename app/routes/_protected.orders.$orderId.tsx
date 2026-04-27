@@ -32,6 +32,11 @@ import {
   FEATURE_FLAGS,
   canUserUploadCadRevision,
 } from "~/lib/featureFlags";
+import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
+import {
+  handleEmailPreviewAction,
+  handleEmailQueueAction,
+} from "~/lib/email/outbound-email-route-actions.server";
 import { hasBlockingOrderContextSend } from "~/lib/sent-emails.server";
 import type { AttachmentDocumentKind , Attachment, Vendor } from "~/lib/db/schema";
 import { formatCurrency } from "~/lib/email/resolve/formatters";
@@ -374,6 +379,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         "generatePurchaseOrder",
         "generateInvoice",
         "generatePackingSlip",
+        "emailPreview",
+        "emailQueue",
         "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
       ];
       if (specialIntents.includes(intent)) {
@@ -463,6 +470,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
 
     switch (intent) {
+      case "emailPreview": {
+        return withAuthHeaders(
+          await handleEmailPreviewAction({
+            auth: { user, userDetails },
+            formData,
+            expected: {
+              contextKey: EMAIL_CONTEXT.ORDER_CONFIRMATION,
+              entityId: String(order.id),
+            },
+          }),
+          headers,
+        );
+      }
+
+      case "emailQueue": {
+        return withAuthHeaders(
+          await handleEmailQueueAction({
+            auth: { user, userDetails },
+            formData,
+            expected: {
+              contextKey: EMAIL_CONTEXT.ORDER_CONFIRMATION,
+              entityType: "order",
+              entityId: String(order.id),
+            },
+          }),
+          headers,
+        );
+      }
+
       case "getNotes": {
         const notes = await getNotes("order", order.id.toString());
         return withAuthHeaders(json({ notes }), headers);
