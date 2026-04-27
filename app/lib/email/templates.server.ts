@@ -6,6 +6,7 @@ import {
 } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import {
+  coerceLegacyEmailLayoutSlug,
   isRegisteredEmailLayoutSlug,
   type TemplateSlug,
 } from "~/emails/registry";
@@ -104,7 +105,9 @@ export async function resolveEmailTemplateForContext(
 
   if (!row) return null;
 
-  const layoutSlug = row.template.layoutSlug;
+  const layoutSlug = coerceLegacyEmailLayoutSlug(
+    row.template.layoutSlug,
+  ) as TemplateSlug;
   if (!isRegisteredEmailLayoutSlug(layoutSlug)) {
     console.error(
       `[email] Template ${row.template.slug} has unknown layout_slug: ${layoutSlug}`

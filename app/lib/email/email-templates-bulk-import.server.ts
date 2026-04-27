@@ -12,9 +12,11 @@ import {
   type EmailContextKey,
 } from "~/lib/email/email-context-registry";
 import {
+  coerceLegacyEmailLayoutSlug,
   isRegisteredEmailLayoutSlug,
   isSelectableEmailLayoutSlug,
   parseBodyCopyForLayout,
+  type TemplateSlug,
 } from "~/emails/registry";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -154,7 +156,9 @@ export async function importEmailTemplatesFromPayload(
         error: `Template "${slug}": layoutSlug is required.`,
       };
     }
-    const layoutSlug = layoutSlugRaw.trim();
+    const layoutSlug = coerceLegacyEmailLayoutSlug(
+      layoutSlugRaw.trim(),
+    ) as TemplateSlug;
 
     let contextKey: EmailContextKey | null = null;
     if (contextRaw !== undefined && contextRaw !== null) {
@@ -189,7 +193,8 @@ export async function importEmailTemplatesFromPayload(
         layoutSlug,
         opts.exampleEmailLayoutsEnabled,
       ) &&
-      (!existingRow || existingRow.layoutSlug !== layoutSlug)
+      (!existingRow ||
+        coerceLegacyEmailLayoutSlug(existingRow.layoutSlug) !== layoutSlug)
     ) {
       return {
         ok: false,

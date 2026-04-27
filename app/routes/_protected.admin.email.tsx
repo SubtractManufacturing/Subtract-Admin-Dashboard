@@ -46,6 +46,7 @@ import {
   isOutboundEmailEnabled,
 } from "~/lib/featureFlags";
 import {
+  coerceLegacyEmailLayoutSlug,
   getDefaultBodyCopyForLayout,
   getLayoutDefinition,
   getSelectableEmailLayoutSlugs,
@@ -63,6 +64,11 @@ import { sendDraftTemplateTestEmail } from "~/lib/email/send-draft-template-test
 import { parseOutboundListMaxAgeHoursInput } from "~/lib/email/parse-outbound-list-max-age-hours-input";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+const EMAIL_LAYOUT_LABELS: Record<TemplateSlug, string> = {
+  "styled-quote": "Styled quote",
+  "example-kitchen-sink": "Kitchen sink (example)",
+};
 
 /** Post body must target this route so fetchers do not hit a parent `action` by mistake. */
 const ADMIN_EMAIL_ACTION = "/admin/email";
@@ -703,7 +709,8 @@ export async function action({ request }: ActionFunctionArgs) {
       10,
     );
 
-    if (!isRegisteredEmailLayoutSlug(layoutSlug)) {
+    const layoutSlugCanonical = coerceLegacyEmailLayoutSlug(layoutSlug);
+    if (!isRegisteredEmailLayoutSlug(layoutSlugCanonical)) {
       return withAuthHeaders(
         json({ error: "Invalid layout slug." }, { status: 400 }),
         headers,
@@ -738,11 +745,19 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const recipientEmail = userDetails.email?.trim() ?? "";
+    if (process.env.NODE_ENV === "development") {
+      console.info("[admin/email] Template test send started");
+    }
     const result = await sendDraftTemplateTestEmail({
       formData,
       recipientEmail,
       identity,
     });
+    if (process.env.NODE_ENV === "development") {
+      console.info(
+        `[admin/email] Template test send finished: ${result.ok ? "ok" : result.error}`,
+      );
+    }
     if (!result.ok) {
       return withAuthHeaders(
         json({ error: result.error }, { status: result.status }),
@@ -762,7 +777,9 @@ export async function action({ request }: ActionFunctionArgs) {
         : null;
     const name = (formData.get("name") as string)?.trim();
     let slug = (formData.get("slug") as string)?.trim().toLowerCase();
-    const layoutSlug = (formData.get("layoutSlug") as string)?.trim();
+    const layoutSlugRaw =
+      (formData.get("layoutSlug") as string)?.trim() ?? "";
+    const layoutSlug = coerceLegacyEmailLayoutSlug(layoutSlugRaw);
     const contextKeyRaw = formData.get("contextKey");
     const contextKey = normalizeContextKey(contextKeyRaw);
     const emailIdentityId = parseInt(
@@ -1134,7 +1151,7 @@ export default function AdminEmail() {
     null,
   );
   const [templateLayoutSlug, setTemplateLayoutSlug] =
-    useState<TemplateSlug>("quote-send");
+    useState<TemplateSlug>("styled-quote");
   const [mergeTokensReferenceOpen, setMergeTokensReferenceOpen] =
     useState(false);
   const [emailTemplatesToolbarMenuOpen, setEmailTemplatesToolbarMenuOpen] =
@@ -1186,8 +1203,9 @@ export default function AdminEmail() {
     if (!templateModalOpen) {
       return;
     }
-    const raw = editingTemplate?.layoutSlug ?? "quote-send";
-    const slug = isRegisteredEmailLayoutSlug(raw) ? raw : "quote-send";
+    const raw = editingTemplate?.layoutSlug ?? "styled-quote";
+    const coerced = coerceLegacyEmailLayoutSlug(raw);
+    const slug = isRegisteredEmailLayoutSlug(coerced) ? coerced : "styled-quote";
     setTemplateLayoutSlug(slug);
   }, [templateModalOpen, editingTemplate]);
 
@@ -1234,11 +1252,13 @@ export default function AdminEmail() {
     const slug = templateLayoutSlug;
     if (
       editingTemplate &&
-      isRegisteredEmailLayoutSlug(editingTemplate.layoutSlug) &&
-      editingTemplate.layoutSlug === slug
+      isRegisteredEmailLayoutSlug(
+        coerceLegacyEmailLayoutSlug(editingTemplate.layoutSlug),
+      ) &&
+      coerceLegacyEmailLayoutSlug(editingTemplate.layoutSlug) === slug
     ) {
       const parsed = parseBodyCopyForLayout(
-        editingTemplate.layoutSlug,
+        coerceLegacyEmailLayoutSlug(editingTemplate.layoutSlug),
         editingTemplate.bodyCopy ?? {},
       );
       if (parsed.ok) {
@@ -1250,7 +1270,9 @@ export default function AdminEmail() {
 
   const templateLayoutOptions = useMemo((): TemplateSlug[] => {
     const base = [...getSelectableEmailLayoutSlugs(exampleEmailLayoutsEnabled)];
-    const cur = editingTemplate?.layoutSlug;
+    const cur = editingTemplate?.layoutSlug
+      ? coerceLegacyEmailLayoutSlug(editingTemplate.layoutSlug)
+      : undefined;
     if (cur && isRegisteredEmailLayoutSlug(cur) && !base.includes(cur)) {
       return [cur, ...base];
     }
@@ -1943,7 +1965,7 @@ export default function AdminEmail() {
                     aria-label="Add email template"
                     onClick={() => {
                       setEditingTemplate(null);
-                      setTemplateLayoutSlug("quote-send");
+                      setTemplateLayoutSlug("styled-quote");
                       setTemplateModalOpen(true);
                     }}
                   />
@@ -2427,7 +2449,7 @@ export default function AdminEmail() {
               >
                 {templateLayoutOptions.map((layout) => (
                   <option key={layout} value={layout}>
-                    {layout}
+                    {EMAIL_LAYOUT_LABELS[layout] ?? layout}
                   </option>
                 ))}
               </select>
@@ -2486,7 +2508,7 @@ export default function AdminEmail() {
                           .map((k) => ATTACHMENT_DOCUMENT_KIND_LABELS[k] ?? k)
                           .join(", ")
                       : "None (optional only)"
-                    : templateLayoutSlug === "quote-send"
+                    : templateLayoutSlug === "styled-quote"
                       ? "Quote PDF"
                       : "None (optional only)"}
                 </span>
@@ -2521,7 +2543,7 @@ export default function AdminEmail() {
                               editingTemplate.requiredAttachmentDocumentKinds ??
                               []
                             ).includes(kind)
-                          : templateLayoutSlug === "quote-send" &&
+                          : templateLayoutSlug === "styled-quote" &&
                             kind === "quote"
                       }
                       className="h-4 w-4 rounded border-gray-300 text-[#840606] focus:ring-[#840606] dark:border-slate-600"

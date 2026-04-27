@@ -5,32 +5,43 @@ import {
   parseAndValidateBodyCopyForDefinition,
 } from "./layout-definition";
 import {
-  QuoteSendEmail,
-  quoteSendLayoutDefinition,
-  type QuoteSendBodyCopy,
-  type QuoteSendEmailProps,
-} from "./layouts/quote-send";
-import {
   ExampleKitchenSinkEmail,
   exampleKitchenSinkLayoutDefinition,
   type ExampleKitchenSinkBodyCopy,
   type ExampleKitchenSinkEmailProps,
 } from "./layouts/example-kitchen-sink";
+import {
+  StyledQuoteEmail,
+  styledQuoteLayoutDefinition,
+  normalizeStyledQuoteBodyCopyRaw,
+  type StyledQuoteBodyCopy,
+  type StyledQuoteEmailProps,
+} from "./layouts/styled-quote";
+
+const LEGACY_LAYOUT_SLUG_MAP: Record<string, string> = {
+  "quote-send": "styled-quote",
+  "branded-content": "styled-quote",
+};
+
+/** Maps removed / renamed layout keys so stored `email_templates.layout_slug` rows keep working. */
+export function coerceLegacyEmailLayoutSlug(slug: string): string {
+  return LEGACY_LAYOUT_SLUG_MAP[slug] ?? slug;
+}
 
 export type PropsBySlug = {
-  "quote-send": QuoteSendEmailProps;
+  "styled-quote": StyledQuoteEmailProps;
   "example-kitchen-sink": ExampleKitchenSinkEmailProps;
 };
 
 export type TemplateSlug = keyof PropsBySlug;
 
-export type LayoutCopy<K extends TemplateSlug> = K extends "quote-send"
-  ? QuoteSendBodyCopy
+export type LayoutCopy<K extends TemplateSlug> = K extends "styled-quote"
+  ? StyledQuoteBodyCopy
   : K extends "example-kitchen-sink"
     ? ExampleKitchenSinkBodyCopy
     : never;
 
-export type { QuoteSendBodyCopy, ExampleKitchenSinkBodyCopy };
+export type { StyledQuoteBodyCopy, ExampleKitchenSinkBodyCopy };
 
 type RegistryEntry<K extends TemplateSlug> = {
   component: FC<PropsBySlug[K]>;
@@ -39,10 +50,10 @@ type RegistryEntry<K extends TemplateSlug> = {
   isExample?: boolean;
 };
 
-const quoteSendEntry: RegistryEntry<"quote-send"> = {
-  component: QuoteSendEmail,
+const styledQuoteEntry: RegistryEntry<"styled-quote"> = {
+  component: StyledQuoteEmail,
   defaultSubject: "Your Quote {{quoteNumber}} from Subtract Manufacturing",
-  definition: quoteSendLayoutDefinition,
+  definition: styledQuoteLayoutDefinition,
 };
 
 const exampleKitchenSinkEntry: RegistryEntry<"example-kitchen-sink"> = {
@@ -53,7 +64,7 @@ const exampleKitchenSinkEntry: RegistryEntry<"example-kitchen-sink"> = {
 };
 
 export const runtimeEmailLayoutRegistry = {
-  "quote-send": quoteSendEntry,
+  "styled-quote": styledQuoteEntry,
   "example-kitchen-sink": exampleKitchenSinkEntry,
 } as const satisfies { [K in TemplateSlug]: RegistryEntry<K> };
 
@@ -85,22 +96,33 @@ export function getSelectableEmailLayoutSlugs(
   );
 }
 
-export function getLayoutDefinition<K extends TemplateSlug>(
-  slug: K,
-): EmailLayoutDefinition {
-  return runtimeEmailLayoutRegistry[slug].definition;
+export function getLayoutDefinition(slug: string): EmailLayoutDefinition {
+  const canonical = coerceLegacyEmailLayoutSlug(slug);
+  if (!isRegisteredEmailLayoutSlug(canonical)) {
+    throw new Error(`Unknown email layout: ${slug}`);
+  }
+  return runtimeEmailLayoutRegistry[canonical].definition;
 }
 
 export function parseBodyCopyForLayout<K extends TemplateSlug>(
-  slug: K,
+  slugInput: K | string,
   raw: unknown,
 ):
   | { ok: true; data: LayoutCopy<K> }
   | { ok: false; errors: Record<string, string> } {
+  const slug = coerceLegacyEmailLayoutSlug(String(slugInput));
+  if (!isRegisteredEmailLayoutSlug(slug)) {
+    return {
+      ok: false,
+      errors: { _root: `Unknown layout "${String(slugInput)}".` },
+    };
+  }
   const definition = getLayoutDefinition(slug);
+  const normalizedRaw =
+    slug === "styled-quote" ? normalizeStyledQuoteBodyCopyRaw(raw) : raw;
   const parsed = parseAndValidateBodyCopyForDefinition<LayoutCopy<K>>(
     definition,
-    raw,
+    normalizedRaw,
   );
   if (!parsed.ok) {
     return { ok: false, errors: parsed.errors };
@@ -111,5 +133,7 @@ export function parseBodyCopyForLayout<K extends TemplateSlug>(
 export function getDefaultBodyCopyForLayout<K extends TemplateSlug>(
   slug: K,
 ): LayoutCopy<K> {
-  return getDefaultBodyCopyFromDefinition(getLayoutDefinition(slug)) as LayoutCopy<K>;
+  return getDefaultBodyCopyFromDefinition(
+    getLayoutDefinition(slug),
+  ) as LayoutCopy<K>;
 }

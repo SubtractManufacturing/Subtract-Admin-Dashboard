@@ -1,5 +1,6 @@
 import { validateInterpolatedButtonLinksInCopy } from "~/emails/layout-definition";
 import {
+  coerceLegacyEmailLayoutSlug,
   getLayoutDefinition,
   isRegisteredEmailLayoutSlug,
   parseBodyCopyForLayout,
@@ -30,7 +31,7 @@ const SUBJECT_PREVIEW_PREFIX = "[Template preview] ";
 const LAYOUT_SAMPLE_MERGE_BASE: Partial<
   Record<TemplateSlug, Record<string, string>>
 > = {
-  "quote-send": {
+  "styled-quote": {
     quoteNumber: "Q-0001-SAMPLE",
     customerName: "Sample Customer LLC",
     total: "$1,234.56",
@@ -64,8 +65,8 @@ function buildSampleStringProps(
     }
   }
 
-  if (layoutSlug === "quote-send") {
-    const qs = LAYOUT_SAMPLE_MERGE_BASE["quote-send"]!;
+  if (layoutSlug === "styled-quote") {
+    const qs = LAYOUT_SAMPLE_MERGE_BASE["styled-quote"]!;
     for (const [k, v] of Object.entries(qs)) {
       if (!stringProps[k]?.trim()) {
         stringProps[k] = v;
@@ -112,10 +113,10 @@ export async function sendDraftTemplateTestEmail(params: {
     };
   }
 
-  if (!isRegisteredEmailLayoutSlug(layoutSlugRaw)) {
+  const layoutSlug = coerceLegacyEmailLayoutSlug(layoutSlugRaw);
+  if (!isRegisteredEmailLayoutSlug(layoutSlug)) {
     return { ok: false, status: 400, error: "Invalid layout slug." };
   }
-  const layoutSlug = layoutSlugRaw;
 
   const layoutDef = getLayoutDefinition(layoutSlug);
   const rawBody = bodyCopyFromFormData(formData, layoutDef);
@@ -147,11 +148,7 @@ export async function sendDraftTemplateTestEmail(params: {
     return { ok: false, status: 400, error: linkPolicyError };
   }
 
-  const props = buildEmailLayoutProps(
-    layoutSlug,
-    interpolatedCopy,
-    stringProps,
-  );
+  const props = buildEmailLayoutProps(layoutSlug, interpolatedCopy);
   let { html: rawHtml, text: textBody } = await renderEmailTemplate(
     layoutSlug,
     props,

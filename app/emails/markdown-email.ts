@@ -3,7 +3,8 @@ import { sanitizeEmailHtml } from "~/lib/email/sanitize-email-html";
 
 marked.setOptions({
   gfm: true,
-  breaks: false,
+  // Single newlines → <br> so plain-text-style templates (e.g. styled-quote) keep line breaks.
+  breaks: true,
 });
 
 export function renderEmailMarkdownToHtml(markdown: string): string {

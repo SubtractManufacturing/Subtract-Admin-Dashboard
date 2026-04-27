@@ -92,7 +92,7 @@ const templateWithKinds = (kinds: string[]) => ({
     requiredAttachmentDocumentKinds: kinds,
   },
   identity: {} as { id: number },
-  layoutSlug: "quote-send" as const,
+  layoutSlug: "styled-quote" as const,
 });
 
 describe("quoteSendEmailHandler.verifyAttachmentIds — quote PDF requirement", () => {

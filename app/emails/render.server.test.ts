@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { interpolateTemplateString, interpolateSubject, interpolateLayoutCopy } from "./render.server";
+import {
+  interpolateTemplateString,
+  interpolateSubject,
+  interpolateLayoutCopy,
+  renderEmailTemplate,
+} from "./render.server";
 import { validateMergeTokens } from "~/lib/email/resolve";
+import { parseBodyCopyForLayout } from "./registry";
 
 describe("interpolateTemplateString", () => {
   it("substitutes a single token", () => {
@@ -102,6 +108,110 @@ describe("interpolateLayoutCopy", () => {
     const cta = result.cta as { buttonLabel: string; link: string };
     expect(cta.buttonLabel).toBe("View Quote 26Q00001");
     expect(cta.link).toBe("https://app.example.com/quotes/26Q00001");
+  });
+});
+
+describe("styled-quote email layout", () => {
+  it("renders intro, button, wrap-up, and footer in order with shared body styling", async () => {
+    const { html, text } = await renderEmailTemplate("styled-quote", {
+      logoUrl: "https://app.example.com/subtract-logo.png",
+      copy: {
+        intro:
+          "## Hello from Subtract\n\nThis is **important** content with a [link](https://example.com).",
+        cta: {
+          buttonLabel: "View Details",
+          link: "https://app.example.com/details",
+        },
+        wrapUp: "Thanks for choosing us—we appreciate your business.",
+        footerNotice:
+          "Ship dates are estimates only. See our [shipping policy](https://example.com/shipping) for details.",
+      },
+    });
+
+    expect(html).toContain("https://app.example.com/subtract-logo.png");
+    expect(html).toContain("Subtract Manufacturing");
+    expect(html).toContain("Hello from Subtract");
+    expect(html).toContain("<strong>important</strong>");
+    expect(html).toContain("https://app.example.com/details");
+    expect(html).toContain("View Details");
+    expect(html).toContain('data-slot-id="intro"');
+    expect(html.indexOf('data-slot-id="cta"')).toBeLessThan(
+      html.indexOf('data-slot-id="wrapUp"'),
+    );
+    expect(html.indexOf('data-slot-id="wrapUp"')).toBeLessThan(
+      html.indexOf('data-slot-id="footerNotice"'),
+    );
+    expect(html).toContain("Thanks for choosing us");
+    expect(html).toContain('data-slot-id="footerNotice"');
+    expect(html).toContain("Ship dates are estimates");
+    expect(text).toContain("HELLO FROM SUBTRACT");
+  });
+
+  it("hides wrap-up and footer when empty", async () => {
+    const { html } = await renderEmailTemplate("styled-quote", {
+      logoUrl: "https://app.example.com/subtract-logo.png",
+      copy: {
+        intro: "Just the intro.",
+        cta: {
+          buttonLabel: "",
+          link: "",
+        },
+        wrapUp: "",
+        footerNotice: "",
+      },
+    });
+
+    expect(html).not.toContain('data-slot-id="cta"');
+    expect(html).not.toContain('data-slot-id="wrapUp"');
+    expect(html).not.toContain('data-slot-id="footerNotice"');
+  });
+
+  it("renders footer after wrap-up when both are present", async () => {
+    const { html } = await renderEmailTemplate("styled-quote", {
+      logoUrl: "https://app.example.com/subtract-logo.png",
+      copy: {
+        intro: "Opening.",
+        cta: {
+          buttonLabel: "Pay",
+          link: "https://example.com/pay",
+        },
+        wrapUp: "Closing paragraph.",
+        footerNotice: "Payment terms: Net 30.",
+      },
+    });
+
+    expect(html.indexOf("Closing paragraph")).toBeLessThan(
+      html.indexOf("Payment terms"),
+    );
+  });
+
+  it("renders footer notice without CTA when button is hidden", async () => {
+    const { html } = await renderEmailTemplate("styled-quote", {
+      logoUrl: "https://app.example.com/subtract-logo.png",
+      copy: {
+        intro: "Main message only.",
+        cta: { buttonLabel: "", link: "" },
+        wrapUp: "",
+        footerNotice: "Fine print goes here.",
+      },
+    });
+
+    expect(html).not.toContain('data-slot-id="cta"');
+    expect(html).toContain('data-slot-id="footerNotice"');
+    expect(html).toContain("Fine print goes here.");
+  });
+
+  it("maps legacy bodyCopy.content to intro when parsing", () => {
+    const result = parseBodyCopyForLayout("styled-quote", {
+      content: "Legacy intro body",
+      cta: { buttonLabel: "", link: "" },
+      footerNotice: "",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.intro).toBe("Legacy intro body");
+      expect(result.data.wrapUp).toBe("");
+    }
   });
 });
 

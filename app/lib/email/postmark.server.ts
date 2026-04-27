@@ -4,6 +4,18 @@ const SERVER_TOKEN =
   process.env.POSTMARK_SERVER_TOKEN ?? process.env.POSTMARK_API_TOKEN;
 const MESSAGE_STREAM = process.env.POSTMARK_MESSAGE_STREAM;
 
+/** Avoid hanging indefinitely when outbound HTTPS to Postmark is blocked or stalled. */
+const POSTMARK_REQUEST_TIMEOUT_MS = 60_000;
+
+function isAbortOrTimeout(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" ||
+      error.name === "TimeoutError" ||
+      /aborted|timeout/i.test(error.message))
+  );
+}
+
 if (!SERVER_TOKEN) {
   console.warn(
     "POSTMARK_SERVER_TOKEN or POSTMARK_API_TOKEN must be set to send emails"
@@ -87,15 +99,26 @@ export async function sendPostmarkTransactionalEmail(
     Attachments: attachmentBuffers,
   };
 
-  const response = await fetch("https://api.postmarkapp.com/email", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "X-Postmark-Server-Token": SERVER_TOKEN,
-    },
-    body: JSON.stringify(payload),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://api.postmarkapp.com/email", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Postmark-Server-Token": SERVER_TOKEN,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(POSTMARK_REQUEST_TIMEOUT_MS),
+    });
+  } catch (e: unknown) {
+    if (isAbortOrTimeout(e)) {
+      throw new Error(
+        `Postmark request timed out after ${POSTMARK_REQUEST_TIMEOUT_MS / 1000}s. Check network, VPN, or firewall access to api.postmarkapp.com.`,
+      );
+    }
+    throw e;
+  }
 
   if (response.status === 429) {
     throw new Error("Postmark rate limit (429) — will retry");

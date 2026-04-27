@@ -1,6 +1,8 @@
 import type { EmailLayoutDefinition } from "~/emails/layout-definition";
 import {
+  coerceLegacyEmailLayoutSlug,
   getLayoutDefinition,
+  isRegisteredEmailLayoutSlug,
   parseBodyCopyForLayout,
   type TemplateSlug,
 } from "~/emails/registry";
@@ -44,28 +46,28 @@ export function parseTemplateBodyFromFormData(
   formData: FormData,
   layoutSlug: string,
 ): ParseTemplateBodyResult {
-  if (!layoutSlug) {
+  const trimmed = layoutSlug.trim();
+  if (!trimmed) {
     return { ok: false, error: "Invalid layout slug.", slotErrors: {} };
   }
 
-  // Narrow to a registered slug before calling getLayoutDefinition
-  let typedSlug: TemplateSlug;
-  try {
-    const definition = getLayoutDefinition(layoutSlug as TemplateSlug);
-    typedSlug = layoutSlug as TemplateSlug;
-    const rawBody = bodyCopyFromFormData(formData, definition);
-    const bodyParsed = parseBodyCopyForLayout(typedSlug, rawBody);
-    if (!bodyParsed.ok) {
-      const mergedErrors = { ...bodyParsed.errors };
-      const message =
-        mergedErrors._root ??
-        Object.values(mergedErrors)[0] ??
-        "Invalid template body fields.";
-      delete mergedErrors._root;
-      return { ok: false, error: message, slotErrors: mergedErrors };
-    }
-    return { ok: true, data: bodyParsed.data as Record<string, unknown> };
-  } catch {
+  const canonical = coerceLegacyEmailLayoutSlug(trimmed);
+  if (!isRegisteredEmailLayoutSlug(canonical)) {
     return { ok: false, error: "Invalid layout slug.", slotErrors: {} };
   }
+
+  const typedSlug = canonical as TemplateSlug;
+  const definition = getLayoutDefinition(typedSlug);
+  const rawBody = bodyCopyFromFormData(formData, definition);
+  const bodyParsed = parseBodyCopyForLayout(typedSlug, rawBody);
+  if (!bodyParsed.ok) {
+    const mergedErrors = { ...bodyParsed.errors };
+    const message =
+      mergedErrors._root ??
+      Object.values(mergedErrors)[0] ??
+      "Invalid template body fields.";
+    delete mergedErrors._root;
+    return { ok: false, error: message, slotErrors: mergedErrors };
+  }
+  return { ok: true, data: bodyParsed.data as Record<string, unknown> };
 }

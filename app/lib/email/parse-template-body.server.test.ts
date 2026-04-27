@@ -3,9 +3,7 @@ import {
   bodyCopyFromFormData,
   parseTemplateBodyFromFormData,
 } from "./parse-template-body.server";
-import {
-  quoteSendLayoutDefinition,
-} from "~/emails/layouts/quote-send";
+import { styledQuoteLayoutDefinition } from "~/emails/layouts/styled-quote";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -19,17 +17,14 @@ function formDataFor(entries: Record<string, string>): FormData {
   return fd;
 }
 
-/** Build form field names for all slots of a layout definition. */
-function validQuoteSendFormData(): FormData {
+/** Build form field names for all slots of the styled-quote layout. */
+function validStyledQuoteFormData(): FormData {
   return formDataFor({
-    "slot.greeting": "Hi {{customerName}},",
-    "slot.intro": "Please find your quote **{{quoteNumber}}** attached.",
-    "slot.totalLabel": "Total:",
-    "slot.payNowButton.buttonLabel": "Pay Now",
-    "slot.payNowButton.link": "{{paymentLinkUrl}}",
-    "slot.signOff": "Best regards,\nSubtract Manufacturing",
-    "slot.signature": "{{default_signature}}",
-    "slot.footer": "You received this email because you submitted an RFQ.",
+    "slot.intro": "Hi {{customerName}},\n\nPlease find **{{quoteNumber}}**.",
+    "slot.cta.buttonLabel": "Pay Now",
+    "slot.cta.link": "{{paymentLinkUrl}}",
+    "slot.wrapUp": "Thanks,\nTeam",
+    "slot.footerNotice": "Terms apply.",
   });
 }
 
@@ -73,16 +68,15 @@ describe("bodyCopyFromFormData", () => {
     expect(result.cta).toEqual({ buttonLabel: "", link: "" });
   });
 
-  it("maps all slots of the quote-send layout", () => {
-    const fd = validQuoteSendFormData();
-    const result = bodyCopyFromFormData(fd, quoteSendLayoutDefinition);
-    expect(typeof result.greeting).toBe("string");
+  it("maps all slots of the styled-quote layout", () => {
+    const fd = validStyledQuoteFormData();
+    const result = bodyCopyFromFormData(fd, styledQuoteLayoutDefinition);
     expect(typeof result.intro).toBe("string");
-    expect(result.payNowButton).toEqual({
+    expect(result.cta).toEqual({
       buttonLabel: "Pay Now",
       link: "{{paymentLinkUrl}}",
     });
-    expect(typeof result.footer).toBe("string");
+    expect(typeof result.footerNotice).toBe("string");
   });
 });
 
@@ -91,13 +85,13 @@ describe("bodyCopyFromFormData", () => {
 // ---------------------------------------------------------------------------
 
 describe("parseTemplateBodyFromFormData — valid payload", () => {
-  it("returns ok with normalised data for a fully filled quote-send form", () => {
-    const fd = validQuoteSendFormData();
-    const result = parseTemplateBodyFromFormData(fd, "quote-send");
+  it("returns ok with normalised data for a fully filled styled-quote form", () => {
+    const fd = validStyledQuoteFormData();
+    const result = parseTemplateBodyFromFormData(fd, "styled-quote");
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.greeting).toBe("Hi {{customerName}},");
-      expect(result.data.payNowButton).toEqual({
+      expect(result.data.intro).toContain("{{customerName}}");
+      expect(result.data.cta).toEqual({
         buttonLabel: "Pay Now",
         link: "{{paymentLinkUrl}}",
       });
@@ -105,9 +99,8 @@ describe("parseTemplateBodyFromFormData — valid payload", () => {
   });
 
   it("returns ok when all optional slots are empty", () => {
-    // All slots in quote-send are optional, so an all-empty form is valid
     const fd = formDataFor({});
-    const result = parseTemplateBodyFromFormData(fd, "quote-send");
+    const result = parseTemplateBodyFromFormData(fd, "styled-quote");
     expect(result.ok).toBe(true);
   });
 
@@ -175,21 +168,15 @@ describe("parseTemplateBodyFromFormData — invalid payload", () => {
 // ---------------------------------------------------------------------------
 
 describe("parseTemplateBodyFromFormData — layout switch", () => {
-  it("fails when form data carries quote-send slot ids but is parsed against example-kitchen-sink", () => {
-    // Build form data whose keys are valid for quote-send but not example-kitchen-sink
+  it("fails when form data carries styled-quote slot ids but is parsed against example-kitchen-sink", () => {
     const fd = formDataFor({
-      "slot.greeting": "Hi",
-      "slot.intro": "Body text",
-      "slot.totalLabel": "Total:",
-      "slot.payNowButton.buttonLabel": "Pay",
-      "slot.payNowButton.link": "https://example.com",
-      "slot.signOff": "Regards",
-      "slot.signature": "Team",
-      "slot.footer": "Footer",
-      // example-kitchen-sink requires 'requiredReject' — not present here
+      "slot.intro": "Hi",
+      "slot.cta.buttonLabel": "Pay",
+      "slot.cta.link": "https://example.com",
+      "slot.wrapUp": "Bye",
+      "slot.footerNotice": "Fine print",
     });
     const result = parseTemplateBodyFromFormData(fd, "example-kitchen-sink");
-    // The required 'requiredReject' field is missing → should fail
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.slotErrors["requiredReject"]).toBeTruthy();

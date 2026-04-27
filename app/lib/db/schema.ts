@@ -768,8 +768,8 @@ export const emailTemplates = pgTable("email_templates", {
   id: serial("id").primaryKey(),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
-  /** React-email layout key in code (e.g. quote-send); not the same as DB slug */
-  layoutSlug: text("layout_slug").notNull().default("quote-send"),
+  /** React-email layout key in code (e.g. styled-quote); not the same as DB slug */
+  layoutSlug: text("layout_slug").notNull().default("styled-quote"),
   /** Optional app context key (e.g. quote_send); unique when not null */
   contextKey: text("context_key").unique(),
   emailIdentityId: integer("email_identity_id").references(() => emailIdentities.id).notNull(),

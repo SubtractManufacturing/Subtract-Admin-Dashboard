@@ -2,6 +2,7 @@ import {
   validateInterpolatedButtonLinksInCopy,
 } from "~/emails/layout-definition";
 import {
+  coerceLegacyEmailLayoutSlug,
   getLayoutDefinition,
   parseBodyCopyForLayout,
   type PropsBySlug,
@@ -59,28 +60,31 @@ export function collectBodyCopyStrings(copy: Record<string, unknown>): string[] 
   return out;
 }
 
+function getPublicAssetUrl(path: string): string {
+  const appUrl = process.env.PUBLIC_APP_URL?.trim();
+  if (!appUrl) {
+    throw new Error("PUBLIC_APP_URL must be configured to render email assets");
+  }
+  return `${appUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
 export function buildEmailLayoutProps(
   layoutSlug: TemplateSlug,
   copy: unknown,
-  stringProps: Record<string, string>,
 ): PropsBySlug[TemplateSlug] {
-  if (layoutSlug === "quote-send") {
+  const canonical = coerceLegacyEmailLayoutSlug(layoutSlug) as TemplateSlug;
+  if (canonical === "styled-quote") {
     return {
-      quoteNumber: stringProps.quoteNumber,
-      customerName: stringProps.customerName,
-      total: stringProps.total,
-      ...(stringProps.paymentLinkUrl
-        ? { paymentLinkUrl: stringProps.paymentLinkUrl }
-        : {}),
-      copy: copy as PropsBySlug["quote-send"]["copy"],
+      logoUrl: getPublicAssetUrl("/subtract-logo.png"),
+      copy: copy as PropsBySlug["styled-quote"]["copy"],
     };
   }
-  if (layoutSlug === "example-kitchen-sink") {
+  if (canonical === "example-kitchen-sink") {
     return {
       copy: copy as PropsBySlug["example-kitchen-sink"]["copy"],
     };
   }
-  const _exhaustive: never = layoutSlug;
+  const _exhaustive: never = canonical;
   return _exhaustive;
 }
 
@@ -180,7 +184,7 @@ export async function buildEmailContent({
     return fail(400, linkPolicyError);
   }
 
-  const props = buildEmailLayoutProps(layoutSlug, interpolatedCopy, stringProps);
+  const props = buildEmailLayoutProps(layoutSlug, interpolatedCopy);
 
   let { html: rawHtml, text: textBody } = await renderEmailTemplate(
     layoutSlug,

@@ -245,17 +245,17 @@ describe("enqueueOutboundUserEmail — input validation", () => {
 describe("enqueueOutboundUserEmail — invalid stored body copy", () => {
   it("returns 400 with a 'template body is invalid' message", async () => {
     // bodyCopy has a required slot ('headline' in example-kitchen-sink requiredReject)
-    // but we use quote-send layout where the schema expects strings — provide a non-string value
+    // but we use styled-quote layout where the schema expects strings — provide a non-string value
     // for a slot that expects a string so parseBodyCopyForLayout fails.
     mockResolveTemplate.mockResolvedValue({
       template: {
         ...mockTemplateBase,
-        layoutSlug: "quote-send",
+        layoutSlug: "styled-quote",
         // greeting expects a string; supply a number to force a parse error
         bodyCopy: { greeting: 42 },
       },
       identity: mockIdentity,
-      layoutSlug: "quote-send" as const,
+      layoutSlug: "styled-quote" as const,
     });
 
     const result = await enqueueOutboundUserEmail(baseInput);
@@ -273,17 +273,17 @@ describe("enqueueOutboundUserEmail — invalid stored body copy", () => {
 
 describe("enqueueOutboundUserEmail — unresolved placeholders", () => {
   it("returns 400 naming the missing tokens when merge map is incomplete", async () => {
-    const defaults = getDefaultBodyCopyForLayout("quote-send");
+    const defaults = getDefaultBodyCopyForLayout("styled-quote");
     // Default bodyCopy references {{customerName}}, {{quoteNumber}}, etc.
     // Supply an empty merge map so those tokens are unresolved.
     mockResolveTemplate.mockResolvedValue({
       template: {
         ...mockTemplateBase,
-        layoutSlug: "quote-send",
+        layoutSlug: "styled-quote",
         bodyCopy: defaults,
       },
       identity: mockIdentity,
-      layoutSlug: "quote-send" as const,
+      layoutSlug: "styled-quote" as const,
     });
     mockGetMergeFields.mockResolvedValue({});
     mockBuildMergeProps.mockResolvedValue({});
@@ -301,7 +301,7 @@ describe("enqueueOutboundUserEmail — unresolved placeholders", () => {
     mockResolveTemplate.mockResolvedValue({
       template: {
         ...mockTemplateBase,
-        layoutSlug: "quote-send",
+        layoutSlug: "styled-quote",
         // Use a bodyCopy with no placeholders so only the subject fails
         bodyCopy: {
           greeting: "Hello",
@@ -314,7 +314,7 @@ describe("enqueueOutboundUserEmail — unresolved placeholders", () => {
         },
       },
       identity: mockIdentity,
-      layoutSlug: "quote-send" as const,
+      layoutSlug: "styled-quote" as const,
     });
     mockGetMergeFields.mockResolvedValue({});
     mockBuildMergeProps.mockResolvedValue({});
@@ -340,19 +340,17 @@ describe("enqueueOutboundUserEmail — valid send", () => {
     mockResolveTemplate.mockResolvedValue({
       template: {
         ...mockTemplateBase,
-        layoutSlug: "quote-send",
+        layoutSlug: "styled-quote",
         bodyCopy: {
-          greeting: "Hi Acme Corp,",
-          intro: "Your quote 26Q00001 is attached.",
-          totalLabel: "Total:",
-          payNowButton: { buttonLabel: "", link: "" },
-          signOff: "Best regards",
-          signature: "Subtract Manufacturing",
-          footer: "You received this email because you submitted an RFQ.",
+          intro: "Hi Acme Corp, your quote 26Q00001 is attached.",
+          cta: { buttonLabel: "", link: "" },
+          wrapUp: "Best regards",
+          footerNotice:
+            "You received this email because you submitted an RFQ.",
         },
       },
       identity: mockIdentity,
-      layoutSlug: "quote-send" as const,
+      layoutSlug: "styled-quote" as const,
     });
     // Merge map has no unresolved placeholders (bodyCopy has no {{tokens}})
     mockGetMergeFields.mockResolvedValue({});
@@ -374,19 +372,16 @@ describe("enqueueOutboundUserEmail — approval gate", () => {
     mockResolveTemplate.mockResolvedValue({
       template: {
         ...mockTemplateBase,
-        layoutSlug: "quote-send",
+        layoutSlug: "styled-quote",
         bodyCopy: {
-          greeting: "Hi Acme Corp,",
-          intro: "Your quote is attached.",
-          totalLabel: "Total:",
-          payNowButton: { buttonLabel: "", link: "" },
-          signOff: "Best regards",
-          signature: "Subtract Manufacturing",
-          footer: "Footer.",
+          intro: "Hi Acme Corp, your quote is attached.",
+          cta: { buttonLabel: "", link: "" },
+          wrapUp: "Best regards",
+          footerNotice: "Footer.",
         },
       },
       identity: mockIdentity,
-      layoutSlug: "quote-send" as const,
+      layoutSlug: "styled-quote" as const,
     });
     mockGetMergeFields.mockResolvedValue({});
     mockBuildMergeProps.mockResolvedValue({});
@@ -437,19 +432,16 @@ describe("enqueueOutboundUserEmail — bodyCopyOverrides", () => {
   const validTemplateMock = {
     template: {
       ...mockTemplateBase,
-      layoutSlug: "quote-send",
+      layoutSlug: "styled-quote",
       bodyCopy: {
-        greeting: "Hi {{customerName}},",
-        intro: "Your quote **{{quoteNumber}}** is attached.",
-        totalLabel: "Total:",
-        payNowButton: { buttonLabel: "", link: "" },
-        signOff: "Best regards",
-        signature: "Subtract Manufacturing",
-        footer: "Footer text.",
+        intro: "Hi {{customerName}}, your quote **{{quoteNumber}}** is attached.",
+        cta: { buttonLabel: "", link: "" },
+        wrapUp: "Best regards",
+        footerNotice: "Footer text.",
       },
     },
     identity: mockIdentity,
-    layoutSlug: "quote-send" as const,
+    layoutSlug: "styled-quote" as const,
   };
 
   beforeEach(() => {
@@ -473,29 +465,29 @@ describe("enqueueOutboundUserEmail — bodyCopyOverrides", () => {
     mockSendEmailJob.mockResolvedValue(undefined);
   });
 
-  it("applies per-send greeting override to allowPerSendEdit slots", async () => {
+  it("applies per-send intro override to allowPerSendEdit slots", async () => {
     const result = await enqueueOutboundUserEmail({
       ...baseInput,
-      bodyCopyOverrides: { greeting: "Hey Acme," },
+      bodyCopyOverrides: { intro: "Hey Acme," },
     });
     expect(result.ok).toBe(true);
     // Rendered content should include the override (renderEmailTemplate was called)
     expect(mockRenderEmailTemplate).toHaveBeenCalledOnce();
     const callArgs = mockRenderEmailTemplate.mock.calls[0];
-    const props = callArgs[1] as { copy: { greeting: string } };
-    expect(props.copy.greeting).toBe("Hey Acme,");
+    const props = callArgs[1] as { copy: { intro: string } };
+    expect(props.copy.intro).toBe("Hey Acme,");
   });
 
-  it("silently ignores overrides for slots not flagged allowPerSendEdit", async () => {
+  it("silently ignores overrides for unknown slot ids", async () => {
     const result = await enqueueOutboundUserEmail({
       ...baseInput,
-      bodyCopyOverrides: { footer: "HACKED FOOTER" },
+      bodyCopyOverrides: { greeting: "HACKED INTRO" },
     });
     expect(result.ok).toBe(true);
     const callArgs = mockRenderEmailTemplate.mock.calls[0];
-    const props = callArgs[1] as { copy: { footer: string } };
-    // footer is NOT allowPerSendEdit — original template value preserved
-    expect(props.copy.footer).toBe("Footer text.");
+    const props = callArgs[1] as { copy: { intro: string } };
+    expect(props.copy.intro).toContain("Acme");
+    expect(props.copy.intro).not.toContain("HACKED");
   });
 
   it("allows empty bodyCopyOverrides without error", async () => {
