@@ -6,6 +6,8 @@ import {
   formatAddress,
   formatPartNames,
   formatPartSpecs,
+  formatPartMaterials,
+  formatPartQtys,
 } from "./formatters";
 
 /**
@@ -88,26 +90,42 @@ export async function resolveQuoteTokens(entityId: string): Promise<ResolvedToke
   if (parts.length > 0) {
     tokens.partCount = String(parts.length);
 
-    // QuotePart uses `finish` (not `finishing`) — normalize to the DTO field name
-    const normalized: NormalizedPart[] = parts.map((p) => ({
-      name: p.partName,
-      material: p.material,
-      tolerance: p.tolerance,
-      finishing: p.finish,
-    }));
+    // QuotePart uses `finish` (not `finishing`) — normalize to the DTO field name.
+    // Quantity: sum line items linked to each quote part (same part may appear on multiple lines).
+    const normalized: NormalizedPart[] = parts.map((p) => {
+      const qtySum = lineItems
+        .filter((li) => li.quotePartId === p.id)
+        .reduce((sum, li) => sum + li.quantity, 0);
+      return {
+        name: p.partName,
+        material: p.material,
+        tolerance: p.tolerance,
+        finishing: p.finish,
+        quantity: qtySum,
+      };
+    });
 
     const partNames = formatPartNames(normalized);
     if (partNames) tokens.partNames = partNames;
 
     const partSpecs = formatPartSpecs(normalized);
     if (partSpecs) tokens.partSpecs = partSpecs;
+
+    const partMaterials = formatPartMaterials(normalized);
+    if (partMaterials) tokens.partMaterials = partMaterials;
+
+    const partQtys = formatPartQtys(normalized);
+    if (partQtys) tokens.partQtys = partQtys;
   } else if (lineItems.length > 0) {
-    // Fallback: use line item names when no linked QuoteParts exist
+    // Fallback: use line item names when no linked QuoteParts exist (no part-level material).
     const nameItems: NormalizedPart[] = lineItems
       .filter((li) => li.name)
-      .map((li) => ({ name: li.name! }));
+      .map((li) => ({ name: li.name!, quantity: li.quantity }));
     const partNames = formatPartNames(nameItems);
     if (partNames) tokens.partNames = partNames;
+
+    const partQtys = formatPartQtys(nameItems);
+    if (partQtys) tokens.partQtys = partQtys;
   }
 
   // ── Commerce / optional ─────────────────────────────────────────────

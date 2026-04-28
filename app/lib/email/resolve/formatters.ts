@@ -77,6 +77,9 @@ function buildCityStateZip(
 
 // ── Parts ─────────────────────────────────────────────────────────────
 
+/** Placeholder for a missing per-part field in comma-separated merge tokens (non-empty for validation). */
+const PART_FIELD_PLACEHOLDER = "—";
+
 /**
  * Build a comma-separated list of part names for use in {{partNames}}.
  * Returns null when the list is empty.
@@ -116,4 +119,32 @@ export function formatPartSpecs(parts: NormalizedPart[]): string | null {
   });
 
   return blocks.join("\n\n");
+}
+
+/**
+ * Comma-separated {{partMaterials}}: one segment per entry in `parts` (same order as
+ * {{partNames}} / {{partSpecs}}). Blank material uses PART_FIELD_PLACEHOLDER.
+ */
+export function formatPartMaterials(parts: NormalizedPart[]): string | null {
+  if (parts.length === 0) return null;
+
+  const segments = parts.map((p) =>
+    p.material?.trim() ? p.material.trim() : PART_FIELD_PLACEHOLDER,
+  );
+  return segments.join(", ");
+}
+
+/**
+ * Comma-separated {{partQtys}}: one segment per entry in `parts`, same order as other part tokens.
+ * Unknown/null quantity uses PART_FIELD_PLACEHOLDER.
+ */
+export function formatPartQtys(parts: NormalizedPart[]): string | null {
+  if (parts.length === 0) return null;
+
+  const segments = parts.map((p) =>
+    p.quantity != null && Number.isFinite(p.quantity)
+      ? String(p.quantity)
+      : PART_FIELD_PLACEHOLDER,
+  );
+  return segments.join(", ");
 }

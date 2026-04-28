@@ -157,6 +157,8 @@ Available on quotes or orders that have an associated vendor, or when the entity
 | ----- | ----- | ------------ | -------- |
 | `{{partNames}}` | Part Names | quote, order | when-available |
 | `{{partSpecs}}` | Part Specifications | quote, order | when-available |
+| `{{partMaterials}}` | Part Materials | quote, order | when-available |
+| `{{partQtys}}` | Part Quantities | quote, order | when-available |
 | `{{lineItemCount}}` | Line Item Count | quote, order | when-available |
 | `{{partCount}}` | Part Count | quote | when-available |
 
@@ -164,6 +166,13 @@ Available on quotes or orders that have an associated vendor, or when the entity
 
 ```
 hood assembly, latch base v2, lug nut cover
+```
+
+**`{{partMaterials}}` and `{{partQtys}}` format** — comma-separated, **one segment per part in the same order** as `{{partNames}}` and the blocks in `{{partSpecs}}`. Missing material uses an em dash (`—`). Missing or unknown quantity uses `—`; numeric quantities render as integers (e.g. `2, 1, 4`). On quotes, each segment’s quantity is the **sum** of quantities on line items linked to that quote part. If a quote has line items but no `quote_parts` rows, `{{partMaterials}}` is not supplied (only names and quantities from line items).
+
+```
+4140 H900, —, PVC
+2, 1, 4
 ```
 
 **`{{partSpecs}}` format** — pre-formatted multi-line block, one block per part, separated by a blank line. Fields with no data are omitted.
@@ -199,7 +208,7 @@ Place `{{partSpecs}}` on its own paragraph. In markdown body slots, the text ren
 
 ## Attachments
 
-File attachments are sent as actual email attachments — they are not exposed as merge tokens. Use `{{partNames}}` or `{{partSpecs}}` for human-readable part identity in the body copy. A dedicated `{{attachmentList}}` token is not provided in v1.
+File attachments are sent as actual email attachments — they are not exposed as merge tokens. Use `{{partNames}}`, `{{partSpecs}}`, `{{partMaterials}}`, or `{{partQtys}}` for human-readable part identity or quantities in the body copy. A dedicated `{{attachmentList}}` token is not provided in v1.
 
 ---
 
@@ -240,6 +249,8 @@ Admin-defined snippets (Admin → Email → Snippets) add custom reusable text. 
 {{vendorName}}          vendor display name
 {{partNames}}           hood assembly, latch base v2
 {{partSpecs}}           multi-line formatted block (Name / Material / Tolerance / Finishing)
+{{partMaterials}}       4140 H900, —, PVC (same order as partNames; — if no material)
+{{partQtys}}            2, 1, 4 (same order as partNames)
 {{lineItemCount}}       3
 {{partCount}}           3
 {{paymentLinkUrl}}      https://buy.stripe.com/…

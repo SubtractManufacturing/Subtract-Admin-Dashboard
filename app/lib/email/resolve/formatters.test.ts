@@ -5,6 +5,8 @@ import {
   formatAddress,
   formatPartNames,
   formatPartSpecs,
+  formatPartMaterials,
+  formatPartQtys,
 } from "./formatters";
 
 describe("formatCurrency", () => {
@@ -179,5 +181,43 @@ describe("formatPartSpecs", () => {
   it("omits blank/whitespace-only fields", () => {
     const result = formatPartSpecs([{ name: "Widget", material: "  " }]);
     expect(result).not.toContain("Material:");
+  });
+});
+
+describe("formatPartMaterials", () => {
+  it("returns null for empty array", () => {
+    expect(formatPartMaterials([])).toBeNull();
+  });
+
+  it("joins trimmed materials", () => {
+    expect(formatPartMaterials([{ name: "A", material: " 6061 " }])).toBe("6061");
+  });
+
+  it("uses placeholder for missing material without dropping positions", () => {
+    const result = formatPartMaterials([
+      { name: "A", material: "4140" },
+      { name: "B", material: null },
+      { name: "C", material: "PVC" },
+    ]);
+    expect(result).toBe("4140, —, PVC");
+  });
+});
+
+describe("formatPartQtys", () => {
+  it("returns null for empty array", () => {
+    expect(formatPartQtys([])).toBeNull();
+  });
+
+  it("joins quantity as string", () => {
+    expect(formatPartQtys([{ name: "A", quantity: 2 }, { name: "B", quantity: 14 }])).toBe("2, 14");
+  });
+
+  it("allows zero quantity", () => {
+    expect(formatPartQtys([{ name: "A", quantity: 0 }])).toBe("0");
+  });
+
+  it("uses placeholder when quantity null or NaN", () => {
+    expect(formatPartQtys([{ name: "A", quantity: null }, { name: "B", quantity: 1 }])).toBe("—, 1");
+    expect(formatPartQtys([{ name: "A", quantity: Number.NaN }])).toBe("—");
   });
 });

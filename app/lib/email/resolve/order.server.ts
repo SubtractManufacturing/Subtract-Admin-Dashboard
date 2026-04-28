@@ -7,6 +7,8 @@ import {
   formatAddress,
   formatPartNames,
   formatPartSpecs,
+  formatPartMaterials,
+  formatPartQtys,
 } from "./formatters";
 
 /**
@@ -88,6 +90,7 @@ export async function resolveOrderTokens(entityId: string): Promise<ResolvedToke
         material: li.part?.material ?? null,
         tolerance: li.part?.tolerance ?? null,
         finishing: li.part?.finishing ?? null,
+        quantity: li.quantity,
       }));
 
     const partNames = formatPartNames(normalized);
@@ -98,6 +101,12 @@ export async function resolveOrderTokens(entityId: string): Promise<ResolvedToke
       const partSpecs = formatPartSpecs(normalized);
       if (partSpecs) tokens.partSpecs = partSpecs;
     }
+
+    const partMaterials = formatPartMaterials(normalized);
+    if (partMaterials) tokens.partMaterials = partMaterials;
+
+    const partQtys = formatPartQtys(normalized);
+    if (partQtys) tokens.partQtys = partQtys;
   }
 
   // ── Commerce / optional ─────────────────────────────────────────────

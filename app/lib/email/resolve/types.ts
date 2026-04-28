@@ -222,6 +222,24 @@ export const MERGE_TOKEN_CATALOG = [
     format: "multiline" as TokenFormat,
   },
   {
+    key: "partMaterials",
+    label: "Part Materials",
+    description:
+      "Comma-separated list of materials in the same order as partNames and partSpecs (one value per part). Uses an em dash for a part with no material.",
+    suppliedBy: ["quote", "order"] as EntityKind[],
+    presence: "when-available" as TokenPresence,
+    format: "string" as TokenFormat,
+  },
+  {
+    key: "partQtys",
+    label: "Part Quantities",
+    description:
+      "Comma-separated list of line quantities in the same order as partNames and partSpecs (one value per part). Uses an em dash when quantity is unknown.",
+    suppliedBy: ["quote", "order"] as EntityKind[],
+    presence: "when-available" as TokenPresence,
+    format: "string" as TokenFormat,
+  },
+  {
     key: "lineItemCount",
     label: "Line Item Count",
     description: "Total number of line items on the document.",
@@ -294,6 +312,8 @@ export type NormalizedPart = {
   material?: string | null;
   tolerance?: string | null;
   finishing?: string | null;
+  /** Line quantity when known (order line item or summed quote line items for a quote part). */
+  quantity?: number | null;
 };
 
 /** Normalized address fields used by address formatters. */
