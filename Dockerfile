@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files (prepare script must exist before npm ci runs prepare)
 COPY package*.json ./
+COPY scripts/prepare-husky.mjs ./scripts/prepare-husky.mjs
 
 # Install all dependencies (including dev dependencies for build)
 RUN npm ci && \
@@ -50,11 +51,12 @@ RUN groupadd -g 1001 nodejs && \
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files (prepare script must exist before npm ci runs prepare)
 COPY package*.json ./
+COPY scripts/prepare-husky.mjs ./scripts/prepare-husky.mjs
 
 # Install production dependencies only
-RUN npm ci --only=production && \
+RUN npm ci --omit=dev && \
     npm cache clean --force
 
 # Copy built application from builder stage

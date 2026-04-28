@@ -43,6 +43,7 @@ import {
   isStripePaymentLinksEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
+import { deactivateQuotePaymentLink } from "~/lib/stripe.server";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
 import {
   handleEmailPreviewAction,
@@ -1188,8 +1189,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const stripeOn = await isStripePaymentLinksEnabled();
           if (stripeOn) {
             try {
-              const { deactivateQuotePaymentLink } =
-                await import("~/lib/stripe.server");
               await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
               await updateQuote(
                 quote.id,
@@ -1381,8 +1380,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const stripeOn = await isStripePaymentLinksEnabled();
           if (stripeOn) {
             try {
-              const { deactivateQuotePaymentLink } =
-                await import("~/lib/stripe.server");
               await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
             } catch (stripeError) {
               console.error(
