@@ -114,6 +114,43 @@ beforeEach(() => {
   });
 });
 
+describe("buildEmailContent — simple-markdown HtmlBody", () => {
+  beforeEach(() => {
+    mockRenderEmailTemplate.mockResolvedValue({
+      html: '<div data-react-email-render="junk"><p><strong>ignored</strong></p></div>',
+      text: 'Hello\n\na < literal angle bracket line',
+    });
+    mockResolveTemplate.mockResolvedValue({
+      template: {
+        ...mockTemplateBase,
+        layoutSlug: "simple-markdown",
+        bodyCopy: {
+          body: "Hi.",
+        },
+      },
+      identity: mockIdentity,
+      layoutSlug: "simple-markdown" as const,
+    });
+  });
+
+  it("wraps interpolated plain-text MIME as minimal HTML instead of Markdown HTML", async () => {
+    const result = await buildEmailContent({
+      auth: mockAuth,
+      contextKey: "quote_send",
+      entityId: "99",
+      subject: "Subject",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.htmlBody).not.toContain("data-react-email-render");
+    expect(result.htmlBody).not.toContain("<strong>");
+    expect(result.htmlBody).not.toContain("<p>");
+    expect(result.htmlBody).toContain("&lt;");
+    expect(result.htmlBody).toContain("white-space:pre-wrap");
+    expect(result.textBody).toContain("a < literal");
+  });
+});
+
 describe("buildEmailContent — prepareEmailContent", () => {
   it("runs prepareEmailContent before buildMergeProps", async () => {
     const result = await buildEmailContent({

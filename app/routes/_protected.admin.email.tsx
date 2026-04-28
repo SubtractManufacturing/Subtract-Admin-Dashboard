@@ -68,6 +68,8 @@ const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const EMAIL_LAYOUT_LABELS: Record<TemplateSlug, string> = {
   "styled-quote": "Styled quote",
   "example-kitchen-sink": "Kitchen sink (example)",
+  "simple-markdown": "Simple Markdown message",
+  "branded-markdown": "Branded Markdown message",
 };
 
 /** Post body must target this route so fetchers do not hit a parent `action` by mistake. */

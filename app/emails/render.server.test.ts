@@ -215,6 +215,40 @@ describe("styled-quote email layout", () => {
   });
 });
 
+describe("simple-markdown email layout", () => {
+  it("renders body markdown without logo or branded shell", async () => {
+    const { html, text } = await renderEmailTemplate("simple-markdown", {
+      copy: {
+        body: "**Hello** from Subtract.\n\n[Link](https://example.com)",
+      },
+    });
+
+    expect(html).toContain('data-slot-id="body"');
+    expect(html).toContain("<strong>Hello</strong>");
+    expect(html).not.toContain("subtract-logo");
+    expect(html).not.toContain("#f7f7f5");
+    expect(text).toContain("Hello from Subtract");
+  });
+});
+
+describe("branded-markdown email layout", () => {
+  it("renders logo, card shell, and body only (no button or legal slots)", async () => {
+    const { html } = await renderEmailTemplate("branded-markdown", {
+      logoUrl: "https://app.example.com/subtract-logo.png",
+      copy: {
+        body: "## Update\n\nYour **order** is ready.",
+      },
+    });
+
+    expect(html).toContain("https://app.example.com/subtract-logo.png");
+    expect(html).toContain("#f7f7f5");
+    expect(html).toContain('data-slot-id="body"');
+    expect(html).toContain("<strong>order</strong>");
+    expect(html).not.toContain('data-slot-id="cta"');
+    expect(html).not.toContain('data-slot-id="footerNotice"');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Snippet interpolation round-trip: mirrors the send pipeline's token guard
 // ---------------------------------------------------------------------------

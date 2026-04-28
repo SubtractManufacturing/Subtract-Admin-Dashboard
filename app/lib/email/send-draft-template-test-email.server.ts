@@ -20,6 +20,7 @@ import { bodyCopyFromFormData } from "~/lib/email/parse-template-body.server";
 import { sendPostmarkTransactionalEmail } from "~/lib/email/postmark.server";
 import { extractPlaceholderKeys } from "~/lib/email/resolve";
 import { sanitizeEmailHtml } from "~/lib/email/sanitize.server";
+import { wrapSimpleMarkdownPlainTextAsHtml } from "~/lib/email/simple-markdown-plain-html.server";
 import type { ActorMergeSource } from "~/lib/email/resolve/actor-merge.server";
 import { buildActorMergeMap } from "~/lib/email/resolve/actor-merge.server";
 import { getEmailMergeFieldsMap } from "~/lib/email/templates.server";
@@ -40,6 +41,8 @@ const LAYOUT_SAMPLE_MERGE_BASE: Partial<
     paymentLinkUrl: "https://example.com/sample-payment",
   },
   "example-kitchen-sink": {},
+  "simple-markdown": {},
+  "branded-markdown": {},
 };
 
 function replaceUnresolvedPlaceholders(s: string): string {
@@ -169,6 +172,9 @@ export async function sendDraftTemplateTestEmail(params: {
 
   rawHtml = interpolateTemplateString(rawHtml, stringProps);
   textBody = interpolateTemplateString(textBody, stringProps);
+  if (layoutSlug === "simple-markdown") {
+    rawHtml = wrapSimpleMarkdownPlainTextAsHtml(textBody);
+  }
   let subjectResolved = interpolateTemplateString(subjectTemplate, stringProps);
 
   rawHtml = replaceUnresolvedPlaceholders(rawHtml);

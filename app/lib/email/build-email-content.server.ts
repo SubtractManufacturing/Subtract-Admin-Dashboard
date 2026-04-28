@@ -18,6 +18,7 @@ import {
   resolveEmailTemplateForContext,
 } from "~/lib/email/templates.server";
 import { sanitizeEmailHtml } from "~/lib/email/sanitize.server";
+import { wrapSimpleMarkdownPlainTextAsHtml } from "~/lib/email/simple-markdown-plain-html.server";
 import { getEmailSendHandler } from "~/lib/email/email-send-context-registry.server";
 import {
   getEmailContextMeta,
@@ -80,9 +81,20 @@ export function buildEmailLayoutProps(
       copy: copy as PropsBySlug["styled-quote"]["copy"],
     };
   }
+  if (canonical === "branded-markdown") {
+    return {
+      logoUrl: getPublicAssetUrl("/subtract-logo.png"),
+      copy: copy as PropsBySlug["branded-markdown"]["copy"],
+    };
+  }
   if (canonical === "example-kitchen-sink") {
     return {
       copy: copy as PropsBySlug["example-kitchen-sink"]["copy"],
+    };
+  }
+  if (canonical === "simple-markdown") {
+    return {
+      copy: copy as PropsBySlug["simple-markdown"]["copy"],
     };
   }
   const _exhaustive: never = canonical;
@@ -206,6 +218,11 @@ export async function buildEmailContent({
 
   rawHtml = interpolateTemplateString(rawHtml, stringProps);
   textBody = interpolateTemplateString(textBody, stringProps);
+
+  const canonicalLayout = coerceLegacyEmailLayoutSlug(layoutSlug) as TemplateSlug;
+  if (canonicalLayout === "simple-markdown") {
+    rawHtml = wrapSimpleMarkdownPlainTextAsHtml(textBody);
+  }
 
   const subjectResolved = interpolateTemplateString(subject, stringProps);
 

@@ -11,6 +11,18 @@ import {
   type ExampleKitchenSinkEmailProps,
 } from "./layouts/example-kitchen-sink";
 import {
+  BrandedMarkdownEmail,
+  brandedMarkdownLayoutDefinition,
+  type BrandedMarkdownBodyCopy,
+  type BrandedMarkdownEmailProps,
+} from "./layouts/branded-markdown";
+import {
+  SimpleMarkdownEmail,
+  simpleMarkdownLayoutDefinition,
+  type SimpleMarkdownBodyCopy,
+  type SimpleMarkdownEmailProps,
+} from "./layouts/simple-markdown";
+import {
   StyledQuoteEmail,
   styledQuoteLayoutDefinition,
   normalizeStyledQuoteBodyCopyRaw,
@@ -31,6 +43,8 @@ export function coerceLegacyEmailLayoutSlug(slug: string): string {
 export type PropsBySlug = {
   "styled-quote": StyledQuoteEmailProps;
   "example-kitchen-sink": ExampleKitchenSinkEmailProps;
+  "simple-markdown": SimpleMarkdownEmailProps;
+  "branded-markdown": BrandedMarkdownEmailProps;
 };
 
 export type TemplateSlug = keyof PropsBySlug;
@@ -39,9 +53,18 @@ export type LayoutCopy<K extends TemplateSlug> = K extends "styled-quote"
   ? StyledQuoteBodyCopy
   : K extends "example-kitchen-sink"
     ? ExampleKitchenSinkBodyCopy
-    : never;
+    : K extends "simple-markdown"
+      ? SimpleMarkdownBodyCopy
+      : K extends "branded-markdown"
+        ? BrandedMarkdownBodyCopy
+        : never;
 
-export type { StyledQuoteBodyCopy, ExampleKitchenSinkBodyCopy };
+export type {
+  StyledQuoteBodyCopy,
+  ExampleKitchenSinkBodyCopy,
+  SimpleMarkdownBodyCopy,
+  BrandedMarkdownBodyCopy,
+};
 
 type RegistryEntry<K extends TemplateSlug> = {
   component: FC<PropsBySlug[K]>;
@@ -63,9 +86,23 @@ const exampleKitchenSinkEntry: RegistryEntry<"example-kitchen-sink"> = {
   isExample: true,
 };
 
+const simpleMarkdownEntry: RegistryEntry<"simple-markdown"> = {
+  component: SimpleMarkdownEmail,
+  defaultSubject: "Message from Subtract Manufacturing",
+  definition: simpleMarkdownLayoutDefinition,
+};
+
+const brandedMarkdownEntry: RegistryEntry<"branded-markdown"> = {
+  component: BrandedMarkdownEmail,
+  defaultSubject: "Message from Subtract Manufacturing",
+  definition: brandedMarkdownLayoutDefinition,
+};
+
 export const runtimeEmailLayoutRegistry = {
   "styled-quote": styledQuoteEntry,
   "example-kitchen-sink": exampleKitchenSinkEntry,
+  "simple-markdown": simpleMarkdownEntry,
+  "branded-markdown": brandedMarkdownEntry,
 } as const satisfies { [K in TemplateSlug]: RegistryEntry<K> };
 
 /** Alias for render path — includes every layout slug (incl. examples for legacy rows). */
