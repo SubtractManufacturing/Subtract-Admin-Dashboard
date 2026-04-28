@@ -78,6 +78,13 @@ export interface SentEmailStatusCounts {
   total: number;
 }
 
+/** Pending approval, failed delivery, or bounced — used for SERP Email nav badge. */
+export function outboundAttentionCountFromStatusCounts(
+  counts: SentEmailStatusCounts,
+): number {
+  return counts.pendingApproval + counts.failed + counts.bounced;
+}
+
 const listSelectShape = {
   id: sentEmails.id,
   status: sentEmails.status,
