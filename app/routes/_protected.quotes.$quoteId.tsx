@@ -1478,6 +1478,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           unitPrice?: number;
           description?: string;
           notes?: string;
+          name?: string;
         } = {};
 
         const quantityRaw = formData.get("quantity") as string | null;
@@ -1485,6 +1486,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const totalPriceRaw = formData.get("totalPrice") as string | null;
         const description = formData.get("description") as string | null;
         const notes = formData.get("notes") as string | null;
+        const nameRaw = formData.get("name") as string | null;
 
         const qty =
           quantityRaw !== null && quantityRaw !== ""
@@ -1530,6 +1532,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
         if (notes !== null) {
           updateData.notes = notes || "";
+        }
+        if (nameRaw !== null) {
+          updateData.name = String(nameRaw).trim();
         }
 
         await updateQuoteLineItem(lineItemIdNum, updateData, eventContext);
@@ -2773,7 +2778,13 @@ export default function QuoteDetail() {
   const handleSaveLineItemField = useCallback(
     (
       lineItemId: number,
-      field: "description" | "notes" | "quantity" | "unitPrice" | "totalPrice",
+      field:
+        | "name"
+        | "description"
+        | "notes"
+        | "quantity"
+        | "unitPrice"
+        | "totalPrice",
       value: string,
     ) => {
       const currentItem = optimisticLineItems?.find(
@@ -2781,7 +2792,16 @@ export default function QuoteDetail() {
       );
       if (!currentItem) return;
 
+      if (field === "name") {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          alert("Name is required");
+          return;
+        }
+      }
+
       const updatedItem: Partial<LineItem> = {};
+      if (field === "name") updatedItem.name = value.trim();
       if (field === "description") updatedItem.description = value || null;
       if (field === "notes") updatedItem.notes = value || null;
 
@@ -2839,6 +2859,8 @@ export default function QuoteDetail() {
       const formData = new FormData();
       formData.append("intent", "updateLineItem");
       formData.append("lineItemId", lineItemId.toString());
+      if (updatedItem.name !== undefined)
+        formData.append("name", updatedItem.name ?? "");
       if (updatedItem.description !== undefined)
         formData.append("description", updatedItem.description || "");
       if (updatedItem.notes !== undefined)

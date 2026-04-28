@@ -2045,6 +2045,7 @@ export async function updateQuoteLineItem(
     leadTimeDays: number;
     description: string;
     notes: string;
+    name: string;
     sortOrder: number;
   }>,
   context?: QuoteEventContext

@@ -1863,13 +1863,27 @@ export default function OrderDetails() {
   const handleSaveLineItemField = useCallback(
     (
       lineItemId: number,
-      field: "description" | "notes" | "quantity" | "unitPrice" | "totalPrice",
+      field:
+        | "name"
+        | "description"
+        | "notes"
+        | "quantity"
+        | "unitPrice"
+        | "totalPrice",
       value: string
     ) => {
       const existing = lineItems.find(
         (li: LineItemWithPart) => li.lineItem.id === lineItemId
       )?.lineItem;
       if (!existing) return;
+
+      if (field === "name") {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          alert("Name is required");
+          return;
+        }
+      }
 
       const qty =
         field === "quantity"
@@ -1903,7 +1917,10 @@ export default function OrderDetails() {
       const formData = new FormData();
       formData.append("intent", "updateLineItem");
       formData.append("lineItemId", lineItemId.toString());
-      formData.append("name", existing.name || "");
+      formData.append(
+        "name",
+        field === "name" ? value.trim() : existing.name || ""
+      );
       formData.append("description", field === "description" ? value : existing.description || "");
       formData.append("notes", field === "notes" ? value : existing.notes || "");
       formData.append("quantity", qty.toString());
