@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "remix vite:build && npm run build:worker",
-    "build:worker": "node --input-type=module -e \"import('esbuild').then(e=>e.build({entryPoints:['scripts/worker.ts'],bundle:true,platform:'node',packages:'external',outfile:'build/worker.js',format:'esm',sourcemap:true}))\"",
+    "build:worker": "node scripts/build-worker.mjs",
     "dev:web": "remix vite:dev --host",
     "dev:worker": "tsx watch scripts/worker.ts",
     "dev": "concurrently -c \"blue,green\" -n \"web,worker\" \"npm run dev:web\" \"npm run dev:worker\"",
