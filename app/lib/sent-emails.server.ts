@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { sentEmails } from "./db/schema";
+import { orders, sentEmails } from "./db/schema";
 import { and, asc, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { SentEmail } from "./db/schema";
 import type { EmailContextKey } from "./email/email-context-registry";
@@ -36,7 +36,7 @@ export async function hasBlockingOrderContextSend(
   return row != null;
 }
 
-export type SentEmailListItem = Pick<
+type SentEmailListItemBase = Pick<
   SentEmail,
   | "id"
   | "status"
@@ -61,6 +61,11 @@ export type SentEmailListItem = Pick<
   | "rejectedByUserId"
   | "rejectedAt"
 >;
+
+export type SentEmailListItem = SentEmailListItemBase & {
+  /** For `entityType === "order"`, batched lookup for `/orders/{orderNumber}` links */
+  orderNumber: string | null;
+};
 
 export interface SentEmailStatusCounts {
   inFlight: number;
@@ -98,6 +103,36 @@ const listSelectShape = {
   rejectedAt: sentEmails.rejectedAt,
 } as const;
 
+async function attachOrderNumbersToSentEmailRows(
+  rows: SentEmailListItemBase[],
+): Promise<SentEmailListItem[]> {
+  const orderIds = new Set<number>();
+  for (const r of rows) {
+    if (r.entityType !== "order") continue;
+    const id = Number.parseInt(r.entityId, 10);
+    if (Number.isFinite(id) && id > 0) orderIds.add(id);
+  }
+  if (orderIds.size === 0) {
+    return rows.map((r) => ({ ...r, orderNumber: null }));
+  }
+  const idList = [...orderIds];
+  const found = await db
+    .select({ id: orders.id, orderNumber: orders.orderNumber })
+    .from(orders)
+    .where(inArray(orders.id, idList));
+  const map = new Map(found.map((o) => [o.id, o.orderNumber]));
+
+  return rows.map((r) => {
+    if (r.entityType !== "order") {
+      return { ...r, orderNumber: null };
+    }
+    const id = Number.parseInt(r.entityId, 10);
+    const orderNumber =
+      Number.isFinite(id) && id > 0 ? (map.get(id) ?? null) : null;
+    return { ...r, orderNumber };
+  });
+}
+
 export async function countSentEmailsInListWindow(
   minCreatedAt: Date | null,
 ): Promise<number> {
@@ -124,10 +159,11 @@ export async function listRecentSentEmails({
   const filtered = minCreatedAt
     ? base.where(gte(sentEmails.createdAt, minCreatedAt))
     : base;
-  return filtered
+  const rows = await filtered
     .orderBy(desc(sentEmails.createdAt))
     .limit(limit)
     .offset(offset);
+  return attachOrderNumbersToSentEmailRows(rows);
 }
 
 export async function listPendingApprovalEmails(
@@ -138,7 +174,7 @@ export async function listPendingApprovalEmails(
     ? and(statusCond, gte(sentEmails.createdAt, minCreatedAt))
     : statusCond;
 
-  return db
+  const rows = await db
     .select({
       id: sentEmails.id,
       status: sentEmails.status,
@@ -166,6 +202,7 @@ export async function listPendingApprovalEmails(
     .from(sentEmails)
     .where(whereClause)
     .orderBy(asc(sentEmails.createdAt));
+  return attachOrderNumbersToSentEmailRows(rows);
 }
 
 export async function getSentEmailStatusCounts(

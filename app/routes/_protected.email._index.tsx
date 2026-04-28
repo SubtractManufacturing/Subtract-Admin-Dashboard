@@ -581,7 +581,14 @@ function EmailRow({
   const entityLink =
     email.entityType === "quote" && email.quoteId
       ? `/quotes/${email.quoteId}`
-      : null;
+      : email.entityType === "order" && email.orderNumber
+        ? `/orders/${encodeURIComponent(email.orderNumber)}`
+        : null;
+
+  const entityLinkLabel =
+    email.entityType === "order"
+      ? `order #${email.orderNumber ?? email.entityId}`
+      : `${email.entityType} #${email.entityId}`;
 
   const displayDate = email.sentAt ?? email.createdAt;
   const dateLabel = new Date(displayDate).toLocaleString(undefined, {
@@ -639,7 +646,7 @@ function EmailRow({
               onClick={(e) => e.stopPropagation()}
               className="text-xs text-[#840606] no-underline hover:underline dark:text-red-400"
             >
-              {email.entityType} #{email.entityId}
+              {entityLinkLabel}
             </Link>
           )}
         </span>
