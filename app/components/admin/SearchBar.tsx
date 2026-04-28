@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "@remix-run/react";
+import { matchSorter } from "match-sorter";
 
 interface SearchItem {
   label: string;
@@ -16,6 +17,7 @@ const searchableItems: SearchItem[] = [
   { label: "Feature Flags", description: "Toggle application features", path: "/admin" },
   { label: "Active Users", description: "View active user count", path: "/admin" },
   { label: "Deployed Version", description: "Current deployment version", path: "/admin" },
+  { label: "Email", description: "Email templates, Postmark, and sender identities", path: "/admin/email" },
 ];
 
 export default function AdminSearchBar() {
@@ -28,12 +30,9 @@ export default function AdminSearchBar() {
 
   const results = useMemo(() => {
     if (!query.trim()) return [];
-    const q = query.toLowerCase();
-    return searchableItems.filter(
-      (item) =>
-        item.label.toLowerCase().includes(q) ||
-        item.description.toLowerCase().includes(q)
-    );
+    return matchSorter(searchableItems, query, {
+      keys: ["label", "description"],
+    });
   }, [query]);
 
   useEffect(() => {

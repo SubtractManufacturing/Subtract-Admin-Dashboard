@@ -39,9 +39,15 @@ import {
   canUserAccessPriceCalculator,
   canUserUploadCadRevision,
   isFeatureEnabled,
+  isOutboundEmailEnabled,
   isStripePaymentLinksEnabled,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
+import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
+import {
+  handleEmailPreviewAction,
+  handleEmailQueueAction,
+} from "~/lib/email/outbound-email-route-actions.server";
 import {
   uploadFile,
   generateFileKey,
@@ -49,7 +55,10 @@ import {
   getDownloadUrl,
   extractS3Key,
 } from "~/lib/s3.server";
-import { getBananaModelUrls, getPlaceholderPartUrls } from "~/lib/developerSettings";
+import {
+  getBananaModelUrls,
+  getPlaceholderPartUrls,
+} from "~/lib/developerSettings";
 import {
   quotePartUsesPlaceholderCad,
   resolveQuotePartPreviewAssets,
@@ -76,6 +85,7 @@ import {
   cadFileVersions,
   partDrawings,
   type QuotePart,
+  type AttachmentDocumentKind,
 } from "~/lib/db/schema";
 import { eq, inArray, and, or } from "drizzle-orm";
 import {
@@ -102,6 +112,7 @@ import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
+import SendQuoteEmailModal from "~/components/quotes/SendQuoteEmailModal";
 import { useDownload } from "~/hooks/useDownload";
 import {
   createPriceCalculation,
@@ -151,7 +162,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
           partMeshUrl: part.partMeshUrl,
           conversionStatus: part.conversionStatus,
         },
-        globalPlaceholder
+        globalPlaceholder,
       );
 
       // Preview mesh (includes live Settings placeholder when usesPlaceholderCad)
@@ -159,9 +170,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         preview.effectiveConversionStatus === "completed" &&
         preview.meshKey
       ) {
-        const { getQuotePartMeshUrl } = await import(
-          "~/lib/quote-part-mesh-converter.server"
-        );
+        const { getQuotePartMeshUrl } =
+          await import("~/lib/quote-part-mesh-converter.server");
         const result = await getQuotePartMeshUrl(part.id, globalPlaceholder);
         if ("url" in result) {
           signedMeshUrl = result.url;
@@ -178,28 +188,28 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         try {
           signedFileUrl = await getDownloadUrl(
             extractS3Key(preview.cadKey),
-            3600
+            3600,
           );
         } catch (error) {
           console.error(
             "Error getting signed file URL for part",
             part.id,
             ":",
-            error
+            error,
           );
         }
       } else if (part.partFileUrl) {
         try {
           signedFileUrl = await getDownloadUrl(
             extractS3Key(part.partFileUrl),
-            3600
+            3600,
           );
         } catch (error) {
           console.error(
             "Error getting signed file URL for part",
             part.id,
             ":",
-            error
+            error,
           );
         }
       }
@@ -214,7 +224,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
             "Error getting signed thumbnail URL for part",
             part.id,
             ":",
-            error
+            error,
           );
         }
       }
@@ -228,7 +238,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         .from(quotePartDrawings)
         .leftJoin(
           attachments,
-          eq(quotePartDrawings.attachmentId, attachments.id)
+          eq(quotePartDrawings.attachmentId, attachments.id),
         )
         .where(eq(quotePartDrawings.quotePartId, part.id));
 
@@ -245,7 +255,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
                 try {
                   thumbnailSignedUrl = await getDownloadUrl(
                     attachment.thumbnailS3Key,
-                    3600
+                    3600,
                   );
                 } catch {
                   // Thumbnail URL generation failed, will fall back to icon
@@ -261,10 +271,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
                 thumbnailSignedUrl,
               };
             } catch (error) {
-              console.error("Error generating signed URL for quote drawing:", error);
+              console.error(
+                "Error generating signed URL for quote drawing:",
+                error,
+              );
               return null;
             }
-          })
+          }),
       );
 
       const spec = part.specifications as Record<string, unknown> | null;
@@ -276,7 +289,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         drawings: drawings.filter((d) => d !== null),
         usesPlaceholderCad: spec?.usesPlaceholderCad === true,
       };
-    })
+    }),
   );
 
   // Update quote with signed URLs
@@ -298,7 +311,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     .map((record) => record.attachment)
     .filter(
       (attachment): attachment is NonNullable<typeof attachment> =>
-        attachment !== null
+        attachment !== null,
     );
 
   // Attachments are served via the unified download route — no presigned URLs needed
@@ -313,6 +326,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     canRevise,
     bananaEnabled,
     stripeEnabled,
+    outboundEmailEnabled,
   ] = await Promise.all([
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
@@ -321,7 +335,74 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
     isStripePaymentLinksEnabled(),
+    isOutboundEmailEnabled(),
   ]);
+
+  let quoteSendEmailReady = false;
+  let quoteSendEmailDefaultSubject: string | null = null;
+  let quoteSendRequiredAttachmentDocumentKinds: AttachmentDocumentKind[] = [];
+  type QuoteSendEditableSlot = {
+    id: string;
+    type: "plainText" | "markdown";
+    adminLabel: string;
+    templateValue: string;
+  };
+  let quoteSendEditableSlots: QuoteSendEditableSlot[] = [];
+  if (outboundEmailEnabled) {
+    const { resolveEmailTemplateForContext, getEmailMergeFieldsMap } =
+      await import("~/lib/email/templates.server");
+    const { interpolateTemplateString } =
+      await import("~/emails/render.server");
+    const { EMAIL_CONTEXT } =
+      await import("~/lib/email/email-context-registry");
+    const { getLayoutDefinition, parseBodyCopyForLayout } =
+      await import("~/emails/registry");
+    const { buildActorMergeMap } =
+      await import("~/lib/email/resolve/actor-merge.server");
+    const actorMerge = buildActorMergeMap({
+      email: userDetails?.email?.trim() || user?.email?.trim() || "",
+      name: userDetails?.name,
+    });
+    const [resolved, mergeFields] = await Promise.all([
+      resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND),
+      getEmailMergeFieldsMap(),
+    ]);
+    if (resolved) {
+      quoteSendEmailReady = true;
+      quoteSendRequiredAttachmentDocumentKinds =
+        resolved.template.requiredAttachmentDocumentKinds ?? [];
+      quoteSendEmailDefaultSubject = interpolateTemplateString(
+        resolved.template.subjectTemplate,
+        {
+          ...mergeFields,
+          ...actorMerge,
+          quoteNumber: quote.quoteNumber,
+          customerName: customer?.displayName ?? "Customer",
+          total: quote.total ?? "0.00",
+        },
+      );
+      const definition = getLayoutDefinition(resolved.layoutSlug);
+      const bodyParseResult = parseBodyCopyForLayout(
+        resolved.layoutSlug,
+        resolved.template.bodyCopy ?? {},
+      );
+      if (bodyParseResult.ok) {
+        quoteSendEditableSlots = definition.slots
+          .filter(
+            (s): s is Extract<typeof s, { type: "plainText" | "markdown" }> =>
+              !!s.allowPerSendEdit && s.type !== "button",
+          )
+          .map((s) => ({
+            id: s.id,
+            type: s.type as "plainText" | "markdown",
+            adminLabel: s.adminLabel,
+            templateValue: String(
+              (bodyParseResult.data as Record<string, unknown>)[s.id] ?? "",
+            ),
+          }));
+      }
+    }
+  }
 
   // Get banana model URL if feature is enabled
   let bananaModelUrl: string | null = null;
@@ -361,8 +442,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       bananaEnabled,
       bananaModelUrl,
       stripeEnabled,
+      outboundEmailEnabled,
+      quoteSendEmailReady,
+      quoteSendEmailDefaultSubject,
+      quoteSendEditableSlots,
+      quoteSendRequiredAttachmentDocumentKinds,
     }),
-    headers
+    headers,
   );
 }
 
@@ -407,10 +493,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const intent = formData.get("intent");
 
     // Handle add line item with file upload (or promote standalone line item to part-backed)
-    if (
-      intent === "addLineItem" ||
-      intent === "promoteLineItemToQuotePart"
-    ) {
+    if (intent === "addLineItem" || intent === "promoteLineItemToQuotePart") {
       const isPromote = intent === "promoteLineItemToQuotePart";
       // Auto-convert RFQ to Draft when editing starts
       await autoConvertRFQToDraft();
@@ -450,7 +533,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         if (existingLineItem.quotePartId) {
           return json(
             { error: "This line item already has an attached part" },
-            { status: 400 }
+            { status: 400 },
           );
         }
         if (!file || file.size === 0) {
@@ -459,7 +542,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               error:
                 "Upload a CAD file or drawing to attach a part to this line item",
             },
-            { status: 400 }
+            { status: 400 },
           );
         }
       }
@@ -470,15 +553,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         // If a file was uploaded, create a quote part
         if (file && file.size > 0) {
           const { quoteParts } = await import("~/lib/db/schema");
-          const { triggerQuotePartMeshConversion } = await import(
-            "~/lib/quote-part-mesh-converter.server"
-          );
-          const { isCadSourceFile, isDrawingSourceFile } = await import(
-            "~/lib/part-source-files"
-          );
-          const { ensureDrawingOnlyQuotePartAssets } = await import(
-            "~/lib/quote-part-assets.server"
-          );
+          const { triggerQuotePartMeshConversion } =
+            await import("~/lib/quote-part-mesh-converter.server");
+          const { isCadSourceFile, isDrawingSourceFile } =
+            await import("~/lib/part-source-files");
+          const { ensureDrawingOnlyQuotePartAssets } =
+            await import("~/lib/quote-part-assets.server");
           const crypto = await import("crypto");
 
           const arrayBuffer = await file.arrayBuffer();
@@ -494,7 +574,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           if (!primaryIsCad && !primaryIsDrawing) {
             return json(
               { error: "Unsupported file type for line item upload" },
-              { status: 400 }
+              { status: 400 },
             );
           }
 
@@ -522,9 +602,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
               .replace(/[^a-zA-Z0-9._-]/g, "");
             const timestamp = Date.now();
             const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-0-${sanitizedDrawingName}`;
-            const { contentTypeForDrawingFileName } = await import(
-              "~/lib/part-source-files"
-            );
+            const { contentTypeForDrawingFileName } =
+              await import("~/lib/part-source-files");
             const drawingContentType = contentTypeForDrawingFileName(file.name);
             const drawingUploadResult = await uploadFile({
               key: drawingKey,
@@ -548,14 +627,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
               } catch (thumbnailError) {
                 console.error(
                   "Failed to generate PDF thumbnail:",
-                  thumbnailError
+                  thumbnailError,
                 );
               }
             }
 
-            const { attachments, quotePartDrawings } = await import(
-              "~/lib/db/schema"
-            );
+            const { attachments, quotePartDrawings } =
+              await import("~/lib/db/schema");
             const [attachment] = await db
               .insert(attachments)
               .values({
@@ -565,6 +643,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 contentType: drawingContentType,
                 fileSize: file.size,
                 thumbnailS3Key,
+                source: "user_upload",
               })
               .returning();
 
@@ -600,7 +679,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                       const th = await generatePdfThumbnail(
                         drawingBuffer,
                         200,
-                        200
+                        200,
                       );
                       const thKey = `quote-parts/${newQuotePart.id}/drawings/${ts}-${i + 1}-${sanitizedName}.thumb.png`;
                       await uploadFile({
@@ -623,6 +702,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                       contentType: ct,
                       fileSize: drawing.size,
                       thumbnailS3Key: dThumb,
+                      source: "user_upload",
                     })
                     .returning();
                   await db.insert(quotePartDrawings).values({
@@ -639,146 +719,144 @@ export async function action({ request, params }: ActionFunctionArgs) {
               primaryDrawingFileName: file.name,
             });
           } else {
-          const sanitizedFileName = file.name
-            .replace(/\s+/g, "-")
-            .replace(/[^a-zA-Z0-9._-]/g, "");
+            const sanitizedFileName = file.name
+              .replace(/\s+/g, "-")
+              .replace(/[^a-zA-Z0-9._-]/g, "");
 
-          const fileKey = `quote-parts/${crypto.randomUUID()}/source/${sanitizedFileName}`;
+            const fileKey = `quote-parts/${crypto.randomUUID()}/source/${sanitizedFileName}`;
 
-          const uploadResult = await uploadFile({
-            key: fileKey,
-            buffer,
-            contentType: file.type || "application/octet-stream",
-            fileName: sanitizedFileName,
-          });
+            const uploadResult = await uploadFile({
+              key: fileKey,
+              buffer,
+              contentType: file.type || "application/octet-stream",
+              fileName: sanitizedFileName,
+            });
 
-          const [newQuotePart] = await db
-            .insert(quoteParts)
-            .values({
-              quoteId: quote.id,
-              partNumber,
-              partName: name,
-              description: description || null,
-              material,
-              tolerance,
-              finish,
-              partFileUrl: uploadResult.key,
-              conversionStatus: "pending",
-            })
-            .returning();
+            const [newQuotePart] = await db
+              .insert(quoteParts)
+              .values({
+                quoteId: quote.id,
+                partNumber,
+                partName: name,
+                description: description || null,
+                material,
+                tolerance,
+                finish,
+                partFileUrl: uploadResult.key,
+                conversionStatus: "pending",
+              })
+              .returning();
 
-          quotePartId = newQuotePart.id;
+            quotePartId = newQuotePart.id;
 
-          triggerQuotePartMeshConversion(
-            newQuotePart.id,
-            uploadResult.key
-          ).catch(async (error) => {
-            console.error(
-              `Failed to trigger mesh conversion for quote part ${newQuotePart.id}:`,
-              error
-            );
-            // Log error event for tracking
-            const { createEvent } = await import("~/lib/events");
-            await createEvent({
-              entityType: "quote",
-              entityId: quoteId,
-              eventType: "mesh_conversion_failed",
-              eventCategory: "system",
-              title: "Mesh Conversion Failed",
-              description: `Failed to trigger mesh conversion for part ${newQuotePart.partName}`,
-              metadata: {
-                quotePartId: newQuotePart.id,
-                error: error instanceof Error ? error.message : String(error),
-              },
-              userId: eventContext?.userId,
-              userEmail: eventContext?.userEmail,
-            }).catch((err) => console.error("Failed to log event:", err));
-          });
-
-          // Handle technical drawings if provided
-          const drawingCount =
-            parseInt(formData.get("drawingCount") as string) || 0;
-          if (drawingCount > 0) {
-            const { attachments, quotePartDrawings } = await import(
-              "~/lib/db/schema"
-            );
-
-            for (let i = 0; i < drawingCount; i++) {
-              const drawing = formData.get(`drawing_${i}`) as File | null;
-              if (drawing && drawing.size > 0) {
-                // Convert drawing File to Buffer
-                const drawingArrayBuffer = await drawing.arrayBuffer();
-                const drawingBuffer = Buffer.from(drawingArrayBuffer);
-
-                // Sanitize drawing filename
-                const sanitizedDrawingName = drawing.name
-                  .replace(/\s+/g, "-")
-                  .replace(/[^a-zA-Z0-9._-]/g, "");
-
-                // Upload drawing to S3
-                const timestamp = Date.now();
-                const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}`;
-                const drawingUploadResult = await uploadFile({
-                  key: drawingKey,
-                  buffer: drawingBuffer,
-                  contentType: drawing.type || "application/pdf",
-                  fileName: sanitizedDrawingName,
-                });
-
-                // Generate thumbnail for PDFs
-                let thumbnailS3Key: string | null = null;
-                if (isPdfFile(drawing.type, drawing.name)) {
-                  try {
-                    const thumbnail = await generatePdfThumbnail(
-                      drawingBuffer,
-                      200,
-                      200
-                    );
-                    const thumbnailKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}.thumb.png`;
-                    await uploadFile({
-                      key: thumbnailKey,
-                      buffer: thumbnail.buffer,
-                      contentType: "image/png",
-                      fileName: `${sanitizedDrawingName}.thumb.png`,
-                    });
-                    thumbnailS3Key = thumbnailKey;
-                  } catch (thumbnailError) {
-                    console.error(
-                      "Failed to generate PDF thumbnail:",
-                      thumbnailError
-                    );
-                  }
-                }
-
-                // Create attachment record
-                const [attachment] = await db
-                  .insert(attachments)
-                  .values({
-                    s3Bucket: process.env.S3_BUCKET || "default-bucket",
-                    s3Key: drawingUploadResult.key,
-                    fileName: drawing.name,
-                    contentType: drawing.type || "application/pdf",
-                    fileSize: drawing.size,
-                    thumbnailS3Key,
-                  })
-                  .returning();
-
-                // Link attachment to quote part
-                await db.insert(quotePartDrawings).values({
+            triggerQuotePartMeshConversion(
+              newQuotePart.id,
+              uploadResult.key,
+            ).catch(async (error) => {
+              console.error(
+                `Failed to trigger mesh conversion for quote part ${newQuotePart.id}:`,
+                error,
+              );
+              // Log error event for tracking
+              const { createEvent } = await import("~/lib/events");
+              await createEvent({
+                entityType: "quote",
+                entityId: quoteId,
+                eventType: "mesh_conversion_failed",
+                eventCategory: "system",
+                title: "Mesh Conversion Failed",
+                description: `Failed to trigger mesh conversion for part ${newQuotePart.partName}`,
+                metadata: {
                   quotePartId: newQuotePart.id,
-                  attachmentId: attachment.id,
-                  version: 1,
-                });
+                  error: error instanceof Error ? error.message : String(error),
+                },
+                userId: eventContext?.userId,
+                userEmail: eventContext?.userEmail,
+              }).catch((err) => console.error("Failed to log event:", err));
+            });
+
+            // Handle technical drawings if provided
+            const drawingCount =
+              parseInt(formData.get("drawingCount") as string) || 0;
+            if (drawingCount > 0) {
+              const { attachments, quotePartDrawings } =
+                await import("~/lib/db/schema");
+
+              for (let i = 0; i < drawingCount; i++) {
+                const drawing = formData.get(`drawing_${i}`) as File | null;
+                if (drawing && drawing.size > 0) {
+                  // Convert drawing File to Buffer
+                  const drawingArrayBuffer = await drawing.arrayBuffer();
+                  const drawingBuffer = Buffer.from(drawingArrayBuffer);
+
+                  // Sanitize drawing filename
+                  const sanitizedDrawingName = drawing.name
+                    .replace(/\s+/g, "-")
+                    .replace(/[^a-zA-Z0-9._-]/g, "");
+
+                  // Upload drawing to S3
+                  const timestamp = Date.now();
+                  const drawingKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}`;
+                  const drawingUploadResult = await uploadFile({
+                    key: drawingKey,
+                    buffer: drawingBuffer,
+                    contentType: drawing.type || "application/pdf",
+                    fileName: sanitizedDrawingName,
+                  });
+
+                  // Generate thumbnail for PDFs
+                  let thumbnailS3Key: string | null = null;
+                  if (isPdfFile(drawing.type, drawing.name)) {
+                    try {
+                      const thumbnail = await generatePdfThumbnail(
+                        drawingBuffer,
+                        200,
+                        200,
+                      );
+                      const thumbnailKey = `quote-parts/${newQuotePart.id}/drawings/${timestamp}-${i}-${sanitizedDrawingName}.thumb.png`;
+                      await uploadFile({
+                        key: thumbnailKey,
+                        buffer: thumbnail.buffer,
+                        contentType: "image/png",
+                        fileName: `${sanitizedDrawingName}.thumb.png`,
+                      });
+                      thumbnailS3Key = thumbnailKey;
+                    } catch (thumbnailError) {
+                      console.error(
+                        "Failed to generate PDF thumbnail:",
+                        thumbnailError,
+                      );
+                    }
+                  }
+
+                  // Create attachment record
+                  const [attachment] = await db
+                    .insert(attachments)
+                    .values({
+                      s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                      s3Key: drawingUploadResult.key,
+                      fileName: drawing.name,
+                      contentType: drawing.type || "application/pdf",
+                      fileSize: drawing.size,
+                      thumbnailS3Key,
+                    })
+                    .returning();
+
+                  // Link attachment to quote part
+                  await db.insert(quotePartDrawings).values({
+                    quotePartId: newQuotePart.id,
+                    attachmentId: attachment.id,
+                    version: 1,
+                  });
+                }
               }
             }
-          }
           }
         }
 
         // Create or update quote line item
-        const { createQuoteLineItem, calculateQuoteTotals } = await import(
-          "~/lib/quotes"
-        );
+        const { createQuoteLineItem, calculateQuoteTotals } =
+          await import("~/lib/quotes");
 
         if (isPromote && promoteLineItemId != null) {
           const qty = parseInt(quantity, 10);
@@ -851,7 +929,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               description: description || undefined,
               notes: notes || undefined,
             },
-            eventContext
+            eventContext,
           );
         }
 
@@ -873,14 +951,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
       if (!quotePartId || drawingCount === 0) {
         return json(
           { error: "Missing quote part ID or drawings" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
       try {
-        const { attachments, quotePartDrawings } = await import(
-          "~/lib/db/schema"
-        );
+        const { attachments, quotePartDrawings } =
+          await import("~/lib/db/schema");
 
         for (let i = 0; i < drawingCount; i++) {
           const drawing = formData.get(`drawing_${i}`) as File | null;
@@ -911,7 +988,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 const thumbnail = await generatePdfThumbnail(
                   drawingBuffer,
                   200,
-                  200
+                  200,
                 );
                 const thumbnailKey = `quote-parts/${quotePartId}/drawings/${timestamp}-${i}-${sanitizedDrawingName}.thumb.png`;
                 await uploadFile({
@@ -924,7 +1001,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               } catch (thumbnailError) {
                 console.error(
                   "Failed to generate PDF thumbnail:",
-                  thumbnailError
+                  thumbnailError,
                 );
               }
             }
@@ -939,6 +1016,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 contentType: drawing.type || "application/pdf",
                 fileSize: drawing.size,
                 thumbnailS3Key,
+                source: "user_upload",
               })
               .returning();
 
@@ -994,8 +1072,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
             fileName: uploadResult.fileName,
             contentType: uploadResult.contentType,
             fileSize: uploadResult.size,
+            source: "user_upload",
           },
-          eventContext
+          eventContext,
         );
 
         // Link to quote
@@ -1003,6 +1082,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
           quoteId: quote.id,
           attachmentId: attachment.id,
         });
+
+        // Fetcher-based uploads request JSON so they don't navigate away
+        if (formData.get("_noRedirect")) {
+          return withAuthHeaders(
+            json({ success: true, attachmentId: attachment.id }),
+            headers,
+          );
+        }
 
         // Return a redirect to refresh the page
         return redirect(`/quotes/${quoteId}`);
@@ -1014,11 +1101,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
     // If we get here with multipart data but unhandled intent, check if it's a PDF generation
     // PDF generation uses FormData but doesn't include files, so let it fall through
-    const pdfGenerationIntents = ["generateQuote", "generateInvoice"];
-    if (!pdfGenerationIntents.includes(intent as string)) {
+    const filelessMultipartIntents = [
+      "generateQuote",
+      "generateInvoice",
+      "emailPreview",
+      "emailQueue",
+    ];
+    if (!filelessMultipartIntents.includes(intent as string)) {
       return json({ error: "Invalid multipart request" }, { status: 400 });
     }
-    // Fall through to regular form handling for PDF generation
+    // Fall through to regular form handling for file-less multipart intents
   } else {
     // Not multipart, parse as regular FormData
     formData = await request.formData();
@@ -1031,13 +1123,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const partAssetAdminResponse = await tryPartAssetAdminAction(
       formData,
       { type: "quote", quoteId: quote.id },
-      { user: { id: user.id }, userDetails, headers }
+      { user: { id: user.id }, userDetails, headers },
     );
     if (partAssetAdminResponse) {
       return partAssetAdminResponse;
     }
 
     switch (intent) {
+      case "emailPreview": {
+        return withAuthHeaders(
+          await handleEmailPreviewAction({
+            auth: { user, userDetails },
+            formData,
+            expected: {
+              contextKey: EMAIL_CONTEXT.QUOTE_SEND,
+              entityId: String(quote.id),
+            },
+          }),
+          headers,
+        );
+      }
+
+      case "emailQueue": {
+        return withAuthHeaders(
+          await handleEmailQueueAction({
+            auth: { user, userDetails },
+            formData,
+            expected: {
+              contextKey: EMAIL_CONTEXT.QUOTE_SEND,
+              entityType: "quote",
+              entityId: String(quote.id),
+            },
+          }),
+          headers,
+        );
+      }
+
       case "updateStatus": {
         const status = formData.get("status") as
           | "RFQ"
@@ -1051,82 +1172,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Stripe payment link creation when sending a quote
         if (status === "Sent") {
-          const stripeOn = await isStripePaymentLinksEnabled();
-          if (stripeOn) {
-            const { isStripeConfigured, createQuotePaymentLink } =
-              await import("~/lib/stripe.server");
-            if (!isStripeConfigured()) {
-              return json(
-                {
-                  error:
-                    "Cannot send quote: Stripe is not configured. Contact your administrator.",
-                },
-                { status: 400 }
-              );
-            }
-
-            const sendTotal = parseFloat(quote.total || "0");
-            if (sendTotal <= 0) {
-              return json(
-                {
-                  error:
-                    "Cannot send quote: Quote total must be greater than $0.",
-                },
-                { status: 400 }
-              );
-            }
-
-            // Skip creation if an active link already exists (idempotency)
-            if (
-              quote.stripePaymentLinkId &&
-              quote.stripePaymentLinkActive
-            ) {
-              await updateQuote(
-                quote.id,
-                { status: "Sent", rejectionReason: null },
-                eventContext
-              );
-              return redirect(`/quotes/${quoteId}`);
-            }
-
-            try {
-              const paymentLink = await createQuotePaymentLink({
-                quoteId: quote.id,
-                quoteNumber: quote.quoteNumber,
-                totalDollars: quote.total!,
-                customerId: quote.customerId,
-              });
-
-              await updateQuote(
-                quote.id,
-                {
-                  status: "Sent",
-                  stripePaymentLinkUrl: paymentLink.url,
-                  stripePaymentLinkId: paymentLink.id,
-                  stripePaymentLinkActive: true,
-                  rejectionReason: null,
-                },
-                eventContext
-              );
-
-              return redirect(`/quotes/${quoteId}`);
-            } catch (stripeError) {
-              console.error(
-                "Stripe payment link creation failed:",
-                stripeError
-              );
-              return json(
-                {
-                  error: `Failed to create payment link: ${
-                    stripeError instanceof Error
-                      ? stripeError.message
-                      : "Unknown error"
-                  }`,
-                },
-                { status: 500 }
-              );
-            }
+          const { transitionQuoteToSent } = await import("~/lib/quotes.server");
+          const result = await transitionQuoteToSent(quote.id, eventContext);
+          if (!result.success) {
+            return json({ error: result.error }, { status: 400 });
           }
+          return redirect(`/quotes/${quoteId}`);
         }
 
         // Stripe payment link deactivation on terminal statuses
@@ -1137,14 +1188,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const stripeOn = await isStripePaymentLinksEnabled();
           if (stripeOn) {
             try {
-              const { deactivateQuotePaymentLink } = await import(
-                "~/lib/stripe.server"
-              );
+              const { deactivateQuotePaymentLink } =
+                await import("~/lib/stripe.server");
               await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
               await updateQuote(
                 quote.id,
                 { stripePaymentLinkActive: false },
-                eventContext
+                eventContext,
               );
             } catch (stripeError) {
               console.error("Stripe deactivation failed:", stripeError);
@@ -1161,7 +1211,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const quoteTotal = parseFloat(quote.total || "0");
           if (quoteTotal <= 0) {
             validationErrors.push(
-              "Quote must have a valid total greater than $0. Please add pricing to line items."
+              "Quote must have a valid total greater than $0. Please add pricing to line items.",
             );
           }
 
@@ -1176,11 +1226,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
               (part) =>
                 part.conversionStatus === "in_progress" ||
                 part.conversionStatus === "queued" ||
-                (part.conversionStatus === "pending" && part.partFileUrl)
+                (part.conversionStatus === "pending" && part.partFileUrl),
             );
             if (pendingConversions.length > 0) {
               validationErrors.push(
-                `Cannot accept quote while ${pendingConversions.length} part(s) have pending mesh conversions.`
+                `Cannot accept quote while ${pendingConversions.length} part(s) have pending mesh conversions.`,
               );
             }
           }
@@ -1192,7 +1242,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 error: "Cannot accept quote",
                 validationErrors,
               },
-              { status: 400 }
+              { status: 400 },
             );
           }
 
@@ -1205,7 +1255,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           // Conversion failed, return error without changing status
           return json(
             { error: result.error || "Failed to convert quote to order" },
-            { status: 400 }
+            { status: 400 },
           );
         }
 
@@ -1216,7 +1266,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             status,
             rejectionReason: status === "Rejected" ? rejectionReason : null,
           },
-          eventContext
+          eventContext,
         );
 
         return redirect(`/quotes/${quoteId}`);
@@ -1236,7 +1286,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           if (isNaN(days) || days < 1 || days > 365) {
             return json(
               { error: "Expiration days must be between 1 and 365" },
-              { status: 400 }
+              { status: 400 },
             );
           }
 
@@ -1259,7 +1309,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         await updateQuote(
           quote.id,
           { customerId: parseInt(customerId) },
-          eventContext
+          eventContext,
         );
         return json({ success: true });
       }
@@ -1274,7 +1324,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           {
             vendorId: vendorId ? parseInt(vendorId) : null,
           },
-          eventContext
+          eventContext,
         );
         return json({ success: true });
       }
@@ -1288,14 +1338,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
         if (!validUntil) {
           return json(
             { error: "Valid until date is required" },
-            { status: 400 }
+            { status: 400 },
           );
         }
 
         await updateQuote(
           quote.id,
           { validUntil: new Date(validUntil) },
-          eventContext
+          eventContext,
         );
         return json({ success: true });
       }
@@ -1307,7 +1357,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
         return json(
           { error: result.error || "Failed to convert quote" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -1320,7 +1370,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               error:
                 "Only sent, dropped, rejected, or expired quotes can be revised. Accepted quotes are immutable.",
             },
-            { status: 400 }
+            { status: 400 },
           );
         }
 
@@ -1331,14 +1381,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
           const stripeOn = await isStripePaymentLinksEnabled();
           if (stripeOn) {
             try {
-              const { deactivateQuotePaymentLink } = await import(
-                "~/lib/stripe.server"
-              );
+              const { deactivateQuotePaymentLink } =
+                await import("~/lib/stripe.server");
               await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
             } catch (stripeError) {
               console.error(
                 "Stripe payment link deactivation failed during revision:",
-                stripeError
+                stripeError,
               );
             }
           }
@@ -1383,7 +1432,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
         return json(
           { error: result.error || "Failed to duplicate quote" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -1419,7 +1468,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const positiveSub = quotePositiveSubtotalExcluding(
           allQuoteLines,
-          lineItemIdNum
+          lineItemIdNum,
         );
 
         const { updateQuoteLineItem } = await import("~/lib/quotes");
@@ -1429,6 +1478,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           unitPrice?: number;
           description?: string;
           notes?: string;
+          name?: string;
         } = {};
 
         const quantityRaw = formData.get("quantity") as string | null;
@@ -1436,6 +1486,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const totalPriceRaw = formData.get("totalPrice") as string | null;
         const description = formData.get("description") as string | null;
         const notes = formData.get("notes") as string | null;
+        const nameRaw = formData.get("name") as string | null;
 
         const qty =
           quantityRaw !== null && quantityRaw !== ""
@@ -1482,6 +1533,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
         if (notes !== null) {
           updateData.notes = notes || "";
         }
+        if (nameRaw !== null) {
+          updateData.name = String(nameRaw).trim();
+        }
 
         await updateQuoteLineItem(lineItemIdNum, updateData, eventContext);
 
@@ -1526,7 +1580,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             content,
             createdBy,
           },
-          noteEventContext
+          noteEventContext,
         );
 
         return withAuthHeaders(json({ note }), headers);
@@ -1600,7 +1654,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         if (!drawingId || !quotePartId) {
           return json(
             { error: "Missing drawing or quote part ID" },
-            { status: 400 }
+            { status: 400 },
           );
         }
 
@@ -1705,7 +1759,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 .from(quotePartDrawings)
                 .innerJoin(
                   attachments,
-                  eq(quotePartDrawings.attachmentId, attachments.id)
+                  eq(quotePartDrawings.attachmentId, attachments.id),
                 )
                 .where(eq(quotePartDrawings.quotePartId, quotePartId));
 
@@ -1723,8 +1777,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 .where(
                   and(
                     eq(cadFileVersions.entityType, "quote_part"),
-                    eq(cadFileVersions.entityId, quotePartId)
-                  )
+                    eq(cadFileVersions.entityId, quotePartId),
+                  ),
                 );
               for (const v of cadVersions) {
                 if (v.s3Key) filesToDelete.push(v.s3Key);
@@ -1744,12 +1798,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 const referencedByParts = await tx
                   .select({ attachmentId: partDrawings.attachmentId })
                   .from(partDrawings)
-                  .where(inArray(partDrawings.attachmentId, drawingAttachmentIds));
+                  .where(
+                    inArray(partDrawings.attachmentId, drawingAttachmentIds),
+                  );
                 const referencedIds = new Set(
-                  referencedByParts.map((r) => r.attachmentId)
+                  referencedByParts.map((r) => r.attachmentId),
                 );
                 const safeToDelete = drawingAttachmentIds.filter(
-                  (id) => !referencedIds.has(id)
+                  (id) => !referencedIds.has(id),
                 );
                 if (safeToDelete.length > 0) {
                   await tx
@@ -1763,8 +1819,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 .where(
                   and(
                     eq(cadFileVersions.entityType, "quote_part"),
-                    eq(cadFileVersions.entityId, quotePartId)
-                  )
+                    eq(cadFileVersions.entityId, quotePartId),
+                  ),
                 );
 
               await tx
@@ -1772,22 +1828,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 .where(
                   or(
                     eq(quotePriceCalculations.quotePartId, quotePartId),
-                    eq(quotePriceCalculations.quoteLineItemId, parseInt(lineItemId))
-                  )
+                    eq(
+                      quotePriceCalculations.quoteLineItemId,
+                      parseInt(lineItemId),
+                    ),
+                  ),
                 );
 
               await tx
                 .delete(quoteLineItems)
                 .where(eq(quoteLineItems.id, parseInt(lineItemId)));
 
-              await tx
-                .delete(quoteParts)
-                .where(eq(quoteParts.id, quotePartId));
+              await tx.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
             } else {
               await tx
                 .delete(quotePriceCalculations)
                 .where(
-                  eq(quotePriceCalculations.quoteLineItemId, parseInt(lineItemId))
+                  eq(
+                    quotePriceCalculations.quoteLineItemId,
+                    parseInt(lineItemId),
+                  ),
                 );
               await tx
                 .delete(quoteLineItems)
@@ -1862,21 +1922,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
               error:
                 "Preview mesh is managed in Settings. Upload a CAD file to regenerate mesh for this part.",
             },
-            { status: 400 }
+            { status: 400 },
           );
         }
 
         if (!quotePart.partFileUrl) {
           return json(
             { error: "No source file available for conversion" },
-            { status: 400 }
+            { status: 400 },
           );
         }
 
         // Trigger mesh conversion
-        const { triggerQuotePartMeshConversion } = await import(
-          "~/lib/quote-part-mesh-converter.server"
-        );
+        const { triggerQuotePartMeshConversion } =
+          await import("~/lib/quote-part-mesh-converter.server");
 
         // Reset conversion status to pending
         await db
@@ -1891,11 +1950,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         // Trigger conversion asynchronously
         triggerQuotePartMeshConversion(
           quotePart.id,
-          quotePart.partFileUrl
+          quotePart.partFileUrl,
         ).catch(async (error) => {
           console.error(
             `Failed to regenerate mesh for quote part ${quotePart.id}:`,
-            error
+            error,
           );
           // Log error event for tracking
           const { createEvent } = await import("~/lib/events");
@@ -1925,10 +1984,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const finish = formData.get("finish") as string;
 
         if (!quotePartId) {
-          return json(
-            { error: "Quote part ID is required" },
-            { status: 400 }
-          );
+          return json({ error: "Quote part ID is required" }, { status: 400 });
         }
 
         // Get current quote part to retrieve old values for comparison
@@ -2053,7 +2109,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         // Create the price calculation record
         await createPriceCalculation(
           calculationData,
-          user?.id || userDetails?.id
+          user?.id || userDetails?.id,
         );
 
         return json({ success: true });
@@ -2072,6 +2128,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             entityId: quote.id,
             htmlContent,
             filename: `Quote-${quote.quoteNumber}.pdf`,
+            documentKind: "quote",
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
           });
@@ -2105,7 +2162,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   ? pdfError.message
                   : "Failed to generate PDF",
             },
-            { status: 500 }
+            { status: 500 },
           );
         }
       }
@@ -2123,6 +2180,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             entityId: quote.id,
             htmlContent,
             filename: `Invoice-${quote.quoteNumber}.pdf`,
+            documentKind: "invoice",
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
           });
@@ -2156,7 +2214,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   ? pdfError.message
                   : "Failed to generate PDF",
             },
-            { status: 500 }
+            { status: 500 },
           );
         }
       }
@@ -2191,6 +2249,11 @@ export default function QuoteDetail() {
     bananaEnabled,
     bananaModelUrl,
     stripeEnabled,
+    outboundEmailEnabled,
+    quoteSendEmailReady,
+    quoteSendEmailDefaultSubject,
+    quoteSendEditableSlots,
+    quoteSendRequiredAttachmentDocumentKinds,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/quotes/${quote.id}`
@@ -2200,6 +2263,9 @@ export default function QuoteDetail() {
   const [isAddingNote, setIsAddingNote] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [pollCount, setPollCount] = useState(0);
+  const emailPollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [emailPollCount, setEmailPollCount] = useState(0);
+  const [isWaitingForSentStatus, setIsWaitingForSentStatus] = useState(false);
   const [isAddLineItemModalOpen, setIsAddLineItemModalOpen] = useState(false);
   const [promoteLineItemTarget, setPromoteLineItemTarget] = useState<{
     id: number;
@@ -2211,6 +2277,7 @@ export default function QuoteDetail() {
     notes?: string;
   } | null>(null);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [isSendEmailModalOpen, setSendEmailModalOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
@@ -2239,21 +2306,21 @@ export default function QuoteDetail() {
           quantity: li.quantity,
           unitPrice: li.unitPrice,
           totalPrice: li.totalPrice,
-        }))
+        })),
       ),
-    [optimisticLineItems]
+    [optimisticLineItems],
   );
 
   const [optimisticTotal, setOptimisticTotal] = useState(quote.total || "0.00");
   const [editingExpirationDays, setEditingExpirationDays] = useState(false);
   const [expirationDaysValue, setExpirationDaysValue] = useState(
-    (quote.expirationDays || 14).toString()
+    (quote.expirationDays || 14).toString(),
   );
   const [editingValidUntil, setEditingValidUntil] = useState(false);
   const [validUntilValue, setValidUntilValue] = useState(
     quote.validUntil
       ? new Date(quote.validUntil).toISOString().split("T")[0]
-      : ""
+      : "",
   );
   const lineItemFetcher = useFetcher();
   const drawingFetcher = useFetcher();
@@ -2298,17 +2365,25 @@ export default function QuoteDetail() {
   } | null>(null);
 
   // Granular locking for different sections
-  const areNotesLocked = ["Accepted", "Rejected", "Expired"].includes(quote.status);
-  const areAttachmentsLocked = ["Accepted", "Rejected", "Expired"].includes(quote.status);
-  const isPricingLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(quote.status);
-  const areDetailsLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(quote.status);
+  const areNotesLocked = ["Accepted", "Rejected", "Expired"].includes(
+    quote.status,
+  );
+  const areAttachmentsLocked = ["Accepted", "Rejected", "Expired"].includes(
+    quote.status,
+  );
+  const isPricingLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
+    quote.status,
+  );
+  const areDetailsLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
+    quote.status,
+  );
 
   // Check if any parts are currently converting
   const hasConvertingParts = quote.parts?.some(
     (part: { conversionStatus: string | null }) =>
       part.conversionStatus === "in_progress" ||
       part.conversionStatus === "queued" ||
-      part.conversionStatus === "pending"
+      part.conversionStatus === "pending",
   );
 
   // Set up polling for parts conversion status
@@ -2347,6 +2422,53 @@ export default function QuoteDetail() {
     };
   }, [hasConvertingParts, pollCount, revalidator]);
 
+  // Poll for quote status change after queueing an email send
+  useEffect(() => {
+    const MAX_EMAIL_POLL_COUNT = 40; // ~2 minutes at 3s interval
+
+    if (!isWaitingForSentStatus) {
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (quote.status === "Sent") {
+      setIsWaitingForSentStatus(false);
+      setEmailPollCount(0);
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+      return;
+    }
+
+    if (
+      !emailPollIntervalRef.current &&
+      emailPollCount < MAX_EMAIL_POLL_COUNT
+    ) {
+      emailPollIntervalRef.current = setInterval(() => {
+        setEmailPollCount((prev) => prev + 1);
+        revalidator.revalidate();
+      }, 3000);
+    } else if (emailPollCount >= MAX_EMAIL_POLL_COUNT) {
+      setIsWaitingForSentStatus(false);
+      setEmailPollCount(0);
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (emailPollIntervalRef.current) {
+        clearInterval(emailPollIntervalRef.current);
+        emailPollIntervalRef.current = null;
+      }
+    };
+  }, [emailPollCount, isWaitingForSentStatus, quote.status, revalidator]);
+
   // Update optimistic line items when the actual data changes
   // Sort so part line items (quotePartId != null) appear before additional services,
   // and items within each group are stable by id
@@ -2376,7 +2498,7 @@ export default function QuoteDetail() {
           const itemTotal = parseFloat(item.totalPrice) || 0;
           return sum + itemTotal;
         },
-        0
+        0,
       );
       setOptimisticTotal(total.toFixed(2));
     }
@@ -2414,9 +2536,9 @@ export default function QuoteDetail() {
             contentType: string | null;
             fileSize: number | null;
           }>;
-        }>
+        }>,
       ),
-    [optimisticLineItems, quote.parts]
+    [optimisticLineItems, quote.parts],
   );
 
   // Track if we've handled the last fetcher response to prevent re-triggering
@@ -2488,7 +2610,7 @@ export default function QuoteDetail() {
   const handleReviseQuote = () => {
     if (
       confirm(
-        "Are you sure you want to revise this quote? This will revert the quote to Draft status and allow editing again."
+        "Are you sure you want to revise this quote? This will revert the quote to Draft status and allow editing again.",
       )
     ) {
       fetcher.submit({ intent: "reviseQuote" }, { method: "post" });
@@ -2498,17 +2620,17 @@ export default function QuoteDetail() {
   const handleDuplicateQuote = () => {
     if (
       confirm(
-        "Create a duplicate of this quote? A new quote with a fresh quote number will be created."
+        "Create a duplicate of this quote? A new quote with a fresh quote number will be created.",
       )
     ) {
       fetcher.submit({ intent: "duplicateQuote" }, { method: "post" });
     }
   };
 
-  const handleSendQuote = () => {
+  const handleMarkAsSent = () => {
     if (
       confirm(
-        "Are you sure you want to send this quote? Once sent, the quote will be locked and line items cannot be modified."
+        "Are you sure you want to mark this quote as sent? Once sent, the quote will be locked and line items cannot be modified.",
       )
     ) {
       fetcher.submit(
@@ -2517,7 +2639,7 @@ export default function QuoteDetail() {
           status: "Sent",
           rejectionReason: "",
         },
-        { method: "post" }
+        { method: "post" },
       );
     }
   };
@@ -2525,7 +2647,7 @@ export default function QuoteDetail() {
   const handleMarkAsAccepted = () => {
     if (
       confirm(
-        "Are you sure you want to mark this quote as accepted? This will automatically convert the quote to an order and the quote will become permanently immutable."
+        "Are you sure you want to mark this quote as accepted? This will automatically convert the quote to an order and the quote will become permanently immutable.",
       )
     ) {
       fetcher.submit(
@@ -2534,7 +2656,7 @@ export default function QuoteDetail() {
           status: "Accepted",
           rejectionReason: "",
         },
-        { method: "post" }
+        { method: "post" },
       );
     }
   };
@@ -2555,7 +2677,7 @@ export default function QuoteDetail() {
         status: "Rejected",
         rejectionReason: rejectionReason.trim(),
       },
-      { method: "post" }
+      { method: "post" },
     );
     setIsRejectModalOpen(false);
     setRejectionReason("");
@@ -2615,7 +2737,7 @@ export default function QuoteDetail() {
   const handleDownloadFiles = () => {
     download(
       `/download/quote/${quote.id}`,
-      `Quote-${quote.quoteNumber}-Files.zip`
+      `Quote-${quote.quoteNumber}-Files.zip`,
     );
   };
 
@@ -2639,7 +2761,7 @@ export default function QuoteDetail() {
   const handleDeleteLineItem = (lineItemId: number, quotePartId?: string) => {
     if (
       confirm(
-        "Are you sure you want to delete this line item? This will also delete any associated files and cannot be undone."
+        "Are you sure you want to delete this line item? This will also delete any associated files and cannot be undone.",
       )
     ) {
       fetcher.submit(
@@ -2648,7 +2770,7 @@ export default function QuoteDetail() {
           lineItemId: lineItemId.toString(),
           quotePartId: quotePartId || "",
         },
-        { method: "post" }
+        { method: "post" },
       );
     }
   };
@@ -2656,13 +2778,30 @@ export default function QuoteDetail() {
   const handleSaveLineItemField = useCallback(
     (
       lineItemId: number,
-      field: "description" | "notes" | "quantity" | "unitPrice" | "totalPrice",
-      value: string
+      field:
+        | "name"
+        | "description"
+        | "notes"
+        | "quantity"
+        | "unitPrice"
+        | "totalPrice",
+      value: string,
     ) => {
-      const currentItem = optimisticLineItems?.find((item) => item.id === lineItemId);
+      const currentItem = optimisticLineItems?.find(
+        (item) => item.id === lineItemId,
+      );
       if (!currentItem) return;
 
+      if (field === "name") {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          alert("Name is required");
+          return;
+        }
+      }
+
       const updatedItem: Partial<LineItem> = {};
+      if (field === "name") updatedItem.name = value.trim();
       if (field === "description") updatedItem.description = value || null;
       if (field === "notes") updatedItem.notes = value || null;
 
@@ -2673,7 +2812,7 @@ export default function QuoteDetail() {
           unitPrice: li.unitPrice,
           totalPrice: li.totalPrice,
         })),
-        lineItemId
+        lineItemId,
       );
       const isPartLinked = currentItem.quotePartId != null;
 
@@ -2713,13 +2852,15 @@ export default function QuoteDetail() {
 
       setOptimisticLineItems((prevItems) =>
         prevItems?.map((item) =>
-          item.id === lineItemId ? { ...item, ...updatedItem } : item
-        )
+          item.id === lineItemId ? { ...item, ...updatedItem } : item,
+        ),
       );
 
       const formData = new FormData();
       formData.append("intent", "updateLineItem");
       formData.append("lineItemId", lineItemId.toString());
+      if (updatedItem.name !== undefined)
+        formData.append("name", updatedItem.name ?? "");
       if (updatedItem.description !== undefined)
         formData.append("description", updatedItem.description || "");
       if (updatedItem.notes !== undefined)
@@ -2732,22 +2873,32 @@ export default function QuoteDetail() {
         formData.append("totalPrice", updatedItem.totalPrice);
       lineItemFetcher.submit(formData, { method: "post" });
     },
-    [lineItemFetcher, optimisticLineItems]
+    [lineItemFetcher, optimisticLineItems],
   );
 
   const handleSaveQuotePartAttribute = useCallback(
-    (partId: string, field: "material" | "tolerance" | "finish", value: string) => {
+    (
+      partId: string,
+      field: "material" | "tolerance" | "finish",
+      value: string,
+    ) => {
       const part = quote.parts?.find((p: { id: string }) => p.id === partId);
       if (!part) return;
       const formData = new FormData();
       formData.append("intent", "updateQuotePartAttributes");
       formData.append("quotePartId", partId);
-      formData.append("material", field === "material" ? value : part.material || "");
-      formData.append("tolerance", field === "tolerance" ? value : part.tolerance || "");
+      formData.append(
+        "material",
+        field === "material" ? value : part.material || "",
+      );
+      formData.append(
+        "tolerance",
+        field === "tolerance" ? value : part.tolerance || "",
+      );
       formData.append("finish", field === "finish" ? value : part.finish || "");
       fetcher.submit(formData, { method: "post" });
     },
-    [fetcher, quote.parts]
+    [fetcher, quote.parts],
   );
 
   const handleQuoteDrawingUpload = useCallback(
@@ -2764,7 +2915,7 @@ export default function QuoteDetail() {
         encType: "multipart/form-data",
       });
     },
-    [drawingFetcher]
+    [drawingFetcher],
   );
 
   const handleQuoteDrawingDelete = useCallback(
@@ -2775,7 +2926,7 @@ export default function QuoteDetail() {
       formData.append("quotePartId", quotePartId);
       fetcher.submit(formData, { method: "post" });
     },
-    [fetcher]
+    [fetcher],
   );
 
   // Format currency
@@ -2814,7 +2965,7 @@ export default function QuoteDetail() {
   const today = new Date();
   const daysUntilExpiry = validUntil
     ? Math.ceil(
-        (validUntil.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+        (validUntil.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
       )
     : null;
 
@@ -2885,9 +3036,60 @@ export default function QuoteDetail() {
                   />
                 </div>
                 {(quote.status === "RFQ" || quote.status === "Draft") && (
-                  <Button onClick={handleSendQuote} variant="primary">
-                    Send Quote
-                  </Button>
+                  <>
+                    <Button
+                      onClick={handleMarkAsSent}
+                      variant="secondary"
+                      className="!border-blue-600 !text-blue-600 hover:!bg-blue-50 dark:!border-blue-500 dark:!text-blue-400 dark:hover:!bg-blue-900/20"
+                    >
+                      Mark as Sent
+                    </Button>
+                    {outboundEmailEnabled && (
+                      <Button
+                        onClick={() => setSendEmailModalOpen(true)}
+                        variant="primary"
+                        disabled={
+                          !customer?.email ||
+                          isWaitingForSentStatus ||
+                          !quoteSendEmailReady
+                        }
+                        title={
+                          !customer?.email
+                            ? "Customer has no email address"
+                            : !quoteSendEmailReady
+                              ? "Configure quote email: Admin → Email → assign a template to “Send quote email”"
+                              : undefined
+                        }
+                      >
+                        Send Quote
+                      </Button>
+                    )}
+                    {isWaitingForSentStatus && (
+                      <div className="flex items-center text-sm text-blue-700 dark:text-blue-300">
+                        <svg
+                          className="animate-spin h-4 w-4 mr-2"
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                          />
+                        </svg>
+                        Waiting for status update...
+                      </div>
+                    )}
+                  </>
                 )}
                 {quote.status === "Sent" && !quote.convertedToOrderId && (
                   <>
@@ -2937,7 +3139,7 @@ export default function QuoteDetail() {
                           {(fetcher.data.validationErrors as string[]).map(
                             (error: string, index: number) => (
                               <li key={index}>{error}</li>
-                            )
+                            ),
                           )}
                         </ul>
                       )}
@@ -3022,8 +3224,8 @@ export default function QuoteDetail() {
                       {quote.status === "Accepted"
                         ? "Accepted quotes are immutable."
                         : quote.status === "Sent"
-                        ? "Sent quotes are locked from editing pricing and details. Notes and attachments can still be modified."
-                        : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
+                          ? "Sent quotes are locked from editing pricing and details. Notes and attachments can still be modified."
+                          : "Sent Quotes are locked from editing. To make revisions, use the Revise Action."}
                     </p>
                   </div>
                 </div>
@@ -3153,7 +3355,7 @@ export default function QuoteDetail() {
                                 intent: "updateValidUntil",
                                 validUntil: validUntilValue,
                               },
-                              { method: "post" }
+                              { method: "post" },
                             );
                           }
                           setEditingValidUntil(false);
@@ -3167,7 +3369,7 @@ export default function QuoteDetail() {
                                   intent: "updateValidUntil",
                                   validUntil: validUntilValue,
                                 },
-                                { method: "post" }
+                                { method: "post" },
                               );
                             }
                             setEditingValidUntil(false);
@@ -3178,7 +3380,7 @@ export default function QuoteDetail() {
                                 ? new Date(quote.validUntil)
                                     .toISOString()
                                     .split("T")[0]
-                                : ""
+                                : "",
                             );
                             setEditingValidUntil(false);
                           }
@@ -3230,7 +3432,7 @@ export default function QuoteDetail() {
                         setEditingExpirationDays(true);
                         setTimeout(() => {
                           const input = document.getElementById(
-                            "expiration-days-input-chip"
+                            "expiration-days-input-chip",
                           );
                           if (input) {
                             (input as HTMLInputElement).focus();
@@ -3244,7 +3446,7 @@ export default function QuoteDetail() {
                           setEditingExpirationDays(true);
                           setTimeout(() => {
                             const input = document.getElementById(
-                              "expiration-days-input-chip"
+                              "expiration-days-input-chip",
                             );
                             if (input) {
                               (input as HTMLInputElement).focus();
@@ -3276,14 +3478,14 @@ export default function QuoteDetail() {
                                       intent: "updateQuote",
                                       expirationDays: expirationDaysValue,
                                     },
-                                    { method: "post" }
+                                    { method: "post" },
                                   );
                                   setEditingExpirationDays(false);
                                 }
                               } else if (e.key === "Escape") {
                                 e.preventDefault();
                                 setExpirationDaysValue(
-                                  (quote.expirationDays || 14).toString()
+                                  (quote.expirationDays || 14).toString(),
                                 );
                                 setEditingExpirationDays(false);
                               }
@@ -3300,11 +3502,11 @@ export default function QuoteDetail() {
                                     intent: "updateQuote",
                                     expirationDays: expirationDaysValue,
                                   },
-                                  { method: "post" }
+                                  { method: "post" },
                                 );
                               } else {
                                 setExpirationDaysValue(
-                                  (quote.expirationDays || 14).toString()
+                                  (quote.expirationDays || 14).toString(),
                                 );
                               }
                               setEditingExpirationDays(false);
@@ -3354,7 +3556,7 @@ export default function QuoteDetail() {
                         if (customerId) {
                           fetcher.submit(
                             { intent: "updateCustomer", customerId },
-                            { method: "post" }
+                            { method: "post" },
                           );
                           setEditingCustomer(false);
                         }
@@ -3367,7 +3569,7 @@ export default function QuoteDetail() {
                           <option key={c.id} value={c.id}>
                             {c.displayName}
                           </option>
-                        )
+                        ),
                       )}
                     </select>
                   ) : (
@@ -3445,7 +3647,7 @@ export default function QuoteDetail() {
                         setEditingExpirationDays(true);
                         setTimeout(() => {
                           const input = document.getElementById(
-                            "expiration-days-input"
+                            "expiration-days-input",
                           );
                           if (input) {
                             (input as HTMLInputElement).focus();
@@ -3459,7 +3661,7 @@ export default function QuoteDetail() {
                           setEditingExpirationDays(true);
                           setTimeout(() => {
                             const input = document.getElementById(
-                              "expiration-days-input"
+                              "expiration-days-input",
                             );
                             if (input) {
                               (input as HTMLInputElement).focus();
@@ -3491,14 +3693,14 @@ export default function QuoteDetail() {
                                       intent: "updateQuote",
                                       expirationDays: expirationDaysValue,
                                     },
-                                    { method: "post" }
+                                    { method: "post" },
                                   );
                                   setEditingExpirationDays(false);
                                 }
                               } else if (e.key === "Escape") {
                                 e.preventDefault();
                                 setExpirationDaysValue(
-                                  (quote.expirationDays || 14).toString()
+                                  (quote.expirationDays || 14).toString(),
                                 );
                                 setEditingExpirationDays(false);
                               }
@@ -3515,11 +3717,11 @@ export default function QuoteDetail() {
                                     intent: "updateQuote",
                                     expirationDays: expirationDaysValue,
                                   },
-                                  { method: "post" }
+                                  { method: "post" },
                                 );
                               } else {
                                 setExpirationDaysValue(
-                                  (quote.expirationDays || 14).toString()
+                                  (quote.expirationDays || 14).toString(),
                                 );
                               }
                               setEditingExpirationDays(false);
@@ -3555,7 +3757,7 @@ export default function QuoteDetail() {
                           const vendorId = e.target.value;
                           fetcher.submit(
                             { intent: "updateVendor", vendorId },
-                            { method: "post" }
+                            { method: "post" },
                           );
                           setEditingVendor(false);
                         }}
@@ -3568,7 +3770,7 @@ export default function QuoteDetail() {
                             <option key={v.id} value={v.id}>
                               {v.displayName}
                             </option>
-                          )
+                          ),
                         )}
                       </select>
                     ) : (
@@ -3615,7 +3817,7 @@ export default function QuoteDetail() {
                         type="button"
                         onClick={() => {
                           navigator.clipboard.writeText(
-                            quote.stripePaymentLinkUrl!
+                            quote.stripePaymentLinkUrl!,
                           );
                           setCopiedLink(true);
                           setTimeout(() => setCopiedLink(false), 2000);
@@ -3730,7 +3932,10 @@ export default function QuoteDetail() {
                 usesPlaceholderCad: part.usesPlaceholderCad,
               });
             }}
-            onViewDrawing={(drawing: NormalizedDrawing, quotePartId: string) => {
+            onViewDrawing={(
+              drawing: NormalizedDrawing,
+              quotePartId: string,
+            ) => {
               setSelectedDrawing({ drawing, quotePartId });
               setDrawingModalOpen(true);
             }}
@@ -3739,7 +3944,12 @@ export default function QuoteDetail() {
                 {item.part && canAccessPriceCalculator ? (
                   <IconButton
                     icon={
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -3755,7 +3965,10 @@ export default function QuoteDetail() {
                 {!item.part && !isPricingLocked ? (
                   <IconButton
                     icon={
-                      <FilePlusCorner className="w-[18px] h-[18px]" strokeWidth={2} />
+                      <FilePlusCorner
+                        className="w-[18px] h-[18px]"
+                        strokeWidth={2}
+                      />
                     }
                     title="Add part files"
                     onClick={() =>
@@ -3840,7 +4053,7 @@ export default function QuoteDetail() {
               : () =>
                   handleQuoteDrawingDelete(
                     selectedDrawing.drawing.id,
-                    selectedDrawing.quotePartId
+                    selectedDrawing.quotePartId,
                   )
           }
           isDeleting={fetcher.state === "submitting"}
@@ -3935,7 +4148,7 @@ export default function QuoteDetail() {
             );
           }
           return null;
-        }
+        },
       )}
 
       {/* Add Line Item Modal */}
@@ -3981,6 +4194,27 @@ export default function QuoteDetail() {
           existingCalculations={priceCalculations || []}
           isSaving={calculatorFetcher.state !== "idle"}
           mode={calculatorMode}
+        />
+      )}
+
+      {/* Send Email Modal */}
+      {outboundEmailEnabled && isSendEmailModalOpen && (
+        <SendQuoteEmailModal
+          isOpen={isSendEmailModalOpen}
+          onClose={() => setSendEmailModalOpen(false)}
+          onSendSuccess={({ delivery }) => {
+            if (delivery === "queued") {
+              setIsWaitingForSentStatus(true);
+            }
+          }}
+          quote={quote}
+          customer={customer}
+          attachments={attachments}
+          defaultSubject={quoteSendEmailDefaultSubject ?? undefined}
+          editableSlots={quoteSendEditableSlots}
+          requiredAttachmentDocumentKinds={
+            quoteSendRequiredAttachmentDocumentKinds
+          }
         />
       )}
 

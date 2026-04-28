@@ -5,8 +5,10 @@ import {
   QUEUES,
   type CadConversionPayload,
   type MockJobPayload,
+  type SendEmailPayload,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
+import { handleSendEmail } from "../app/lib/queue/handlers/send-email";
 import { startWorkerQueue, stopWorkerQueue } from "../app/lib/queue/worker.server";
 
 let isShuttingDown = false;
@@ -56,6 +58,13 @@ async function main() {
     handleCadConversion,
   );
   console.log(`[Worker] Listening on queue: ${QUEUES.CAD_CONVERSION}`);
+
+  await boss.work<SendEmailPayload>(
+    QUEUES.SEND_EMAIL,
+    { batchSize: 1 },
+    handleSendEmail,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.SEND_EMAIL}`);
 
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {

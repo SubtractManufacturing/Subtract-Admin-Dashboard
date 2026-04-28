@@ -86,5 +86,22 @@ module.exports = {
         node: true,
       },
     },
+
+    // Test files — silence no-undef for Vitest globals (describe, it, expect, vi, etc.)
+    {
+      files: ["**/*.test.ts", "**/*.spec.ts", "**/*.integration.test.ts"],
+      env: { node: true },
+      globals: {
+        describe: "readonly",
+        it: "readonly",
+        test: "readonly",
+        expect: "readonly",
+        vi: "readonly",
+        beforeAll: "readonly",
+        afterAll: "readonly",
+        beforeEach: "readonly",
+        afterEach: "readonly",
+      },
+    },
   ],
 };

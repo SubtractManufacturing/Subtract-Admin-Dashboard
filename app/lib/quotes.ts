@@ -310,6 +310,14 @@ export async function updateQuote(
       }
     }
 
+    if (
+      updates.status &&
+      oldQuote.status === "Sent" &&
+      updates.status !== "Sent"
+    ) {
+      updateData.sentAt = null;
+    }
+
     if (updates.status === "Accepted" && oldQuote.status !== "Accepted") {
       updateData.acceptedAt = new Date();
     }
@@ -921,6 +929,8 @@ export async function convertQuoteToOrder(
                       contentType: record.attachment.contentType,
                       fileSize: record.attachment.fileSize,
                       thumbnailS3Key: newThumbnailS3Key,
+                      source: record.attachment.source ?? "system",
+                      documentKind: record.attachment.documentKind,
                     })
                     .returning();
 
@@ -1339,6 +1349,8 @@ export async function duplicateQuote(
                   contentType: attachment.contentType,
                   fileSize: attachment.fileSize,
                   thumbnailS3Key: newThumbnailS3Key,
+                  source: attachment.source ?? "system",
+                  documentKind: attachment.documentKind,
                 })
                 .returning();
 
@@ -1420,6 +1432,8 @@ export async function duplicateQuote(
                 contentType: attachment.contentType,
                 fileSize: attachment.fileSize,
                 thumbnailS3Key: newThumbnailS3Key,
+                source: attachment.source ?? "system",
+                documentKind: attachment.documentKind,
               })
               .returning();
 
@@ -1741,6 +1755,7 @@ export async function createQuoteWithParts(
               contentType,
               fileSize: drawing.buffer.length,
               thumbnailS3Key,
+              source: "user_upload",
             })
             .returning();
 
@@ -2030,6 +2045,7 @@ export async function updateQuoteLineItem(
     leadTimeDays: number;
     description: string;
     notes: string;
+    name: string;
     sortOrder: number;
   }>,
   context?: QuoteEventContext

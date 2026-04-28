@@ -12,6 +12,9 @@ interface SidebarProps {
   showEventsLink?: boolean;
   showQuotesLink?: boolean;
   showAdminConsole?: boolean;
+  showEmailNav?: boolean;
+  /** SERP Email nav badge: pending approval + failed + bounced (see outboundAttentionCountFromStatusCounts). */
+  emailAttentionCount?: number;
 }
 
 interface NavItem {
@@ -30,6 +33,8 @@ export default function Sidebar({
   showEventsLink = true,
   showQuotesLink = true,
   showAdminConsole = false,
+  showEmailNav = false,
+  emailAttentionCount = 0,
 }: SidebarProps) {
   const { isExpanded, toggleSidebar, isMobileOpen, setMobileOpen } = useSidebar();
   const location = useLocation();
@@ -138,6 +143,16 @@ export default function Sidebar({
         </svg>
       ),
     },
+    {
+      to: "/email",
+      label: "Email",
+      show: showEmailNav,
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+      ),
+    },
   ];
 
   const isActiveRoute = (path: string) => {
@@ -192,19 +207,56 @@ export default function Sidebar({
           {navItems.map((item) => {
             if (item.show === false) return null;
             const isActive = isActiveRoute(item.to);
+            const showEmailBadge =
+              item.to === "/email" && emailAttentionCount > 0;
+            const badgeText =
+              emailAttentionCount > 99 ? "99+" : String(emailAttentionCount);
             return (
               <li key={item.to}>
                 <Link
                   to={item.to}
+                  aria-label={
+                    showEmailBadge
+                      ? emailAttentionCount === 1
+                        ? "Email, 1 item needs attention"
+                        : `Email, ${emailAttentionCount} items need attention`
+                      : undefined
+                  }
                   className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors no-underline ${
                     isActive
                       ? "bg-blue-600 text-white"
                       : "text-gray-300 hover:bg-white/10 dark:hover:bg-slate-800"
                   }`}
                 >
-                  <span className="flex-shrink-0">{item.icon}</span>
+                  <span
+                    className={
+                      showEmailBadge && !showLabels
+                        ? "relative flex-shrink-0"
+                        : "flex-shrink-0"
+                    }
+                  >
+                    {item.icon}
+                    {showEmailBadge && !showLabels && (
+                      <span
+                        className="absolute -right-1 -top-1 inline-flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-red-500 px-[3px] text-[9px] font-semibold leading-none text-white tabular-nums"
+                        aria-hidden
+                      >
+                        {badgeText}
+                      </span>
+                    )}
+                  </span>
                   {showLabels ? (
-                    <span className="font-medium truncate">{item.label}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-2 font-medium">
+                      <span className="truncate">{item.label}</span>
+                      {showEmailBadge && (
+                        <span
+                          className="inline-flex min-h-[1.125rem] min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-semibold tabular-nums text-white"
+                          aria-hidden
+                        >
+                          {badgeText}
+                        </span>
+                      )}
+                    </span>
                   ) : (
                     <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 dark:bg-slate-800 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 shadow-lg">
                       {item.label}

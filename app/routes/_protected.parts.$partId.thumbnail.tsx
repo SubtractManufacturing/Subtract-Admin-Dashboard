@@ -71,6 +71,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       contentType: uploadResult.contentType,
       s3Key: uploadResult.key,
       s3Bucket: uploadResult.bucket,
+      source: "system",
     });
 
     // Store just the S3 key (not a signed URL that expires)

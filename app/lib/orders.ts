@@ -660,6 +660,8 @@ export async function duplicateOrder(
                 contentType: attachment.contentType,
                 fileSize: attachment.fileSize,
                 thumbnailS3Key: newThumbnailS3Key,
+                source: attachment.source ?? "system",
+                documentKind: attachment.documentKind,
               })
               .returning();
 

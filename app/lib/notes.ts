@@ -1,6 +1,6 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { notes, type Note, type NewNote } from "./db/schema";
+import { notes, users, type Note, type NewNote } from "./db/schema";
 import { createEvent } from "./events";
 
 export type NoteEventContext = {
@@ -8,7 +8,12 @@ export type NoteEventContext = {
   userEmail?: string;
 };
 
-export async function getNotes(entityType: string, entityId: string): Promise<Note[]> {
+export type NoteWithAuthor = Note & {
+  authorName: string | null;
+  authorEmail: string | null;
+};
+
+export async function getNotes(entityType: string, entityId: string): Promise<NoteWithAuthor[]> {
   const result = await db
     .select()
     .from(notes)
@@ -20,8 +25,32 @@ export async function getNotes(entityType: string, entityId: string): Promise<No
       )
     )
     .orderBy(desc(notes.createdAt));
-  
-  return result;
+
+  if (result.length === 0) {
+    return [];
+  }
+
+  const userIds = [...new Set(result.map((note) => note.createdBy))];
+  const noteAuthors = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+    })
+    .from(users)
+    .where(inArray(users.id, userIds));
+
+  const authorMap = new Map(noteAuthors.map((author) => [author.id, author]));
+
+  return result.map((note) => {
+    const author = authorMap.get(note.createdBy);
+
+    return {
+      ...note,
+      authorName: author?.name ?? null,
+      authorEmail: author?.email ?? null,
+    };
+  });
 }
 
 export async function createNote(data: Omit<NewNote, "id" | "createdAt" | "updatedAt">, eventContext?: NoteEventContext): Promise<Note> {

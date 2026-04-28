@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   serial,
@@ -40,10 +41,49 @@ export const orderStatusEnum = pgEnum("order_status", [
   "Archived",
 ]);
 export const userRoleEnum = pgEnum("user_role", ["User", "Admin", "Dev"]);
+export const USER_ROLES = userRoleEnum.enumValues;
+export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export const userStatusEnum = pgEnum("user_status", [
   "pending",
   "active",
   "disabled",
+]);
+
+export const sentEmailStatusEnum = pgEnum("sent_email_status", [
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "bounced",
+  "pending_approval",
+  "rejected",
+]);
+export const sentEmailEntityTypeEnum = pgEnum("sent_email_entity_type", [
+  "quote",
+  "order",
+  "invoice",
+]);
+export const sentEmailSourceEnum = pgEnum("sent_email_source", [
+  "user",
+  "system",
+]);
+
+export const emailSettingKindEnum = pgEnum("email_setting_kind", [
+  "operational",
+  "merge",
+]);
+
+export const attachmentSourceEnum = pgEnum("attachment_source", [
+  "user_upload",
+  "generated",
+  "system",
+]);
+
+export const attachmentDocumentKindEnum = pgEnum("attachment_document_kind", [
+  "quote",
+  "invoice",
+  "purchase_order",
+  "packing_slip",
 ]);
 
 export const users = pgTable("users", {
@@ -230,6 +270,8 @@ export const attachments = pgTable("attachments", {
   contentType: text("content_type").notNull(),
   fileSize: integer("file_size"),
   thumbnailS3Key: text("thumbnail_s3_key"), // For PDF/document thumbnails
+  source: attachmentSourceEnum("source"), // NULL on pre-migration rows
+  documentKind: attachmentDocumentKindEnum("document_kind"), // NULL for non-classified files (drawings, CAD, generic uploads)
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -551,6 +593,8 @@ export type Part = typeof parts.$inferSelect;
 export type NewPart = typeof parts.$inferInsert;
 export type Attachment = typeof attachments.$inferSelect;
 export type NewAttachment = typeof attachments.$inferInsert;
+export type AttachmentSource = (typeof attachmentSourceEnum.enumValues)[number];
+export type AttachmentDocumentKind = (typeof attachmentDocumentKindEnum.enumValues)[number];
 export type PartDrawing = typeof partDrawings.$inferSelect;
 export type NewPartDrawing = typeof partDrawings.$inferInsert;
 export type QuotePartDrawing = typeof quotePartDrawings.$inferSelect;
@@ -699,6 +743,137 @@ export const developerSettings = pgTable("developer_settings", {
   updatedBy: text("updated_by"),
 });
 
+export const emailSettings = pgTable("email_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value"),
+  kind: emailSettingKindEnum("kind").default("operational").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by"),
+});
+
+export const emailIdentities = pgTable("email_identities", {
+  id: serial("id").primaryKey(),
+  fromEmail: text("from_email").notNull(),
+  fromDisplayName: text("from_display_name"),
+  replyToEmail: text("reply_to_email"),
+  isDefault: boolean("is_default").default(false).notNull(),
+  isArchived: boolean("is_archived").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by"),
+});
+
+export const emailTemplates = pgTable("email_templates", {
+  id: serial("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  /** React-email layout key in code (e.g. styled-quote); not the same as DB slug */
+  layoutSlug: text("layout_slug").notNull().default("styled-quote"),
+  /** Optional app context key (e.g. quote_send); unique when not null */
+  contextKey: text("context_key").unique(),
+  emailIdentityId: integer("email_identity_id").references(() => emailIdentities.id).notNull(),
+  subjectTemplate: text("subject_template").notNull(),
+  bodyCopy: jsonb("body_copy").notNull(),
+  /** Classified document kinds that must be included when sending; empty = none required */
+  requiredAttachmentDocumentKinds: jsonb("required_attachment_document_kinds")
+    .$type<AttachmentDocumentKind[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  isArchived: boolean("is_archived").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: text("updated_by"),
+});
+
+export const sentEmails = pgTable(
+  "sent_emails",
+  {
+    id: serial("id").primaryKey(),
+    /** Populated for quote sends; optional for other entity types */
+    quoteId: integer("quote_id").references(() => quotes.id),
+
+    /** Matches email_templates.context_key — used for worker afterSent dispatch */
+    contextKey: text("context_key").notNull(),
+    entityType: sentEmailEntityTypeEnum("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+
+    // Client-generated UUID per modal open — prevents double-submit
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+
+    // Envelope
+    fromEmail: text("from_email").notNull(),   // resolved at enqueue, stored for audit
+    fromDisplayName: text("from_display_name"),
+    subject: text("subject").notNull(),
+    toAddresses: text("to_addresses").array().notNull(),
+    ccAddresses: text("cc_addresses").array(),
+    replyTo: text("reply_to"),
+    recipientOverride: text("recipient_override"),
+
+    // Body (both stored; HTML is sanitized before insert)
+    htmlBody: text("html_body").notNull(),
+    textBody: text("text_body"),               // rendered via @react-email/render plainText:true
+
+    // Delivery state machine
+    status: sentEmailStatusEnum("status").default("queued").notNull(),
+    providerMessageId: text("provider_message_id"),
+    errorMessage: text("error_message"),
+    /** Set when worker confirms provider delivery */
+    sentAt: timestamp("sent_at"),
+
+    // Sender provenance — proper FK columns, not JSONB
+    source: sentEmailSourceEnum("source").notNull(),
+    sentByUserId: text("sent_by_user_id").references(() => users.id),
+    sentByUserEmail: text("sent_by_user_email"), // denormalized for audit
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+
+    approvedByUserId: text("approved_by_user_id").references(() => users.id),
+    approvedAt: timestamp("approved_at"),
+    rejectedByUserId: text("rejected_by_user_id").references(() => users.id),
+    rejectedAt: timestamp("rejected_at"),
+  },
+  (table) => ({
+    quoteIdx: index("sent_emails_quote_idx").on(table.quoteId),
+    statusIdx: index("sent_emails_status_idx").on(table.status),
+    entityIdx: index("sent_emails_entity_idx").on(
+      table.entityType,
+      table.entityId,
+    ),
+    contextIdx: index("sent_emails_context_idx").on(table.contextKey),
+  })
+);
+
+export const sentEmailAttachments = pgTable(
+  "sent_email_attachments",
+  {
+    sentEmailId: integer("sent_email_id")
+      .references(() => sentEmails.id)
+      .notNull(),
+    attachmentId: uuid("attachment_id")
+      .references(() => attachments.id)
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.sentEmailId, table.attachmentId] }),
+    sentEmailIdx: index("sent_email_attachments_email_idx").on(table.sentEmailId),
+  })
+);
+
+export type SentEmail = typeof sentEmails.$inferSelect;
+export type NewSentEmail = typeof sentEmails.$inferInsert;
+export type SentEmailEntityType =
+  (typeof sentEmailEntityTypeEnum.enumValues)[number];
+
+export type EmailSetting = typeof emailSettings.$inferSelect;
+export type NewEmailSetting = typeof emailSettings.$inferInsert;
+
+export type EmailIdentity = typeof emailIdentities.$inferSelect;
+export type NewEmailIdentity = typeof emailIdentities.$inferInsert;
+
+export type EmailTemplate = typeof emailTemplates.$inferSelect;
+export type NewEmailTemplate = typeof emailTemplates.$inferInsert;
 
 export type QuotePriceCalculation = typeof quotePriceCalculations.$inferSelect;
 export type NewQuotePriceCalculation =

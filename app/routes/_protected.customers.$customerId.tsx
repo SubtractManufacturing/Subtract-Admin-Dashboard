@@ -243,6 +243,7 @@ async function handlePartsAction(
             fileName: uploadResult.fileName,
             contentType: uploadResult.contentType,
             fileSize: uploadResult.size,
+            source: "user_upload",
           }, attachmentEventContext);
 
           // Link to part as a 3D model
@@ -469,6 +470,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         fileName: uploadResult.fileName,
         contentType: uploadResult.contentType,
         fileSize: uploadResult.size,
+        source: "user_upload",
       }, eventContext);
 
       // Link to customer

@@ -1,0 +1,163 @@
+import { db } from "../db";
+import {
+  emailSettings,
+  emailIdentities,
+  emailTemplates,
+} from "../db/schema";
+import { eq, and } from "drizzle-orm";
+import {
+  coerceLegacyEmailLayoutSlug,
+  isRegisteredEmailLayoutSlug,
+  type TemplateSlug,
+} from "~/emails/registry";
+import type { EmailContextKey } from "./email-context-registry";
+
+export async function getEmailSettings() {
+  const settings = await db
+    .select()
+    .from(emailSettings)
+    .where(eq(emailSettings.kind, "operational"));
+  const map = new Map<string, string>();
+  for (const s of settings) {
+    if (s.value !== null) {
+      map.set(s.key, s.value);
+    }
+  }
+  let approvalRoleSlugs: string[] = [];
+  try {
+    const raw = map.get("outbound_approval_role_slugs") ?? "[]";
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      approvalRoleSlugs = parsed.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    approvalRoleSlugs = [];
+  }
+
+  const rawListHours = map.get("email_list_max_age_hours");
+  let emailListMaxAgeHours = 0;
+  if (rawListHours != null && rawListHours !== "") {
+    const n = parseInt(rawListHours, 10);
+    if (!Number.isNaN(n) && n >= 0) {
+      emailListMaxAgeHours = Math.min(n, 100_000);
+    }
+  }
+
+  const outboundGlobalBccRaw = (map.get("outbound_global_bcc") ?? "").trim();
+  const outboundGlobalBcc = outboundGlobalBccRaw.length > 0
+    ? outboundGlobalBccRaw
+    : null;
+
+  return {
+    outboundDelayMinutes: parseInt(map.get("outbound_delay_minutes") || "0", 10) || 0,
+    recipientOverride: map.get("recipient_override") || null,
+    outboundGlobalBcc,
+    emailListMaxAgeHours,
+    approvalRequired: map.get("outbound_approval_required") === "true",
+    approvalRoleSlugs,
+  };
+}
+
+/** Snippet / merge field values (kind = merge). */
+export async function getEmailMergeFieldsMap(): Promise<Record<string, string>> {
+  const rows = await db
+    .select()
+    .from(emailSettings)
+    .where(eq(emailSettings.kind, "merge"));
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.value !== null) map[row.key] = row.value;
+  }
+  return map;
+}
+
+export type ResolvedEmailTemplate = {
+  template: typeof emailTemplates.$inferSelect;
+  identity: typeof emailIdentities.$inferSelect;
+  layoutSlug: TemplateSlug;
+};
+
+/**
+ * Resolve which DB template + identity to use for an app context.
+ * email_templates(context_key) -> email_identities
+ */
+export async function resolveEmailTemplateForContext(
+  contextKey: EmailContextKey
+): Promise<ResolvedEmailTemplate | null> {
+  const [row] = await db
+    .select({
+      template: emailTemplates,
+      identity: emailIdentities,
+    })
+    .from(emailTemplates)
+    .innerJoin(
+      emailIdentities,
+      eq(emailTemplates.emailIdentityId, emailIdentities.id)
+    )
+    .where(
+      and(
+        eq(emailTemplates.contextKey, contextKey),
+        eq(emailTemplates.isArchived, false),
+        eq(emailIdentities.isArchived, false)
+      )
+    )
+    .limit(1);
+
+  if (!row) return null;
+
+  const layoutSlug = coerceLegacyEmailLayoutSlug(
+    row.template.layoutSlug,
+  ) as TemplateSlug;
+  if (!isRegisteredEmailLayoutSlug(layoutSlug)) {
+    console.error(
+      `[email] Template ${row.template.slug} has unknown layout_slug: ${layoutSlug}`
+    );
+    return null;
+  }
+
+  return {
+    template: row.template,
+    identity: row.identity,
+    layoutSlug,
+  };
+}
+
+export async function findConflictingTemplateForContextKey(
+  contextKey: EmailContextKey,
+  excludeTemplateId?: number
+): Promise<{ id: number; name: string; slug: string } | null> {
+  const rows = await db
+    .select({
+      id: emailTemplates.id,
+      name: emailTemplates.name,
+      slug: emailTemplates.slug,
+    })
+    .from(emailTemplates)
+    .where(
+      and(
+        eq(emailTemplates.contextKey, contextKey),
+        eq(emailTemplates.isArchived, false)
+      )
+    )
+    .limit(5);
+
+  const conflict = rows.find((r) => r.id !== excludeTemplateId);
+  return conflict ?? null;
+}
+
+/** Lookup by unique template slug (admin / legacy) */
+export async function getEmailTemplateWithIdentity(slug: string) {
+  const [row] = await db
+    .select({
+      template: emailTemplates,
+      identity: emailIdentities,
+    })
+    .from(emailTemplates)
+    .innerJoin(emailIdentities, eq(emailTemplates.emailIdentityId, emailIdentities.id))
+    .where(
+      and(eq(emailTemplates.slug, slug), eq(emailTemplates.isArchived, false))
+    )
+    .limit(1);
+
+  return row || null;
+}

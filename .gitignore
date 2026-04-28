@@ -56,6 +56,7 @@ yarn-error.log*
 
 # Unit test / coverage reports
 htmlcov/
+coverage/
 .tox/
 .coverage
 .coverage.*

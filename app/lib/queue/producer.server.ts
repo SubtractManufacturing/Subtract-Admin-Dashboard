@@ -2,9 +2,11 @@ import { PgBoss } from "pg-boss";
 import {
   CAD_CONVERSION_OPTIONS,
   DEFAULT_RETRY_OPTIONS,
+  SEND_EMAIL_OPTIONS,
   QUEUES,
   type CadConversionPayload,
   type MockJobPayload,
+  type SendEmailPayload,
 } from "./types";
 
 declare global {
@@ -69,4 +71,16 @@ export async function sendCadConversionJob(
   return producer.send(QUEUES.CAD_CONVERSION, payload, {
     ...CAD_CONVERSION_OPTIONS,
   });
+}
+
+export async function sendEmailJob(
+  payload: SendEmailPayload,
+  delayMinutes: number = 0
+): Promise<string | null> {
+  const producer = await getProducer();
+  const options: Record<string, unknown> = { ...SEND_EMAIL_OPTIONS };
+  if (delayMinutes > 0) {
+    options.startAfter = delayMinutes * 60; // pg-boss startAfter is in seconds
+  }
+  return producer.send(QUEUES.SEND_EMAIL, payload, options);
 }

@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useFetcher } from "@remix-run/react";
-import type { Note } from "~/lib/db/schema";
+import type { NoteWithAuthor } from "~/lib/notes";
 import Button from "./Button";
 
 interface NoteProps {
-  note: Note;
+  note: NoteWithAuthor;
   currentUserId: string;
   currentUserName: string;
   onUpdate?: () => void;
@@ -17,8 +17,11 @@ export function NoteComponent({ note, currentUserId, currentUserName, onUpdate, 
   const fetcher = useFetcher();
   // Check ownership by ID only
   const isOwner = note.createdBy === currentUserId && !readOnly;
-  // For display: if createdBy is a UUID, show the current user's name, otherwise show what's stored
-  const displayName = note.createdBy === currentUserId ? currentUserName : note.createdBy;
+  const displayName =
+    note.authorName?.trim() ||
+    note.authorEmail ||
+    (note.createdBy === currentUserId ? currentUserName : null) ||
+    note.createdBy;
 
   const handleSave = () => {
     fetcher.submit(

@@ -7,7 +7,8 @@ import {
   quoteAttachments,
   orderAttachments,
   customerAttachments,
-  vendorAttachments
+  vendorAttachments,
+  type AttachmentDocumentKind,
 } from "./db/schema";
 
 export type EntityType = "quote" | "order" | "customer" | "vendor";
@@ -17,6 +18,7 @@ export interface GenerateDocumentPdfOptions {
   entityId: number;
   htmlContent: string;
   filename: string;
+  documentKind: AttachmentDocumentKind;
   userId?: string;
   userEmail?: string;
 }
@@ -33,7 +35,7 @@ export interface GenerateDocumentPdfResult {
 export async function generateDocumentPdf(
   options: GenerateDocumentPdfOptions
 ): Promise<GenerateDocumentPdfResult> {
-  const { entityType, entityId, htmlContent, filename, userId, userEmail } = options;
+  const { entityType, entityId, htmlContent, filename, documentKind, userId, userEmail } = options;
 
   // Wrap HTML in full document
   const fullHtml = `
@@ -79,6 +81,8 @@ export async function generateDocumentPdf(
       fileName: uploadResult.fileName,
       contentType: uploadResult.contentType,
       fileSize: uploadResult.size,
+      source: "generated",
+      documentKind,
     },
     eventContext
   );

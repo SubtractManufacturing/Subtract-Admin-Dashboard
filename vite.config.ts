@@ -1,6 +1,7 @@
 import { vitePlugin as remix } from "@remix-run/dev";
 import { defineConfig } from "vite";
 import path from "path";
+import { flatRoutes } from "remix-flat-routes";
 
 export default defineConfig({
   plugins: [
@@ -8,6 +9,11 @@ export default defineConfig({
       ignoredRouteFiles: ["**/*.css"],
       future: {
         v3_relativeSplatPath: true,
+      },
+      routes(defineRoutes) {
+        return flatRoutes("routes", defineRoutes, {
+          ignoredRouteFiles: ["**/*.css", "**/.*"],
+        });
       },
     }),
   ],

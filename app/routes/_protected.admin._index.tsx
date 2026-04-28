@@ -3,7 +3,7 @@ import { Link, useLoaderData } from "@remix-run/react";
 import { getAppConfig } from "~/lib/config.server";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAllUsers } from "~/lib/users";
-import { isStripePaymentLinksEnabled } from "~/lib/featureFlags";
+import { isStripePaymentLinksEnabled, isOutboundEmailEnabled } from "~/lib/featureFlags";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { userDetails, headers } = await requireAuth(request);
@@ -12,9 +12,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return withAuthHeaders(redirect("/"), headers);
   }
 
-  const [users, stripeEnabled] = await Promise.all([
+  const [users, stripeEnabled, outboundEmailEnabled] = await Promise.all([
     getAllUsers(),
     isStripePaymentLinksEnabled(),
+    isOutboundEmailEnabled(),
   ]);
   const activeUserCount = users.filter((user) => user.status === "active").length;
   const totalUserCount = users.length;
@@ -29,13 +30,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       version: appConfig.version,
       environment: appConfig.environment,
       stripeEnabled,
+      outboundEmailEnabled,
     }),
     headers
   );
 }
 
 export default function AdminDashboard() {
-  const { activeUserCount, totalUserCount, pendingUserCount, version, environment, stripeEnabled } =
+  const { activeUserCount, totalUserCount, pendingUserCount, version, environment, stripeEnabled, outboundEmailEnabled } =
     useLoaderData<typeof loader>();
 
   return (
@@ -93,6 +95,30 @@ export default function AdminDashboard() {
             </h2>
             <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
               Configure payment link defaults
+            </p>
+          </Link>
+        )}
+
+        {outboundEmailEnabled && (
+          <Link
+            to="/admin/email"
+            className="group rounded-xl border border-gray-200 bg-white p-5 no-underline transition hover:border-gray-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
+          >
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[#840606]/[0.07] text-[#840606] dark:bg-red-400/10 dark:text-red-400">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"
+                />
+              </svg>
+            </div>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+              Email
+            </h2>
+            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+              Configure templates and identities
             </p>
           </Link>
         )}

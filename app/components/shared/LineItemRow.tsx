@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Box } from "lucide-react";
 import { PartAssetAdminTrigger } from "~/components/admin/PartAssetAdminFlyout";
 import { IconButton } from "~/components/shared/IconButton";
@@ -10,6 +10,7 @@ import type {
 import { formatToleranceValue, initToleranceOnFocus } from "~/utils/tolerance";
 
 export type LineItemEditableField =
+  | "name"
   | "description"
   | "notes"
   | "quantity"
@@ -92,6 +93,7 @@ export function LineItemRow({
   partAssetAdminAction,
 }: LineItemRowProps) {
   const drawingInputRef = useRef<HTMLInputElement>(null);
+  const lineItemNameInputRef = useRef<HTMLInputElement>(null);
   const part = item.part;
   const rowTotal = (item.quantity || 0) * parseFloat(item.unitPrice || "0");
   const totalColumns = showActions ? 7 : 6;
@@ -159,6 +161,17 @@ export function LineItemRow({
 
   const isEditing = (field: LineItemEditableField) =>
     editingField?.lineItemId === item.id && editingField.field === field;
+
+  useLayoutEffect(() => {
+    if (
+      editingField?.lineItemId === item.id &&
+      editingField.field === "name"
+    ) {
+      const el = lineItemNameInputRef.current;
+      el?.focus();
+      el?.select();
+    }
+  }, [editingField, item.id]);
 
   return (
     <>
@@ -333,12 +346,31 @@ export function LineItemRow({
               )
             ) : null}
 
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                {item.name || "--"}
-              </span>
+            <div className="flex flex-col min-w-0 flex-1">
+              {isEditing("name") ? (
+                <input
+                  ref={lineItemNameInputRef}
+                  type="text"
+                  value={editingValue}
+                  onChange={(e) => onChangeEdit(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") onSaveEdit();
+                    if (e.key === "Escape") onCancelEdit();
+                  }}
+                  className="w-full min-w-0 max-w-xs px-2 py-1 text-sm font-medium border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  placeholder="Line item name"
+                />
+              ) : (
+                <button
+                  type="button"
+                  className={`text-left w-full min-w-0 font-medium text-gray-900 dark:text-gray-100 ${readOnly ? "" : "hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1"}`}
+                  onClick={() => startFieldEdit("name", item.name)}
+                >
+                  {renderFieldDisplay(item.name, "Click to add name")}
+                </button>
+              )}
               {part && (
-                <span className="text-xs text-gray-500 dark:text-gray-400">
+                <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                   Part: {part.partName || "--"}
                 </span>
               )}
