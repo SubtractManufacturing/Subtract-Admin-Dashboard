@@ -357,6 +357,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       await import("~/lib/email/email-context-registry");
     const { getLayoutDefinition, parseBodyCopyForLayout } =
       await import("~/emails/registry");
+    const { buildActorMergeMap } =
+      await import("~/lib/email/resolve/actor-merge.server");
+    const actorMerge = buildActorMergeMap({
+      email: userDetails?.email?.trim() || user?.email?.trim() || "",
+      name: userDetails?.name,
+    });
     const [resolved, mergeFields] = await Promise.all([
       resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_SEND),
       getEmailMergeFieldsMap(),
@@ -369,6 +375,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         resolved.template.subjectTemplate,
         {
           ...mergeFields,
+          ...actorMerge,
           quoteNumber: quote.quoteNumber,
           customerName: customer?.displayName ?? "Customer",
           total: quote.total ?? "0.00",

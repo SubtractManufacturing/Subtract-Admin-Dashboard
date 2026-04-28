@@ -18,6 +18,9 @@ function formatSuppliedBy(
   if (suppliedBy === "all") {
     return "All kinds (where customer data exists)";
   }
+  if (suppliedBy === "actor") {
+    return "All outbound sends (logged-in staff user)";
+  }
   return suppliedBy.map((k) => ENTITY_LABEL[k]).join(", ");
 }
 

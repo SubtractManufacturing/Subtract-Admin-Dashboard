@@ -188,3 +188,29 @@ describe("quoteSendEmailHandler.verifyAttachmentIds — quote PDF requirement", 
     ).rejects.toThrow(/Invoice/i);
   });
 });
+
+describe("quoteSendEmailHandler.prepareEmailContent", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("calls ensureQuoteStripePaymentLink with quote id and auth context", async () => {
+    const { ensureQuoteStripePaymentLink } = await import("~/lib/quotes.server");
+    await quoteSendEmailHandler.prepareEmailContent!(mockAuth, ENTITY_ID);
+    expect(ensureQuoteStripePaymentLink).toHaveBeenCalledWith(42, {
+      userId: "user-1",
+      userEmail: "sender@example.com",
+    });
+  });
+
+  it("throws when ensureQuoteStripePaymentLink fails", async () => {
+    const { ensureQuoteStripePaymentLink } = await import("~/lib/quotes.server");
+    vi.mocked(ensureQuoteStripePaymentLink).mockResolvedValueOnce({
+      success: false,
+      error: "Quote total must be greater than $0",
+    });
+    await expect(
+      quoteSendEmailHandler.prepareEmailContent!(mockAuth, ENTITY_ID),
+    ).rejects.toThrow(/Quote total must be greater than \$0/);
+  });
+});

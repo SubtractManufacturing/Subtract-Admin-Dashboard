@@ -24,6 +24,7 @@ import {
   type EmailContextKey,
 } from "~/lib/email/email-context-registry";
 import { validateMergeTokens } from "~/lib/email/resolve";
+import { resolveActorMergeTokens } from "~/lib/email/resolve/actor-merge.server";
 import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
 
 export type BuildEmailContentResult =
@@ -97,6 +98,7 @@ export function buildEmailLayoutProps(
  * be applied; all others are silently ignored.
  */
 export async function buildEmailContent({
+  auth,
   contextKey,
   entityId,
   subject: subjectRaw,
@@ -113,6 +115,15 @@ export async function buildEmailContent({
     handler = getEmailSendHandler(contextKey);
   } catch {
     return fail(500, "Email send is not configured for this context");
+  }
+
+  if (handler.prepareEmailContent) {
+    try {
+      await handler.prepareEmailContent(auth, entityId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return fail(400, msg);
+    }
   }
 
   const [templateData, mergeFields, mergeProps] = await Promise.all([
@@ -134,9 +145,11 @@ export async function buildEmailContent({
     return fail(400, "Email sending is not configured (no identity found)");
   }
 
+  const actorTokens = resolveActorMergeTokens(auth);
   const stringProps: Record<string, string> = {
     ...mergeFields,
     ...mergeProps,
+    ...actorTokens,
   };
 
   const layoutSlug = templateData.layoutSlug;

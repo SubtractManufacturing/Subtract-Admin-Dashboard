@@ -20,6 +20,8 @@ import { bodyCopyFromFormData } from "~/lib/email/parse-template-body.server";
 import { sendPostmarkTransactionalEmail } from "~/lib/email/postmark.server";
 import { extractPlaceholderKeys } from "~/lib/email/resolve";
 import { sanitizeEmailHtml } from "~/lib/email/sanitize.server";
+import type { ActorMergeSource } from "~/lib/email/resolve/actor-merge.server";
+import { buildActorMergeMap } from "~/lib/email/resolve/actor-merge.server";
 import { getEmailMergeFieldsMap } from "~/lib/email/templates.server";
 
 const SUBJECT_PREVIEW_PREFIX = "[Template preview] ";
@@ -49,9 +51,14 @@ function buildSampleStringProps(
   subjectTemplate: string,
   bodyCopy: Record<string, unknown>,
   snippetMap: Record<string, string>,
+  actorMerge?: Record<string, string>,
 ): Record<string, string> {
   const base = { ...(LAYOUT_SAMPLE_MERGE_BASE[layoutSlug] ?? {}) };
-  const stringProps: Record<string, string> = { ...base, ...snippetMap };
+  const stringProps: Record<string, string> = {
+    ...base,
+    ...snippetMap,
+    ...(actorMerge ?? {}),
+  };
 
   const referenced = extractPlaceholderKeys([
     subjectTemplate.trim(),
@@ -90,8 +97,10 @@ export async function sendDraftTemplateTestEmail(params: {
   formData: FormData;
   recipientEmail: string;
   identity: EmailIdentity;
+  /** When set, {{userName}} / {{userEmail}} resolve like real sends */
+  actorSource?: ActorMergeSource;
 }): Promise<SendDraftTemplateTestEmailResult> {
-  const { formData, recipientEmail, identity } = params;
+  const { formData, recipientEmail, identity, actorSource } = params;
   const layoutSlugRaw = (formData.get("layoutSlug") as string)?.trim();
   const subjectTemplate = (formData.get("subjectTemplate") as string)?.trim();
   const to = recipientEmail.trim();
@@ -132,11 +141,15 @@ export async function sendDraftTemplateTestEmail(params: {
 
   const mergedCopy = { ...(bodyParsed.data as Record<string, unknown>) };
   const snippetMap = await getEmailMergeFieldsMap();
+  const actorMerge = actorSource
+    ? buildActorMergeMap(actorSource)
+    : undefined;
   const stringProps = buildSampleStringProps(
     layoutSlug,
     subjectTemplate,
     mergedCopy,
     snippetMap,
+    actorMerge,
   );
 
   const interpolatedCopy = interpolateLayoutCopy(mergedCopy, stringProps);

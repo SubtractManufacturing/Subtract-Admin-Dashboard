@@ -752,6 +752,10 @@ export async function action({ request }: ActionFunctionArgs) {
       formData,
       recipientEmail,
       identity,
+      actorSource: {
+        email: userDetails.email?.trim() || "",
+        name: userDetails.name,
+      },
     });
     if (process.env.NODE_ENV === "development") {
       console.info(

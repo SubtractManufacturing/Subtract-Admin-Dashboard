@@ -266,6 +266,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       await import("~/lib/email/email-context-registry");
     const { getLayoutDefinition, parseBodyCopyForLayout } =
       await import("~/emails/registry");
+    const { buildActorMergeMap } =
+      await import("~/lib/email/resolve/actor-merge.server");
+    const actorMerge = buildActorMergeMap({
+      email: userDetails?.email?.trim() || user?.email?.trim() || "",
+      name: userDetails?.name,
+    });
     const totalForSubject = formatCurrency(order.totalPrice) ?? "0.00";
     const [resolved, mergeFields, blocked] = await Promise.all([
       resolveEmailTemplateForContext(EMAIL_CONTEXT.ORDER_CONFIRMATION),
@@ -284,6 +290,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         resolved.template.subjectTemplate,
         {
           ...mergeFields,
+          ...actorMerge,
           orderNumber: order.orderNumber,
           quoteNumber: order.orderNumber,
           documentNumber: order.orderNumber,

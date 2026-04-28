@@ -10,14 +10,15 @@ The code-level catalog lives in `app/lib/email/resolve/types.ts` (`MERGE_TOKEN_C
 
 **Merge tokens** are `{{tokenName}}` placeholders you place in email templates. When an email is sent, the application replaces every token with a real value resolved from the entity being emailed about (a quote, order, customer, etc.).
 
-There are two sources of tokens at send time:
+There are three layers merged at send time:
 
-| Source | Where values come from |
+| Layer | Where values come from |
 | ------ | ---------------------- |
-| **Reserved tokens** | Automatically resolved from application data by the resolver layer. Documented on this page. |
-| **Snippets** | Admin-defined reusable text blocks configured in Admin → Email → Snippets. |
+| **Snippets** | Admin-defined reusable text blocks (Admin → Email → Snippets), keyed by camelCase names. |
+| **Entity resolver** | Quote/order/customer/vendor data for the send (document number, totals, customer fields, parts, …). Documented below. |
+| **Staff (actor)** | The logged-in SERP user performing the send: `{{userName}}` and `{{userEmail}}` (not the customer). These apply last, so like other reserved tokens they override a snippet key with the same name. |
 
-When both sources define the same key, the **reserved resolver wins**. A reserved key like `customerName` cannot be overridden by a snippet of the same name.
+Taken together, **reserved** tokens (entity resolver + actor) win over snippets for the same key.
 
 ---
 
@@ -103,6 +104,17 @@ Totals are formatted as USD with two decimal places (e.g. `$1,200.00`). Both tok
 
 ---
 
+### Staff / actor (logged-in user)
+
+| Token | Label | Availability | Presence |
+| ----- | ----- | ------------ | -------- |
+| `{{userName}}` | User Name (staff) | All outbound sends from the app | always |
+| `{{userEmail}}` | User Email (staff) | All outbound sends from the app | always |
+
+These refer to **Subtract staff** submitting the send, not your customer’s contact. Useful for signatures and sign-offs. If the profile has no display name, `{{userName}}` uses a readable fallback from the staff email address (e.g. the local part). `{{userEmail}}` is always non-empty (`-` only in pathological accounts with no email).
+
+---
+
 ### Customer
 
 These tokens are **universal**: available in any entity kind that has an associated customer record.
@@ -180,7 +192,7 @@ Place `{{partSpecs}}` on its own paragraph. In markdown body slots, the text ren
 | `{{validUntil}}` | Valid Until | quote | when-available |
 | `{{shipDate}}` | Ship Date | order | when-available |
 
-- `{{paymentLinkUrl}}` is only present when the quote has an **active** Stripe payment link. Referencing it on a quote without a link will cause a send failure.
+- `{{paymentLinkUrl}}` is the quote’s **active** Stripe payment link URL. When Stripe payment links are enabled and the quote is payable (positive total, Stripe configured, etc.), a link is **created when the email is rendered** (preview or send) if one does not exist yet, then stored on the quote and merged into the template. If payment links are disabled or the quote cannot be made payable, referencing this token will still fail validation.
 - `{{validUntil}}` and `{{shipDate}}` are formatted as `Month D, YYYY`.
 
 ---
@@ -200,7 +212,7 @@ Admin-defined snippets (Admin → Email → Snippets) add custom reusable text. 
 ## Adding new tokens
 
 1. Add an entry to `MERGE_TOKEN_CATALOG` in `app/lib/email/resolve/types.ts`.
-2. Implement the field in the appropriate entity resolver(s) under `app/lib/email/resolve/`.
+2. Implement the field in the appropriate entity resolver(s) under `app/lib/email/resolve/`, or in `actor-merge.server.ts` for staff user tokens (`suppliedBy: "actor"`).
 3. Update this document.
 4. Run `npm run typecheck` to verify.
 
@@ -209,6 +221,8 @@ Admin-defined snippets (Admin → Email → Snippets) add custom reusable text. 
 ## Quick reference
 
 ```
+{{userName}}             staff sender display name (or fallback from email local-part)
+{{userEmail}}            staff sender email — not {{customerEmail}}
 {{documentNumber}}      quote number or order number (preferred in new templates)
 {{quoteNumber}}         quote number — alias, prefer documentNumber
 {{orderNumber}}         order number — alias, prefer documentNumber

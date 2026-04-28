@@ -31,9 +31,10 @@ export type MergeTokenDefinition = {
   description: string;
   /**
    * Which entity kinds supply this token.
-   * "all" = universally available wherever the relevant party data exists.
+   * "all" = universally available wherever the relevant customer-party data exists.
+   * "actor" = staff user performing the send (userName / userEmail); not an EntityKind.
    */
-  suppliedBy: EntityKind[] | "all";
+  suppliedBy: EntityKind[] | "all" | "actor";
   /** See TokenPresence. */
   presence: TokenPresence;
   /** Format hint for documentation and UI rendering. */
@@ -171,6 +172,26 @@ export const MERGE_TOKEN_CATALOG = [
     format: "string" as TokenFormat,
   },
 
+  // ── Staff (logged-in user) — distinct from customer ────────────────────
+  {
+    key: "userName",
+    label: "User Name (staff)",
+    description:
+      "The display name of the Subtract staff member sending the email. If no name is set on the account, a readable fallback is derived from their email (e.g. local part with spaces). Not the customer.",
+    suppliedBy: "actor",
+    presence: "always" as TokenPresence,
+    format: "string" as TokenFormat,
+  },
+  {
+    key: "userEmail",
+    label: "User Email (staff)",
+    description:
+      "The email address of the Subtract staff member sending the email. Not the customer's email.",
+    suppliedBy: "actor",
+    presence: "always" as TokenPresence,
+    format: "string" as TokenFormat,
+  },
+
   // ── Vendor ────────────────────────────────────────────────────────────
   {
     key: "vendorName",
@@ -222,7 +243,7 @@ export const MERGE_TOKEN_CATALOG = [
     key: "paymentLinkUrl",
     label: "Payment Link URL",
     description:
-      "Active Stripe payment link URL. Only present when the quote has an active link. Referencing this token on a quote without an active link causes a send failure.",
+      "Active Stripe payment link URL. When Stripe payment links are enabled and the quote is payable, a link is created at email preview/send time if missing, then this token resolves.",
     suppliedBy: ["quote"] as EntityKind[],
     presence: "when-available" as TokenPresence,
     format: "url" as TokenFormat,

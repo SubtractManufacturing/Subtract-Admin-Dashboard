@@ -18,6 +18,14 @@ export interface EmailSendContextHandler {
     entityId: string,
     attachmentIds: string[],
   ): Promise<void>;
+  /**
+   * Run before merge props are loaded so DB-backed tokens exist (e.g. Stripe
+   * payment link on quotes). Used by preview and enqueue via buildEmailContent.
+   */
+  prepareEmailContent?(
+    auth: EmailEnqueueAuth,
+    entityId: string,
+  ): Promise<void>;
   beforeEnqueue?(entityId: string, auth: EmailEnqueueAuth): Promise<void>;
   /**
    * After the outbound is persisted with pending_approval and attachments.

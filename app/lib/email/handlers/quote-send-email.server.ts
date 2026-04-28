@@ -142,7 +142,7 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
     }
   },
 
-  async beforeEnqueue(entityId, auth) {
+  async prepareEmailContent(auth, entityId) {
     const quoteId = quoteIdFromEntityId(entityId);
     const result = await ensureQuoteStripePaymentLink(
       quoteId,
