@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.14](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.13...v1.3.14) (2026-04-28)
+
+
+### Bug Fixes
+
+* add email sending capabilities ([4d57aa0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/4d57aa0b3e894dfb9f66021edff1ebca7d718ada))
+* correct worker build copy ([1a95aa6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/1a95aa68722a2dafab497600696b3812f0fd599d))
+* track build-worker.mjs for Docker/CI builds ([ea80a87](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/ea80a87072cedce795f2e7bc2e55ed2182a23bb6))
+
 ## [1.3.13](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.12...v1.3.13) (2026-04-20)
 
 
