@@ -130,3 +130,4 @@ CLAUDE.md
 !/scripts/
 /scripts/*
 !/scripts/worker.ts
+!/scripts/prepare-husky.mjs
