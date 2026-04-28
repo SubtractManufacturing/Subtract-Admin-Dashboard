@@ -104,6 +104,7 @@ export default function PdfGenerationModal({
           'Mailing Address',
           'Email',
           'Phone',
+          'Part notes',
         ];
 
         if (defaultPlaceholders.includes(text)) {
