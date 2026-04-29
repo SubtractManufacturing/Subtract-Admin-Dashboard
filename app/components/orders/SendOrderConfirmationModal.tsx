@@ -389,6 +389,9 @@ export default function SendOrderConfirmationModal({
     requiredAttachmentDocumentKinds.every(
       (k) => (selectedPrimaryByKind[k] ?? null) != null,
     );
+  const missingRequiredAttachmentLabels = requiredAttachmentDocumentKinds
+    .filter((k) => (selectedPrimaryByKind[k] ?? null) == null)
+    .map((k) => ATTACHMENT_DOCUMENT_KIND_LABELS[k]);
 
   const canSend =
     allRequiredPrimariesSelected &&
@@ -837,6 +840,13 @@ export default function SendOrderConfirmationModal({
               </div>
             </div>
 
+            {/* Attachment validation */}
+            {missingRequiredAttachmentLabels.length > 0 && (
+              <div className="px-4 py-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 text-sm text-amber-800 dark:text-amber-200">
+                Add required attachments before sending: {missingRequiredAttachmentLabels.join(", ")}.
+              </div>
+            )}
+
             {/* Submit error */}
             {submitError && (
               <div className="px-4 py-3 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 text-sm text-red-700 dark:text-red-300">
@@ -856,7 +866,7 @@ export default function SendOrderConfirmationModal({
               disabled={!canSend}
               title={
                 !allRequiredPrimariesSelected
-                  ? "Add every required document type for this email template"
+                  ? `Add required attachments before sending: ${missingRequiredAttachmentLabels.join(", ")}`
                   : isOverSizeLimit
                     ? "Attachments exceed 10 MB limit"
                     : undefined

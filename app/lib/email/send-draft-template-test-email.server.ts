@@ -25,8 +25,6 @@ import type { ActorMergeSource } from "~/lib/email/resolve/actor-merge.server";
 import { buildActorMergeMap } from "~/lib/email/resolve/actor-merge.server";
 import { getEmailMergeFieldsMap } from "~/lib/email/templates.server";
 
-const SUBJECT_PREVIEW_PREFIX = "[Template preview] ";
-
 /**
  * Default merge values for layout props and button URL rules. Extend when new
  * email layouts are registered.
@@ -181,15 +179,13 @@ export async function sendDraftTemplateTestEmail(params: {
   textBody = replaceUnresolvedPlaceholders(textBody);
   subjectResolved = replaceUnresolvedPlaceholders(subjectResolved);
 
-  const fullSubject = `${SUBJECT_PREVIEW_PREFIX}${subjectResolved}`;
-
   try {
     await sendPostmarkTransactionalEmail({
       fromEmail: identity.fromEmail,
       fromDisplayName: identity.fromDisplayName,
       toAddresses: [to],
       replyTo: identity.replyToEmail,
-      subject: fullSubject,
+      subject: subjectResolved,
       htmlBody: sanitizeEmailHtml(rawHtml),
       textBody,
     });

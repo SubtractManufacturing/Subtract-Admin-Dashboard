@@ -1656,6 +1656,7 @@ export default function OrderDetails() {
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [invoicePdfFromEmailContext, setInvoicePdfFromEmailContext] = useState(false);
   const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
   const [isSendOrderConfirmationModalOpen, setSendOrderConfirmationModalOpen] =
     useState(false);
@@ -2169,6 +2170,7 @@ export default function OrderDetails() {
   }, [editOrderModalOpen, handleEditOrderSubmit]);
 
   const handleGenerateInvoice = () => {
+    setInvoicePdfFromEmailContext(false);
     setIsInvoiceModalOpen(true);
   };
 
@@ -2973,11 +2975,15 @@ export default function OrderDetails() {
       {/* Invoice PDF Modal */}
       <GenerateInvoicePdfModal
         isOpen={isInvoiceModalOpen}
-        onClose={() => setIsInvoiceModalOpen(false)}
+        onClose={() => {
+          setIsInvoiceModalOpen(false);
+          setInvoicePdfFromEmailContext(false);
+        }}
         entity={order}
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
-        autoDownload={pdfAutoDownload}
+        autoDownload={invoicePdfFromEmailContext ? false : pdfAutoDownload}
+        initialPresetId={invoicePdfFromEmailContext ? "paid" : "default"}
       />
 
       <GeneratePackingSlipPdfModal
@@ -3012,6 +3018,7 @@ export default function OrderDetails() {
           }
           onRequestGenerateForDocumentKind={(kind) => {
             if (kind === "invoice") {
+              setInvoicePdfFromEmailContext(true);
               setIsInvoiceModalOpen(true);
               return;
             }
