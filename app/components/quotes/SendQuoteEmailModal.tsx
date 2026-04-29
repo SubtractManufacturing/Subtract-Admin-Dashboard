@@ -234,6 +234,8 @@ export default function SendQuoteEmailModal({
 
   // ── Error state ──
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showRequiredAttachmentError, setShowRequiredAttachmentError] =
+    useState(false);
 
   // ── Editable preview HTML (script injected client-side) ──
   const [editableHtml, setEditableHtml] = useState<string | null>(null);
@@ -249,6 +251,7 @@ export default function SendQuoteEmailModal({
       setStaleQuotePdfAcknowledged(false);
       setSelectedOptionalIds([]);
       setSubmitError(null);
+      setShowRequiredAttachmentError(false);
       setEditableHtml(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -382,17 +385,31 @@ export default function SendQuoteEmailModal({
       (k) => (selectedPrimaryByKind[k] ?? null) != null,
     );
 
-  const canSend =
-    allRequiredPrimariesSelected &&
-    !needsStaleQuotePrimaryAck &&
-    !isOverSizeLimit &&
-    submitFetcher.state === "idle" &&
-    subject.trim().length > 0;
+  const missingKinds = requiredAttachmentDocumentKinds.filter(
+    (k) => (selectedPrimaryByKind[k] ?? null) == null,
+  );
+
+  const sendButtonHardDisabled =
+    needsStaleQuotePrimaryAck ||
+    isOverSizeLimit ||
+    submitFetcher.state !== "idle";
+
+  useEffect(() => {
+    if (allRequiredPrimariesSelected) {
+      setShowRequiredAttachmentError(false);
+    }
+  }, [allRequiredPrimariesSelected]);
 
   // ── Submit ──
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSend) return;
+    if (sendButtonHardDisabled) return;
+    if (!allRequiredPrimariesSelected) {
+      setShowRequiredAttachmentError(true);
+      return;
+    }
+    setShowRequiredAttachmentError(false);
+    if (subject.trim().length === 0) return;
     setSubmitError(null);
 
     const formData = new FormData();
@@ -532,6 +549,18 @@ export default function SendQuoteEmailModal({
         zIndex={55}
       >
         <form onSubmit={handleSubmit} className="flex flex-col h-full">
+          {showRequiredAttachmentError && missingKinds.length > 0 && (
+            <div
+              role="alert"
+              className="shrink-0 mx-6 mt-4 rounded-md border border-red-300 dark:border-red-700 bg-red-100 dark:bg-red-950/60 px-4 py-3 text-sm font-medium text-red-900 dark:text-red-100"
+            >
+              Attach{" "}
+              {missingKinds
+                .map((k) => ATTACHMENT_DOCUMENT_KIND_LABELS[k])
+                .join(" and ")}{" "}
+              before sending.
+            </div>
+          )}
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
@@ -856,7 +885,7 @@ export default function SendQuoteEmailModal({
             )}
           </div>
 
-          {/* ── Sticky footer ── */}
+           {/* ── Sticky footer ── */}
           <div className="shrink-0 border-t border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-end gap-3">
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
@@ -864,15 +893,13 @@ export default function SendQuoteEmailModal({
             <Button
               type="submit"
               variant="primary"
-              disabled={!canSend}
+              disabled={sendButtonHardDisabled}
               title={
-                !allRequiredPrimariesSelected
-                  ? "Add every required document type for this email template"
-                  : needsStaleQuotePrimaryAck
-                    ? "Confirm you've reviewed the quote PDF above"
-                    : isOverSizeLimit
-                      ? "Attachments exceed 10 MB limit"
-                      : undefined
+                needsStaleQuotePrimaryAck
+                  ? "Confirm you've reviewed the quote PDF above"
+                  : isOverSizeLimit
+                    ? "Attachments exceed 10 MB limit"
+                    : undefined
               }
             >
               {submitFetcher.state !== "idle" ? "Sending…" : "Send quote email"}
