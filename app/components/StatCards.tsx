@@ -1,4 +1,4 @@
-import { Link, useSearchParams, useSubmit } from "@remix-run/react";
+import { Link } from "@remix-run/react";
 import type { DashboardStats } from "~/lib/dashboard";
 import { cardStyles } from "~/utils/tw-styles";
 
@@ -7,26 +7,11 @@ interface StatCardsProps {
 }
 
 export default function StatCards({ stats }: StatCardsProps) {
-  const [searchParams] = useSearchParams();
-  const submit = useSubmit();
-  const rfqPeriod = searchParams.get("rfqPeriod") || "30";
-
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
     }).format(amount);
-  };
-
-  const handlePeriodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newValue = e.target.value;
-    const newParams = new URLSearchParams(searchParams);
-    newParams.set("rfqPeriod", newValue);
-    submit(newParams, {
-      method: "get",
-      preventScrollReset: true,
-      replace: true,
-    });
   };
 
   return (
@@ -57,19 +42,6 @@ export default function StatCards({ stats }: StatCardsProps) {
       <div className={`${cardStyles.container} h-full flex flex-col`}>
         <h4 className={cardStyles.subtitle}>Quotes</h4>
         <h1 className={cardStyles.title}>{stats.rfqs}</h1>
-        <div className="flex items-center gap-2">
-          <p className={cardStyles.content}>In the Last:</p>
-          <select
-            value={rfqPeriod}
-            onChange={handlePeriodChange}
-            className="font-semibold text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-150"
-          >
-            <option value="30">30 Days</option>
-            <option value="14">14 Days</option>
-            <option value="7">7 Days</option>
-            <option value="1">Today</option>
-          </select>
-        </div>
       </div>
     </div>
   );

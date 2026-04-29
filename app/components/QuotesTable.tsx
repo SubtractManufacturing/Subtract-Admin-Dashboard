@@ -1,7 +1,14 @@
 import type { Quote } from "~/lib/dashboard"
 import { listCardStyles, tableStyles, statusStyles } from "~/utils/tw-styles"
-import { useNavigate, Link } from "@remix-run/react"
+import { useNavigate, Link, useSearchParams, useSubmit } from "@remix-run/react"
 import ViewToggle, { useViewToggle } from "./shared/ViewToggle"
+
+const LIST_LIMITS = [10, 25, 50] as const
+
+function isDashboardListLimit(n: number): n is (typeof LIST_LIMITS)[number] {
+  return n === 10 || n === 25 || n === 50
+}
+
 
 interface QuotesTableProps {
   quotes: Quote[]
@@ -13,7 +20,18 @@ function openInNewTab(href: string) {
 
 export default function QuotesTable({ quotes }: QuotesTableProps) {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const submit = useSubmit()
   const [view, setView] = useViewToggle("dashboard-quotes-view")
+
+  const rawQuotesLimit = Number(searchParams.get("quotesLimit"))
+  const quotesLimit = isDashboardListLimit(rawQuotesLimit) ? rawQuotesLimit : 10
+
+  const setQuotesLimit = (nextLimit: number) => {
+    const next = new URLSearchParams(searchParams)
+    next.set("quotesLimit", String(nextLimit))
+    submit(next, { method: "get", preventScrollReset: true, replace: true })
+  }
 
   const handleRowClick = (e: React.MouseEvent<HTMLElement>, href: string) => {
     if (e.defaultPrevented) return;
@@ -70,9 +88,37 @@ export default function QuotesTable({ quotes }: QuotesTableProps) {
 
   return (
     <div className="px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h2 className="text-2xl font-semibold">Quotes</h2>
-        <ViewToggle view={view} onChange={setView} />
+        <div className="flex flex-wrap items-center gap-2 ml-auto">
+          <div
+            role="radiogroup"
+            aria-label="How many quotes to show"
+            className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden flex-shrink-0"
+          >
+            {LIST_LIMITS.map((limit, i) => {
+              const selected = quotesLimit === limit
+              return (
+                <button
+                  key={limit}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setQuotesLimit(limit)}
+                  title={`Show ${limit}`}
+                  className={`px-3 py-2 text-sm font-semibold transition-colors ${i > 0 ? "border-l border-gray-300 dark:border-gray-600" : ""} ${
+                    selected
+                      ? "bg-blue-600 text-white"
+                      : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  }`}
+                >
+                  {limit}
+                </button>
+              )
+            })}
+          </div>
+          <ViewToggle view={view} onChange={setView} />
+        </div>
       </div>
 
       {view === "list" ? (
