@@ -124,6 +124,8 @@ CLAUDE.md
 .cursorrules
 .cursor
 
+.agents
+
 /planning
 /logs
 /scripts
