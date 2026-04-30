@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Box } from "lucide-react";
 import { PartAssetAdminTrigger } from "~/components/admin/PartAssetAdminFlyout";
 import { IconButton } from "~/components/shared/IconButton";
@@ -162,7 +162,7 @@ export function LineItemRow({
   const isEditing = (field: LineItemEditableField) =>
     editingField?.lineItemId === item.id && editingField.field === field;
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (
       editingField?.lineItemId === item.id &&
       editingField.field === "name"
