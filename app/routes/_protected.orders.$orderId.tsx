@@ -31,7 +31,9 @@ import {
   isOutboundEmailEnabled,
   FEATURE_FLAGS,
   canUserUploadCadRevision,
+  isStripePaymentLinksEnabled,
 } from "~/lib/featureFlags";
+import { isStripeConfigured } from "~/lib/stripe.server";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
 import {
   handleEmailPreviewAction,
@@ -54,6 +56,11 @@ import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { Notes } from "~/components/shared/Notes";
 import OrderActionsDropdown from "~/components/orders/OrderActionsDropdown";
+import CheckoutAddressConflictModal, {
+  type CheckoutAddressImportPhase,
+  type CheckoutAddressImportProgressStep,
+} from "~/components/orders/CheckoutAddressConflictModal";
+import type { CheckoutAddressConflictPreview } from "~/lib/stripe/checkout-address-conflict.types";
 import SendOrderConfirmationModal from "~/components/orders/SendOrderConfirmationModal";
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
@@ -86,6 +93,7 @@ import {
   attachments,
   partDrawings,
   orderLineItems,
+  quotes,
 } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
@@ -321,6 +329,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     }
   }
 
+  const stripePaymentLinksEnabled = await isStripePaymentLinksEnabled();
+  const stripeConfigured = isStripeConfigured();
+
+  let quoteStripePaymentLinkId: string | null = null;
+  if (order.sourceQuoteId) {
+    const [qr] = await db
+      .select({ stripePaymentLinkId: quotes.stripePaymentLinkId })
+      .from(quotes)
+      .where(eq(quotes.id, order.sourceQuoteId))
+      .limit(1);
+    quoteStripePaymentLinkId = qr?.stripePaymentLinkId ?? null;
+  }
+
   return withAuthHeaders(
     json({
       order,
@@ -343,6 +364,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       orderConfirmationEditableSlots,
       orderConfirmationRequiredAttachmentDocumentKinds,
       orderConfirmationSendBlocked,
+      stripePaymentLinksEnabled,
+      stripeConfigured,
+      quoteStripePaymentLinkId,
     }),
     headers
   );
@@ -389,6 +413,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         "emailPreview",
         "emailQueue",
         "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
+        "importCheckoutAddressesQuick",
+        "applyCheckoutAddressImportChoices",
       ];
       if (specialIntents.includes(intent)) {
         // These intents handle form data differently, let them fall through
@@ -1573,6 +1599,57 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "importCheckoutAddressesQuick": {
+        const { importCheckoutAddressesQuickFromOrder } = await import(
+          "~/lib/stripe/checkout-addresses.server"
+        );
+        const result = await importCheckoutAddressesQuickFromOrder({
+          orderId: order.id,
+          sourceQuoteId: order.sourceQuoteId ?? null,
+          customerId: order.customerId ?? null,
+          eventContext: {
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          },
+        });
+        return withAuthHeaders(json(result), headers);
+      }
+
+      case "applyCheckoutAddressImportChoices": {
+        const { applyCheckoutAddressImportForOrder } = await import(
+          "~/lib/stripe/checkout-addresses.server"
+        );
+        const parseChoice = (key: string) => {
+          const v = formData.get(key);
+          return v === "checkout" || v === "on_file" ? v : undefined;
+        };
+        const result = await applyCheckoutAddressImportForOrder({
+          orderId: order.id,
+          sourceQuoteId: order.sourceQuoteId ?? null,
+          customerId: order.customerId ?? null,
+          billingChoice: parseChoice("billingChoice"),
+          shippingChoice: parseChoice("shippingChoice"),
+          phoneChoice: parseChoice("phoneChoice"),
+          eventContext: {
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          },
+        });
+        if (!result.ok) {
+          return withAuthHeaders(
+            json(
+              { error: result.message, reason: result.reason },
+              { status: 400 }
+            ),
+            headers
+          );
+        }
+        return withAuthHeaders(
+          json({ success: true, updated: result.updated }),
+          headers
+        );
+      }
+
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
@@ -1604,6 +1681,9 @@ export default function OrderDetails() {
     orderConfirmationEditableSlots,
     orderConfirmationRequiredAttachmentDocumentKinds,
     orderConfirmationSendBlocked,
+    stripePaymentLinksEnabled,
+    stripeConfigured,
+    quoteStripePaymentLinkId,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/orders/${order.orderNumber}`
@@ -1662,6 +1742,41 @@ export default function OrderDetails() {
   const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
   const [isSendOrderConfirmationModalOpen, setSendOrderConfirmationModalOpen] =
     useState(false);
+  const [checkoutAddressModalOpen, setCheckoutAddressModalOpen] =
+    useState(false);
+  const [checkoutAddressPhase, setCheckoutAddressPhase] =
+    useState<CheckoutAddressImportPhase>("working");
+  const [checkoutAddressStep, setCheckoutAddressStep] =
+    useState<CheckoutAddressImportProgressStep>("connecting");
+  const [checkoutConflictPreview, setCheckoutConflictPreview] = useState<
+    CheckoutAddressConflictPreview | null
+  >(null);
+  const [checkoutErrorMessage, setCheckoutErrorMessage] = useState<
+    string | undefined
+  >(undefined);
+  const [checkoutSummary, setCheckoutSummary] = useState<{
+    billingUpdated?: boolean;
+    shippingUpdated?: boolean;
+    phoneUpdated?: boolean;
+  }>({});
+  const checkoutAddressImportFetcher = useFetcher();
+  const lastCheckoutChoicesRef = useRef<{
+    billingChoice?: "checkout" | "on_file";
+    shippingChoice?: "checkout" | "on_file";
+    phoneChoice?: "checkout" | "on_file";
+  } | null>(null);
+
+  const showImportCheckoutAddresses =
+    stripePaymentLinksEnabled && !!quoteStripePaymentLinkId;
+
+  const importCheckoutAddressesDisabled =
+    !order.customerId || !stripeConfigured;
+
+  const importCheckoutAddressesTooltip = !order.customerId
+    ? "Orders need a customer to import addresses."
+    : !stripeConfigured
+      ? "Payment checkout is not configured."
+      : "";
 
   const canSendOrderConfirmation =
     outboundEmailEnabled &&
@@ -2042,6 +2157,131 @@ export default function OrderDetails() {
     }
   };
 
+  useEffect(() => {
+    if (!checkoutAddressModalOpen) return;
+    if (checkoutAddressImportFetcher.state === "submitting") {
+      setCheckoutAddressStep("fetching");
+      return;
+    }
+    if (checkoutAddressImportFetcher.state === "loading") {
+      setCheckoutAddressStep("comparing");
+    }
+  }, [checkoutAddressImportFetcher.state, checkoutAddressModalOpen]);
+
+  useEffect(() => {
+    if (!checkoutAddressModalOpen) return;
+    if (checkoutAddressImportFetcher.state !== "idle") return;
+    const d = checkoutAddressImportFetcher.data as
+      | {
+          kind?: string;
+          message?: string;
+          reason?: string;
+          preview?: CheckoutAddressConflictPreview;
+          success?: boolean;
+          updated?: boolean;
+          error?: string;
+        }
+      | undefined;
+    if (!d) return;
+
+    if (d.kind === "error" || d.error) {
+      setCheckoutErrorMessage(d.message ?? d.error ?? "Import failed.");
+      setCheckoutAddressPhase("error");
+      return;
+    }
+
+    if (d.kind === "applied") {
+      const choices = lastCheckoutChoicesRef.current;
+      lastCheckoutChoicesRef.current = null;
+      setCheckoutSummary(
+        choices
+          ? {
+              billingUpdated: choices.billingChoice === "checkout",
+              shippingUpdated: choices.shippingChoice === "checkout",
+              phoneUpdated: choices.phoneChoice === "checkout",
+            }
+          : { billingUpdated: true, shippingUpdated: true, phoneUpdated: true }
+      );
+      setCheckoutAddressPhase("success");
+      revalidator.revalidate();
+      return;
+    }
+
+    if (d.kind === "noop") {
+      setCheckoutErrorMessage(d.message);
+      setCheckoutAddressPhase("noop");
+      return;
+    }
+
+    if (d.kind === "conflict" && d.preview) {
+      setCheckoutConflictPreview(d.preview);
+      setCheckoutAddressPhase("conflict");
+      return;
+    }
+
+    if (d.success === true && typeof d.updated === "boolean") {
+      const choices = lastCheckoutChoicesRef.current;
+      lastCheckoutChoicesRef.current = null;
+      if (d.updated) {
+        setCheckoutSummary({
+          billingUpdated: choices?.billingChoice === "checkout",
+          shippingUpdated: choices?.shippingChoice === "checkout",
+          phoneUpdated: choices?.phoneChoice === "checkout",
+        });
+        setCheckoutAddressPhase("success");
+        revalidator.revalidate();
+      } else {
+        setCheckoutAddressPhase("noop");
+      }
+    }
+  }, [
+    checkoutAddressImportFetcher.state,
+    checkoutAddressImportFetcher.data,
+    checkoutAddressModalOpen,
+    revalidator,
+  ]);
+
+  const startCheckoutAddressImport = () => {
+    setCheckoutErrorMessage(undefined);
+    setCheckoutConflictPreview(null);
+    setCheckoutSummary({});
+    setCheckoutAddressStep("connecting");
+    setCheckoutAddressPhase("working");
+    setCheckoutAddressModalOpen(true);
+    const fd = new FormData();
+    fd.append("intent", "importCheckoutAddressesQuick");
+    checkoutAddressImportFetcher.submit(fd, { method: "post" });
+  };
+
+  const handleImportCheckoutAddresses = () => {
+    if (importCheckoutAddressesDisabled) return;
+    startCheckoutAddressImport();
+  };
+
+  const handleCloseCheckoutAddressModal = () => {
+    setCheckoutAddressModalOpen(false);
+    setCheckoutConflictPreview(null);
+    setCheckoutErrorMessage(undefined);
+  };
+
+  const handleCheckoutConflictConfirm = (choices: {
+    billingChoice?: "checkout" | "on_file";
+    shippingChoice?: "checkout" | "on_file";
+    phoneChoice?: "checkout" | "on_file";
+  }) => {
+    lastCheckoutChoicesRef.current = choices;
+    setCheckoutAddressPhase("submitting_choices");
+    setCheckoutAddressStep("applying");
+    const fd = new FormData();
+    fd.append("intent", "applyCheckoutAddressImportChoices");
+    if (choices.billingChoice)
+      fd.append("billingChoice", choices.billingChoice);
+    if (choices.shippingChoice)
+      fd.append("shippingChoice", choices.shippingChoice);
+    if (choices.phoneChoice) fd.append("phoneChoice", choices.phoneChoice);
+    checkoutAddressImportFetcher.submit(fd, { method: "post" });
+  };
+
   const handleManageVendorSubmit = () => {
     const formData = new FormData();
     formData.append("intent", "updateVendor");
@@ -2364,6 +2604,14 @@ export default function OrderDetails() {
                 }
                 orderConfirmationMenuDisabled={
                   !canSendOrderConfirmation
+                }
+                onImportCheckoutAddresses={handleImportCheckoutAddresses}
+                showImportCheckoutAddresses={showImportCheckoutAddresses}
+                importCheckoutAddressesDisabled={
+                  importCheckoutAddressesDisabled
+                }
+                importCheckoutAddressesTooltip={
+                  importCheckoutAddressesTooltip
                 }
               />
             </div>
@@ -3001,6 +3249,18 @@ export default function OrderDetails() {
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
         autoDownload={pdfAutoDownload}
+      />
+
+      <CheckoutAddressConflictModal
+        open={checkoutAddressModalOpen}
+        phase={checkoutAddressPhase}
+        progressStep={checkoutAddressStep}
+        preview={checkoutConflictPreview}
+        summary={checkoutSummary}
+        errorMessage={checkoutErrorMessage}
+        onClose={handleCloseCheckoutAddressModal}
+        onConfirm={handleCheckoutConflictConfirm}
+        onRetry={startCheckoutAddressImport}
       />
 
       {outboundEmailEnabled && isSendOrderConfirmationModalOpen && (

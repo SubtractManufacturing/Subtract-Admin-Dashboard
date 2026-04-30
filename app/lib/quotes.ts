@@ -1087,6 +1087,19 @@ export async function convertQuoteToOrder(
       userEmail: context?.userEmail,
     });
 
+    const { tryAutoFillBlankCustomerFromQuoteCheckout } = await import(
+      "~/lib/stripe/checkout-addresses.server"
+    );
+    await tryAutoFillBlankCustomerFromQuoteCheckout({
+      quoteId,
+      customerId: quote.customerId,
+      orderId: result.orderId,
+      eventContext: {
+        userId: context?.userId,
+        userEmail: context?.userEmail,
+      },
+    });
+
     return {
       success: true,
       orderId: result.orderId,

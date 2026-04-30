@@ -33,6 +33,12 @@ export type CustomerInput = {
 export type CustomerEventContext = {
   userId?: string
   userEmail?: string
+  /** When set, logs a dedicated checkout-import event instead of generic customer_updated */
+  checkoutAddressImport?: {
+    quoteId: number
+    orderId?: number
+    quoteNumber?: string
+  }
 }
 
 export async function getCustomers(): Promise<Customer[]> {
@@ -119,18 +125,35 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
 
     const customer = result[0]
 
-    // Log event for customer update
-    await createEvent({
-      entityType: "customer",
-      entityId: id.toString(),
-      eventType: "customer_updated",
-      eventCategory: "system",
-      title: `Customer information updated`,
-      description: `Customer "${customer.displayName}" details were updated`,
-      metadata: customerData,
-      userId: eventContext?.userId,
-      userEmail: eventContext?.userEmail,
-    })
+    if (eventContext?.checkoutAddressImport) {
+      await createEvent({
+        entityType: "customer",
+        entityId: id.toString(),
+        eventType: "customer_checkout_addresses_imported",
+        eventCategory: "system",
+        title: "Addresses imported from checkout",
+        description: `Billing/shipping or phone were imported from the quote payment checkout.`,
+        metadata: {
+          ...eventContext.checkoutAddressImport,
+          updatedFields: Object.keys(customerData),
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail,
+      })
+    } else {
+      // Log event for customer update
+      await createEvent({
+        entityType: "customer",
+        entityId: id.toString(),
+        eventType: "customer_updated",
+        eventCategory: "system",
+        title: `Customer information updated`,
+        description: `Customer "${customer.displayName}" details were updated`,
+        metadata: customerData,
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail,
+      })
+    }
 
     return customer
   } catch (error) {
