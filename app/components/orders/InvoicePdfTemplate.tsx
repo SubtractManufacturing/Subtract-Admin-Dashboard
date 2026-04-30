@@ -8,7 +8,11 @@ import {
   commonPdfStyles,
   type PdfPresetOption,
 } from "~/lib/pdf-utils";
-import { extractShippingAddress, isAddressComplete } from "~/lib/address-utils";
+import {
+  extractBillingAddress,
+  extractShippingAddress,
+  isAddressComplete,
+} from "~/lib/address-utils";
 
 export const INVOICE_PDF_PRESETS = [
   { id: "default", label: "Default" },
@@ -638,7 +642,7 @@ export function InvoicePdfTemplate({
               {/* Billing Address */}
               {entity.customer &&
                 (() => {
-                  const billingAddress = extractShippingAddress(
+                  const billingAddress = extractBillingAddress(
                     entity.customer
                   );
                   const hasBillingAddress = isAddressComplete(billingAddress);

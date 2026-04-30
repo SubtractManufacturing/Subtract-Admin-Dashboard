@@ -7,7 +7,11 @@ import {
   commonPdfStyles,
   type PdfPresetOption,
 } from "~/lib/pdf-utils";
-import { extractShippingAddress, isAddressComplete } from "~/lib/address-utils";
+import {
+  extractBillingAddress,
+  extractShippingAddress,
+  isAddressComplete,
+} from "~/lib/address-utils";
 
 export const PURCHASE_ORDER_PDF_PRESETS = [
   { id: "default", label: "Default" },
@@ -523,33 +527,39 @@ export function PurchaseOrderPdfTemplate({
                   </span>
                 </p>
               )}
-              {/* Shipping Address */}
+              {/* Vendor location (structured shipping preferred; else billing) */}
               {order.vendor && (() => {
                 const shippingAddress = extractShippingAddress(order.vendor);
-                const hasShippingAddress = isAddressComplete(shippingAddress);
+                const billingAddress = extractBillingAddress(order.vendor);
+                const vendorAddress = isAddressComplete(shippingAddress)
+                  ? shippingAddress
+                  : isAddressComplete(billingAddress)
+                    ? billingAddress
+                    : shippingAddress;
+                const hasVendorAddress = isAddressComplete(vendorAddress);
 
-                if (hasShippingAddress) {
+                if (hasVendorAddress) {
                   return (
                     <>
-                      {shippingAddress.line1 && (
+                      {vendorAddress.line1 && (
                         <p>
                           <span
                             className={editable ? "editable" : ""}
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {shippingAddress.line1}
+                            {vendorAddress.line1}
                           </span>
                         </p>
                       )}
-                      {shippingAddress.line2 && (
+                      {vendorAddress.line2 && (
                         <p>
                           <span
                             className={editable ? "editable" : ""}
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
-                            {shippingAddress.line2}
+                            {vendorAddress.line2}
                           </span>
                         </p>
                       )}
@@ -559,20 +569,22 @@ export function PurchaseOrderPdfTemplate({
                           contentEditable={editable}
                           suppressContentEditableWarning
                         >
-                          {shippingAddress.city}, {shippingAddress.state} {shippingAddress.postalCode}
+                          {vendorAddress.city}, {vendorAddress.state}{" "}
+                          {vendorAddress.postalCode}
                         </span>
                       </p>
-                      {shippingAddress.country && shippingAddress.country !== "US" && (
-                        <p>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {shippingAddress.country}
-                          </span>
-                        </p>
-                      )}
+                      {vendorAddress.country &&
+                        vendorAddress.country !== "US" && (
+                          <p>
+                            <span
+                              className={editable ? "editable" : ""}
+                              contentEditable={editable}
+                              suppressContentEditableWarning
+                            >
+                              {vendorAddress.country}
+                            </span>
+                          </p>
+                        )}
                     </>
                   );
                 } else if (order.vendor?.address) {
