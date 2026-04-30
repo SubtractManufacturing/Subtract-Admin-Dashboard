@@ -1,10 +1,10 @@
 import { db } from "./db";
-import { orders, sentEmails } from "./db/schema";
+import { orders, sentEmails, users } from "./db/schema";
 import { and, asc, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { SentEmail } from "./db/schema";
 import type { EmailContextKey } from "./email/email-context-registry";
 
-/** Blocks a new send while one of these rows exists for (order, context). */
+/** Blocks a new send while one of these exists for (order, context). */
 const ORDER_CONTEXT_BLOCKING_STATUSES = [
   "queued",
   "sending",
@@ -53,6 +53,7 @@ type SentEmailListItemBase = Pick<
   | "entityId"
   | "quoteId"
   | "source"
+  | "sentByUserId"
   | "sentByUserEmail"
   | "createdAt"
   | "sentAt"
@@ -62,10 +63,73 @@ type SentEmailListItemBase = Pick<
   | "rejectedAt"
 >;
 
+/** After order-number enrichment, before audit user labels */
+type SentEmailListItemWithOrderNumber = SentEmailListItemBase & {
+  orderNumber: string | null;
+};
+
 export type SentEmailListItem = SentEmailListItemBase & {
   /** For `entityType === "order"`, batched lookup for `/orders/{orderNumber}` links */
   orderNumber: string | null;
+  submittedByLabel: string | null;
+  approvedByLabel: string | null;
+  rejectedByLabel: string | null;
 };
+
+type AuditUserRow = {
+  id: string;
+  name: string | null;
+  email: string;
+};
+
+function displayLabelForUser(
+  row: AuditUserRow | undefined,
+  fallbackId: string,
+): string {
+  const name = row?.name?.trim();
+  if (name) return name;
+  return row?.email ?? fallbackId;
+}
+
+async function attachAuditUserLabels(
+  rows: SentEmailListItemWithOrderNumber[],
+): Promise<SentEmailListItem[]> {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (row.sentByUserId) ids.add(row.sentByUserId);
+    if (row.approvedByUserId) ids.add(row.approvedByUserId);
+    if (row.rejectedByUserId) ids.add(row.rejectedByUserId);
+  }
+
+  if (ids.size === 0) {
+    return rows.map((row) => ({
+      ...row,
+      submittedByLabel: null,
+      approvedByLabel: null,
+      rejectedByLabel: null,
+    }));
+  }
+
+  const foundUsers = await db
+    .select({ id: users.id, name: users.name, email: users.email })
+    .from(users)
+    .where(inArray(users.id, [...ids]));
+
+  const userById = new Map(foundUsers.map((u) => [u.id, u]));
+
+  return rows.map((row) => ({
+    ...row,
+    submittedByLabel: row.sentByUserId
+      ? displayLabelForUser(userById.get(row.sentByUserId), row.sentByUserId)
+      : null,
+    approvedByLabel: row.approvedByUserId
+      ? displayLabelForUser(userById.get(row.approvedByUserId), row.approvedByUserId)
+      : null,
+    rejectedByLabel: row.rejectedByUserId
+      ? displayLabelForUser(userById.get(row.rejectedByUserId), row.rejectedByUserId)
+      : null,
+  }));
+}
 
 export interface SentEmailStatusCounts {
   inFlight: number;
@@ -101,6 +165,7 @@ const listSelectShape = {
   entityId: sentEmails.entityId,
   quoteId: sentEmails.quoteId,
   source: sentEmails.source,
+  sentByUserId: sentEmails.sentByUserId,
   sentByUserEmail: sentEmails.sentByUserEmail,
   createdAt: sentEmails.createdAt,
   sentAt: sentEmails.sentAt,
@@ -112,7 +177,7 @@ const listSelectShape = {
 
 async function attachOrderNumbersToSentEmailRows(
   rows: SentEmailListItemBase[],
-): Promise<SentEmailListItem[]> {
+): Promise<SentEmailListItemWithOrderNumber[]> {
   const orderIds = new Set<number>();
   for (const r of rows) {
     if (r.entityType !== "order") continue;
@@ -170,7 +235,8 @@ export async function listRecentSentEmails({
     .orderBy(desc(sentEmails.createdAt))
     .limit(limit)
     .offset(offset);
-  return attachOrderNumbersToSentEmailRows(rows);
+  const withOrderNumbers = await attachOrderNumbersToSentEmailRows(rows);
+  return attachAuditUserLabels(withOrderNumbers);
 }
 
 export async function listPendingApprovalEmails(
@@ -182,34 +248,12 @@ export async function listPendingApprovalEmails(
     : statusCond;
 
   const rows = await db
-    .select({
-      id: sentEmails.id,
-      status: sentEmails.status,
-      subject: sentEmails.subject,
-      toAddresses: sentEmails.toAddresses,
-      ccAddresses: sentEmails.ccAddresses,
-      fromEmail: sentEmails.fromEmail,
-      fromDisplayName: sentEmails.fromDisplayName,
-      htmlBody: sentEmails.htmlBody,
-      textBody: sentEmails.textBody,
-      errorMessage: sentEmails.errorMessage,
-      contextKey: sentEmails.contextKey,
-      entityType: sentEmails.entityType,
-      entityId: sentEmails.entityId,
-      quoteId: sentEmails.quoteId,
-      source: sentEmails.source,
-      sentByUserEmail: sentEmails.sentByUserEmail,
-      createdAt: sentEmails.createdAt,
-      sentAt: sentEmails.sentAt,
-      approvedByUserId: sentEmails.approvedByUserId,
-      approvedAt: sentEmails.approvedAt,
-      rejectedByUserId: sentEmails.rejectedByUserId,
-      rejectedAt: sentEmails.rejectedAt,
-    })
+    .select(listSelectShape)
     .from(sentEmails)
     .where(whereClause)
     .orderBy(asc(sentEmails.createdAt));
-  return attachOrderNumbersToSentEmailRows(rows);
+  const withOrderNumbers = await attachOrderNumbersToSentEmailRows(rows);
+  return attachAuditUserLabels(withOrderNumbers);
 }
 
 export async function getSentEmailStatusCounts(
