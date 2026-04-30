@@ -84,11 +84,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
         ...e,
         createdAt: e.createdAt.toISOString(),
         sentAt: e.sentAt ? e.sentAt.toISOString() : null,
+        approvedAt: e.approvedAt ? e.approvedAt.toISOString() : null,
+        rejectedAt: e.rejectedAt ? e.rejectedAt.toISOString() : null,
       })),
       emails: emails.map((e) => ({
         ...e,
         createdAt: e.createdAt.toISOString(),
         sentAt: e.sentAt ? e.sentAt.toISOString() : null,
+        approvedAt: e.approvedAt ? e.approvedAt.toISOString() : null,
+        rejectedAt: e.rejectedAt ? e.rejectedAt.toISOString() : null,
       })),
       counts,
       isApprover,
@@ -435,10 +439,74 @@ function SummaryStrip({ counts }: { counts: SentEmailStatusCounts }) {
 
 // ─── Email preview panel ──────────────────────────────────────────────────────
 
+function formatEmailDate(value: string | Date | null): string | null {
+  if (!value) return null;
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function EmailAuditStrip({
+  email,
+}: {
+  email: SentEmailListItem & {
+    createdAt: string;
+    sentAt: string | null;
+    approvedAt?: string | Date | null;
+    rejectedAt?: string | Date | null;
+  };
+}) {
+  const approvedAtLabel = formatEmailDate(
+    email.approvedAt != null ? email.approvedAt : null,
+  );
+  const rejectedAtLabel = formatEmailDate(
+    email.rejectedAt != null ? email.rejectedAt : null,
+  );
+
+  if (
+    !email.submittedByLabel &&
+    !email.approvedByLabel &&
+    !email.rejectedByLabel
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+      {email.submittedByLabel && (
+        <span>
+          <span className="font-medium">Submitted by:</span>{" "}
+          {email.submittedByLabel}
+        </span>
+      )}
+      {email.approvedByLabel && (
+        <span>
+          <span className="font-medium">Approved by:</span>{" "}
+          {email.approvedByLabel}
+          {approvedAtLabel ? ` · ${approvedAtLabel}` : ""}
+        </span>
+      )}
+      {email.rejectedByLabel && (
+        <span>
+          <span className="font-medium">Rejected by:</span>{" "}
+          {email.rejectedByLabel}
+          {rejectedAtLabel ? ` · ${rejectedAtLabel}` : ""}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function EmailPreview({
   email,
 }: {
-  email: SentEmailListItem & { createdAt: string; sentAt: string | null };
+  email: SentEmailListItem & {
+    createdAt: string;
+    sentAt: string | null;
+    approvedAt?: string | Date | null;
+    rejectedAt?: string | Date | null;
+  };
 }) {
   const [tab, setTab] = useState<"html" | "text">("html");
   const sanitized = sanitizeEmailHtml(email.htmlBody);
@@ -446,6 +514,8 @@ function EmailPreview({
   return (
     <div className="border-t border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-900/50">
       <div className="p-4 pb-2">
+        <EmailAuditStrip email={email} />
+
         <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600 dark:text-gray-400">
           <span>
             <span className="font-medium">From:</span>{" "}
@@ -522,6 +592,8 @@ function EmailPreview({
 type RowEmail = SentEmailListItem & {
   createdAt: string;
   sentAt: string | null;
+  approvedAt?: string | Date | null;
+  rejectedAt?: string | Date | null;
 };
 
 function approverFormClass(disabled: boolean) {
@@ -591,10 +663,7 @@ function EmailRow({
       : `${email.entityType} #${email.entityId}`;
 
   const displayDate = email.sentAt ?? email.createdAt;
-  const dateLabel = new Date(displayDate).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  const dateLabel = formatEmailDate(displayDate) ?? "";
 
   const showApproverBar = isApprover && email.status === "pending_approval";
   const busy = reviewFetcher.state !== "idle";
@@ -634,6 +703,11 @@ function EmailRow({
           <span className="mt-0.5 block text-sm text-gray-500 dark:text-gray-400">
             {email.toAddresses.join(", ")}
           </span>
+          {email.submittedByLabel && (
+            <span className="mt-0.5 block truncate text-xs text-gray-400 dark:text-gray-500">
+              Submitted by {email.submittedByLabel}
+            </span>
+          )}
         </span>
 
         <span className="flex flex-shrink-0 flex-col items-end gap-1">

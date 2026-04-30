@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
 import { orders, quotes, customers, vendors, orderLineItems, quoteLineItems } from "./db/schema.js"
-import { eq, count, sum, gte, inArray, and, ne, sql } from 'drizzle-orm'
+import { eq, count, sum, gte, inArray, and, ne, sql, desc } from 'drizzle-orm'
 
 export type DashboardStats = {
   actionItems: number
@@ -37,7 +37,7 @@ export type Quote = {
   created_at: Date | string
 }
 
-export async function getDashboardStats(rfqDays: number = 30): Promise<DashboardStats> {
+export async function getDashboardStats(rfqDays: number = 7): Promise<DashboardStats> {
   try {
     // Get action items (orders pending review)
     const actionItemsResult = await db
@@ -83,8 +83,11 @@ export async function getDashboardStats(rfqDays: number = 30): Promise<Dashboard
   }
 }
 
-export async function getOrders(): Promise<Order[]> {
+export async function getOrders(rfqDays: number = 7, limitCount: number = 10): Promise<Order[]> {
   try {
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - rfqDays)
+
     const result = await db
       .select({
         id: orders.id,
@@ -103,10 +106,15 @@ export async function getOrders(): Promise<Order[]> {
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .leftJoin(vendors, eq(orders.vendorId, vendors.id))
       .leftJoin(orderLineItems, eq(orders.id, orderLineItems.orderId))
-      .where(ne(orders.status, 'Archived'))
+      .where(
+        and(
+          ne(orders.status, 'Archived'),
+          gte(orders.createdAt, startDate)
+        )
+      )
       .groupBy(orders.id, customers.displayName, vendors.displayName)
-      .orderBy(orders.createdAt)
-      .limit(10)
+      .orderBy(desc(orders.createdAt))
+      .limit(limitCount)
 
     return result.map(order => ({
       id: order.id,
@@ -127,8 +135,11 @@ export async function getOrders(): Promise<Order[]> {
   }
 }
 
-export async function getQuotes(): Promise<Quote[]> {
+export async function getQuotes(rfqDays: number = 7, limitCount: number = 10): Promise<Quote[]> {
   try {
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - rfqDays)
+
     const result = await db
       .select({
         id: quotes.id,
@@ -149,11 +160,12 @@ export async function getQuotes(): Promise<Quote[]> {
       .leftJoin(quoteLineItems, eq(quotes.id, quoteLineItems.quoteId))
       .where(and(
         inArray(quotes.status, ['RFQ', 'Draft', 'Sent']),
-        eq(quotes.isArchived, false)
+        eq(quotes.isArchived, false),
+        gte(quotes.createdAt, startDate)
       ))
       .groupBy(quotes.id, customers.displayName, vendors.displayName)
-      .orderBy(quotes.createdAt)
-      .limit(10)
+      .orderBy(desc(quotes.createdAt))
+      .limit(limitCount)
 
     return result.map(quote => ({
       id: quote.id,

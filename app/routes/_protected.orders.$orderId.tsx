@@ -1655,6 +1655,9 @@ export default function OrderDetails() {
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
+  const [invoiceModalSource, setInvoiceModalSource] = useState<
+    "standard" | "order_confirmation"
+  >("standard");
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
   const [isSendOrderConfirmationModalOpen, setSendOrderConfirmationModalOpen] =
@@ -2169,6 +2172,7 @@ export default function OrderDetails() {
   }, [editOrderModalOpen, handleEditOrderSubmit]);
 
   const handleGenerateInvoice = () => {
+    setInvoiceModalSource("standard");
     setIsInvoiceModalOpen(true);
   };
 
@@ -2973,11 +2977,21 @@ export default function OrderDetails() {
       {/* Invoice PDF Modal */}
       <GenerateInvoicePdfModal
         isOpen={isInvoiceModalOpen}
-        onClose={() => setIsInvoiceModalOpen(false)}
+        onClose={() => {
+          setIsInvoiceModalOpen(false);
+          setInvoiceModalSource("standard");
+        }}
         entity={order}
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
-        autoDownload={pdfAutoDownload}
+        initialPresetId={
+          invoiceModalSource === "order_confirmation" ? "paid" : "default"
+        }
+        autoDownload={
+          invoiceModalSource === "order_confirmation"
+            ? false
+            : pdfAutoDownload
+        }
       />
 
       <GeneratePackingSlipPdfModal
@@ -3012,6 +3026,7 @@ export default function OrderDetails() {
           }
           onRequestGenerateForDocumentKind={(kind) => {
             if (kind === "invoice") {
+              setInvoiceModalSource("order_confirmation");
               setIsInvoiceModalOpen(true);
               return;
             }

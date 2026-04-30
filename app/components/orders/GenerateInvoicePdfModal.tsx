@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import PdfGenerationModal from "~/components/shared/PdfGenerationModal";
 import {
   InvoicePdfTemplate,
@@ -16,6 +16,8 @@ interface GenerateInvoicePdfModalProps {
   lineItems?: (OrderLineItem | QuoteLineItem)[];
   parts?: (Part | null)[];
   autoDownload?: boolean;
+  /** Applied when the modal opens (e.g. order confirmation → Paid). */
+  initialPresetId?: InvoicePdfPresetId;
 }
 
 export default function GenerateInvoicePdfModal({
@@ -25,9 +27,17 @@ export default function GenerateInvoicePdfModal({
   lineItems = [],
   parts = [],
   autoDownload = true,
+  initialPresetId = "default",
 }: GenerateInvoicePdfModalProps) {
-  const [presetId, setPresetId] = useState<InvoicePdfPresetId>("default");
+  const [presetId, setPresetId] = useState<InvoicePdfPresetId>(initialPresetId);
   const isOrder = "orderNumber" in entity;
+
+  useLayoutEffect(() => {
+    if (isOpen) {
+      setPresetId(initialPresetId);
+    }
+  }, [isOpen, initialPresetId]);
+
   const apiEndpoint = isOrder
     ? `/orders/${entity.orderNumber}`
     : `/quotes/${entity.id}`;
