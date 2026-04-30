@@ -15,6 +15,11 @@ interface OrderActionsDropdownProps {
   hasCustomer?: boolean;
   showOrderConfirmationInMenu?: boolean;
   orderConfirmationMenuDisabled?: boolean;
+  /** Import billing/shipping from quote payment checkout (when flag on + quote has payment link) */
+  onImportCheckoutAddresses?: () => void;
+  showImportCheckoutAddresses?: boolean;
+  importCheckoutAddressesDisabled?: boolean;
+  importCheckoutAddressesTooltip?: string;
 }
 
 export default function OrderActionsDropdown({
@@ -31,6 +36,10 @@ export default function OrderActionsDropdown({
   hasCustomer = false,
   showOrderConfirmationInMenu = false,
   orderConfirmationMenuDisabled = false,
+  onImportCheckoutAddresses,
+  showImportCheckoutAddresses = false,
+  importCheckoutAddressesDisabled = false,
+  importCheckoutAddressesTooltip = "",
 }: OrderActionsDropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -192,6 +201,40 @@ export default function OrderActionsDropdown({
           },
         ]
       : []),
+    ...(onImportCheckoutAddresses && showImportCheckoutAddresses
+      ? [
+          {
+            icon: (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+            ),
+            label: "Addresses",
+            onClick: () => {
+              onImportCheckoutAddresses();
+              onClose();
+            },
+            disabled: importCheckoutAddressesDisabled,
+            disabledTooltip: importCheckoutAddressesTooltip || undefined,
+          },
+        ]
+      : []),
     ...(onDuplicate
       ? [
           {
@@ -233,16 +276,15 @@ export default function OrderActionsDropdown({
           const isInvoiceButton = action.label === "Invoice";
           const isPackingSlipButton = action.label === "Packing slip";
           const isConfirmationButton = action.label === "Confirmation";
-          const showTooltip =
-            isDisabled &&
-            (isPOButton ||
-              isInvoiceButton ||
-              isPackingSlipButton ||
-              isConfirmationButton);
-
+          const customTooltip =
+            "disabledTooltip" in action && action.disabledTooltip
+              ? action.disabledTooltip
+              : "";
           let tooltipText = "";
-          if (showTooltip) {
-            if (isPOButton) {
+          if (isDisabled) {
+            if (customTooltip) {
+              tooltipText = customTooltip;
+            } else if (isPOButton) {
               tooltipText = "Purchase Orders require a vendor";
             } else if (isInvoiceButton) {
               tooltipText = "Invoices require a customer";
@@ -253,6 +295,7 @@ export default function OrderActionsDropdown({
                 "Customer confirmation is unavailable: missing customer email, email template, or a send already completed.";
             }
           }
+          const showTooltip = isDisabled && tooltipText.length > 0;
 
           return (
             <div key={index} className="relative group/tooltip">
@@ -278,7 +321,7 @@ export default function OrderActionsDropdown({
                 </span>
               </button>
               {showTooltip && (
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg whitespace-nowrap opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-opacity duration-200 pointer-events-none z-[60]">
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg max-w-xs whitespace-normal text-left opacity-0 invisible group-hover/tooltip:opacity-100 group-hover/tooltip:visible transition-opacity duration-200 pointer-events-none z-[60]">
                   {tooltipText}
                   <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
                 </div>

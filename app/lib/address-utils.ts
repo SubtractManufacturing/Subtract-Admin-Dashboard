@@ -90,6 +90,20 @@ export function isAddressEmpty(address: Address): boolean {
 }
 
 /**
+ * True when there is no street/city/state/ZIP data — only a default country (e.g. schema default "US")
+ * does not count as an existing address for merge/import flows.
+ */
+export function isAddressMeaningfullyEmpty(address: Address): boolean {
+  return !(
+    address.line1?.trim() ||
+    address.line2?.trim() ||
+    address.city?.trim() ||
+    address.state?.trim() ||
+    address.postalCode?.trim()
+  );
+}
+
+/**
  * Convert address object to format expected by shipping APIs
  * (e.g., UPS, FedEx, USPS, ShipStation)
  */

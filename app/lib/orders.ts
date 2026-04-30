@@ -21,6 +21,7 @@ export type OrderWithRelations = {
   customerId: number | null
   vendorId: number | null
   quoteId: number | null
+  sourceQuoteId: number | null
   status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   totalPrice: string | null
   vendorPay: string | null
@@ -59,6 +60,7 @@ export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
         customerId: orders.customerId,
         vendorId: orders.vendorId,
         quoteId: orders.quoteId,
+        sourceQuoteId: orders.sourceQuoteId,
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
@@ -107,6 +109,7 @@ export async function getOrder(id: number): Promise<OrderWithRelations | null> {
         customerId: orders.customerId,
         vendorId: orders.vendorId,
         quoteId: orders.quoteId,
+        sourceQuoteId: orders.sourceQuoteId,
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
@@ -139,6 +142,7 @@ export async function getOrderByNumber(orderNumber: string): Promise<OrderWithRe
         customerId: orders.customerId,
         vendorId: orders.vendorId,
         quoteId: orders.quoteId,
+        sourceQuoteId: orders.sourceQuoteId,
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
@@ -229,6 +233,7 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
         customerId: orders.customerId,
         vendorId: orders.vendorId,
         quoteId: orders.quoteId,
+        sourceQuoteId: orders.sourceQuoteId,
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
@@ -391,6 +396,7 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
         customerId: orders.customerId,
         vendorId: orders.vendorId,
         quoteId: orders.quoteId,
+        sourceQuoteId: orders.sourceQuoteId,
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,

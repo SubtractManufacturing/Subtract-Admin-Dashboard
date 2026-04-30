@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import PdfGenerationModal from "~/components/shared/PdfGenerationModal";
 import {
   InvoicePdfTemplate,
@@ -32,7 +32,7 @@ export default function GenerateInvoicePdfModal({
   const [presetId, setPresetId] = useState<InvoicePdfPresetId>(initialPresetId);
   const isOrder = "orderNumber" in entity;
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (isOpen) {
       setPresetId(initialPresetId);
     }
