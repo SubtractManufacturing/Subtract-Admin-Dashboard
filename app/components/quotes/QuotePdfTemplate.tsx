@@ -7,9 +7,8 @@ import {
   type PdfPresetOption,
 } from "~/lib/pdf-utils";
 import {
-  extractBillingAddress,
   extractShippingAddress,
-  isAddressComplete,
+  isAddressMeaningfullyEmpty,
 } from "~/lib/address-utils";
 
 export const QUOTE_PDF_PRESETS = [
@@ -564,78 +563,129 @@ export function QuotePdfTemplate({
           {/* Customer Details */}
           <div className="customer-details">
             <div className="detail-section">
-              <h3>Bill To</h3>
+              <h3>Customer</h3>
               <p className="primary">
                 <span
                   className={editable ? "editable" : ""}
                   contentEditable={editable}
                   suppressContentEditableWarning
                 >
-                  {quote.customer?.displayName || ""}
+                  {quote.customer?.displayName ||
+                    quote.customer?.companyName ||
+                    ""}
                 </span>
               </p>
-              <p>
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  {quote.customer?.email || ""}
-                </span>
-              </p>
+              {quote.customer?.email && (
+                <p>
+                  <span
+                    className={editable ? "editable" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    {quote.customer.email}
+                  </span>
+                </p>
+              )}
+              {editable && !quote.customer?.email && (
+                <p>
+                  <span
+                    className="editable placeholder-text"
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    Email
+                  </span>
+                </p>
+              )}
+              {quote.customer?.phone && (
+                <p>
+                  <span
+                    className={editable ? "editable" : ""}
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    {quote.customer.phone}
+                  </span>
+                </p>
+              )}
+              {editable && !quote.customer?.phone && (
+                <p>
+                  <span
+                    className="editable placeholder-text"
+                    contentEditable={editable}
+                    suppressContentEditableWarning
+                  >
+                    Phone
+                  </span>
+                </p>
+              )}
               {(quote.customer || editable) &&
                 (() => {
-                  const billingAddress = quote.customer
-                    ? extractBillingAddress(quote.customer)
+                  const shippingAddress = quote.customer
+                    ? extractShippingAddress(quote.customer)
                     : null;
-                  const hasBillingAddress =
-                    billingAddress != null &&
-                    isAddressComplete(billingAddress);
+                  const hasShippingLines =
+                    shippingAddress != null &&
+                    !isAddressMeaningfullyEmpty(shippingAddress);
 
-                  if (hasBillingAddress && billingAddress) {
+                  if (hasShippingLines && shippingAddress) {
+                    const cityStatePart = [
+                      shippingAddress.city,
+                      shippingAddress.state,
+                    ]
+                      .filter(Boolean)
+                      .join(", ");
+                    const cityStateZip = [
+                      cityStatePart,
+                      shippingAddress.postalCode?.trim() || "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+
                     return (
                       <>
-                        {billingAddress.line1 && (
+                        {shippingAddress.line1 && (
                           <p>
                             <span
                               className={editable ? "editable" : ""}
                               contentEditable={editable}
                               suppressContentEditableWarning
                             >
-                              {billingAddress.line1}
+                              {shippingAddress.line1}
                             </span>
                           </p>
                         )}
-                        {billingAddress.line2 && (
+                        {shippingAddress.line2 && (
                           <p>
                             <span
                               className={editable ? "editable" : ""}
                               contentEditable={editable}
                               suppressContentEditableWarning
                             >
-                              {billingAddress.line2}
+                              {shippingAddress.line2}
                             </span>
                           </p>
                         )}
-                        <p>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {billingAddress.city}, {billingAddress.state}{" "}
-                            {billingAddress.postalCode}
-                          </span>
-                        </p>
-                        {billingAddress.country &&
-                          billingAddress.country !== "US" && (
+                        {cityStateZip && (
+                          <p>
+                            <span
+                              className={editable ? "editable" : ""}
+                              contentEditable={editable}
+                              suppressContentEditableWarning
+                            >
+                              {cityStateZip}
+                            </span>
+                          </p>
+                        )}
+                        {shippingAddress.country &&
+                          shippingAddress.country !== "US" && (
                             <p>
                               <span
                                 className={editable ? "editable" : ""}
                                 contentEditable={editable}
                                 suppressContentEditableWarning
                               >
-                                {billingAddress.country}
+                                {shippingAddress.country}
                               </span>
                             </p>
                           )}
@@ -645,28 +695,16 @@ export function QuotePdfTemplate({
 
                   if (editable) {
                     return (
-                      <>
-                        <p>
-                          <span
-                            className="editable placeholder-text address-placeholder"
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                            data-default-text="Address Line 1"
-                          >
-                            Address Line 1
-                          </span>
-                        </p>
-                        <p>
-                          <span
-                            className="editable placeholder-text address-placeholder"
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                            data-default-text="City, State ZIP"
-                          >
-                            City, State ZIP
-                          </span>
-                        </p>
-                      </>
+                      <p>
+                        <span
+                          className="editable placeholder-text address-placeholder"
+                          contentEditable={editable}
+                          suppressContentEditableWarning
+                          data-default-text="Shipping address"
+                        >
+                          Shipping address
+                        </span>
+                      </p>
                     );
                   }
 
@@ -674,7 +712,7 @@ export function QuotePdfTemplate({
                 })()}
             </div>
             <div className="detail-section">
-              <h3>Shipping Information</h3>
+              <h3>Shipping details</h3>
               <p className="primary">
                 Method:{" "}
                 <span
@@ -705,96 +743,6 @@ export function QuotePdfTemplate({
                   Payment in Advance
                 </span>
               </p>
-              {quote.customer &&
-                (() => {
-                  const shippingAddress = extractShippingAddress(
-                    quote.customer,
-                  );
-                  const hasShippingAddress =
-                    isAddressComplete(shippingAddress);
-
-                  if (hasShippingAddress) {
-                    return (
-                      <>
-                        <p className="primary">Ship To</p>
-                        {shippingAddress.line1 && (
-                          <p>
-                            <span
-                              className={editable ? "editable" : ""}
-                              contentEditable={editable}
-                              suppressContentEditableWarning
-                            >
-                              {shippingAddress.line1}
-                            </span>
-                          </p>
-                        )}
-                        {shippingAddress.line2 && (
-                          <p>
-                            <span
-                              className={editable ? "editable" : ""}
-                              contentEditable={editable}
-                              suppressContentEditableWarning
-                            >
-                              {shippingAddress.line2}
-                            </span>
-                          </p>
-                        )}
-                        <p>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {shippingAddress.city}, {shippingAddress.state}{" "}
-                            {shippingAddress.postalCode}
-                          </span>
-                        </p>
-                        {shippingAddress.country &&
-                          shippingAddress.country !== "US" && (
-                            <p>
-                              <span
-                                className={editable ? "editable" : ""}
-                                contentEditable={editable}
-                                suppressContentEditableWarning
-                              >
-                                {shippingAddress.country}
-                              </span>
-                            </p>
-                          )}
-                      </>
-                    );
-                  }
-
-                  if (editable) {
-                    return (
-                      <>
-                        <p className="primary">Ship To</p>
-                        <p>
-                          <span
-                            className="editable placeholder-text address-placeholder"
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                            data-default-text="Shipping Address Line 1"
-                          >
-                            Shipping Address Line 1
-                          </span>
-                        </p>
-                        <p>
-                          <span
-                            className="editable placeholder-text address-placeholder"
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                            data-default-text="Shipping City, State ZIP"
-                          >
-                            Shipping City, State ZIP
-                          </span>
-                        </p>
-                      </>
-                    );
-                  }
-
-                  return null;
-                })()}
             </div>
           </div>
 
