@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.14...v1.4.0) (2026-05-01)
+
+
+### Features
+
+* add auto address collection via stripe at quote -&gt; order conversion ([c18c86c](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/c18c86ccc4b93047745769c1d158ac1226480329))
+
+
+### Bug Fixes
+
+* More Email Visibility ([34bdcb6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/34bdcb6f2f32a892ae4c005fb931644a3cb0d7c4))
+* quote address hotfix ([8271604](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/8271604d3ee045d697235a1b545eef7ba9157292))
+
 ## [1.3.14](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.13...v1.3.14) (2026-04-28)
 
 
