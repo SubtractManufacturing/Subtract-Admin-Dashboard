@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.4.0...v1.4.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* add pricing template to quote PDF and fix line item naming bug ([b16bb79](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/b16bb792f00a8161d6c6266cbbf37f8a60736c07))
+
 ## [1.4.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.3.14...v1.4.0) (2026-05-01)
 
 
