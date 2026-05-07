@@ -192,6 +192,10 @@ export default function CheckoutAddressConflictModal({
       setShipping(null);
       setPhone(null);
     }
+    // We intentionally key this effect on `preview?.quoteId` rather than the
+    // full `preview` object so the choices only reset when the modal opens
+    // for a new quote, not on every parent re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, preview?.quoteId]);
 
   if (!open) return null;

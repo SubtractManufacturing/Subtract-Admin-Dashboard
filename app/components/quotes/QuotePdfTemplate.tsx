@@ -13,6 +13,7 @@ import {
 
 export const QUOTE_PDF_PRESETS = [
   { id: "default", label: "Default" },
+  { id: "lineItemPricing", label: "Line item pricing" },
 ] as const satisfies readonly PdfPresetOption[];
 
 export type QuotePdfPresetId = (typeof QUOTE_PDF_PRESETS)[number]["id"];
@@ -21,13 +22,17 @@ function getQuotePresetFields(
   presetId: QuotePdfPresetId,
   ctx: { partsSubtotal: number; grandTotal: number },
 ) {
+  const base = {
+    partsSubtotalDisplay: formatCurrency(ctx.partsSubtotal),
+    grandTotalDisplay: formatCurrency(ctx.grandTotal),
+    showLinePricing: false,
+  };
   switch (presetId) {
+    case "lineItemPricing":
+      return { ...base, showLinePricing: true };
     case "default":
     default:
-      return {
-        partsSubtotalDisplay: formatCurrency(ctx.partsSubtotal),
-        grandTotalDisplay: formatCurrency(ctx.grandTotal),
-      };
+      return base;
   }
 }
 
@@ -381,6 +386,17 @@ export function QuotePdfTemplate({
           .parts-section td:nth-child(4) {
             width: 60px;
             text-align: center;
+            white-space: nowrap;
+          }
+
+          .parts-section th:nth-child(5),
+          .parts-section td:nth-child(5),
+          .parts-section th:nth-child(6),
+          .parts-section td:nth-child(6) {
+            width: auto;
+            min-width: 90px;
+            max-width: 130px;
+            text-align: right;
             white-space: nowrap;
           }
 
@@ -757,6 +773,12 @@ export function QuotePdfTemplate({
                     <th>Description</th>
                     <th>Material</th>
                     <th>Qty</th>
+                    {quotePresetFields.showLinePricing && (
+                      <>
+                        <th>Unit Price</th>
+                        <th>Line Total</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -802,6 +824,28 @@ export function QuotePdfTemplate({
                             {item.quantity}
                           </span>
                         </td>
+                        {quotePresetFields.showLinePricing && (
+                          <>
+                            <td>
+                              <span
+                                className={editable ? "editable" : ""}
+                                contentEditable={editable}
+                                suppressContentEditableWarning
+                              >
+                                {formatCurrency(item.unitPrice)}
+                              </span>
+                            </td>
+                            <td>
+                              <span
+                                className={editable ? "editable" : ""}
+                                contentEditable={editable}
+                                suppressContentEditableWarning
+                              >
+                                {formatCurrency(item.totalPrice)}
+                              </span>
+                            </td>
+                          </>
+                        )}
                       </tr>
                     );
                   })}

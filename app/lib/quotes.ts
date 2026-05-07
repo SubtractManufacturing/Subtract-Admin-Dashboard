@@ -1791,6 +1791,7 @@ export async function createQuoteWithParts(
       await db.insert(quoteLineItems).values({
         quoteId: quote.id,
         quotePartId: quotePart.id,
+        name: part.partName,
         quantity: part.quantity,
         unitPrice: "0",
         totalPrice: "0",

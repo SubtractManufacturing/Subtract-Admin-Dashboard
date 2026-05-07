@@ -426,8 +426,8 @@ export default function NewQuoteModal({
         }
         const defaultName =
           config.partName ||
-          config.file?.name ||
-          config.drawings?.[0]?.name ||
+          (config.file ? baseFileName(config.file) : undefined) ||
+          (config.drawings?.[0] ? baseFileName(config.drawings[0]) : undefined) ||
           `Part ${index + 1}`;
         formData.append(`parts[${index}][name]`, defaultName);
         formData.append(`parts[${index}][material]`, config.material || "");
