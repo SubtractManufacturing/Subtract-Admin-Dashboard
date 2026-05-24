@@ -41,6 +41,7 @@ import {
   isFeatureEnabled,
   isOutboundEmailEnabled,
   isStripePaymentLinksEnabled,
+  shouldHideLineItemThumbnails,
   FEATURE_FLAGS,
 } from "~/lib/featureFlags";
 import { deactivateQuotePaymentLink } from "~/lib/stripe.server";
@@ -328,6 +329,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     bananaEnabled,
     stripeEnabled,
     outboundEmailEnabled,
+    hideLineItemThumbnails,
   ] = await Promise.all([
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
@@ -337,6 +339,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
     isStripePaymentLinksEnabled(),
     isOutboundEmailEnabled(),
+    shouldHideLineItemThumbnails(),
   ]);
 
   let quoteSendEmailReady = false;
@@ -444,6 +447,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       bananaModelUrl,
       stripeEnabled,
       outboundEmailEnabled,
+      hideLineItemThumbnails,
       quoteSendEmailReady,
       quoteSendEmailDefaultSubject,
       quoteSendEditableSlots,
@@ -2247,6 +2251,7 @@ export default function QuoteDetail() {
     bananaModelUrl,
     stripeEnabled,
     outboundEmailEnabled,
+    hideLineItemThumbnails,
     quoteSendEmailReady,
     quoteSendEmailDefaultSubject,
     quoteSendEditableSlots,
@@ -3907,6 +3912,7 @@ export default function QuoteDetail() {
           <LineItemsSection
             items={normalizedLineItems}
             entityType="quote"
+            hideThumbnails={hideLineItemThumbnails}
             readOnly={isPricingLocked}
             subtotal={formatCurrency(optimisticTotal)}
             onAdd={handleAddLineItem}

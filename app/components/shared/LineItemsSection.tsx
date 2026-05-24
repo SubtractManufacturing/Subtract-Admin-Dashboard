@@ -11,6 +11,8 @@ import type {
 interface LineItemsSectionProps {
   items: NormalizedLineItem[];
   entityType: "order" | "quote";
+  /** When true, line items show CAD placeholder instead of raster 3D thumbnails (click still opens viewer). */
+  hideThumbnails?: boolean;
   readOnly?: boolean;
   subtotal: string;
   onAdd: () => void;
@@ -37,6 +39,7 @@ interface LineItemsSectionProps {
 export function LineItemsSection({
   items,
   entityType,
+  hideThumbnails,
   readOnly,
   subtotal,
   onAdd,
@@ -172,6 +175,7 @@ export function LineItemsSection({
                   key={item.id}
                   item={item}
                   entityType={entityType}
+                  hideThumbnails={hideThumbnails}
                   showSpecs={showSpecs}
                   readOnly={readOnly}
                   showActions={showActions}

@@ -2246,6 +2246,7 @@ export default function Settings() {
                           flag.key === "cad_revisions_dev" ||
                           flag.key === "display_version_header" ||
                           flag.key === "email_example_layouts_dev" ||
+                          flag.key === "hide_thumbnails" ||
                           flag.key === "mesh_uploads_all" ||
                           flag.key === "mesh_uploads_dev" ||
                           flag.key === "outbound_email_enabled" ||
