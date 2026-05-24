@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.4.1...v1.4.2) (2026-05-24)
+
+
+### Bug Fixes
+
+* add thumbnail filtering with feature flag ([43b6551](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/43b6551d5447b9fbd012423e5bd5d6b3f93bafbd))
+* cleanup known DB connection errors ([3433fbb](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/3433fbb9bf305f2f59c2124a4c4753090decb85a))
+
 ## [1.4.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.4.0...v1.4.1) (2026-05-07)
 
 
