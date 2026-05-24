@@ -21,6 +21,7 @@ interface LineItemRowProps {
   item: NormalizedLineItem;
   entityType: "order" | "quote";
   showSpecs: boolean;
+  hideThumbnails?: boolean;
   readOnly?: boolean;
   showActions?: boolean;
   editingField: { lineItemId: number; field: LineItemEditableField } | null;
@@ -69,6 +70,7 @@ export function LineItemRow({
   item,
   entityType,
   showSpecs,
+  hideThumbnails,
   readOnly,
   showActions = true,
   editingField,
@@ -148,7 +150,7 @@ export function LineItemRow({
 
   /** Raster in part.thumbnailUrl is the mesh/CAD preview, not the drawing PDF (see drawing-only quote parts). */
   const cadThumbnailImage = Boolean(
-    part?.thumbnailUrl && !part.usesPlaceholderCad
+    part?.thumbnailUrl && !part.usesPlaceholderCad && !hideThumbnails,
   );
 
   const startFieldEdit = (

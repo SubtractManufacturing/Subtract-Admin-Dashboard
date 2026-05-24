@@ -32,6 +32,7 @@ import {
   FEATURE_FLAGS,
   canUserUploadCadRevision,
   isStripePaymentLinksEnabled,
+  shouldHideLineItemThumbnails,
 } from "~/lib/featureFlags";
 import { isStripeConfigured } from "~/lib/stripe.server";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
@@ -235,12 +236,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     canRevise,
     bananaEnabled,
     outboundEmailEnabled,
+    hideLineItemThumbnails,
   ] = await Promise.all([
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
     getEventsForOrder(order.id, 10),
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
     isOutboundEmailEnabled(),
+    shouldHideLineItemThumbnails(),
   ]);
 
   // Get banana model URL if feature is enabled
@@ -359,6 +362,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       bananaEnabled,
       bananaModelUrl,
       outboundEmailEnabled,
+      hideLineItemThumbnails,
       orderConfirmationEmailReady,
       orderConfirmationEmailDefaultSubject,
       orderConfirmationEditableSlots,
@@ -1676,6 +1680,7 @@ export default function OrderDetails() {
     bananaEnabled,
     bananaModelUrl,
     outboundEmailEnabled,
+    hideLineItemThumbnails,
     orderConfirmationEmailReady,
     orderConfirmationEmailDefaultSubject,
     orderConfirmationEditableSlots,
@@ -2968,6 +2973,7 @@ export default function OrderDetails() {
           <LineItemsSection
             items={normalizedLineItems}
             entityType="order"
+            hideThumbnails={hideLineItemThumbnails}
             subtotal={formatCurrency(orderTotalPrice)}
             onAdd={handleAddLineItem}
             onDelete={handleDeleteLineItem}

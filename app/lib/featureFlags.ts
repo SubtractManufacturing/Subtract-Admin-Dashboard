@@ -27,6 +27,7 @@ export const FEATURE_FLAGS = {
    * in Admin → Email and may be assigned to new templates.
    */
   EMAIL_EXAMPLE_LAYOUTS_DEV: "email_example_layouts_dev",
+  HIDE_THUMBNAILS: "hide_thumbnails",
 } as const;
 
 // Default feature flags with their metadata
@@ -152,6 +153,13 @@ const DEFAULT_FLAGS: Array<
     name: "Show Example Email Layouts (Admin)",
     description:
       "Developer-only: list example email layouts (e.g. example-kitchen-sink) in Admin → Email when creating or editing templates.",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.HIDE_THUMBNAILS,
+    name: "Hide Thumbnails",
+    description:
+      "Show placeholder icons instead of 3D part thumbnail images in quote and order line items. Clicking still opens the 3D viewer.",
     enabled: false,
   },
 ];
@@ -323,6 +331,10 @@ export async function canUserUploadCadRevision(userRole?: string | null) {
 
 export async function shouldShowVersionInHeader() {
   return isFeatureEnabled(FEATURE_FLAGS.DISPLAY_VERSION_HEADER);
+}
+
+export async function shouldHideLineItemThumbnails() {
+  return isFeatureEnabled(FEATURE_FLAGS.HIDE_THUMBNAILS);
 }
 
 export async function isStripePaymentLinksEnabled(): Promise<boolean> {
