@@ -31,11 +31,12 @@ export function formatEventForTimeline(event: EventLog): {
       const field = updatedFields[0];
       const change = changes ? changes[field] : undefined;
 
-      if (field === "shipDate" && change) {
+      // Legacy field name shipDate — events from v1.4.2 and earlier
+      if ((field === "deliveryDate" || field === "shipDate") && change) {
         const oldDate = change.old ? new Date(change.old as string | number).toLocaleDateString() : "Not set";
         const newDate = change.new ? new Date(change.new as string | number).toLocaleDateString() : "Not set";
         return {
-          title: "Ship Date Updated",
+          title: "Delivery Date Updated",
           description: `${oldDate} → ${newDate}`
         };
       }
@@ -44,7 +45,7 @@ export function formatEventForTimeline(event: EventLog): {
         const oldDate = change.old ? new Date(change.old as string | number).toLocaleDateString() : "Not set";
         const newDate = change.new ? new Date(change.new as string | number).toLocaleDateString() : "Not set";
         return {
-          title: "Due Date Updated",
+          title: "Delivery Date Updated",
           description: `${oldDate} → ${newDate}`
         };
       }

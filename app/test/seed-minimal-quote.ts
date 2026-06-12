@@ -39,6 +39,8 @@ export async function seedMinimalQuote(): Promise<SeededQuoteIds> {
       status: "RFQ",
       total: "100.00",
       subtotal: "90.00",
+      leadTimeBusinessDaysMin: 7,
+      leadTimeBusinessDaysMax: 12,
     })
     .returning({ id: quotes.id });
 

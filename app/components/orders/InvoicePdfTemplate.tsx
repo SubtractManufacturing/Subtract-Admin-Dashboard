@@ -38,16 +38,16 @@ function getInvoicePresetFields(
   ctx: {
     total: number;
     isOrder: boolean;
-    shipDate: Date | string | null | undefined;
+    deliveryDate: Date | string | null | undefined;
     customerPaymentTerms: string | null | undefined;
   },
 ): InvoicePresetFields {
   const shipDueDate =
-    ctx.shipDate == null
+    ctx.deliveryDate == null
       ? null
-      : ctx.shipDate instanceof Date
-        ? ctx.shipDate
-        : new Date(ctx.shipDate);
+      : ctx.deliveryDate instanceof Date
+        ? ctx.deliveryDate
+        : new Date(ctx.deliveryDate);
   const defaultDue =
     ctx.isOrder && shipDueDate
       ? formatDate(shipDueDate)
@@ -158,13 +158,13 @@ export function InvoicePdfTemplate({
   };
 
   const total = calculateTotal();
-  const shipDate = isOrder
-    ? (entity as OrderWithRelations).shipDate
+  const deliveryDate = isOrder
+    ? (entity as OrderWithRelations).deliveryDate
     : undefined;
   const invoicePresetFields = getInvoicePresetFields(presetId, {
     total,
     isOrder,
-    shipDate,
+    deliveryDate,
     customerPaymentTerms: entity.customer?.paymentTerms ?? undefined,
   });
 
@@ -499,7 +499,7 @@ export function InvoicePdfTemplate({
                 <span className="value">{formatDate(new Date())}</span>
               </div>
               <div className="info-item">
-                <span className="label">Due Date</span>
+                <span className="label">Delivery Date</span>
                 <span className="value">
                   <span
                     className={editable ? "editable" : ""}

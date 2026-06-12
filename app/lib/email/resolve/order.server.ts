@@ -10,6 +10,11 @@ import {
   formatPartMaterials,
   formatPartQtys,
 } from "./formatters";
+import {
+  formatDateForDisplay,
+  formatDateRangeForDisplay,
+} from "~/lib/date-display";
+import { formatLeadTimeBusinessDays } from "~/lib/business-days";
 
 /**
  * Resolve all applicable merge tokens for an order entity.
@@ -82,7 +87,6 @@ export async function resolveOrderTokens(entityId: string): Promise<ResolvedToke
   if (lineItems.length > 0) {
     tokens.lineItemCount = String(lineItems.length);
 
-    // Order line items may have a joined Part which carries material/tolerance/finishing
     const normalized: NormalizedPart[] = lineItems
       .filter((li) => li.name)
       .map((li) => ({
@@ -110,9 +114,36 @@ export async function resolveOrderTokens(entityId: string): Promise<ResolvedToke
   }
 
   // ── Commerce / optional ─────────────────────────────────────────────
-  if (order.shipDate) {
-    const formatted = formatDate(order.shipDate);
+  if (order.deliveryDate) {
+    if (order.deliveryDateStart) {
+      const rangeFormatted = formatDateRangeForDisplay(
+        order.deliveryDateStart,
+        order.deliveryDate,
+        { includeTimeZoneLabel: false }
+      );
+      if (rangeFormatted) tokens.estimatedDeliveryDate = rangeFormatted;
+    } else {
+      const formatted = formatDateForDisplay(order.deliveryDate, {
+        includeTimeZoneLabel: false,
+      });
+      if (formatted) tokens.estimatedDeliveryDate = formatted;
+    }
+    const formatted = formatDate(order.deliveryDate);
     if (formatted) tokens.shipDate = formatted;
+  }
+
+  if (order.leadTime != null) {
+    if (
+      order.leadTimeBusinessDaysMin != null &&
+      order.leadTimeBusinessDaysMin !== order.leadTime
+    ) {
+      tokens.leadTimeBusinessDays = formatLeadTimeBusinessDays(
+        order.leadTimeBusinessDaysMin,
+        order.leadTime
+      );
+    } else {
+      tokens.leadTimeBusinessDays = formatLeadTimeBusinessDays(order.leadTime);
+    }
   }
 
   return tokens;

@@ -7,6 +7,12 @@ import {
   type PdfPresetOption,
 } from "~/lib/pdf-utils";
 import {
+  addBusinessDays,
+  formatLeadTimeBusinessDays,
+  startOfTodayInAppTz,
+} from "~/lib/business-days";
+import { formatDateForDisplay } from "~/lib/date-display";
+import {
   extractShippingAddress,
   isAddressMeaningfullyEmpty,
 } from "~/lib/address-utils";
@@ -183,6 +189,18 @@ export function QuotePdfTemplate({
   };
 
   const validUntilDisplay = calculateValidUntil();
+
+  const estimatedDeliveryDisplay = (() => {
+    const min = quote.leadTimeBusinessDaysMin;
+    const max = quote.leadTimeBusinessDaysMax;
+    if (min == null || max == null) return null;
+    const today = startOfTodayInAppTz();
+    const end = addBusinessDays(today, max);
+    return {
+      date: formatDateForDisplay(end, { includeTimeZoneLabel: false }),
+      leadTime: `${formatLeadTimeBusinessDays(min, max)} (ARO)`,
+    };
+  })();
 
   const partsSubtotal = partsLineItems.reduce(
     (sum, item) => sum + parseFloat(item.totalPrice?.toString() || "0"),
@@ -741,13 +759,11 @@ export function QuotePdfTemplate({
               </p>
               <p>
                 Lead Time:{" "}
-                <span
-                  className={editable ? "editable" : ""}
-                  contentEditable={editable}
-                  suppressContentEditableWarning
-                >
-                  10-12 business days
-                </span>
+                <span>{estimatedDeliveryDisplay?.leadTime ?? "TBD"}</span>
+              </p>
+              <p>
+                Estimated Delivery:{" "}
+                <span>{estimatedDeliveryDisplay?.date ?? "TBD"}</span>
               </p>
               <p>
                 Terms:{" "}

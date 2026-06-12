@@ -199,10 +199,15 @@ Place `{{partSpecs}}` on its own paragraph. In markdown body slots, the text ren
 | ----- | ----- | ------------ | -------- |
 | `{{paymentLinkUrl}}` | Payment Link URL | quote | when-available |
 | `{{validUntil}}` | Valid Until | quote | when-available |
-| `{{shipDate}}` | Ship Date | order | when-available |
+| `{{estimatedDeliveryDate}}` | Estimated Delivery Date | quote, order | when-available |
+| `{{leadTimeBusinessDays}}` | Lead Time (Business Days) | quote, order | when-available |
+| `{{shipDate}}` | Ship Date (deprecated) | order | when-available |
 
 - `{{paymentLinkUrl}}` is the quote’s **active** Stripe payment link URL. When Stripe payment links are enabled and the quote is payable (positive total, Stripe configured, etc.), a link is **created when the email is rendered** (preview or send) if one does not exist yet, then stored on the quote and merged into the template. If payment links are disabled or the quote cannot be made payable, referencing this token will still fail validation.
-- `{{validUntil}}` and `{{shipDate}}` are formatted as `Month D, YYYY`.
+- `{{validUntil}}` is formatted as `Month D, YYYY`.
+- `{{estimatedDeliveryDate}}` shows a single date or range. On quotes it is computed from stored lead-time business days at send time; on orders it reflects the stored Delivery Date (or range when applicable).
+- `{{leadTimeBusinessDays}}` shows lead time in business days, e.g. `12 Business Days` or `11–13 Business Days`.
+- `{{shipDate}}` is a **deprecated** alias for the order delivery date (`Month D, YYYY`). Prefer `{{estimatedDeliveryDate}}` in new templates.
 
 ---
 
@@ -255,5 +260,7 @@ Admin-defined snippets (Admin → Email → Snippets) add custom reusable text. 
 {{partCount}}           3
 {{paymentLinkUrl}}      https://buy.stripe.com/…
 {{validUntil}}          April 30, 2026
-{{shipDate}}            May 15, 2026
+{{estimatedDeliveryDate}}  May 12–15, 2026
+{{leadTimeBusinessDays}}   11–13 Business Days
+{{shipDate}}            May 15, 2026 (deprecated — use estimatedDeliveryDate)
 ```

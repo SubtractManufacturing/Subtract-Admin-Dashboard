@@ -19,7 +19,7 @@ export type Order = {
   status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   quantity: number
   po_amount: string | null
-  ship_date: Date | string | null
+  delivery_date: Date | string | null
   created_at: Date | string
 }
 
@@ -96,7 +96,7 @@ export async function getOrders(rfqDays: number = 7, limitCount: number = 10): P
         vendor_id: orders.vendorId,
         status: orders.status,
         total_price: orders.totalPrice,
-        ship_date: orders.shipDate,
+        delivery_date: orders.deliveryDate,
         created_at: orders.createdAt,
         customer_name: customers.displayName,
         vendor_name: vendors.displayName,
@@ -126,7 +126,7 @@ export async function getOrders(rfqDays: number = 7, limitCount: number = 10): P
       status: order.status,
       quantity: Number(order.line_item_count) || 0,
       po_amount: order.total_price,
-      ship_date: order.ship_date,
+      delivery_date: order.delivery_date,
       created_at: order.created_at
     }))
   } catch (error) {

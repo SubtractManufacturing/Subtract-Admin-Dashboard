@@ -110,6 +110,13 @@ import { IconButton } from "~/components/shared/IconButton";
 import { FilePlusCorner } from "lucide-react";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
+import QuoteDeliveryDateCard from "~/components/quotes/QuoteDeliveryDateCard";
+import {
+  addBusinessDays,
+  formatLeadTimeBusinessDays,
+  leadTimeOptionToBusinessDays,
+  startOfTodayInAppTz,
+} from "~/lib/business-days";
 import GenerateQuotePdfModal from "~/components/quotes/GenerateQuotePdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
@@ -140,7 +147,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Quote not found", { status: 404 });
   }
 
-  // Fetch customer and vendor details, plus all customers and vendors for editing
+  // Fetch customer and vendor details, plus selectable lists for editing
   const [customer, vendor, customers, vendors] = await Promise.all([
     quote.customerId ? getCustomer(quote.customerId) : null,
     quote.vendorId ? getVendor(quote.vendorId) : null,
@@ -1332,6 +1339,38 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "updateEstimatedDelivery": {
+        await autoConvertRFQToDraft();
+
+        const minStr = formData.get("leadTimeBusinessDaysMin") as string;
+        const maxStr = formData.get("leadTimeBusinessDaysMax") as string;
+        const min = parseInt(minStr, 10);
+        const max = parseInt(maxStr, 10);
+
+        if (isNaN(min) || isNaN(max) || min < 0 || max < min) {
+          return json(
+            { error: "Invalid lead time business day range" },
+            { status: 400 },
+          );
+        }
+
+        const today = startOfTodayInAppTz();
+        const start = addBusinessDays(today, min);
+        const end = addBusinessDays(today, max);
+
+        await updateQuote(
+          quote.id,
+          {
+            leadTimeBusinessDaysMin: min,
+            leadTimeBusinessDaysMax: max,
+            estimatedDeliveryDateStart: start,
+            estimatedDeliveryDateEnd: end,
+          },
+          eventContext,
+        );
+        return json({ success: true });
+      }
+
       case "updateValidUntil": {
         // Auto-convert RFQ to Draft when editing starts
         await autoConvertRFQToDraft();
@@ -2113,6 +2152,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
           user?.id || userDetails?.id,
         );
 
+        if (
+          quote.leadTimeBusinessDaysMin == null &&
+          quote.leadTimeBusinessDaysMax == null &&
+          calculationData.leadTimeOption
+        ) {
+          const { min, max } = leadTimeOptionToBusinessDays(
+            calculationData.leadTimeOption as string,
+          );
+          const today = startOfTodayInAppTz();
+          await updateQuote(
+            quote.id,
+            {
+              leadTimeBusinessDaysMin: min,
+              leadTimeBusinessDaysMax: max,
+              estimatedDeliveryDateStart: addBusinessDays(today, min),
+              estimatedDeliveryDateEnd: addBusinessDays(today, max),
+            },
+            eventContext,
+          );
+        }
+
         return json({ success: true });
       }
 
@@ -2281,7 +2341,8 @@ export default function QuoteDetail() {
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [isSendEmailModalOpen, setSendEmailModalOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
-  const [editingCustomer, setEditingCustomer] = useState(false);
+  const [isCustomerInfoModalOpen, setIsCustomerInfoModalOpen] = useState(false);
+  const [isLeadTimeModalOpen, setIsLeadTimeModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState(false);
   // Define the line item type
   type LineItem = {
@@ -2379,6 +2440,14 @@ export default function QuoteDetail() {
   const areDetailsLocked = ["Sent", "Accepted", "Rejected", "Expired"].includes(
     quote.status,
   );
+  const quoteLeadTimeDisplay =
+    quote.leadTimeBusinessDaysMin != null &&
+    quote.leadTimeBusinessDaysMax != null
+      ? formatLeadTimeBusinessDays(
+          quote.leadTimeBusinessDaysMin,
+          quote.leadTimeBusinessDaysMax,
+        )
+      : "Not set";
 
   // Check if any parts are currently converting
   const hasConvertingParts = quote.parts?.some(
@@ -3268,6 +3337,12 @@ export default function QuoteDetail() {
               </div>
             </div>
 
+            <QuoteDeliveryDateCard
+              quote={quote}
+              variant="summary"
+              readOnly={areDetailsLocked}
+            />
+
             {/* Valid Until / Expiration Days / Accepted Date Card */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 p-6">
               {quote.status === "Accepted" ? (
@@ -3542,75 +3617,6 @@ export default function QuoteDetail() {
                 {formatCurrency(optimisticTotal)}
               </p>
             </div>
-
-            {/* Customer Card */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-                Customer
-              </h3>
-              {!areDetailsLocked ? (
-                <div>
-                  {editingCustomer ? (
-                    <select
-                      value={quote.customerId?.toString() || ""}
-                      onChange={(e) => {
-                        const customerId = e.target.value;
-                        if (customerId) {
-                          fetcher.submit(
-                            { intent: "updateCustomer", customerId },
-                            { method: "post" },
-                          );
-                          setEditingCustomer(false);
-                        }
-                      }}
-                      onBlur={() => setEditingCustomer(false)}
-                      className="w-full px-3 py-2 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 dark:text-white"
-                    >
-                      {customers.map(
-                        (c: { id: number; displayName: string }) => (
-                          <option key={c.id} value={c.id}>
-                            {c.displayName}
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  ) : (
-                    <div
-                      onClick={() => setEditingCustomer(true)}
-                      className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1 -mx-2 transition-colors"
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setEditingCustomer(true);
-                        }
-                      }}
-                    >
-                      <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                        {customer?.displayName || "N/A"}
-                      </p>
-                      {customer?.email && (
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                          {customer.email}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                    {customer?.displayName || "N/A"}
-                  </p>
-                  {customer?.email && (
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      {customer.email}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
 
           {/* Quote Details Card */}
@@ -3621,7 +3627,7 @@ export default function QuoteDetail() {
               </h3>
             </div>
             <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 lg:gap-6">
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     Quote Number
@@ -3629,6 +3635,35 @@ export default function QuoteDetail() {
                   <p className="text-base font-medium text-gray-900 dark:text-gray-100">
                     {quote.quoteNumber}
                   </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Customer
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomerInfoModalOpen(true)}
+                    className="mt-1 -mx-2 inline-flex max-w-full rounded-lg px-2 py-1 text-left transition-colors hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:hover:bg-blue-900/20"
+                  >
+                    <p className="truncate text-base font-medium text-gray-900 dark:text-gray-100">
+                      {customer?.displayName || "N/A"}
+                    </p>
+                  </button>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Lead Time
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsLeadTimeModalOpen(true)}
+                    disabled={areDetailsLocked}
+                    className="mt-1 -mx-2 inline-flex max-w-full rounded-lg px-2 py-1 text-left transition-colors hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-blue-900/20 dark:disabled:hover:bg-transparent"
+                  >
+                    <p className="truncate text-base font-medium text-gray-900 dark:text-gray-100">
+                      {quoteLeadTimeDisplay}
+                    </p>
+                  </button>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -3644,7 +3679,7 @@ export default function QuoteDetail() {
                   </p>
                   {!areDetailsLocked ? (
                     <div
-                      className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1 -mx-2 transition-colors"
+                      className="inline-flex cursor-pointer rounded px-2 py-1 -mx-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
                       onClick={() => {
                         setEditingExpirationDays(true);
                         setTimeout(() => {
@@ -3778,7 +3813,7 @@ export default function QuoteDetail() {
                     ) : (
                       <div
                         onClick={() => setEditingVendor(true)}
-                        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-2 py-1 -mx-2 transition-colors"
+                        className="inline-flex max-w-full cursor-pointer rounded px-2 py-1 -mx-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => {
@@ -3788,7 +3823,7 @@ export default function QuoteDetail() {
                           }
                         }}
                       >
-                        <p className="text-base font-medium text-gray-900 dark:text-gray-100">
+                        <p className="truncate text-base font-medium text-gray-900 dark:text-gray-100">
                           {vendor?.displayName || "None"}
                         </p>
                       </div>
@@ -3908,7 +3943,6 @@ export default function QuoteDetail() {
               </div>
             </div>
           </div>
-
           <LineItemsSection
             items={normalizedLineItems}
             entityType="quote"
@@ -4236,6 +4270,114 @@ export default function QuoteDetail() {
         parts={quote.parts || []}
         autoDownload={pdfAutoDownload}
       />
+
+      <Modal
+        isOpen={isCustomerInfoModalOpen}
+        onClose={() => setIsCustomerInfoModalOpen(false)}
+        title="Customer"
+        size="md"
+      >
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Name</p>
+              <p className="text-base font-medium text-gray-900 dark:text-gray-100">
+                {customer?.displayName || "N/A"}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Business Name
+              </p>
+              <p className="text-base font-medium text-gray-900 dark:text-gray-100">
+                {customer?.companyName || "N/A"}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Email</p>
+              <p className="text-base font-medium text-gray-900 dark:text-gray-100 break-words">
+                {customer?.email || "N/A"}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Phone</p>
+              <p className="text-base font-medium text-gray-900 dark:text-gray-100">
+                {customer?.phone || "N/A"}
+              </p>
+            </div>
+          </div>
+
+          {!areDetailsLocked && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
+              <label
+                htmlFor="quote-customer-account"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >
+                Change Customer
+              </label>
+              <select
+                id="quote-customer-account"
+                value={quote.customerId?.toString() || ""}
+                onChange={(e) => {
+                  const customerId = e.target.value;
+                  if (
+                    !customerId ||
+                    customerId === quote.customerId?.toString()
+                  ) {
+                    return;
+                  }
+                  fetcher.submit(
+                    { intent: "updateCustomer", customerId },
+                    { method: "post" },
+                  );
+                  setIsCustomerInfoModalOpen(false);
+                }}
+                className="mt-3 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              >
+                <option value="" disabled>
+                  Select a customer
+                </option>
+                {customers.map((c: { id: number; displayName: string }) => (
+                  <option key={c.id} value={c.id}>
+                    {c.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              onClick={() => setIsCustomerInfoModalOpen(false)}
+              variant="secondary"
+            >
+              Close
+            </Button>
+            {customer?.id && (
+              <Link
+                to={`/customers/${customer.id}`}
+                className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+              >
+                View Customer Details
+              </Link>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isLeadTimeModalOpen}
+        onClose={() => setIsLeadTimeModalOpen(false)}
+        title="Set Delivery Window"
+        size="2xl"
+      >
+        <QuoteDeliveryDateCard
+          quote={quote}
+          variant="modal"
+          onCancel={() => setIsLeadTimeModalOpen(false)}
+          onSaved={() => setIsLeadTimeModalOpen(false)}
+        />
+      </Modal>
 
       <Modal
         isOpen={isRejectModalOpen}

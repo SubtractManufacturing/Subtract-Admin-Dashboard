@@ -4,6 +4,7 @@
  */
 
 import type { NormalizedAddress, NormalizedPart } from "./types";
+import { formatDateForDisplay } from "~/lib/date-display";
 
 // ── Currency ──────────────────────────────────────────────────────────
 
@@ -30,12 +31,7 @@ export function formatCurrency(amount: string | null | undefined): string | null
  */
 export function formatDate(date: Date | null | undefined): string | null {
   if (date == null) return null;
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    timeZone: "UTC",
-  }).format(date);
+  return formatDateForDisplay(date);
 }
 
 // ── Addresses ─────────────────────────────────────────────────────────

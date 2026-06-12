@@ -156,7 +156,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
                 <th className={tableStyles.headerCell}>Status</th>
                 <th className={tableStyles.headerCell}>Items</th>
                 <th className={tableStyles.headerCell}>PO Amount</th>
-                <th className={tableStyles.headerCell}>Due Date</th>
+                <th className={tableStyles.headerCell}>Delivery Date</th>
                 <th className={tableStyles.headerCell}>Date Created</th>
               </tr>
             </thead>
@@ -214,7 +214,7 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
                     {formatCurrency(order.po_amount)}
                   </td>
                   <td className={tableStyles.cell}>
-                    {order.ship_date ? formatDate(order.ship_date) : '--'}
+                    {order.delivery_date ? formatDate(order.delivery_date) : '--'}
                   </td>
                   <td className={tableStyles.cell}>
                     {formatDate(order.created_at)}
@@ -257,8 +257,8 @@ export default function OrdersTable({ orders }: OrdersTableProps) {
                   <div className={listCardStyles.value}>{formatCurrency(order.po_amount)}</div>
                 </div>
                 <div>
-                  <div className={listCardStyles.label}>Due Date</div>
-                  <div className={listCardStyles.value}>{order.ship_date ? formatDate(order.ship_date) : "--"}</div>
+                  <div className={listCardStyles.label}>Delivery Date</div>
+                  <div className={listCardStyles.value}>{order.delivery_date ? formatDate(order.delivery_date) : "--"}</div>
                 </div>
               </div>
             </div>

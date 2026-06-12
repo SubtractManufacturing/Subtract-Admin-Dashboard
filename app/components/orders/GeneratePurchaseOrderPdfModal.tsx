@@ -32,6 +32,15 @@ export default function GeneratePurchaseOrderPdfModal({
       isOpen={isOpen}
       onClose={onClose}
       title="Generate Purchase Order PDF"
+      headerNotice={
+        !order.deliveryDate ? (
+          <div className="mb-4 rounded-lg border-2 border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 p-4 text-amber-900 dark:text-amber-200 text-sm">
+            No delivery date is set on this order. The purchase order will show{" "}
+            <strong>TBD</strong> for the Delivery Date. Set the Delivery Date on
+            the order before sending to the vendor.
+          </div>
+        ) : undefined
+      }
       apiEndpoint={`/orders/${order.orderNumber}`}
       autoDownload={autoDownload}
       intent="generatePurchaseOrder"

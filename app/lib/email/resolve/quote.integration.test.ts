@@ -71,4 +71,11 @@ describe("resolveQuoteTokens", () => {
   it("throws for a quote id that does not exist", async () => {
     await expect(resolveQuoteTokens("99999999")).rejects.toThrow("Quote not found");
   });
+
+  it("resolves estimatedDeliveryDate and leadTimeBusinessDays from seeded lead time", async () => {
+    const tokens = await resolveQuoteTokens(String(seeded.quoteId));
+    expect(tokens.estimatedDeliveryDate).toBeDefined();
+    expect(tokens.estimatedDeliveryDate).not.toMatch(/\(ET\)/);
+    expect(tokens.leadTimeBusinessDays).toBe("7–12 Business Days");
+  });
 });

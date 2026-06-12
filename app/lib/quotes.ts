@@ -53,6 +53,11 @@ import {
 } from "./quote-part-assets.server.js";
 import { contentTypeForDrawingFileName } from "./part-source-files.js";
 import crypto from "crypto";
+import {
+  addBusinessDays,
+  countBusinessDays,
+  startOfTodayInAppTz,
+} from "./business-days.js";
 
 export type QuoteWithRelations = {
   id: number;
@@ -70,6 +75,7 @@ export type QuoteWithRelations = {
   validUntil: Date | null;
   expirationDays: number | null;
   sentAt: Date | null;
+  acceptedAt: Date | null;
   expiredAt: Date | null;
   archivedAt: Date | null;
   subtotal: string | null;
@@ -80,6 +86,10 @@ export type QuoteWithRelations = {
   stripePaymentLinkUrl: string | null;
   stripePaymentLinkId: string | null;
   stripePaymentLinkActive: boolean | null;
+  estimatedDeliveryDateStart: Date | null;
+  estimatedDeliveryDateEnd: Date | null;
+  leadTimeBusinessDaysMin: number | null;
+  leadTimeBusinessDaysMax: number | null;
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -104,6 +114,10 @@ export type QuoteInput = {
   validUntil?: Date | null;
   expirationDays?: number | null;
   rejectionReason?: string | null;
+  estimatedDeliveryDateStart?: Date | null;
+  estimatedDeliveryDateEnd?: Date | null;
+  leadTimeBusinessDaysMin?: number | null;
+  leadTimeBusinessDaysMax?: number | null;
   stripePaymentLinkUrl?: string | null;
   stripePaymentLinkId?: string | null;
   stripePaymentLinkActive?: boolean | null;
@@ -668,6 +682,31 @@ export async function convertQuoteToOrder(
       // Calculate vendor pay as 70% of total by default
       const defaultVendorPay = (calculatedTotal * 0.7).toFixed(2);
 
+      const anchor = quote.acceptedAt ?? new Date();
+      const min = quote.leadTimeBusinessDaysMin;
+      const max = quote.leadTimeBusinessDaysMax;
+      const hasLeadTime =
+        min != null && max != null && min >= 0 && max >= min;
+
+      let deliveryFields: {
+        deliveryDate?: Date;
+        deliveryDateStart?: Date | null;
+        leadTime?: number;
+        leadTimeBusinessDaysMin?: number | null;
+      } = {};
+
+      if (hasLeadTime) {
+        const deliveryDateStart = addBusinessDays(anchor, min);
+        const deliveryDateEnd = addBusinessDays(anchor, max);
+        const isRange = min !== max;
+        deliveryFields = {
+          deliveryDate: deliveryDateEnd,
+          deliveryDateStart: isRange ? deliveryDateStart : null,
+          leadTime: countBusinessDays(anchor, deliveryDateEnd),
+          leadTimeBusinessDaysMin: isRange ? min : null,
+        };
+      }
+
       const [order] = await tx
         .insert(orders)
         .values({
@@ -677,7 +716,8 @@ export async function convertQuoteToOrder(
           sourceQuoteId: quoteId,
           status: "Pending",
           totalPrice: calculatedTotal.toFixed(2),
-          vendorPay: defaultVendorPay, // Store as dollar amount (70% of total)
+          vendorPay: defaultVendorPay,
+          ...deliveryFields,
         })
         .returning();
 
@@ -1153,9 +1193,29 @@ export async function duplicateQuote(
           archivedAt: null,
           convertedToOrderId: null,
           rejectionReason: null,
+          leadTimeBusinessDaysMin: quote.leadTimeBusinessDaysMin,
+          leadTimeBusinessDaysMax: quote.leadTimeBusinessDaysMax,
+          estimatedDeliveryDateStart: null,
+          estimatedDeliveryDateEnd: null,
           isArchived: false,
         })
         .returning();
+
+      if (
+        newQuote.leadTimeBusinessDaysMin != null &&
+        newQuote.leadTimeBusinessDaysMax != null
+      ) {
+        const today = startOfTodayInAppTz();
+        const start = addBusinessDays(today, newQuote.leadTimeBusinessDaysMin);
+        const end = addBusinessDays(today, newQuote.leadTimeBusinessDaysMax);
+        await tx
+          .update(quotes)
+          .set({
+            estimatedDeliveryDateStart: start,
+            estimatedDeliveryDateEnd: end,
+          })
+          .where(eq(quotes.id, newQuote.id));
+      }
 
       // Map old quote part IDs to new quote part IDs for line item linking
       const partIdMap = new Map<string, string>();

@@ -392,14 +392,14 @@ export function PurchaseOrderPdfTemplate({
                 <span className="value">{formatDate(order.createdAt)}</span>
               </div>
               <div className="info-item">
-                <span className="label">Ship Date</span>
+                <span className="label">Delivery Date</span>
                 <span className="value">
                   <span
                     className={editable ? "editable" : ""}
                     contentEditable={editable}
                     suppressContentEditableWarning
                   >
-                    {order.shipDate ? formatDate(order.shipDate) : "TBD"}
+                    {order.deliveryDate ? formatDate(order.deliveryDate) : "TBD"}
                   </span>
                 </span>
               </div>
