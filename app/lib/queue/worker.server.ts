@@ -1,4 +1,5 @@
 import { PgBoss } from "pg-boss";
+import { getQueueDatabaseUrl } from "../db/connection-string.server";
 import { QUEUES } from "./types";
 
 let boss: PgBoss | null = null;
@@ -8,9 +9,9 @@ export async function startWorkerQueue(): Promise<PgBoss> {
     return boss;
   }
 
-  const connectionString = process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL;
+  const connectionString = getQueueDatabaseUrl();
   if (!connectionString) {
-    throw new Error("[PgBoss:Worker] DATABASE_DIRECT_URL or DATABASE_URL must be set");
+    throw new Error("[PgBoss:Worker] DATABASE_URL or DATABASE_DIRECT_URL must be set");
   }
 
   boss = new PgBoss({

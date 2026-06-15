@@ -1,4 +1,5 @@
 import { PgBoss } from "pg-boss";
+import { getQueueDatabaseUrl } from "../db/connection-string.server";
 import {
   CAD_CONVERSION_OPTIONS,
   DEFAULT_RETRY_OPTIONS,
@@ -27,11 +28,10 @@ function getProducer(): Promise<PgBoss> {
 }
 
 async function initProducer(): Promise<PgBoss> {
-  const connectionString =
-    process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL;
+  const connectionString = getQueueDatabaseUrl();
   if (!connectionString) {
     throw new Error(
-      "[PgBoss:Producer] DATABASE_DIRECT_URL or DATABASE_URL must be set",
+      "[PgBoss:Producer] DATABASE_URL or DATABASE_DIRECT_URL must be set",
     );
   }
 
