@@ -67,13 +67,38 @@ jobs:
 
       - name: Check for migration drift
         run: |
-          # Generate migrations to see if schema has uncommitted changes
-          npm run db:generate
+          set -euo pipefail
 
-          # Fail if new files were generated (schema changed without migration)
+          BASE="origin/${{ github.event.pull_request.base.ref }}"
+          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=1
+
+          if git diff --name-only "$BASE"...HEAD -- app/lib/db/schema.ts | grep -q .; then
+            if ! git diff --name-only "$BASE"...HEAD -- drizzle/ | grep -q .; then
+              echo "::error::app/lib/db/schema.ts changed in this PR but no drizzle/ migration files were updated. Run 'npm run db:generate' locally and commit the migration."
+              exit 1
+            fi
+          fi
+
+          set +e
+          npm run db:generate 2>&1 | tee /tmp/drizzle-generate.log
+          GENERATE_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          if grep -q "Interactive prompts require a TTY" /tmp/drizzle-generate.log; then
+            echo "::error::drizzle-kit generate requires interactive input (likely a column/table rename). Run 'npm run db:generate' locally, commit the migration, and re-push."
+            exit 1
+          fi
+
+          if [ "$GENERATE_EXIT" -ne 0 ]; then
+            echo "::error::drizzle-kit generate failed with exit code $GENERATE_EXIT"
+            cat /tmp/drizzle-generate.log
+            exit 1
+          fi
+
           if [ -n "$(git status --porcelain drizzle/)" ]; then
             echo "::error::Schema drift detected! Run 'npm run db:generate' and commit the migration."
             git status drizzle/
+            git diff drizzle/ || true
             exit 1
           fi
         env:
@@ -81,6 +106,35 @@ jobs:
 
       - name: Test migrations apply cleanly
         run: npm run db:migrate
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db
+
+      - name: Verify committed migrations match schema
+        run: |
+          set -euo pipefail
+
+          set +e
+          npm run db:generate 2>&1 | tee /tmp/drizzle-post-migrate.log
+          GENERATE_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          if grep -q "Interactive prompts require a TTY" /tmp/drizzle-post-migrate.log; then
+            echo "::error::Committed migrations are incomplete for schema.ts (interactive generate still required)."
+            exit 1
+          fi
+
+          if [ "$GENERATE_EXIT" -ne 0 ]; then
+            echo "::error::drizzle-kit generate failed after migrate with exit code $GENERATE_EXIT"
+            cat /tmp/drizzle-post-migrate.log
+            exit 1
+          fi
+
+          if [ -n "$(git status --porcelain drizzle/)" ]; then
+            echo "::error::After applying migrations, schema.ts still differs from committed migration snapshots."
+            git status drizzle/
+            git diff drizzle/ || true
+            exit 1
+          fi
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db
 
@@ -116,8 +170,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Push schema to test database
-        run: npx drizzle-kit push --force --verbose
+      - name: Apply migrations to test database
+        run: npm run db:migrate
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_db
 
