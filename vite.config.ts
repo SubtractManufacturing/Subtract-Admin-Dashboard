@@ -26,6 +26,17 @@ export default defineConfig({
   // Exclude server-only packages from client bundling
   optimizeDeps: {
     exclude: ["mupdf"],
+    esbuildOptions: {
+      // esbuild 0.28+ errors on destructuring for legacy browser targets unless explicitly allowed
+      supported: {
+        destructuring: true,
+      },
+    },
+  },
+  esbuild: {
+    supported: {
+      destructuring: true,
+    },
   },
   build: {
     target: "es2022",
