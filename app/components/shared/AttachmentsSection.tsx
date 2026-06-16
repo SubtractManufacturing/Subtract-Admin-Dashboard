@@ -1,10 +1,24 @@
-import { useRef, useState } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useEffect, useRef, useState } from "react";
+import { useFetcher, useRevalidator } from "@remix-run/react";
 import Button from "./Button";
 import FileViewerModal from "./FileViewerModal";
+import { PasteAttachmentModal } from "./PasteAttachmentModal";
 import { SectionCard } from "./SectionCard";
 import { useDownload } from "~/hooks/useDownload";
+import {
+  defaultScreenshotFileName,
+  extractImageFromClipboardEvent,
+  isEditablePasteTarget,
+} from "~/lib/clipboard-images";
 import { formatFileSize, getFileType, isViewableFile } from "~/lib/file-utils";
+
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+
+type UploadFetcherData = {
+  success?: boolean;
+  attachmentId?: string;
+  error?: string;
+};
 
 type AttachmentItem = {
   id: string;
@@ -32,10 +46,16 @@ export function AttachmentsSection({
   onDeleteOverride,
 }: AttachmentsSectionProps) {
   const { download } = useDownload();
-  const uploadFetcher = useFetcher();
+  const revalidator = useRevalidator();
+  const uploadFetcher = useFetcher<UploadFetcherData>();
   const deleteFetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const handledUploadIdRef = useRef<string | null>(null);
   const [fileModalOpen, setFileModalOpen] = useState(false);
+  const [pasteModalOpen, setPasteModalOpen] = useState(false);
+  const [pastedFile, setPastedFile] = useState<File | null>(null);
+  const [pastedFileName, setPastedFileName] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<{
     url: string;
     fileName: string;
@@ -54,6 +74,8 @@ export function AttachmentsSection({
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("intent", "uploadAttachment");
+    formData.append("_noRedirect", "1");
     formData.append("entityType", String(entityType));
     formData.append("entityId", String(entityId));
 
@@ -63,6 +85,33 @@ export function AttachmentsSection({
     });
 
     event.target.value = "";
+  };
+
+  const handlePastedUpload = (fileName: string) => {
+    if (!pastedFile) return;
+
+    if (pastedFile.size > MAX_ATTACHMENT_SIZE) {
+      setPasteError("File size exceeds 10MB limit");
+      return;
+    }
+
+    const renamedFile = new File([pastedFile], fileName, {
+      type: pastedFile.type || "image/png",
+      lastModified: pastedFile.lastModified,
+    });
+
+    const formData = new FormData();
+    formData.append("file", renamedFile);
+    formData.append("intent", "uploadAttachment");
+    formData.append("_noRedirect", "1");
+    formData.append("entityType", String(entityType));
+    formData.append("entityId", String(entityId));
+
+    setPasteError(null);
+    uploadFetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
   };
 
   const handleDeleteAttachment = (attachmentId: string) => {
@@ -100,6 +149,54 @@ export function AttachmentsSection({
       day: "2-digit",
     });
   };
+
+  useEffect(() => {
+    if (readOnly) return;
+
+    const handlePaste = (event: ClipboardEvent) => {
+      if (pasteModalOpen) return;
+      if (isEditablePasteTarget(event.target)) return;
+      if (document.querySelector(".modal-overlay")) return;
+
+      const imageFile = extractImageFromClipboardEvent(event);
+      if (!imageFile) return;
+
+      event.preventDefault();
+
+      const extension = imageFile.type.split("/")[1] || "png";
+      setPastedFile(imageFile);
+      setPastedFileName(defaultScreenshotFileName(extension));
+      setPasteError(
+        imageFile.size > MAX_ATTACHMENT_SIZE ? "File size exceeds 10MB limit" : null
+      );
+      setPasteModalOpen(true);
+    };
+
+    document.addEventListener("paste", handlePaste);
+
+    return () => {
+      document.removeEventListener("paste", handlePaste);
+    };
+  }, [pasteModalOpen, readOnly]);
+
+  useEffect(() => {
+    const uploadData = uploadFetcher.data;
+    if (
+      uploadFetcher.state !== "idle" ||
+      !uploadData?.success ||
+      !uploadData.attachmentId ||
+      handledUploadIdRef.current === uploadData.attachmentId
+    ) {
+      return;
+    }
+
+    handledUploadIdRef.current = uploadData.attachmentId;
+    setPasteModalOpen(false);
+    setPastedFile(null);
+    setPastedFileName("");
+    setPasteError(null);
+    revalidator.revalidate();
+  }, [revalidator, uploadFetcher.data, uploadFetcher.state]);
 
   return (
     <>
@@ -251,6 +348,21 @@ export function AttachmentsSection({
           isDeleting={deleteFetcher.state === "submitting"}
         />
       )}
+
+      <PasteAttachmentModal
+        isOpen={pasteModalOpen}
+        file={pastedFile}
+        initialFileName={pastedFileName}
+        isUploading={uploadFetcher.state !== "idle"}
+        error={pasteError || uploadFetcher.data?.error}
+        onClose={() => {
+          setPasteModalOpen(false);
+          setPastedFile(null);
+          setPastedFileName("");
+          setPasteError(null);
+        }}
+        onUpload={handlePastedUpload}
+      />
     </>
   );
 }

@@ -476,6 +476,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       // Link to customer
       await linkAttachmentToCustomer(customer.id, attachment.id, eventContext);
 
+      if (formData.get("_noRedirect")) {
+        return json({ success: true, attachmentId: attachment.id });
+      }
+
       // Return a redirect to refresh the page
       return redirect(`/customers/${customerId}`);
     } catch (error) {
