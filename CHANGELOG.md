@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.4.2...v1.5.0) (2026-06-16)
+
+
+### Features
+
+* **attachments:** add clipboard image paste uploads to all attachment areas ([648ae97](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/648ae97ffb68adb756feb85174286ea7f1bc6d08))
+
+
+### Bug Fixes
+
+* **orders:** hotfix handle Remix-serialized dates in business-day calculations ([27a56dc](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/27a56dce9c635c24cb63dc755b90b9cd4c5b6357))
+* **quotes:** add business-day delivery window and rename order ship dates ([7c27e41](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/7c27e41c7e9221e62d04903db47b5da926cedc78))
+
 ## [1.4.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.4.1...v1.4.2) (2026-05-24)
 
 
