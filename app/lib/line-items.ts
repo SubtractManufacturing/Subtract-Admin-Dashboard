@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
 import { orderLineItems, quoteLineItems, parts, quoteParts } from "./db/schema.js"
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import type { OrderLineItem, QuoteLineItem, Part, QuotePart } from "./db/schema.js"
 
 export type OrderLineItemWithPart = OrderLineItem & {
@@ -33,11 +33,19 @@ export async function getOrderLineItems(orderId: number): Promise<OrderLineItemW
         quantity: orderLineItems.quantity,
         unitPrice: orderLineItems.unitPrice,
         notes: orderLineItems.notes,
+        isArchived: orderLineItems.isArchived,
+        archivedAt: orderLineItems.archivedAt,
+        hardDeleteAt: orderLineItems.hardDeleteAt,
         part: parts
       })
       .from(orderLineItems)
       .leftJoin(parts, eq(orderLineItems.partId, parts.id))
-      .where(eq(orderLineItems.orderId, orderId))
+      .where(
+        and(
+          eq(orderLineItems.orderId, orderId),
+          eq(orderLineItems.isArchived, false),
+        ),
+      )
       .orderBy(orderLineItems.id)
 
     return result
@@ -103,13 +111,21 @@ export async function getQuoteLineItems(quoteId: number): Promise<QuoteLineItemW
         description: quoteLineItems.description,
         notes: quoteLineItems.notes,
         sortOrder: quoteLineItems.sortOrder,
+        isArchived: quoteLineItems.isArchived,
+        archivedAt: quoteLineItems.archivedAt,
+        hardDeleteAt: quoteLineItems.hardDeleteAt,
         createdAt: quoteLineItems.createdAt,
         updatedAt: quoteLineItems.updatedAt,
         quotePart: quoteParts
       })
       .from(quoteLineItems)
       .leftJoin(quoteParts, eq(quoteLineItems.quotePartId, quoteParts.id))
-      .where(eq(quoteLineItems.quoteId, quoteId))
+      .where(
+        and(
+          eq(quoteLineItems.quoteId, quoteId),
+          eq(quoteLineItems.isArchived, false),
+        ),
+      )
       .orderBy(quoteLineItems.sortOrder, quoteLineItems.id)
 
     return result

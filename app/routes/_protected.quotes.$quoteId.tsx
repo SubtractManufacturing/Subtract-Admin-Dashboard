@@ -60,7 +60,13 @@ import {
 import {
   getBananaModelUrls,
   getPlaceholderPartUrls,
+  getLineItemArchiveRetentionDays,
 } from "~/lib/developerSettings";
+import {
+  archiveQuoteLineItem,
+  listArchivedQuoteLineItems,
+  restoreQuoteLineItem,
+} from "~/lib/line-item-archive.server";
 import {
   quotePartUsesPlaceholderCad,
   resolveQuotePartPreviewAssets,
@@ -81,15 +87,10 @@ import {
   attachments,
   quotes,
   quotePartDrawings,
-  quoteParts,
   quoteLineItems,
-  quotePriceCalculations,
-  cadFileVersions,
-  partDrawings,
-  type QuotePart,
   type AttachmentDocumentKind,
 } from "~/lib/db/schema";
-import { eq, inArray, and, or } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import {
   parseLineTotalInput,
   parseUnitPriceInput,
@@ -432,6 +433,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch existing price calculations for the quote
   const priceCalculations = await getLatestCalculationsForQuote(quote.id);
 
+  const [archivedLineItems, archiveRetentionDays] = await Promise.all([
+    listArchivedQuoteLineItems(quote.id),
+    getLineItemArchiveRetentionDays(),
+  ]);
+
   return withAuthHeaders(
     json({
       quote: quoteWithSignedUrls,
@@ -459,6 +465,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       quoteSendEmailDefaultSubject,
       quoteSendEditableSlots,
       quoteSendRequiredAttachmentDocumentKinds,
+      archivedLineItems: archivedLineItems.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        archivedAt: item.archivedAt.toISOString(),
+        hardDeleteAt: item.hardDeleteAt.toISOString(),
+        quotePartId: item.quotePartId,
+      })),
+      archiveRetentionDays,
     }),
     headers,
   );
@@ -1504,7 +1519,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const allQuoteLines = await db
           .select()
           .from(quoteLineItems)
-          .where(eq(quoteLineItems.quoteId, quote.id));
+          .where(
+            and(
+              eq(quoteLineItems.quoteId, quote.id),
+              eq(quoteLineItems.isArchived, false),
+            ),
+          );
 
         const positiveSub = quotePositiveSubtotalExcluding(
           allQuoteLines,
@@ -1719,222 +1739,51 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/quotes/${quoteId}`);
       }
 
-      case "deleteLineItem": {
-        // Auto-convert RFQ to Draft when editing starts
+      case "archiveLineItem": {
         await autoConvertRFQToDraft();
 
         const lineItemId = formData.get("lineItemId") as string;
-        const quotePartId = formData.get("quotePartId") as string;
-
         if (!lineItemId) {
           return json({ error: "Missing line item ID" }, { status: 400 });
         }
 
         try {
-          // Extract S3 key from full URL or bare key (handles Supabase, S3, and raw keys)
-          const extractS3Key = (urlOrKey: string): string | null => {
-            if (!urlOrKey?.trim()) return null;
-            const s = urlOrKey.trim();
-            if (s.startsWith("quote-parts/")) return s;
-            // Supabase storage URL: .../storage/v1/s3/{bucket}/{key}
-            if (s.includes("/storage/v1/s3/")) {
-              const match = s.split("/storage/v1/s3/")[1];
-              if (match) {
-                const afterBucket = match.replace(/^[^/]+\//, "");
-                return afterBucket || null;
-              }
-            }
-            // Full S3-style URL: .../bucket/key or .../quote-parts/...
-            if (s.includes("/quote-parts/")) {
-              const idx = s.indexOf("quote-parts/");
-              return s.slice(idx);
-            }
-            if (s.includes("quote-parts/")) {
-              const parts = s.split("/");
-              const i = parts.findIndex((p) => p === "quote-parts");
-              if (i >= 0) return parts.slice(i).join("/");
-            }
-            return s;
-          };
-
-          let quotePart: QuotePart | null = null;
-          const filesToDelete: string[] = [];
-          const drawingAttachmentIds: string[] = [];
-
-          // Get line item for event logging and quoteId
-          const [lineItemRow] = await db
-            .select()
-            .from(quoteLineItems)
-            .where(eq(quoteLineItems.id, parseInt(lineItemId)))
-            .limit(1);
-          if (!lineItemRow) {
-            return json({ error: "Line item not found" }, { status: 404 });
-          }
-
-          // If there's an associated quote part, get its details and collect S3 keys
-          if (quotePartId) {
-            const [part] = await db
-              .select()
-              .from(quoteParts)
-              .where(eq(quoteParts.id, quotePartId))
-              .limit(1);
-
-            quotePart = part ?? null;
-
-            if (quotePart) {
-              const keyFile = extractS3Key(quotePart.partFileUrl ?? "");
-              if (keyFile) filesToDelete.push(keyFile);
-
-              const keyMesh = extractS3Key(quotePart.partMeshUrl ?? "");
-              if (keyMesh) filesToDelete.push(keyMesh);
-
-              const keyThumb = extractS3Key(quotePart.thumbnailUrl ?? "");
-              if (keyThumb) filesToDelete.push(keyThumb);
-
-              const drawingsData = await db
-                .select({
-                  drawing: quotePartDrawings,
-                  attachment: attachments,
-                })
-                .from(quotePartDrawings)
-                .innerJoin(
-                  attachments,
-                  eq(quotePartDrawings.attachmentId, attachments.id),
-                )
-                .where(eq(quotePartDrawings.quotePartId, quotePartId));
-
-              for (const { attachment } of drawingsData) {
-                if (attachment.s3Key) filesToDelete.push(attachment.s3Key);
-                if (attachment.thumbnailS3Key)
-                  filesToDelete.push(attachment.thumbnailS3Key);
-                drawingAttachmentIds.push(attachment.id);
-              }
-
-              // CAD file versions for this quote part
-              const cadVersions = await db
-                .select({ s3Key: cadFileVersions.s3Key })
-                .from(cadFileVersions)
-                .where(
-                  and(
-                    eq(cadFileVersions.entityType, "quote_part"),
-                    eq(cadFileVersions.entityId, quotePartId),
-                  ),
-                );
-              for (const v of cadVersions) {
-                if (v.s3Key) filesToDelete.push(v.s3Key);
-              }
-            }
-          }
-
-          // Delete database records in transaction (explicit order for FK and S3 key collection)
-          await db.transaction(async (tx) => {
-            if (quotePart && quotePartId) {
-              await tx
-                .delete(quotePartDrawings)
-                .where(eq(quotePartDrawings.quotePartId, quotePartId));
-
-              if (drawingAttachmentIds.length > 0) {
-                // Only delete attachments not still referenced by part_drawings (from converted orders)
-                const referencedByParts = await tx
-                  .select({ attachmentId: partDrawings.attachmentId })
-                  .from(partDrawings)
-                  .where(
-                    inArray(partDrawings.attachmentId, drawingAttachmentIds),
-                  );
-                const referencedIds = new Set(
-                  referencedByParts.map((r) => r.attachmentId),
-                );
-                const safeToDelete = drawingAttachmentIds.filter(
-                  (id) => !referencedIds.has(id),
-                );
-                if (safeToDelete.length > 0) {
-                  await tx
-                    .delete(attachments)
-                    .where(inArray(attachments.id, safeToDelete));
-                }
-              }
-
-              await tx
-                .delete(cadFileVersions)
-                .where(
-                  and(
-                    eq(cadFileVersions.entityType, "quote_part"),
-                    eq(cadFileVersions.entityId, quotePartId),
-                  ),
-                );
-
-              await tx
-                .delete(quotePriceCalculations)
-                .where(
-                  or(
-                    eq(quotePriceCalculations.quotePartId, quotePartId),
-                    eq(
-                      quotePriceCalculations.quoteLineItemId,
-                      parseInt(lineItemId),
-                    ),
-                  ),
-                );
-
-              await tx
-                .delete(quoteLineItems)
-                .where(eq(quoteLineItems.id, parseInt(lineItemId)));
-
-              await tx.delete(quoteParts).where(eq(quoteParts.id, quotePartId));
-            } else {
-              await tx
-                .delete(quotePriceCalculations)
-                .where(
-                  eq(
-                    quotePriceCalculations.quoteLineItemId,
-                    parseInt(lineItemId),
-                  ),
-                );
-              await tx
-                .delete(quoteLineItems)
-                .where(eq(quoteLineItems.id, parseInt(lineItemId)));
-            }
-          });
-
-          for (const fileKey of filesToDelete) {
-            try {
-              await deleteFile(fileKey);
-            } catch (error: unknown) {
-              const err = error as { Code?: string; name?: string };
-              if (err?.Code === "NoSuchKey" || err?.name === "NoSuchKey") {
-                // ignore
-              } else {
-                console.error(`Error deleting S3 file ${fileKey}:`, error);
-              }
-            }
-          }
-
-          const { calculateQuoteTotals } = await import("~/lib/quotes");
-          await calculateQuoteTotals(quote.id);
-
-          let partName = "Unknown Part";
-          if (quotePart?.partName) partName = quotePart.partName;
-
-          await createEvent({
-            entityType: "quote",
-            entityId: quote.id.toString(),
-            eventType: "quote_line_item_deleted",
-            eventCategory: "financial",
-            title: "Line Item Deleted",
-            description: `Deleted ${partName}`,
-            metadata: {
-              lineItemId: parseInt(lineItemId),
-              partName,
-              quantity: lineItemRow.quantity,
-              totalPrice: parseFloat(lineItemRow.totalPrice || "0").toFixed(2),
-            },
-            userId: eventContext?.userId,
-            userEmail: eventContext?.userEmail,
-          });
-
+          await archiveQuoteLineItem(parseInt(lineItemId, 10), eventContext);
           return redirect(`/quotes/${quoteId}`);
         } catch (error) {
-          console.error("Error deleting line item:", error);
-          return json({ error: "Failed to delete line item" }, { status: 500 });
+          console.error("Error archiving line item:", error);
+          return json(
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to archive line item",
+            },
+            { status: 500 },
+          );
+        }
+      }
+
+      case "restoreLineItem": {
+        const lineItemId = formData.get("lineItemId") as string;
+        if (!lineItemId) {
+          return json({ error: "Missing line item ID" }, { status: 400 });
+        }
+
+        try {
+          await restoreQuoteLineItem(parseInt(lineItemId, 10), eventContext);
+          return redirect(`/quotes/${quoteId}`);
+        } catch (error) {
+          console.error("Error restoring line item:", error);
+          return json(
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to restore line item",
+            },
+            { status: 500 },
+          );
         }
       }
 
@@ -2316,6 +2165,8 @@ export default function QuoteDetail() {
     quoteSendEmailDefaultSubject,
     quoteSendEditableSlots,
     quoteSendRequiredAttachmentDocumentKinds,
+    archivedLineItems,
+    archiveRetentionDays,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/quotes/${quote.id}`
@@ -2386,6 +2237,9 @@ export default function QuoteDetail() {
       : "",
   );
   const lineItemFetcher = useFetcher();
+  const restoreLineItemFetcher = useFetcher();
+  const [restoringArchivedLineItemId, setRestoringArchivedLineItemId] =
+    useState<number | null>(null);
   const drawingFetcher = useFetcher();
   const [selectedDrawing, setSelectedDrawing] = useState<{
     drawing: NormalizedDrawing;
@@ -2829,21 +2683,31 @@ export default function QuoteDetail() {
     // Modal closing is handled by the useEffect that monitors calculatorFetcher.state
   };
 
-  const handleDeleteLineItem = (lineItemId: number, quotePartId?: string) => {
+  const handleDeleteLineItem = (lineItemId: number) => {
     if (
       confirm(
-        "Are you sure you want to delete this line item? This will also delete any associated files and cannot be undone.",
+        `Archive this line item? It will be kept for ${archiveRetentionDays} day(s) and can be restored from Archived before permanent deletion.`,
       )
     ) {
       fetcher.submit(
         {
-          intent: "deleteLineItem",
+          intent: "archiveLineItem",
           lineItemId: lineItemId.toString(),
-          quotePartId: quotePartId || "",
         },
         { method: "post" },
       );
     }
+  };
+
+  const handleRestoreArchivedLineItem = (lineItemId: number) => {
+    setRestoringArchivedLineItemId(lineItemId);
+    restoreLineItemFetcher.submit(
+      {
+        intent: "restoreLineItem",
+        lineItemId: lineItemId.toString(),
+      },
+      { method: "post" },
+    );
   };
 
   const handleSaveLineItemField = useCallback(
@@ -3949,8 +3813,12 @@ export default function QuoteDetail() {
             hideThumbnails={hideLineItemThumbnails}
             readOnly={isPricingLocked}
             subtotal={formatCurrency(optimisticTotal)}
+            archivedItems={archivedLineItems}
             onAdd={handleAddLineItem}
             onDelete={handleDeleteLineItem}
+            onRestoreArchived={handleRestoreArchivedLineItem}
+            isRestoringArchived={restoreLineItemFetcher.state !== "idle"}
+            restoringArchivedLineItemId={restoringArchivedLineItemId}
             onSaveField={handleSaveLineItemField}
             onSaveAttribute={handleSaveQuotePartAttribute}
             onDrawingUpload={handleQuoteDrawingUpload}

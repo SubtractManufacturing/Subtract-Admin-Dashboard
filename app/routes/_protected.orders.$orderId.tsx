@@ -58,7 +58,12 @@ import {
 import { hasBlockingOrderContextSend } from "~/lib/sent-emails.server";
 import type { AttachmentDocumentKind , Attachment, Vendor } from "~/lib/db/schema";
 import { formatCurrency } from "~/lib/email/resolve/formatters";
-import { getBananaModelUrls } from "~/lib/developerSettings";
+import { getBananaModelUrls, getLineItemArchiveRetentionDays } from "~/lib/developerSettings";
+import {
+  archiveOrderLineItem,
+  listArchivedOrderLineItems,
+  restoreOrderLineItem,
+} from "~/lib/line-item-archive.server";
 import {
   uploadFile,
   generateFileKey,
@@ -92,7 +97,6 @@ import {
   getLineItemsByOrderId,
   createLineItem,
   updateLineItem,
-  deleteLineItem,
   type LineItemWithPart,
   type LineItemEventContext,
 } from "~/lib/lineItems";
@@ -350,6 +354,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const stripePaymentLinksEnabled = await isStripePaymentLinksEnabled();
   const stripeConfigured = isStripeConfigured();
 
+  const [archivedLineItems, archiveRetentionDays] = await Promise.all([
+    listArchivedOrderLineItems(order.id),
+    getLineItemArchiveRetentionDays(),
+  ]);
+
   let quoteStripePaymentLinkId: string | null = null;
   if (order.sourceQuoteId) {
     const [qr] = await db
@@ -386,6 +395,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       stripePaymentLinksEnabled,
       stripeConfigured,
       quoteStripePaymentLinkId,
+      archivedLineItems: archivedLineItems.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        archivedAt: item.archivedAt.toISOString(),
+        hardDeleteAt: item.hardDeleteAt.toISOString(),
+        partId: item.partId,
+      })),
+      archiveRetentionDays,
     }),
     headers
   );
@@ -952,7 +970,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
       }
 
-      case "deleteLineItem": {
+      case "archiveLineItem": {
         const lineItemId = parseInt(formData.get("lineItemId") as string);
 
         if (!lineItemId) {
@@ -964,8 +982,48 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        await deleteLineItem(lineItemId, eventContext);
-        return withAuthHeaders(json({ success: true }), headers);
+        try {
+          await archiveOrderLineItem(lineItemId, eventContext);
+          return withAuthHeaders(json({ success: true }), headers);
+        } catch (error) {
+          return json(
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to archive line item",
+            },
+            { status: 500 },
+          );
+        }
+      }
+
+      case "restoreLineItem": {
+        const lineItemId = parseInt(formData.get("lineItemId") as string);
+
+        if (!lineItemId) {
+          return json({ error: "Missing line item ID" }, { status: 400 });
+        }
+
+        const eventContext: LineItemEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        try {
+          await restoreOrderLineItem(lineItemId, eventContext);
+          return withAuthHeaders(json({ success: true }), headers);
+        } catch (error) {
+          return json(
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to restore line item",
+            },
+            { status: 500 },
+          );
+        }
       }
 
       case "updateLineItemNote": {
@@ -1709,6 +1767,8 @@ export default function OrderDetails() {
     stripePaymentLinksEnabled,
     stripeConfigured,
     quoteStripePaymentLinkId,
+    archivedLineItems,
+    archiveRetentionDays,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/orders/${order.orderNumber}`
@@ -1748,6 +1808,9 @@ export default function OrderDetails() {
     vendorPayPercent: "",
   });
   const lineItemFetcher = useFetcher();
+  const restoreLineItemFetcher = useFetcher();
+  const [restoringArchivedLineItemId, setRestoringArchivedLineItemId] =
+    useState<number | null>(null);
   const notesFetcher = useFetcher();
   const orderEditFetcher = useFetcher();
   const drawingFetcher = useFetcher();
@@ -1842,9 +1905,13 @@ export default function OrderDetails() {
   };
 
   const handleDeleteLineItem = (lineItemId: number) => {
-    if (confirm("Are you sure you want to delete this line item?")) {
+    if (
+      confirm(
+        `Archive this line item? It will be kept for ${archiveRetentionDays} day(s) and can be restored from Archived before permanent deletion.`,
+      )
+    ) {
       const formData = new FormData();
-      formData.append("intent", "deleteLineItem");
+      formData.append("intent", "archiveLineItem");
       formData.append("lineItemId", lineItemId.toString());
 
       lineItemFetcher.submit(formData, {
@@ -1852,6 +1919,40 @@ export default function OrderDetails() {
       });
     }
   };
+
+  const handleRestoreArchivedLineItem = (lineItemId: number) => {
+    setRestoringArchivedLineItemId(lineItemId);
+    const formData = new FormData();
+    formData.append("intent", "restoreLineItem");
+    formData.append("lineItemId", lineItemId.toString());
+    restoreLineItemFetcher.submit(formData, { method: "post" });
+  };
+
+  useEffect(() => {
+    if (lineItemFetcher.state === "idle" && lineItemFetcher.data) {
+      const data = lineItemFetcher.data as { success?: boolean; error?: string };
+      if (data.success) {
+        revalidator.revalidate();
+      } else if (data.error) {
+        alert(`Failed to update line item: ${data.error}`);
+      }
+    }
+  }, [lineItemFetcher.state, lineItemFetcher.data, revalidator]);
+
+  useEffect(() => {
+    if (restoreLineItemFetcher.state === "idle" && restoreLineItemFetcher.data) {
+      const data = restoreLineItemFetcher.data as {
+        success?: boolean;
+        error?: string;
+      };
+      setRestoringArchivedLineItemId(null);
+      if (data.success) {
+        revalidator.revalidate();
+      } else if (data.error) {
+        alert(`Failed to restore line item: ${data.error}`);
+      }
+    }
+  }, [restoreLineItemFetcher.state, restoreLineItemFetcher.data, revalidator]);
 
   const handleDrawingUpload = useCallback(
     (partId: string, files: FileList | null) => {
@@ -3055,8 +3156,12 @@ export default function OrderDetails() {
             entityType="order"
             hideThumbnails={hideLineItemThumbnails}
             subtotal={formatCurrency(orderTotalPrice)}
+            archivedItems={archivedLineItems}
             onAdd={handleAddLineItem}
             onDelete={handleDeleteLineItem}
+            onRestoreArchived={handleRestoreArchivedLineItem}
+            isRestoringArchived={restoreLineItemFetcher.state !== "idle"}
+            restoringArchivedLineItemId={restoringArchivedLineItemId}
             onSaveField={handleSaveLineItemField}
             onSaveAttribute={handleSavePartAttribute}
             onDrawingUpload={(partId, files) => handleDrawingUpload(partId, files)}
