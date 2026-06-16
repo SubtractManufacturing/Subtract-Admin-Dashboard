@@ -123,6 +123,28 @@ export default function AdminDashboard() {
           </Link>
         )}
 
+        <Link
+          to="/admin/data-retention"
+          className="group rounded-xl border border-gray-200 bg-white p-5 no-underline transition hover:border-gray-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
+        >
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[#840606]/[0.07] text-[#840606] dark:bg-red-400/10 dark:text-red-400">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+            Data Retention
+          </h2>
+          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+            Line item archive retention settings
+          </p>
+        </Link>
+
         <div className="rounded-xl border border-dashed border-gray-300 bg-white/50 p-5 dark:border-slate-600 dark:bg-slate-800/50">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-400 dark:bg-slate-700 dark:text-slate-500">
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
