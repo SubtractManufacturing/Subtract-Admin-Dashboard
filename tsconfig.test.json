@@ -6,6 +6,7 @@
   "include": [
     "vitest.config.ts",
     "app/**/*.test.ts",
+    "app/**/*.test.tsx",
     "app/**/*.integration.test.ts",
     "app/test/**/*.ts"
   ]
