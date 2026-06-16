@@ -76,6 +76,9 @@
   "devDependencies": {
     "@babel/traverse": "^7.28.0",
     "@remix-run/dev": "^2.17.5",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.2.20",
     "@types/react-dom": "^18.2.7",
     "@types/sanitize-html": "^2.16.1",
@@ -91,6 +94,7 @@
     "eslint-plugin-jsx-a11y": "^6.8.0",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
+    "happy-dom": "^20.10.4",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "postcss": "^8.5.6",

@@ -128,6 +128,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
       // Link to vendor
       await linkAttachmentToVendor(vendor.id, attachment.id, eventContext);
 
+      if (formData.get("_noRedirect")) {
+        return json({ success: true, attachmentId: attachment.id });
+      }
+
       // Return a redirect to refresh the page
       return redirect(`/vendors/${vendorId}`);
     } catch (error) {
