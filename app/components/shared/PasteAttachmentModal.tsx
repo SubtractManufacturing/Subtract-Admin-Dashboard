@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Button from "./Button";
 import Modal from "./Modal";
 import { formStyles } from "~/utils/tw-styles";
@@ -9,6 +9,7 @@ type PasteAttachmentModalProps = {
   initialFileName: string;
   isUploading: boolean;
   error?: string;
+  isUploadDisabled?: boolean;
   onClose: () => void;
   onUpload: (fileName: string) => void;
 };
@@ -19,11 +20,13 @@ export function PasteAttachmentModal({
   initialFileName,
   isUploading,
   error,
+  isUploadDisabled = false,
   onClose,
   onUpload,
 }: PasteAttachmentModalProps) {
   const fileNameInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState(initialFileName);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -32,23 +35,24 @@ export function PasteAttachmentModal({
     }
   }, [initialFileName, isOpen]);
 
-  const previewUrl = useMemo(() => {
-    if (!file) return null;
-    return URL.createObjectURL(file);
-  }, [file]);
-
   useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+
     return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
+      URL.revokeObjectURL(objectUrl);
     };
-  }, [previewUrl]);
+  }, [file]);
 
   if (!file) return null;
 
   const trimmedFileName = fileName.trim();
-  const canUpload = trimmedFileName.length > 0 && !isUploading;
+  const canUpload = trimmedFileName.length > 0 && !isUploading && !isUploadDisabled;
 
   return (
     <Modal

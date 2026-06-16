@@ -4,6 +4,8 @@ type PasteTarget = {
   closest?: (selector: string) => unknown;
 };
 
+export const PASTED_IMAGE_SIZE_ERROR = "File size exceeds 10MB limit";
+
 export function extractImageFromClipboardEvent(event: ClipboardEvent): File | null {
   const items = event.clipboardData?.items;
   if (!items) return null;
@@ -30,7 +32,22 @@ export function isEditablePasteTarget(target: EventTarget | null): boolean {
 
   if (element.isContentEditable) return true;
 
-  return Boolean(element.closest?.("[contenteditable='true']"));
+  return Boolean(
+    element.closest?.("[contenteditable]") ||
+      element.closest?.("[contenteditable='true']") ||
+      element.closest?.("[contenteditable='plaintext-only']")
+  );
+}
+
+export function getClipboardImageExtension(mimeType: string | undefined): string {
+  const subtype = mimeType?.trim().toLowerCase().match(/^image\/([^;]+)/)?.[1];
+  if (!subtype) return "png";
+
+  return subtype.split("+")[0].replace(/[^a-z0-9]/g, "") || "png";
+}
+
+export function getPastedImageError(file: File, maxSizeBytes: number): string | null {
+  return file.size > maxSizeBytes ? PASTED_IMAGE_SIZE_ERROR : null;
 }
 
 export function defaultScreenshotFileName(extension = "png"): string {

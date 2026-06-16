@@ -8,6 +8,8 @@ import { useDownload } from "~/hooks/useDownload";
 import {
   defaultScreenshotFileName,
   extractImageFromClipboardEvent,
+  getClipboardImageExtension,
+  getPastedImageError,
   isEditablePasteTarget,
 } from "~/lib/clipboard-images";
 import { formatFileSize, getFileType, isViewableFile } from "~/lib/file-utils";
@@ -56,6 +58,7 @@ export function AttachmentsSection({
   const [pastedFile, setPastedFile] = useState<File | null>(null);
   const [pastedFileName, setPastedFileName] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<{
     url: string;
     fileName: string;
@@ -90,8 +93,9 @@ export function AttachmentsSection({
   const handlePastedUpload = (fileName: string) => {
     if (!pastedFile) return;
 
-    if (pastedFile.size > MAX_ATTACHMENT_SIZE) {
-      setPasteError("File size exceeds 10MB limit");
+    const validationError = getPastedImageError(pastedFile, MAX_ATTACHMENT_SIZE);
+    if (validationError) {
+      setPasteError(validationError);
       return;
     }
 
@@ -108,6 +112,7 @@ export function AttachmentsSection({
     formData.append("entityId", String(entityId));
 
     setPasteError(null);
+    setUploadError(null);
     uploadFetcher.submit(formData, {
       method: "post",
       encType: "multipart/form-data",
@@ -163,12 +168,11 @@ export function AttachmentsSection({
 
       event.preventDefault();
 
-      const extension = imageFile.type.split("/")[1] || "png";
+      const extension = getClipboardImageExtension(imageFile.type);
       setPastedFile(imageFile);
       setPastedFileName(defaultScreenshotFileName(extension));
-      setPasteError(
-        imageFile.size > MAX_ATTACHMENT_SIZE ? "File size exceeds 10MB limit" : null
-      );
+      setPasteError(getPastedImageError(imageFile, MAX_ATTACHMENT_SIZE));
+      setUploadError(null);
       setPasteModalOpen(true);
     };
 
@@ -181,6 +185,10 @@ export function AttachmentsSection({
 
   useEffect(() => {
     const uploadData = uploadFetcher.data;
+    if (uploadFetcher.state === "idle" && uploadData?.error) {
+      setUploadError(uploadData.error);
+    }
+
     if (
       uploadFetcher.state !== "idle" ||
       !uploadData?.success ||
@@ -195,6 +203,7 @@ export function AttachmentsSection({
     setPastedFile(null);
     setPastedFileName("");
     setPasteError(null);
+    setUploadError(null);
     revalidator.revalidate();
   }, [revalidator, uploadFetcher.data, uploadFetcher.state]);
 
@@ -354,12 +363,14 @@ export function AttachmentsSection({
         file={pastedFile}
         initialFileName={pastedFileName}
         isUploading={uploadFetcher.state !== "idle"}
-        error={pasteError || uploadFetcher.data?.error}
+        error={pasteError || uploadError || undefined}
+        isUploadDisabled={Boolean(pasteError)}
         onClose={() => {
           setPasteModalOpen(false);
           setPastedFile(null);
           setPastedFileName("");
           setPasteError(null);
+          setUploadError(null);
         }}
         onUpload={handlePastedUpload}
       />
