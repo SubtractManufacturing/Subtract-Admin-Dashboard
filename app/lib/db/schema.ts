@@ -332,63 +332,99 @@ export const partModels = pgTable(
   })
 );
 
-export const orderLineItems = pgTable("order_line_items", {
-  id: serial("id").primaryKey(),
-  orderId: integer("order_id")
-    .notNull()
-    .references(() => orders.id),
-  partId: uuid("part_id").references(() => parts.id),
-  name: text("name"),
-  description: text("description"),
-  quantity: integer("quantity").notNull(),
-  unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
-  notes: text("notes"),
-});
-
-export const quoteParts = pgTable("quote_parts", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  quoteId: integer("quote_id")
-    .notNull()
-    .references(() => quotes.id),
-  partNumber: text("part_number").notNull(),
-  partName: text("part_name").notNull(),
-  description: text("description"),
-  material: text("material"),
-  finish: text("finish"),
-  tolerance: text("tolerance"),
-  thumbnailUrl: text("thumbnail_url"),
-  partFileUrl: text("part_file_url"),
-  partMeshUrl: text("part_mesh_url"),
-  conversionStatus:
-    meshConversionStatusEnum("conversion_status").default("pending"),
-  meshConversionError: text("mesh_conversion_error"),
-  meshConversionJobId: text("mesh_conversion_job_id"),
-  meshConversionStartedAt: timestamp("mesh_conversion_started_at"),
-  meshConversionCompletedAt: timestamp("mesh_conversion_completed_at"),
-  specifications: jsonb("specifications"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
-export const quoteLineItems = pgTable("quote_line_items", {
-  id: serial("id").primaryKey(),
-  quoteId: integer("quote_id")
-    .notNull()
-    .references(() => quotes.id),
-  quotePartId: uuid("quote_part_id").references(() => quoteParts.id, {
-    onDelete: "cascade",
+export const orderLineItems = pgTable(
+  "order_line_items",
+  {
+    id: serial("id").primaryKey(),
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => orders.id),
+    partId: uuid("part_id").references(() => parts.id),
+    name: text("name"),
+    description: text("description"),
+    quantity: integer("quantity").notNull(),
+    unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
+    notes: text("notes"),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    archivedAt: timestamp("archived_at"),
+    hardDeleteAt: timestamp("hard_delete_at"),
+  },
+  (table) => ({
+    archivePurgeIdx: index("order_line_items_archive_purge_idx").on(
+      table.isArchived,
+      table.hardDeleteAt,
+    ),
   }),
-  name: text("name"),
-  quantity: integer("quantity").notNull(),
-  unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
-  totalPrice: numeric("total_price", { precision: 10, scale: 2 }).notNull(),
-  leadTimeDays: integer("lead_time_days"),
-  description: text("description"),
-  notes: text("notes"),
-  sortOrder: integer("sort_order").default(0),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+);
+
+export const quoteParts = pgTable(
+  "quote_parts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    quoteId: integer("quote_id")
+      .notNull()
+      .references(() => quotes.id),
+    partNumber: text("part_number").notNull(),
+    partName: text("part_name").notNull(),
+    description: text("description"),
+    material: text("material"),
+    finish: text("finish"),
+    tolerance: text("tolerance"),
+    thumbnailUrl: text("thumbnail_url"),
+    partFileUrl: text("part_file_url"),
+    partMeshUrl: text("part_mesh_url"),
+    conversionStatus:
+      meshConversionStatusEnum("conversion_status").default("pending"),
+    meshConversionError: text("mesh_conversion_error"),
+    meshConversionJobId: text("mesh_conversion_job_id"),
+    meshConversionStartedAt: timestamp("mesh_conversion_started_at"),
+    meshConversionCompletedAt: timestamp("mesh_conversion_completed_at"),
+    specifications: jsonb("specifications"),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    archivedAt: timestamp("archived_at"),
+    hardDeleteAt: timestamp("hard_delete_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    archivePurgeIdx: index("quote_parts_archive_purge_idx").on(
+      table.isArchived,
+      table.hardDeleteAt,
+    ),
+  }),
+);
+
+export const quoteLineItems = pgTable(
+  "quote_line_items",
+  {
+    id: serial("id").primaryKey(),
+    quoteId: integer("quote_id")
+      .notNull()
+      .references(() => quotes.id),
+    quotePartId: uuid("quote_part_id").references(() => quoteParts.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name"),
+    quantity: integer("quantity").notNull(),
+    unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
+    totalPrice: numeric("total_price", { precision: 10, scale: 2 }).notNull(),
+    leadTimeDays: integer("lead_time_days"),
+    description: text("description"),
+    notes: text("notes"),
+    sortOrder: integer("sort_order").default(0),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    archivedAt: timestamp("archived_at"),
+    hardDeleteAt: timestamp("hard_delete_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    archivePurgeIdx: index("quote_line_items_archive_purge_idx").on(
+      table.isArchived,
+      table.hardDeleteAt,
+    ),
+  }),
+);
 
 export const orderAttachments = pgTable(
   "order_attachments",
