@@ -6,7 +6,7 @@ import {
   parseAppCalendarDateString,
   toAppCalendarDateIsoString,
 } from "./business-days";
-import { resolveOrderDeliveryFromForm } from "./order-delivery";
+import { orderPlacementAnchor, resolveOrderDeliveryFromForm } from "./order-delivery";
 
 describe("resolveOrderDeliveryFromForm", () => {
   const placedAt = fromAppCalendarDate(2026, 6, 1);
@@ -26,6 +26,15 @@ describe("resolveOrderDeliveryFromForm", () => {
     );
     expect(result!.leadTime).toBe(
       businessDaysFrom(placedAt, parseAppCalendarDateString(deliveryDateStr))
+    );
+  });
+
+  it("accepts serialized order placement dates from Remix loader data", () => {
+    const serializedPlacedAt = "2026-06-01T12:00:00.000Z";
+
+    expect(() => orderPlacementAnchor(serializedPlacedAt)).not.toThrow();
+    expect(toAppCalendarDateIsoString(orderPlacementAnchor(serializedPlacedAt))).toBe(
+      "2026-06-01"
     );
   });
 

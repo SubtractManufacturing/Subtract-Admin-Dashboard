@@ -41,7 +41,9 @@ import {
   addBusinessDays,
   businessDaysFrom,
   businessDaysUntil,
+  parseAppInstant,
   parseAppCalendarDateString,
+  startOfTodayInAppTz,
   toAppCalendarDate,
   toAppCalendarDateIsoString,
 } from "~/lib/business-days";
@@ -2372,7 +2374,11 @@ export default function OrderDetails() {
     }
   };
 
-  const orderPlacedAnchor = orderPlacementAnchor(order.createdAt);
+  const orderPlacedAnchor = useMemo(() => {
+    const createdAt = parseAppInstant(order.createdAt);
+    return createdAt ? orderPlacementAnchor(createdAt) : startOfTodayInAppTz();
+  }, [order.createdAt]);
+  const orderDeliveryDate = parseAppInstant(order.deliveryDate);
 
   const handleEditOrder = () => {
     // Initialize with the existing vendor pay dollar amount
@@ -2382,8 +2388,8 @@ export default function OrderDetails() {
       orderTotal > 0 ? Math.min(100, (vendorPayAmount / orderTotal) * 100) : 70;
 
     setEditOrderForm({
-      deliveryDate: order.deliveryDate
-        ? toAppCalendarDateIsoString(new Date(order.deliveryDate))
+      deliveryDate: orderDeliveryDate
+        ? toAppCalendarDateIsoString(orderDeliveryDate)
         : "",
       leadTime: order.leadTime?.toString() || "",
       vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
@@ -2455,9 +2461,6 @@ export default function OrderDetails() {
     setIsPackingSlipModalOpen(true);
   };
 
-  const orderDeliveryDate = order.deliveryDate
-    ? new Date(order.deliveryDate)
-    : null;
   const businessDaysToDelivery = orderDeliveryDate
     ? businessDaysUntil(orderDeliveryDate)
     : null;
@@ -2937,9 +2940,9 @@ export default function OrderDetails() {
                       Delivery Date
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {order.deliveryDate
-                        ? formatDateForDisplay(new Date(order.deliveryDate)) ??
-                          formatDate(order.deliveryDate)
+                      {orderDeliveryDate
+                        ? formatDateForDisplay(orderDeliveryDate) ??
+                          formatDate(orderDeliveryDate)
                         : "--"}
                     </p>
                   </div>

@@ -1,5 +1,6 @@
 import {
   addBusinessDays,
+  type AppInstantInput,
   businessDaysFrom,
   parseAppCalendarDateString,
   toAppCalendarDate,
@@ -9,7 +10,7 @@ export type OrderDeliveryFormInput = {
   deliveryDateStr: string | null;
   leadTimeStr: string | null;
   /** order.createdAt for edits; startOfTodayInAppTz() for create */
-  placedAt: Date;
+  placedAt: AppInstantInput;
 };
 
 export type OrderDeliveryFormResult =
@@ -18,7 +19,7 @@ export type OrderDeliveryFormResult =
   | undefined;
 
 /** Normalize order placement to ET calendar midnight for lead-time math. */
-export function orderPlacementAnchor(placedAt: Date): Date {
+export function orderPlacementAnchor(placedAt: AppInstantInput): Date {
   return toAppCalendarDate(placedAt);
 }
 

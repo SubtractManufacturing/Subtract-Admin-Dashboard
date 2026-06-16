@@ -31,6 +31,7 @@ import BusinessDayCalendar from "~/components/shared/BusinessDayCalendar";
 import {
   addBusinessDays,
   businessDaysFrom,
+  parseAppInstant,
   parseAppCalendarDateString,
   startOfTodayInAppTz,
   toAppCalendarDate,
@@ -288,17 +289,19 @@ export default function Orders() {
   useEffect(() => {
     if (!modalOpen) return;
     if (editingOrder) {
+      const deliveryDate = parseAppInstant(editingOrder.deliveryDate);
       setDeliveryForm({
-        deliveryDate: editingOrder.deliveryDate
-          ? toAppCalendarDateIsoString(new Date(editingOrder.deliveryDate))
-          : "",
+        deliveryDate: deliveryDate ? toAppCalendarDateIsoString(deliveryDate) : "",
         leadTime: editingOrder.leadTime?.toString() || "",
       });
     }
   }, [modalOpen, editingOrder]);
 
-  const deliveryPlacementAnchor = editingOrder
-    ? orderPlacementAnchor(editingOrder.createdAt)
+  const editingOrderCreatedAt = editingOrder
+    ? parseAppInstant(editingOrder.createdAt)
+    : null;
+  const deliveryPlacementAnchor = editingOrderCreatedAt
+    ? orderPlacementAnchor(editingOrderCreatedAt)
     : startOfTodayInAppTz();
 
   const handleGenerateOrderNumber = () => {

@@ -10,6 +10,7 @@ import {
   getNextBusinessDay,
   isBusinessDay,
   leadTimeOptionToBusinessDays,
+  parseAppInstant,
   parseAppCalendarDateString,
   startOfTodayInAppTz,
   toAppCalendarDate,
@@ -62,6 +63,19 @@ describe("business-days", () => {
     const stored = fromAppCalendarDate(2026, 6, 15);
     const read = toAppCalendarDate(stored);
     expect(read.getTime()).toBe(stored.getTime());
+  });
+
+  it("accepts ISO timestamp strings from Remix loader serialization", () => {
+    const serializedDate = "2026-06-15T15:30:00.000Z";
+
+    expect(() => toAppCalendarDate(serializedDate)).not.toThrow();
+    expect(toAppCalendarDateIsoString(serializedDate)).toBe("2026-06-15");
+  });
+
+  it("returns null for invalid serialized date values", () => {
+    expect(parseAppInstant(null)).toBeNull();
+    expect(parseAppInstant("")).toBeNull();
+    expect(parseAppInstant("not-a-date")).toBeNull();
   });
 
   it("getNextBusinessDay skips weekend", () => {
