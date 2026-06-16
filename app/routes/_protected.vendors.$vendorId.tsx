@@ -29,7 +29,7 @@ type VendorOrder = {
   status: string;
   totalPrice: string | null;
   vendorPay: string | null;
-  shipDate: Date | null;
+  deliveryDate: Date | null;
   createdAt: Date;
   customer: Customer | null;
 };

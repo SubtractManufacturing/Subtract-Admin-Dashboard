@@ -190,7 +190,7 @@ export async function getVendorOrders(vendorId: number) {
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
-        shipDate: orders.shipDate,
+        deliveryDate: orders.deliveryDate,
         createdAt: orders.createdAt,
         customer: customers
       })

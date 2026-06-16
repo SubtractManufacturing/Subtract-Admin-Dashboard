@@ -25,8 +25,22 @@ import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
 import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle";
 import { DataTable } from "~/components/shared/DataTable";
-import { InputField, SelectField } from "~/components/shared/FormField";
+import { SelectField } from "~/components/shared/FormField";
 import { listCardStyles, statusStyles } from "~/utils/tw-styles";
+import BusinessDayCalendar from "~/components/shared/BusinessDayCalendar";
+import {
+  addBusinessDays,
+  businessDaysFrom,
+  parseAppCalendarDateString,
+  startOfTodayInAppTz,
+  toAppCalendarDate,
+  toAppCalendarDateIsoString,
+} from "~/lib/business-days";
+import {
+  orderPlacementAnchor,
+  resolveOrderDeliveryFromForm,
+} from "~/lib/order-delivery";
+import { formatDateForDisplay } from "~/lib/date-display";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -96,6 +110,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
         // For new orders, we don't have a total yet, so store "0"
         // Vendor pay will be calculated when line items are added
+        const deliveryDateStr = formData.get("deliveryDate") as string | null;
+        const leadTimeStr = formData.get("leadTime") as string | null;
+        const deliveryFields = resolveOrderDeliveryFromForm({
+          deliveryDateStr,
+          leadTimeStr,
+          placedAt: startOfTodayInAppTz(),
+        });
+
         const orderData: OrderInput = {
           orderNumber,
           customerId: formData.get("customerId")
@@ -106,9 +128,12 @@ export async function action({ request }: ActionFunctionArgs) {
             : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
           vendorPay: "0", // Will be set properly when line items are added
-          shipDate: formData.get("shipDate")
-            ? new Date(formData.get("shipDate") as string)
-            : null,
+          ...(deliveryFields?.deliveryDate !== undefined && {
+            deliveryDate: deliveryFields.deliveryDate,
+          }),
+          ...(deliveryFields?.leadTime !== undefined && {
+            leadTime: deliveryFields.leadTime,
+          }),
         };
         await createOrder(orderData, eventContext);
         return json({ success: true });
@@ -128,6 +153,14 @@ export async function action({ request }: ActionFunctionArgs) {
         const orderTotal = parseFloat(order.totalPrice || "0");
         const vendorPayAmount = (orderTotal * vendorPayPercentage / 100).toFixed(2);
 
+        const deliveryDateStr = formData.get("deliveryDate") as string | null;
+        const leadTimeStr = formData.get("leadTime") as string | null;
+        const deliveryFields = resolveOrderDeliveryFromForm({
+          deliveryDateStr,
+          leadTimeStr,
+          placedAt: order.createdAt,
+        });
+
         const orderData: OrderInput = {
           customerId: formData.get("customerId")
             ? parseInt(formData.get("customerId") as string)
@@ -137,9 +170,12 @@ export async function action({ request }: ActionFunctionArgs) {
             : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
           vendorPay: vendorPayAmount, // Store as dollar amount
-          shipDate: formData.get("shipDate")
-            ? new Date(formData.get("shipDate") as string)
-            : null,
+          ...(deliveryFields?.deliveryDate !== undefined && {
+            deliveryDate: deliveryFields.deliveryDate,
+          }),
+          ...(deliveryFields?.leadTime !== undefined && {
+            leadTime: deliveryFields.leadTime,
+          }),
         };
         await updateOrder(orderId, orderData, eventContext);
         return json({ success: true });
@@ -190,6 +226,7 @@ export default function Orders() {
   const [newOrderNumber, setNewOrderNumber] = useState("");
   const [isReassigningOrderNumber, setIsReassigningOrderNumber] = useState(false);
   const [reassignError, setReassignError] = useState("");
+  const [deliveryForm, setDeliveryForm] = useState({ deliveryDate: "", leadTime: "" });
   const [view, setView] = useViewToggle("orders-view");
 
   // Handle fetcher response
@@ -222,6 +259,7 @@ export default function Orders() {
         setNewOrderNumber("");
         setIsReassigningOrderNumber(false);
         setReassignError("");
+        setDeliveryForm({ deliveryDate: "", leadTime: "" });
         // Reload the page data
         revalidator.revalidate();
       }
@@ -243,8 +281,25 @@ export default function Orders() {
     setOrderNumber("");
     setOrderNumberError("");
     setVendorPayPercentage(70);
+    setDeliveryForm({ deliveryDate: "", leadTime: "" });
     setModalOpen(true);
   };
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    if (editingOrder) {
+      setDeliveryForm({
+        deliveryDate: editingOrder.deliveryDate
+          ? toAppCalendarDateIsoString(new Date(editingOrder.deliveryDate))
+          : "",
+        leadTime: editingOrder.leadTime?.toString() || "",
+      });
+    }
+  }, [modalOpen, editingOrder]);
+
+  const deliveryPlacementAnchor = editingOrder
+    ? orderPlacementAnchor(editingOrder.createdAt)
+    : startOfTodayInAppTz();
 
   const handleGenerateOrderNumber = () => {
     fetcher.submit({ intent: "generateOrderNumber" }, { method: "POST" });
@@ -323,7 +378,7 @@ export default function Orders() {
   const formatDate = (date: Date | string | null) => {
     if (!date) return "--";
     const dateObj = typeof date === "string" ? new Date(date) : date;
-    return dateObj.toLocaleDateString("en-US", {
+    return formatDateForDisplay(dateObj) ?? dateObj.toLocaleDateString("en-US", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -472,9 +527,9 @@ export default function Orders() {
               },
             },
             {
-              key: "shipDate",
-              header: "Ship Date",
-              render: (order) => formatDate(order.shipDate),
+              key: "deliveryDate",
+              header: "Delivery Date",
+              render: (order) => formatDate(order.deliveryDate),
             },
             {
               key: "createdAt",
@@ -528,9 +583,9 @@ export default function Orders() {
                   </div>
                 </div>
                 <div>
-                  <div className={listCardStyles.label}>Ship Date</div>
+                  <div className={listCardStyles.label}>Delivery Date</div>
                   <div className={listCardStyles.value}>
-                    {formatDate(order.shipDate)}
+                    {formatDate(order.deliveryDate)}
                   </div>
                 </div>
               </div>
@@ -776,16 +831,59 @@ export default function Orders() {
             </div>
           </div>
 
-          <InputField
-            label="Ship Date"
-            name="shipDate"
-            type="date"
-            defaultValue={
-              editingOrder?.shipDate
-                ? new Date(editingOrder.shipDate).toISOString().split("T")[0]
-                : ""
-            }
-          />
+          <input type="hidden" name="deliveryDate" value={deliveryForm.deliveryDate} />
+          <input type="hidden" name="leadTime" value={deliveryForm.leadTime} />
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Delivery Date
+            </label>
+            <BusinessDayCalendar
+              mode="single"
+              value={
+                deliveryForm.deliveryDate
+                  ? parseAppCalendarDateString(deliveryForm.deliveryDate)
+                  : null
+              }
+              onChange={(date) => {
+                const cal = toAppCalendarDate(date);
+                const iso = toAppCalendarDateIsoString(cal);
+                const lead = businessDaysFrom(deliveryPlacementAnchor, cal);
+                setDeliveryForm({ deliveryDate: iso, leadTime: String(lead) });
+              }}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="order-lead-time"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+            >
+              Lead Time (Business Days)
+            </label>
+            <input
+              id="order-lead-time"
+              type="number"
+              value={deliveryForm.leadTime}
+              onChange={(e) => {
+                const input = e.target.value;
+                if (input === "") {
+                  setDeliveryForm({ deliveryDate: "", leadTime: "" });
+                  return;
+                }
+                const leadTimeDays = parseInt(input);
+                if (isNaN(leadTimeDays) || leadTimeDays < 0) return;
+                const newDate = addBusinessDays(deliveryPlacementAnchor, leadTimeDays);
+                setDeliveryForm({
+                  deliveryDate: toAppCalendarDateIsoString(newDate),
+                  leadTime: input,
+                });
+              }}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              placeholder="e.g., 10"
+              min="0"
+            />
+          </div>
 
           <div className="flex justify-end space-x-2 pt-4">
             <Button

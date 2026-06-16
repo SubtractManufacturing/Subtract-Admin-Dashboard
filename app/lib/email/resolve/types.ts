@@ -276,10 +276,28 @@ export const MERGE_TOKEN_CATALOG = [
     format: "date" as TokenFormat,
   },
   {
-    key: "shipDate",
-    label: "Ship Date",
+    key: "estimatedDeliveryDate",
+    label: "Estimated Delivery Date",
     description:
-      "The expected ship date for the order, formatted as Month D, YYYY. Only present when a ship date is set.",
+      "Estimated delivery date or range. On quotes, computed from lead time at send time. On orders, from the stored Delivery Date.",
+    suppliedBy: ["quote", "order"] as EntityKind[],
+    presence: "when-available" as TokenPresence,
+    format: "date" as TokenFormat,
+  },
+  {
+    key: "leadTimeBusinessDays",
+    label: "Lead Time (Business Days)",
+    description:
+      "Lead time in business days, e.g. \"12 Business Days\" or \"11–13 Business Days\".",
+    suppliedBy: ["quote", "order"] as EntityKind[],
+    presence: "when-available" as TokenPresence,
+    format: "string" as TokenFormat,
+  },
+  {
+    key: "shipDate",
+    label: "Ship Date (deprecated)",
+    description:
+      "Deprecated alias for order delivery date. Prefer estimatedDeliveryDate in new templates.",
     suppliedBy: ["order"] as EntityKind[],
     presence: "when-available" as TokenPresence,
     format: "date" as TokenFormat,

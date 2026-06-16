@@ -6,6 +6,7 @@ export default defineConfig({
   schema: "./app/lib/db/schema.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL!,
+    // Prefer session pooler (DATABASE_URL) — see getQueueDatabaseUrl() for pg-boss.
+    url: process.env.DATABASE_URL || process.env.DATABASE_DIRECT_URL!,
   },
 });

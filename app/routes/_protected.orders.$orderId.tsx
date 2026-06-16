@@ -13,6 +13,7 @@ import {
   restoreOrder,
   duplicateOrder,
   type OrderEventContext,
+  type OrderInput,
 } from "~/lib/orders";
 import { getCustomer } from "~/lib/customers";
 import { getVendor, getVendors } from "~/lib/vendors";
@@ -36,6 +37,20 @@ import {
 } from "~/lib/featureFlags";
 import { isStripeConfigured } from "~/lib/stripe.server";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
+import {
+  addBusinessDays,
+  businessDaysFrom,
+  businessDaysUntil,
+  parseAppCalendarDateString,
+  toAppCalendarDate,
+  toAppCalendarDateIsoString,
+} from "~/lib/business-days";
+import {
+  orderPlacementAnchor,
+  resolveOrderDeliveryFromForm,
+} from "~/lib/order-delivery";
+import { formatDateForDisplay } from "~/lib/date-display";
+import BusinessDayCalendar from "~/components/shared/BusinessDayCalendar";
 import {
   handleEmailPreviewAction,
   handleEmailQueueAction,
@@ -1035,7 +1050,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "updateOrderInfo": {
-        const shipDate = formData.get("shipDate") as string | null;
+        const deliveryDate = formData.get("deliveryDate") as string | null;
         const leadTime = formData.get("leadTime") as string | null;
         const vendorPay = formData.get("vendorPay") as string | null;
 
@@ -1044,13 +1059,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const updates: Partial<{
-          shipDate: Date;
-          leadTime: number;
-          vendorPay: string;
-        }> = {};
-        if (shipDate) updates.shipDate = new Date(shipDate);
-        if (leadTime) updates.leadTime = parseInt(leadTime);
+        const updates: Partial<OrderInput> = {};
+        const deliveryFields = resolveOrderDeliveryFromForm({
+          deliveryDateStr: deliveryDate,
+          leadTimeStr: leadTime,
+          placedAt: order.createdAt,
+        });
+        if (deliveryFields !== undefined) {
+          updates.deliveryDate = deliveryFields.deliveryDate;
+          updates.leadTime = deliveryFields.leadTime;
+        } else if (leadTime) {
+          updates.leadTime = parseInt(leadTime);
+        }
         if (vendorPay) updates.vendorPay = vendorPay;
 
         await updateOrder(order.id, updates, orderEventContext);
@@ -1722,7 +1742,7 @@ export default function OrderDetails() {
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
   const [editOrderModalOpen, setEditOrderModalOpen] = useState(false);
   const [editOrderForm, setEditOrderForm] = useState({
-    shipDate: "",
+    deliveryDate: "",
     leadTime: "",
     vendorPayDollar: "",
     vendorPayPercent: "",
@@ -2352,6 +2372,8 @@ export default function OrderDetails() {
     }
   };
 
+  const orderPlacedAnchor = orderPlacementAnchor(order.createdAt);
+
   const handleEditOrder = () => {
     // Initialize with the existing vendor pay dollar amount
     const vendorPayAmount = Math.max(0, parseFloat(order.vendorPay || "0"));
@@ -2360,8 +2382,8 @@ export default function OrderDetails() {
       orderTotal > 0 ? Math.min(100, (vendorPayAmount / orderTotal) * 100) : 70;
 
     setEditOrderForm({
-      shipDate: order.shipDate
-        ? new Date(order.shipDate).toISOString().split("T")[0]
+      deliveryDate: order.deliveryDate
+        ? toAppCalendarDateIsoString(new Date(order.deliveryDate))
         : "",
       leadTime: order.leadTime?.toString() || "",
       vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
@@ -2375,14 +2397,18 @@ export default function OrderDetails() {
     const formData = new FormData();
     formData.append("intent", "updateOrderInfo");
 
-    if (editOrderForm.shipDate) {
-      formData.append("shipDate", editOrderForm.shipDate);
-    }
+    if (!editOrderForm.deliveryDate && !editOrderForm.leadTime) {
+      formData.append("deliveryDate", "");
+    } else {
+      if (editOrderForm.deliveryDate) {
+        formData.append("deliveryDate", editOrderForm.deliveryDate);
+      }
 
-    if (editOrderForm.leadTime) {
-      const leadTime = parseInt(editOrderForm.leadTime);
-      if (!isNaN(leadTime) && leadTime >= 0) {
-        formData.append("leadTime", leadTime.toString());
+      if (editOrderForm.leadTime) {
+        const leadTime = parseInt(editOrderForm.leadTime);
+        if (!isNaN(leadTime) && leadTime >= 0) {
+          formData.append("leadTime", leadTime.toString());
+        }
       }
     }
 
@@ -2429,22 +2455,55 @@ export default function OrderDetails() {
     setIsPackingSlipModalOpen(true);
   };
 
-  // Calculate days until ship date
-  const shipDate = order.shipDate ? new Date(order.shipDate) : null;
-  const today = new Date();
-  const daysUntilShip = shipDate
-    ? Math.ceil((shipDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+  const orderDeliveryDate = order.deliveryDate
+    ? new Date(order.deliveryDate)
+    : null;
+  const businessDaysToDelivery = orderDeliveryDate
+    ? businessDaysUntil(orderDeliveryDate)
     : null;
 
-  // Determine priority based on days until ship
   const getPriority = () => {
-    if (!daysUntilShip) return "Normal";
-    if (daysUntilShip <= 3) return "Critical";
-    if (daysUntilShip <= 7) return "High";
+    if (businessDaysToDelivery == null) return "Normal";
+    if (businessDaysToDelivery <= 0) return "Critical";
+    if (businessDaysToDelivery <= 5) return "High";
     return "Normal";
   };
 
   const priority = getPriority();
+
+  const deliveryBanner = (() => {
+    if (!orderDeliveryDate) {
+      return {
+        show: true,
+        color: "amber" as const,
+        message:
+          "No Delivery Date set. Set a Delivery Date to track this order.",
+      };
+    }
+    const days = businessDaysUntil(orderDeliveryDate);
+    const dateLabel = formatDateForDisplay(orderDeliveryDate) ?? "";
+    if (days > 5) return { show: false, color: "none" as const, message: "" };
+    if (days >= 1) {
+      return {
+        show: true,
+        color: "orange" as const,
+        message: `Delivery Date is in ${days} business day${days === 1 ? "" : "s"} (${dateLabel})`,
+      };
+    }
+    if (days === 0) {
+      return {
+        show: true,
+        color: "red" as const,
+        message: `Delivery Date is today (${dateLabel})`,
+      };
+    }
+    const ago = Math.abs(days);
+    return {
+      show: true,
+      color: "red" as const,
+      message: `Delivery Date was ${ago} business day${ago === 1 ? "" : "s"} ago (${dateLabel})`,
+    };
+  })();
 
   // Format currency
   const formatCurrency = (amount: string | null) => {
@@ -2724,15 +2783,23 @@ export default function OrderDetails() {
             </div>
           )}
 
-          {/* Notice Bar */}
-          {showNotice &&
-            daysUntilShip &&
-            daysUntilShip <= 7 &&
-            order.status !== "Archived" && (
-              <div className="relative bg-yellow-100 dark:bg-yellow-900/50 border-2 border-yellow-300 dark:border-yellow-700 rounded-lg p-4">
+          {/* Delivery Date proximity banner */}
+          {deliveryBanner.show &&
+            order.status !== "Archived" &&
+            (deliveryBanner.color === "amber" || showNotice) && (
+            <div
+              className={`relative rounded-lg p-4 border-2 ${
+                deliveryBanner.color === "amber"
+                  ? "bg-amber-50 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700"
+                  : deliveryBanner.color === "orange"
+                    ? "bg-orange-100 dark:bg-orange-900/50 border-orange-300 dark:border-orange-700"
+                    : "bg-red-100 dark:bg-red-900/50 border-red-300 dark:border-red-700"
+              }`}
+            >
+              {deliveryBanner.color !== "amber" && (
                 <button
                   onClick={() => setShowNotice(false)}
-                  className="absolute top-2 right-2 text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
+                  className="absolute top-2 right-2 text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
                 >
                   <svg
                     className="w-5 h-5"
@@ -2748,12 +2815,20 @@ export default function OrderDetails() {
                     />
                   </svg>
                 </button>
-                <p className="font-semibold text-yellow-800 dark:text-yellow-200">
-                  Attention: This order is approaching its due date (
-                  {daysUntilShip} days remaining)
-                </p>
-              </div>
-            )}
+              )}
+              <p
+                className={`font-semibold ${
+                  deliveryBanner.color === "amber"
+                    ? "text-amber-900 dark:text-amber-200"
+                    : deliveryBanner.color === "orange"
+                      ? "text-orange-800 dark:text-orange-200"
+                      : "text-red-800 dark:text-red-200"
+                }`}
+              >
+                {deliveryBanner.message}
+              </p>
+            </div>
+          )}
 
           {/* Status Cards - Always at top */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
@@ -2859,18 +2934,23 @@ export default function OrderDetails() {
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                      Ship Date
+                      Delivery Date
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {formatDate(order.shipDate)}
+                      {order.deliveryDate
+                        ? formatDateForDisplay(new Date(order.deliveryDate)) ??
+                          formatDate(order.deliveryDate)
+                        : "--"}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                      Lead Time
+                      Lead Time (Business Days)
                     </p>
                     <p className="text-lg text-gray-900 dark:text-gray-100">
-                      {order.leadTime ? `${order.leadTime} Days` : "--"}
+                      {order.leadTime
+                        ? `${order.leadTime} Business Day${order.leadTime === 1 ? "" : "s"}`
+                        : "--"}
                     </p>
                   </div>
                   <div>
@@ -3474,43 +3554,26 @@ export default function OrderDetails() {
 
             <div className="space-y-4">
               <div>
-                <label
-                  htmlFor="ship-date-input"
-                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                >
-                  Due Date
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Delivery Date
                 </label>
-                <input
-                  id="ship-date-input"
-                  type="date"
-                  value={editOrderForm.shipDate}
-                  onChange={(e) => {
-                    const newShipDate = e.target.value;
-                    if (!newShipDate) {
-                      setEditOrderForm({
-                        ...editOrderForm,
-                        shipDate: "",
-                        leadTime: "",
-                      });
-                      return;
-                    }
-
-                    // Calculate lead time in calendar days from today to the new ship date
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    const shipDate = new Date(newShipDate);
-                    const diffInMs = shipDate.getTime() - today.getTime();
-                    const diffInDays = Math.round(
-                      diffInMs / (1000 * 60 * 60 * 24)
-                    );
-
+                <BusinessDayCalendar
+                  mode="single"
+                  value={
+                    editOrderForm.deliveryDate
+                      ? parseAppCalendarDateString(editOrderForm.deliveryDate)
+                      : null
+                  }
+                  onChange={(date) => {
+                    const cal = toAppCalendarDate(date);
+                    const iso = toAppCalendarDateIsoString(cal);
+                    const lead = businessDaysFrom(orderPlacedAnchor, cal);
                     setEditOrderForm({
                       ...editOrderForm,
-                      shipDate: newShipDate,
-                      leadTime: diffInDays >= 0 ? diffInDays.toString() : "0",
+                      deliveryDate: iso,
+                      leadTime: String(lead),
                     });
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
               </div>
 
@@ -3519,7 +3582,7 @@ export default function OrderDetails() {
                   htmlFor="lead-time-input"
                   className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
                 >
-                  Lead Time (Days)
+                  Lead Time (Business Days)
                 </label>
                 <input
                   id="lead-time-input"
@@ -3531,7 +3594,7 @@ export default function OrderDetails() {
                       setEditOrderForm({
                         ...editOrderForm,
                         leadTime: "",
-                        shipDate: "",
+                        deliveryDate: "",
                       });
                       return;
                     }
@@ -3539,17 +3602,13 @@ export default function OrderDetails() {
                     const leadTimeDays = parseInt(input);
                     if (isNaN(leadTimeDays) || leadTimeDays < 0) return;
 
-                    // Calculate ship date by adding lead time days to today
-                    const today = new Date();
-                    const shipDate = new Date(
-                      today.getTime() + leadTimeDays * 24 * 60 * 60 * 1000
-                    );
-                    const shipDateString = shipDate.toISOString().split("T")[0];
+                    const newDate = addBusinessDays(orderPlacedAnchor, leadTimeDays);
+                    const deliveryDateString = toAppCalendarDateIsoString(newDate);
 
                     setEditOrderForm({
                       ...editOrderForm,
                       leadTime: input,
-                      shipDate: shipDateString,
+                      deliveryDate: deliveryDateString,
                     });
                   }}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"

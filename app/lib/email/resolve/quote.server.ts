@@ -9,6 +9,12 @@ import {
   formatPartMaterials,
   formatPartQtys,
 } from "./formatters";
+import {
+  addBusinessDays,
+  formatLeadTimeBusinessDays,
+  startOfTodayInAppTz,
+} from "~/lib/business-days";
+import { formatDateRangeForDisplay } from "~/lib/date-display";
 
 /**
  * Resolve all applicable merge tokens for a quote entity.
@@ -136,6 +142,19 @@ export async function resolveQuoteTokens(entityId: string): Promise<ResolvedToke
   if (quote.validUntil) {
     const formatted = formatDate(quote.validUntil);
     if (formatted) tokens.validUntil = formatted;
+  }
+
+  const min = quote.leadTimeBusinessDaysMin;
+  const max = quote.leadTimeBusinessDaysMax;
+  if (min != null && max != null && min >= 0 && max >= min) {
+    const today = startOfTodayInAppTz();
+    const start = addBusinessDays(today, min);
+    const end = addBusinessDays(today, max);
+    const rangeFormatted = formatDateRangeForDisplay(start, end, {
+      includeTimeZoneLabel: false,
+    });
+    if (rangeFormatted) tokens.estimatedDeliveryDate = rangeFormatted;
+    tokens.leadTimeBusinessDays = formatLeadTimeBusinessDays(min, max);
   }
 
   return tokens;

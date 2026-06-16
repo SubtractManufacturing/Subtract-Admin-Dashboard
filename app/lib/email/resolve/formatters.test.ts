@@ -58,28 +58,21 @@ describe("formatDate", () => {
     expect(formatDate(undefined)).toBeNull();
   });
 
-  it("formats a UTC date as 'Month D, YYYY'", () => {
-    const date = new Date(Date.UTC(2026, 0, 15)); // January 15, 2026
-    const result = formatDate(date);
-    expect(result).toContain("January");
-    expect(result).toContain("15");
-    expect(result).toContain("2026");
+  it("formats a date as Month D, YYYY with ET label", () => {
+    const date = new Date("2026-01-15T17:00:00.000Z");
+    expect(formatDate(date)).toBe("January 15, 2026 (ET)");
   });
 
   it("formats month correctly — March", () => {
-    const date = new Date(Date.UTC(2026, 2, 3)); // March 3, 2026
-    const result = formatDate(date);
-    expect(result).toContain("March");
-    expect(result).toContain("3");
+    const date = new Date("2026-03-03T17:00:00.000Z");
+    expect(formatDate(date)).toBe("March 3, 2026 (ET)");
   });
 
-  it("uses UTC timezone (no off-by-one from local tz)", () => {
-    // Midnight UTC Jan 1 — should still be January 1, not Dec 31 in any tz
-    const date = new Date(Date.UTC(2026, 0, 1));
-    const result = formatDate(date);
-    expect(result).toContain("January");
-    expect(result).toContain("1");
-    expect(result).toContain("2026");
+  it("uses Eastern Time for calendar day boundaries", () => {
+    const midnightUtc = new Date(Date.UTC(2026, 0, 1));
+    expect(formatDate(midnightUtc)).toBe("December 31, 2025 (ET)");
+    const noonEt = new Date("2026-01-01T17:00:00.000Z");
+    expect(formatDate(noonEt)).toBe("January 1, 2026 (ET)");
   });
 });
 

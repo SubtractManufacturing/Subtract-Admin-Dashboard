@@ -49,6 +49,7 @@ interface PdfGenerationModalProps {
   children: ReactNode;
   /** Footer controls grouped with actions on the right — not included in generated PDF HTML */
   previewToolbar?: ReactNode;
+  headerNotice?: ReactNode;
   autoDownload?: boolean;
   intent: string;
 }
@@ -64,6 +65,7 @@ export default function PdfGenerationModal({
   apiEndpoint,
   children,
   previewToolbar,
+  headerNotice,
   autoDownload = true,
   intent,
 }: PdfGenerationModalProps) {
@@ -244,6 +246,8 @@ export default function PdfGenerationModal({
             </p>
           </div>
         )}
+
+        {headerNotice}
 
         {isRefreshing && (
           <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">

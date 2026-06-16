@@ -25,7 +25,9 @@ export type OrderWithRelations = {
   status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   totalPrice: string | null
   vendorPay: string | null
-  shipDate: Date | null
+  deliveryDate: Date | null
+  deliveryDateStart: Date | null
+  leadTimeBusinessDaysMin: number | null
   notes: string | null
   leadTime: number | null
   createdAt: Date
@@ -43,7 +45,10 @@ export type OrderInput = {
   status?: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   vendorPay?: string | null
   vendorPayPercentage?: number
-  shipDate?: Date | null
+  deliveryDate?: Date | null
+  leadTime?: number | null
+  deliveryDateStart?: Date | null
+  leadTimeBusinessDaysMin?: number | null
 }
 
 export type OrderEventContext = {
@@ -64,7 +69,9 @@ export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
-        shipDate: orders.shipDate,
+        deliveryDate: orders.deliveryDate,
+        deliveryDateStart: orders.deliveryDateStart,
+        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -113,7 +120,9 @@ export async function getOrder(id: number): Promise<OrderWithRelations | null> {
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
-        shipDate: orders.shipDate,
+        deliveryDate: orders.deliveryDate,
+        deliveryDateStart: orders.deliveryDateStart,
+        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -146,7 +155,9 @@ export async function getOrderByNumber(orderNumber: string): Promise<OrderWithRe
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
-        shipDate: orders.shipDate,
+        deliveryDate: orders.deliveryDate,
+        deliveryDateStart: orders.deliveryDateStart,
+        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -237,7 +248,9 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
-        shipDate: orders.shipDate,
+        deliveryDate: orders.deliveryDate,
+        deliveryDateStart: orders.deliveryDateStart,
+        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -283,7 +296,7 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       .where(eq(orders.id, id))
 
     // Track all changes
-    const changes: Record<string, string | number | null> = {};
+    const changes: Record<string, unknown> = {};
     const changedFields: string[] = [];
 
     // Check each field for changes
@@ -302,13 +315,12 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       changes.newCustomerId = orderData.customerId;
       changedFields.push('customer');
     }
-    if (orderData.shipDate !== undefined) {
-      const newShipDate = orderData.shipDate ? new Date(orderData.shipDate).toISOString() : null;
-      const currentShipDate = currentOrder.shipDate ? new Date(currentOrder.shipDate).toISOString() : null;
-      if (newShipDate !== currentShipDate) {
-        changes.previousShipDate = currentShipDate;
-        changes.newShipDate = newShipDate;
-        changedFields.push('shipDate');
+    if (orderData.deliveryDate !== undefined) {
+      const newDeliveryDate = orderData.deliveryDate ? new Date(orderData.deliveryDate).toISOString() : null;
+      const currentDeliveryDate = currentOrder.deliveryDate ? new Date(currentOrder.deliveryDate).toISOString() : null;
+      if (newDeliveryDate !== currentDeliveryDate) {
+        changes.deliveryDate = { old: currentDeliveryDate, new: newDeliveryDate };
+        changedFields.push('deliveryDate');
       }
     }
     if ('totalPrice' in restData && restData.totalPrice !== currentOrder.totalPrice) {
@@ -400,7 +412,9 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
-        shipDate: orders.shipDate,
+        deliveryDate: orders.deliveryDate,
+        deliveryDateStart: orders.deliveryDateStart,
+        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -605,7 +619,9 @@ export async function duplicateOrder(
           // Reset/clear fields
           quoteId: null,
           sourceQuoteId: null,
-          shipDate: null,
+          deliveryDate: null,
+          deliveryDateStart: null,
+          leadTimeBusinessDaysMin: null,
           notes: null,
         })
         .returning();
