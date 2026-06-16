@@ -54,6 +54,25 @@ export function getAppCalendarParts(instant: Date): {
   return { year, month, day };
 }
 
+/** Parse `YYYY-MM-DD` as midnight ET on that calendar day (never UTC midnight). */
+export function parseAppCalendarDateString(isoDate: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) {
+    throw new Error(`parseAppCalendarDateString: invalid date "${isoDate}"`);
+  }
+  return fromAppCalendarDate(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3])
+  );
+}
+
+/** Format an instant as `YYYY-MM-DD` in ET. */
+export function toAppCalendarDateIsoString(instant: Date): string {
+  const { year, month, day } = getAppCalendarParts(instant);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 /** UTC instant for midnight ET on the given calendar day (month 1–12). */
 export function fromAppCalendarDate(
   year: number,
@@ -147,15 +166,23 @@ export function signedBusinessDaysBetween(start: Date, end: Date): number {
   return countBusinessDays(startCal, endCal) - (isBusinessDay(startCal) ? 1 : 0);
 }
 
+/**
+ * Business days from start (ET calendar day) to end.
+ * Same day → 0. End before start → negative count.
+ */
+export function businessDaysFrom(start: Date, end: Date): number {
+  const startCal = toAppCalendarDate(start);
+  const endCal = toAppCalendarDate(end);
+  if (endCal.getTime() === startCal.getTime()) return 0;
+  if (endCal < startCal) {
+    return -countBusinessDays(addCalendarDays(endCal, 1), startCal);
+  }
+  return countBusinessDays(startCal, endCal) - (isBusinessDay(startCal) ? 1 : 0);
+}
+
 /** Business days from today (ET) to target; negative if target is in the past. */
 export function businessDaysUntil(target: Date): number {
-  const today = startOfTodayInAppTz();
-  const targetCal = toAppCalendarDate(target);
-  if (targetCal.getTime() === today.getTime()) return 0;
-  if (targetCal < today) {
-    return -countBusinessDays(addCalendarDays(targetCal, 1), today);
-  }
-  return countBusinessDays(today, targetCal) - (isBusinessDay(today) ? 1 : 0);
+  return businessDaysFrom(startOfTodayInAppTz(), target);
 }
 
 export function formatLeadTimeBusinessDays(

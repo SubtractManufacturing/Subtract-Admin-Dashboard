@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { formatDateForDisplay } from "./date-display";
 import {
   addBusinessDays,
+  businessDaysFrom,
   businessDaysUntil,
   countBusinessDays,
   formatLeadTimeBusinessDays,
@@ -8,8 +10,10 @@ import {
   getNextBusinessDay,
   isBusinessDay,
   leadTimeOptionToBusinessDays,
+  parseAppCalendarDateString,
   startOfTodayInAppTz,
   toAppCalendarDate,
+  toAppCalendarDateIsoString,
 } from "./business-days";
 
 describe("business-days", () => {
@@ -87,5 +91,17 @@ describe("business-days", () => {
 
   it("rejects negative addBusinessDays", () => {
     expect(() => addBusinessDays(new Date(), -1)).toThrow();
+  });
+
+  it("parseAppCalendarDateString round-trips and displays June 15 in ET", () => {
+    const parsed = parseAppCalendarDateString("2026-06-15");
+    expect(toAppCalendarDateIsoString(parsed)).toBe("2026-06-15");
+    expect(formatDateForDisplay(parsed)).toBe("June 15, 2026 (ET)");
+  });
+
+  it("businessDaysFrom matches addBusinessDays offset", () => {
+    const placed = fromAppCalendarDate(2026, 6, 1);
+    const delivery = addBusinessDays(placed, 10);
+    expect(businessDaysFrom(placed, delivery)).toBe(10);
   });
 });

@@ -39,11 +39,16 @@ import { isStripeConfigured } from "~/lib/stripe.server";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
 import {
   addBusinessDays,
+  businessDaysFrom,
   businessDaysUntil,
-  countBusinessDays,
-  startOfTodayInAppTz,
+  parseAppCalendarDateString,
   toAppCalendarDate,
+  toAppCalendarDateIsoString,
 } from "~/lib/business-days";
+import {
+  orderPlacementAnchor,
+  resolveOrderDeliveryFromForm,
+} from "~/lib/order-delivery";
 import { formatDateForDisplay } from "~/lib/date-display";
 import BusinessDayCalendar from "~/components/shared/BusinessDayCalendar";
 import {
@@ -1055,13 +1060,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
         };
 
         const updates: Partial<OrderInput> = {};
-        if (deliveryDate === "") {
-          updates.deliveryDate = null;
-          updates.leadTime = null;
-        } else if (deliveryDate) {
-          const parsed = new Date(deliveryDate);
-          updates.deliveryDate = parsed;
-          updates.leadTime = countBusinessDays(startOfTodayInAppTz(), parsed);
+        const deliveryFields = resolveOrderDeliveryFromForm({
+          deliveryDateStr: deliveryDate,
+          leadTimeStr: leadTime,
+          placedAt: order.createdAt,
+        });
+        if (deliveryFields !== undefined) {
+          updates.deliveryDate = deliveryFields.deliveryDate;
+          updates.leadTime = deliveryFields.leadTime;
         } else if (leadTime) {
           updates.leadTime = parseInt(leadTime);
         }
@@ -2366,6 +2372,8 @@ export default function OrderDetails() {
     }
   };
 
+  const orderPlacedAnchor = orderPlacementAnchor(order.createdAt);
+
   const handleEditOrder = () => {
     // Initialize with the existing vendor pay dollar amount
     const vendorPayAmount = Math.max(0, parseFloat(order.vendorPay || "0"));
@@ -2375,7 +2383,7 @@ export default function OrderDetails() {
 
     setEditOrderForm({
       deliveryDate: order.deliveryDate
-        ? new Date(order.deliveryDate).toISOString().split("T")[0]
+        ? toAppCalendarDateIsoString(new Date(order.deliveryDate))
         : "",
       leadTime: order.leadTime?.toString() || "",
       vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
@@ -2389,14 +2397,18 @@ export default function OrderDetails() {
     const formData = new FormData();
     formData.append("intent", "updateOrderInfo");
 
-    if (editOrderForm.deliveryDate) {
-      formData.append("deliveryDate", editOrderForm.deliveryDate);
-    }
+    if (!editOrderForm.deliveryDate && !editOrderForm.leadTime) {
+      formData.append("deliveryDate", "");
+    } else {
+      if (editOrderForm.deliveryDate) {
+        formData.append("deliveryDate", editOrderForm.deliveryDate);
+      }
 
-    if (editOrderForm.leadTime) {
-      const leadTime = parseInt(editOrderForm.leadTime);
-      if (!isNaN(leadTime) && leadTime >= 0) {
-        formData.append("leadTime", leadTime.toString());
+      if (editOrderForm.leadTime) {
+        const leadTime = parseInt(editOrderForm.leadTime);
+        if (!isNaN(leadTime) && leadTime >= 0) {
+          formData.append("leadTime", leadTime.toString());
+        }
       }
     }
 
@@ -3549,13 +3561,13 @@ export default function OrderDetails() {
                   mode="single"
                   value={
                     editOrderForm.deliveryDate
-                      ? new Date(editOrderForm.deliveryDate + "T12:00:00")
+                      ? parseAppCalendarDateString(editOrderForm.deliveryDate)
                       : null
                   }
                   onChange={(date) => {
                     const cal = toAppCalendarDate(date);
-                    const iso = cal.toISOString().split("T")[0];
-                    const lead = countBusinessDays(startOfTodayInAppTz(), cal);
+                    const iso = toAppCalendarDateIsoString(cal);
+                    const lead = businessDaysFrom(orderPlacedAnchor, cal);
                     setEditOrderForm({
                       ...editOrderForm,
                       deliveryDate: iso,
@@ -3590,13 +3602,8 @@ export default function OrderDetails() {
                     const leadTimeDays = parseInt(input);
                     if (isNaN(leadTimeDays) || leadTimeDays < 0) return;
 
-                    const newDate = addBusinessDays(
-                      startOfTodayInAppTz(),
-                      leadTimeDays
-                    );
-                    const deliveryDateString = newDate
-                      .toISOString()
-                      .split("T")[0];
+                    const newDate = addBusinessDays(orderPlacedAnchor, leadTimeDays);
+                    const deliveryDateString = toAppCalendarDateIsoString(newDate);
 
                     setEditOrderForm({
                       ...editOrderForm,

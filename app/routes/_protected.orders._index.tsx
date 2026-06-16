@@ -30,10 +30,16 @@ import { listCardStyles, statusStyles } from "~/utils/tw-styles";
 import BusinessDayCalendar from "~/components/shared/BusinessDayCalendar";
 import {
   addBusinessDays,
-  countBusinessDays,
+  businessDaysFrom,
+  parseAppCalendarDateString,
   startOfTodayInAppTz,
   toAppCalendarDate,
+  toAppCalendarDateIsoString,
 } from "~/lib/business-days";
+import {
+  orderPlacementAnchor,
+  resolveOrderDeliveryFromForm,
+} from "~/lib/order-delivery";
 import { formatDateForDisplay } from "~/lib/date-display";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -106,18 +112,11 @@ export async function action({ request }: ActionFunctionArgs) {
         // Vendor pay will be calculated when line items are added
         const deliveryDateStr = formData.get("deliveryDate") as string | null;
         const leadTimeStr = formData.get("leadTime") as string | null;
-        let deliveryDate: Date | null = null;
-        let leadTime: number | null = null;
-        if (deliveryDateStr) {
-          deliveryDate = new Date(deliveryDateStr);
-          leadTime = countBusinessDays(startOfTodayInAppTz(), deliveryDate);
-        } else if (leadTimeStr) {
-          const days = parseInt(leadTimeStr);
-          if (!isNaN(days) && days >= 0) {
-            leadTime = days;
-            deliveryDate = addBusinessDays(startOfTodayInAppTz(), days);
-          }
-        }
+        const deliveryFields = resolveOrderDeliveryFromForm({
+          deliveryDateStr,
+          leadTimeStr,
+          placedAt: startOfTodayInAppTz(),
+        });
 
         const orderData: OrderInput = {
           orderNumber,
@@ -129,8 +128,12 @@ export async function action({ request }: ActionFunctionArgs) {
             : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
           vendorPay: "0", // Will be set properly when line items are added
-          deliveryDate,
-          leadTime,
+          ...(deliveryFields?.deliveryDate !== undefined && {
+            deliveryDate: deliveryFields.deliveryDate,
+          }),
+          ...(deliveryFields?.leadTime !== undefined && {
+            leadTime: deliveryFields.leadTime,
+          }),
         };
         await createOrder(orderData, eventContext);
         return json({ success: true });
@@ -152,21 +155,11 @@ export async function action({ request }: ActionFunctionArgs) {
 
         const deliveryDateStr = formData.get("deliveryDate") as string | null;
         const leadTimeStr = formData.get("leadTime") as string | null;
-        let deliveryDate: Date | null | undefined = undefined;
-        let leadTime: number | null | undefined = undefined;
-        if (deliveryDateStr === "") {
-          deliveryDate = null;
-          leadTime = null;
-        } else if (deliveryDateStr) {
-          deliveryDate = new Date(deliveryDateStr);
-          leadTime = countBusinessDays(startOfTodayInAppTz(), deliveryDate);
-        } else if (leadTimeStr) {
-          const days = parseInt(leadTimeStr);
-          if (!isNaN(days) && days >= 0) {
-            leadTime = days;
-            deliveryDate = addBusinessDays(startOfTodayInAppTz(), days);
-          }
-        }
+        const deliveryFields = resolveOrderDeliveryFromForm({
+          deliveryDateStr,
+          leadTimeStr,
+          placedAt: order.createdAt,
+        });
 
         const orderData: OrderInput = {
           customerId: formData.get("customerId")
@@ -177,8 +170,12 @@ export async function action({ request }: ActionFunctionArgs) {
             : null,
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
           vendorPay: vendorPayAmount, // Store as dollar amount
-          ...(deliveryDate !== undefined && { deliveryDate }),
-          ...(leadTime !== undefined && { leadTime }),
+          ...(deliveryFields?.deliveryDate !== undefined && {
+            deliveryDate: deliveryFields.deliveryDate,
+          }),
+          ...(deliveryFields?.leadTime !== undefined && {
+            leadTime: deliveryFields.leadTime,
+          }),
         };
         await updateOrder(orderId, orderData, eventContext);
         return json({ success: true });
@@ -293,12 +290,16 @@ export default function Orders() {
     if (editingOrder) {
       setDeliveryForm({
         deliveryDate: editingOrder.deliveryDate
-          ? new Date(editingOrder.deliveryDate).toISOString().split("T")[0]
+          ? toAppCalendarDateIsoString(new Date(editingOrder.deliveryDate))
           : "",
         leadTime: editingOrder.leadTime?.toString() || "",
       });
     }
   }, [modalOpen, editingOrder]);
+
+  const deliveryPlacementAnchor = editingOrder
+    ? orderPlacementAnchor(editingOrder.createdAt)
+    : startOfTodayInAppTz();
 
   const handleGenerateOrderNumber = () => {
     fetcher.submit({ intent: "generateOrderNumber" }, { method: "POST" });
@@ -841,13 +842,13 @@ export default function Orders() {
               mode="single"
               value={
                 deliveryForm.deliveryDate
-                  ? new Date(deliveryForm.deliveryDate + "T12:00:00")
+                  ? parseAppCalendarDateString(deliveryForm.deliveryDate)
                   : null
               }
               onChange={(date) => {
                 const cal = toAppCalendarDate(date);
-                const iso = cal.toISOString().split("T")[0];
-                const lead = countBusinessDays(startOfTodayInAppTz(), cal);
+                const iso = toAppCalendarDateIsoString(cal);
+                const lead = businessDaysFrom(deliveryPlacementAnchor, cal);
                 setDeliveryForm({ deliveryDate: iso, leadTime: String(lead) });
               }}
             />
@@ -872,9 +873,9 @@ export default function Orders() {
                 }
                 const leadTimeDays = parseInt(input);
                 if (isNaN(leadTimeDays) || leadTimeDays < 0) return;
-                const newDate = addBusinessDays(startOfTodayInAppTz(), leadTimeDays);
+                const newDate = addBusinessDays(deliveryPlacementAnchor, leadTimeDays);
                 setDeliveryForm({
-                  deliveryDate: newDate.toISOString().split("T")[0],
+                  deliveryDate: toAppCalendarDateIsoString(newDate),
                   leadTime: input,
                 });
               }}

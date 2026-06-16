@@ -111,7 +111,7 @@ function AlternatingClickRangeCalendar({
     } else if (!from && !to) {
       setClickCount(0);
     }
-  }, [from?.getTime(), to?.getTime()]);
+  }, [from, to]);
 
   useEffect(() => {
     if (to) {
@@ -119,7 +119,7 @@ function AlternatingClickRangeCalendar({
     } else if (from) {
       setMonth(from);
     }
-  }, [from?.getTime(), to?.getTime()]);
+  }, [from, to]);
 
   const disabled = (date: Date) => isDisabledDay(date, minDate);
 

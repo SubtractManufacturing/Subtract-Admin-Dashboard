@@ -55,7 +55,7 @@ import { contentTypeForDrawingFileName } from "./part-source-files.js";
 import crypto from "crypto";
 import {
   addBusinessDays,
-  countBusinessDays,
+  businessDaysFrom,
   startOfTodayInAppTz,
 } from "./business-days.js";
 
@@ -682,7 +682,7 @@ export async function convertQuoteToOrder(
       // Calculate vendor pay as 70% of total by default
       const defaultVendorPay = (calculatedTotal * 0.7).toFixed(2);
 
-      const anchor = quote.acceptedAt ?? new Date();
+      const placedAt = startOfTodayInAppTz();
       const min = quote.leadTimeBusinessDaysMin;
       const max = quote.leadTimeBusinessDaysMax;
       const hasLeadTime =
@@ -696,13 +696,13 @@ export async function convertQuoteToOrder(
       } = {};
 
       if (hasLeadTime) {
-        const deliveryDateStart = addBusinessDays(anchor, min);
-        const deliveryDateEnd = addBusinessDays(anchor, max);
+        const deliveryDateStart = addBusinessDays(placedAt, min);
+        const deliveryDateEnd = addBusinessDays(placedAt, max);
         const isRange = min !== max;
         deliveryFields = {
           deliveryDate: deliveryDateEnd,
           deliveryDateStart: isRange ? deliveryDateStart : null,
-          leadTime: countBusinessDays(anchor, deliveryDateEnd),
+          leadTime: businessDaysFrom(placedAt, deliveryDateEnd),
           leadTimeBusinessDaysMin: isRange ? min : null,
         };
       }

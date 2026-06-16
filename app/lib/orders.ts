@@ -296,7 +296,7 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       .where(eq(orders.id, id))
 
     // Track all changes
-    const changes: Record<string, string | number | null> = {};
+    const changes: Record<string, unknown> = {};
     const changedFields: string[] = [];
 
     // Check each field for changes
@@ -319,8 +319,7 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       const newDeliveryDate = orderData.deliveryDate ? new Date(orderData.deliveryDate).toISOString() : null;
       const currentDeliveryDate = currentOrder.deliveryDate ? new Date(currentOrder.deliveryDate).toISOString() : null;
       if (newDeliveryDate !== currentDeliveryDate) {
-        changes.previousDeliveryDate = currentDeliveryDate;
-        changes.newDeliveryDate = newDeliveryDate;
+        changes.deliveryDate = { old: currentDeliveryDate, new: newDeliveryDate };
         changedFields.push('deliveryDate');
       }
     }
@@ -621,6 +620,8 @@ export async function duplicateOrder(
           quoteId: null,
           sourceQuoteId: null,
           deliveryDate: null,
+          deliveryDateStart: null,
+          leadTimeBusinessDaysMin: null,
           notes: null,
         })
         .returning();
