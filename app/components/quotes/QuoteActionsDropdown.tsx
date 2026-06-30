@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ToolpathIcon } from "~/components/icons/ToolpathIcon";
 
 interface QuoteActionsDropdownProps {
   isOpen: boolean;
@@ -11,6 +12,9 @@ interface QuoteActionsDropdownProps {
   onDownloadFiles?: () => void;
   onGeneratePdf?: () => void;
   onGenerateInvoice?: () => void;
+  onOpenToolpath?: () => void;
+  isToolpathDisabled?: boolean;
+  toolpathDisabledReason?: string;
   isDownloading?: boolean;
   hasCustomer?: boolean;
 }
@@ -26,6 +30,9 @@ export default function QuoteActionsDropdown({
   onDownloadFiles,
   onGeneratePdf,
   onGenerateInvoice,
+  onOpenToolpath,
+  isToolpathDisabled = false,
+  toolpathDisabledReason,
   isDownloading = false,
   hasCustomer = false,
 }: QuoteActionsDropdownProps) {
@@ -82,6 +89,21 @@ export default function QuoteActionsDropdown({
               onCalculatePricing();
               onClose();
             },
+          },
+        ]
+      : []),
+    ...(canCalculate && onOpenToolpath
+      ? [
+          {
+            icon: <ToolpathIcon className="w-5 h-5 text-[#2596be]" />,
+            label: "Toolpath",
+            onClick: () => {
+              if (isToolpathDisabled) return;
+              onOpenToolpath();
+              onClose();
+            },
+            disabled: isToolpathDisabled,
+            title: isToolpathDisabled ? toolpathDisabledReason : undefined,
           },
         ]
       : []),
@@ -244,6 +266,7 @@ export default function QuoteActionsDropdown({
         {actionButtons.map((action, index) => (
           <button
             key={index}
+            title={"title" in action ? action.title : undefined}
             className={`flex flex-col items-center justify-center p-4 rounded-lg border border-gray-200 dark:border-gray-700 transition-colors group w-16 h-16 ${
               "disabled" in action && action.disabled
                 ? "opacity-50 cursor-not-allowed"
