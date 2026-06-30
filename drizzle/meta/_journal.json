@@ -85,6 +85,13 @@
       "when": 1781559153040,
       "tag": "0011_quote_delivery_dates",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782856648291,
+      "tag": "0012_ancient_nova",
+      "breakpoints": true
     }
   ]
 }

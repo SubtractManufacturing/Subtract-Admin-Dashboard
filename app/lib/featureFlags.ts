@@ -28,6 +28,7 @@ export const FEATURE_FLAGS = {
    */
   EMAIL_EXAMPLE_LAYOUTS_DEV: "email_example_layouts_dev",
   HIDE_THUMBNAILS: "hide_thumbnails",
+  TOOLPATH_INTEGRATION: "toolpath_integration",
 } as const;
 
 // Default feature flags with their metadata
@@ -160,6 +161,13 @@ const DEFAULT_FLAGS: Array<
     name: "Hide Thumbnails",
     description:
       "Show placeholder icons instead of 3D part thumbnail images in quote and order line items. Clicking still opens the 3D viewer.",
+    enabled: false,
+  },
+  {
+    key: FEATURE_FLAGS.TOOLPATH_INTEGRATION,
+    name: "Enable Toolpath Integration",
+    description:
+      "Allow uploading quote parts to Toolpath and linking to machinability reports.",
     enabled: false,
   },
 ];
@@ -335,6 +343,10 @@ export async function shouldShowVersionInHeader() {
 
 export async function shouldHideLineItemThumbnails() {
   return isFeatureEnabled(FEATURE_FLAGS.HIDE_THUMBNAILS);
+}
+
+export async function canUserAccessToolpath(): Promise<boolean> {
+  return isFeatureEnabled(FEATURE_FLAGS.TOOLPATH_INTEGRATION);
 }
 
 export async function isStripePaymentLinksEnabled(): Promise<boolean> {

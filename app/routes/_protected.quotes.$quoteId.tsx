@@ -37,6 +37,7 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import {
   canUserAccessPriceCalculator,
+  canUserAccessToolpath,
   canUserUploadCadRevision,
   isFeatureEnabled,
   isOutboundEmailEnabled,
@@ -95,6 +96,11 @@ import {
   parseUnitPriceInput,
   quotePositiveSubtotalExcluding,
 } from "~/lib/lineItemPricing";
+import { buildToolpathReportHref } from "~/lib/toolpath";
+import {
+  isToolpathEnabled,
+  uploadQuotePartToToolpath,
+} from "~/lib/toolpath.server";
 
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -122,6 +128,11 @@ import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { Part3DViewerModal } from "~/components/shared/Part3DViewerModal";
 import SendQuoteEmailModal from "~/components/quotes/SendQuoteEmailModal";
+import ToolpathUploadModal, {
+  type ToolpathUploadResult,
+  type ToolpathUploadSelection,
+} from "~/components/quotes/ToolpathUploadModal";
+import { ToolpathIcon } from "~/components/icons/ToolpathIcon";
 import { useDownload } from "~/hooks/useDownload";
 import {
   createPriceCalculation,
@@ -337,6 +348,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     stripeEnabled,
     outboundEmailEnabled,
     hideLineItemThumbnails,
+    canAccessToolpath,
   ] = await Promise.all([
     canUserAccessPriceCalculator(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.PDF_AUTO_DOWNLOAD),
@@ -347,6 +359,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     isStripePaymentLinksEnabled(),
     isOutboundEmailEnabled(),
     shouldHideLineItemThumbnails(),
+    canUserAccessToolpath(),
   ]);
 
   let quoteSendEmailReady = false;
@@ -455,6 +468,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       stripeEnabled,
       outboundEmailEnabled,
       hideLineItemThumbnails,
+      canAccessToolpath,
       quoteSendEmailReady,
       quoteSendEmailDefaultSubject,
       quoteSendEditableSlots,
@@ -1166,6 +1180,250 @@ export async function action({ request, params }: ActionFunctionArgs) {
               entityType: "quote",
               entityId: String(quote.id),
             },
+          }),
+          headers,
+        );
+      }
+
+      case "uploadToToolpath": {
+        if (!(await canUserAccessToolpath())) {
+          return withAuthHeaders(
+            json({ error: "Toolpath integration is not enabled" }, { status: 403 }),
+            headers,
+          );
+        }
+
+        if (!["Draft", "RFQ"].includes(quote.status)) {
+          return withAuthHeaders(
+            json(
+              { error: "Toolpath uploads are only available for Draft or RFQ quotes" },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+
+        if (!isToolpathEnabled()) {
+          return withAuthHeaders(
+            json({ error: "Toolpath API is not configured" }, { status: 503 }),
+            headers,
+          );
+        }
+
+        let payload: unknown;
+        try {
+          payload = JSON.parse(String(formData.get("payload") || "{}"));
+        } catch {
+          return withAuthHeaders(
+            json({ error: "Invalid Toolpath upload payload" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        if (
+          typeof payload !== "object" ||
+          payload === null ||
+          !Array.isArray((payload as { selections?: unknown }).selections)
+        ) {
+          return withAuthHeaders(
+            json({ error: "Invalid Toolpath upload payload" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        const selections = (payload as { selections: unknown[] }).selections;
+        if (selections.length === 0) {
+          return withAuthHeaders(
+            json({ error: "Select at least one part to upload" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        if (selections.length > 25) {
+          return withAuthHeaders(
+            json({ error: "Cannot upload more than 25 parts at once" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        const seenQuotePartIds = new Set<string>();
+        for (const selection of selections) {
+          if (
+            typeof selection !== "object" ||
+            selection === null ||
+            typeof (selection as { quotePartId?: unknown }).quotePartId !== "string" ||
+            typeof (selection as { cutConfigId?: unknown }).cutConfigId !== "string"
+          ) {
+            return withAuthHeaders(
+              json({ error: "Invalid Toolpath upload selection" }, { status: 400 }),
+              headers,
+            );
+          }
+
+          const { quotePartId } = selection as { quotePartId: string; cutConfigId: string };
+          if (seenQuotePartIds.has(quotePartId)) {
+            return withAuthHeaders(
+              json({ error: "Duplicate part selection in upload request" }, { status: 400 }),
+              headers,
+            );
+          }
+          seenQuotePartIds.add(quotePartId);
+        }
+
+        const validatedSelections = selections as Array<{
+          quotePartId: string;
+          cutConfigId: string;
+        }>;
+
+        const lineItemPartIds = new Set(
+          (quote.lineItems || [])
+            .map((lineItem) => lineItem.quotePartId)
+            .filter((id): id is string => !!id),
+        );
+        const partsById = new Map((quote.parts || []).map((part) => [part.id, part]));
+        const results: ToolpathUploadResult[] = [];
+
+        for (const selection of validatedSelections) {
+          const quotePartId = selection.quotePartId;
+          const cutConfigId = selection.cutConfigId;
+
+          if (!quotePartId || !cutConfigId) {
+            results.push({
+              quotePartId: quotePartId || "unknown",
+              partName: "Unknown part",
+              success: false,
+              error: "Missing part or cut config selection",
+            });
+            continue;
+          }
+
+          const part = partsById.get(quotePartId);
+          if (!part || !lineItemPartIds.has(quotePartId)) {
+            results.push({
+              quotePartId,
+              partName: part?.partName || "Unknown part",
+              success: false,
+              error: "Part is not linked to this quote's line items",
+            });
+            continue;
+          }
+
+          if (!part.partFileUrl) {
+            results.push({
+              quotePartId,
+              partName: part.partName,
+              success: false,
+              error: "Part does not have a CAD file",
+            });
+            continue;
+          }
+
+          if (part.toolpathPartId) {
+            results.push({
+              quotePartId,
+              partName: part.partName,
+              success: false,
+              error: "Part is already uploaded to Toolpath",
+            });
+            continue;
+          }
+
+          let uploadResult:
+            | Awaited<ReturnType<typeof uploadQuotePartToToolpath>>
+            | undefined;
+
+          try {
+            uploadResult = await uploadQuotePartToToolpath({
+              quotePartId,
+              name: part.partName,
+              partFileUrl: part.partFileUrl,
+              cutConfigId,
+              units: "in",
+            });
+
+            await db
+              .update(quoteParts)
+              .set({
+                toolpathPartId: uploadResult.toolpathPartId,
+                toolpathReportUrl: uploadResult.toolpathReportUrl,
+                toolpathCutConfigId: cutConfigId,
+                toolpathUploadedAt: new Date(),
+                toolpathUploadError: null,
+                updatedAt: new Date(),
+              })
+              .where(eq(quoteParts.id, quotePartId));
+
+            results.push({
+              quotePartId,
+              partName: part.partName,
+              success: true,
+              toolpathPartId: uploadResult.toolpathPartId,
+              toolpathReportUrl: uploadResult.toolpathReportUrl,
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Upload failed";
+
+            try {
+              await db
+                .update(quoteParts)
+                .set({
+                  ...(uploadResult
+                    ? {
+                        toolpathPartId: uploadResult.toolpathPartId,
+                        toolpathReportUrl: uploadResult.toolpathReportUrl,
+                        toolpathCutConfigId: cutConfigId,
+                        toolpathUploadedAt: new Date(),
+                      }
+                    : {}),
+                  toolpathUploadError: message,
+                  updatedAt: new Date(),
+                })
+                .where(eq(quoteParts.id, quotePartId));
+            } catch (dbError) {
+              console.error("Failed to persist Toolpath state after error:", dbError);
+            }
+
+            results.push({
+              quotePartId,
+              partName: part.partName,
+              success: false,
+              error: message,
+            });
+          }
+        }
+
+        const uploadedCount = results.filter((result) => result.success).length;
+        const failedCount = results.length - uploadedCount;
+
+        try {
+          await createEvent({
+            entityType: "quote",
+            entityId: quote.id.toString(),
+            eventType: "toolpath_upload",
+            eventCategory: "manufacturing",
+            title: "Toolpath upload batch completed",
+            description: `Uploaded ${uploadedCount} part(s) to Toolpath for quote ${quote.quoteNumber}. ${failedCount} part(s) failed.`,
+            metadata: {
+              quoteId: quote.id,
+              quoteNumber: quote.quoteNumber,
+              uploadedCount,
+              failedCount,
+              results,
+            },
+            userId: user.id,
+            userEmail: user.email || userDetails?.email || undefined,
+          });
+        } catch (eventError) {
+          console.error("Failed to log Toolpath upload event:", eventError);
+        }
+
+        const success = failedCount === 0;
+        return withAuthHeaders(
+          json({
+            success,
+            results,
+            error: success ? undefined : "Some parts failed to upload to Toolpath",
           }),
           headers,
         );
@@ -2312,6 +2570,7 @@ export default function QuoteDetail() {
     stripeEnabled,
     outboundEmailEnabled,
     hideLineItemThumbnails,
+    canAccessToolpath,
     quoteSendEmailReady,
     quoteSendEmailDefaultSubject,
     quoteSendEditableSlots,
@@ -2405,6 +2664,18 @@ export default function QuoteDetail() {
     success?: boolean;
     error?: string;
   }>();
+  const toolpathFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+    results?: ToolpathUploadResult[];
+  }>();
+  const [isToolpathModalOpen, setIsToolpathModalOpen] = useState(false);
+  const [toolpathModalSession, setToolpathModalSession] = useState(0);
+  const [toolpathResultsSession, setToolpathResultsSession] = useState<
+    number | null
+  >(null);
+  const [lastHandledToolpathData, setLastHandledToolpathData] =
+    useState<unknown>(null);
   const { download, isDownloading } = useDownload({
     onError: (err) => {
       console.error("Download error:", err);
@@ -2597,6 +2868,8 @@ export default function QuoteDetail() {
           conversionStatus: string | null;
           meshConversionError?: string | null;
           partFileUrl?: string | null;
+          toolpathPartId?: string | null;
+          toolpathUploadError?: string | null;
           signedFileUrl?: string;
           signedMeshUrl?: string;
           signedThumbnailUrl?: string;
@@ -2611,6 +2884,36 @@ export default function QuoteDetail() {
       ),
     [optimisticLineItems, quote.parts],
   );
+
+  const toolpathUploadableParts = useMemo(() => {
+    const lineItemPartIds = new Set(
+      (optimisticLineItems || [])
+        .map((lineItem) => lineItem.quotePartId)
+        .filter((id): id is string => !!id),
+    );
+    const parts = (quote.parts || []) as Array<{
+      id: string;
+      partName: string;
+      material: string | null;
+      partFileUrl: string | null;
+      toolpathPartId?: string | null;
+      toolpathUploadError?: string | null;
+    }>;
+
+    return parts
+      .filter(
+        (part) =>
+          lineItemPartIds.has(part.id) &&
+          !!part.partFileUrl &&
+          !part.toolpathPartId,
+      )
+      .map((part) => ({
+        id: part.id,
+        partName: part.partName,
+        material: part.material,
+        previousError: part.toolpathUploadError,
+      }));
+  }, [optimisticLineItems, quote.parts]);
 
   // Track if we've handled the last fetcher response to prevent re-triggering
   const [lastHandledFetcherData, setLastHandledFetcherData] =
@@ -2642,6 +2945,29 @@ export default function QuoteDetail() {
     calculatorFetcher.data,
     revalidator,
     lastHandledFetcherData,
+  ]);
+
+  useEffect(() => {
+    if (
+      toolpathFetcher.state !== "idle" ||
+      !toolpathFetcher.data ||
+      toolpathFetcher.data === lastHandledToolpathData
+    ) {
+      return;
+    }
+
+    setLastHandledToolpathData(toolpathFetcher.data);
+
+    if (toolpathFetcher.data.success) {
+      setIsToolpathModalOpen(false);
+    }
+
+    revalidator.revalidate();
+  }, [
+    toolpathFetcher.state,
+    toolpathFetcher.data,
+    lastHandledToolpathData,
+    revalidator,
   ]);
 
   const handleView3DModel = (part: {
@@ -2785,6 +3111,24 @@ export default function QuoteDetail() {
     setCalculatorMode("allParts");
     setIsCalculatorOpen(true);
     setCurrentCalculatorPartIndex(0);
+  };
+
+  const handleOpenToolpath = () => {
+    setToolpathModalSession((session) => session + 1);
+    setToolpathResultsSession(null);
+    setIsToolpathModalOpen(true);
+  };
+
+  const handleToolpathUpload = (selections: ToolpathUploadSelection[]) => {
+    if (toolpathFetcher.state !== "idle") return;
+
+    setToolpathResultsSession(toolpathModalSession);
+
+    const formData = new FormData();
+    formData.append("intent", "uploadToToolpath");
+    formData.append("payload", JSON.stringify({ selections }));
+
+    toolpathFetcher.submit(formData, { method: "post" });
   };
 
   const handleGeneratePdf = () => {
@@ -3099,6 +3443,11 @@ export default function QuoteDetail() {
                         ? handleOpenCalculator
                         : undefined
                     }
+                    onOpenToolpath={
+                      canAccessToolpath ? handleOpenToolpath : undefined
+                    }
+                    isToolpathDisabled={toolpathUploadableParts.length === 0}
+                    toolpathDisabledReason="All parts already uploaded or missing CAD files"
                     onDownloadFiles={handleDownloadFiles}
                     onGeneratePdf={handleGeneratePdf}
                     onGenerateInvoice={handleGenerateInvoice}
@@ -3976,8 +4325,28 @@ export default function QuoteDetail() {
               setSelectedDrawing({ drawing, quotePartId });
               setDrawingModalOpen(true);
             }}
-            rowExtraActions={(item: NormalizedLineItem) => (
+            rowExtraActions={(item: NormalizedLineItem) => {
+              const reportHref =
+                item.part?.toolpathPartId && canAccessToolpath
+                  ? buildToolpathReportHref({
+                      toolpathReportUrl: item.part.toolpathReportUrl,
+                      toolpathPartId: item.part.toolpathPartId,
+                    })
+                  : null;
+
+              return (
               <>
+                {reportHref ? (
+                  <a
+                    href={reportHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open Toolpath Report"
+                    className="p-2 rounded transition-colors duration-150 hover:bg-[#c5e3d1]/50 dark:hover:bg-[#c5e3d1]/10"
+                  >
+                    <ToolpathIcon className="w-[18px] h-[18px]" />
+                  </a>
+                ) : null}
                 {item.part && canAccessPriceCalculator ? (
                   <IconButton
                     icon={
@@ -4022,7 +4391,8 @@ export default function QuoteDetail() {
                   />
                 ) : null}
               </>
-            )}
+              );
+            }}
           />
 
           <AttachmentsSection
@@ -4217,6 +4587,31 @@ export default function QuoteDetail() {
             : null
         }
       />
+
+      {canAccessToolpath && (
+        <ToolpathUploadModal
+          isOpen={isToolpathModalOpen}
+          onClose={() => setIsToolpathModalOpen(false)}
+          parts={toolpathUploadableParts}
+          onUpload={handleToolpathUpload}
+          isUploading={toolpathFetcher.state !== "idle"}
+          uploadProgressText={
+            toolpathUploadableParts.length > 1
+              ? `Uploading ${toolpathUploadableParts.length} parts to Toolpath (paced API limits)...`
+              : "Uploading 1 part to Toolpath..."
+          }
+          uploadError={
+            toolpathResultsSession === toolpathModalSession
+              ? (toolpathFetcher.data?.error ?? null)
+              : null
+          }
+          uploadResults={
+            toolpathResultsSession === toolpathModalSession
+              ? (toolpathFetcher.data?.results ?? [])
+              : []
+          }
+        />
+      )}
 
       {canAccessPriceCalculator && (
         <QuotePriceCalculatorModal
