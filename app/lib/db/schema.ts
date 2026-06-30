@@ -366,6 +366,7 @@ export const quoteParts = pgTable("quote_parts", {
   meshConversionStartedAt: timestamp("mesh_conversion_started_at"),
   meshConversionCompletedAt: timestamp("mesh_conversion_completed_at"),
   toolpathPartId: text("toolpath_part_id"),
+  toolpathReportUrl: text("toolpath_report_url"),
   toolpathCutConfigId: text("toolpath_cut_config_id"),
   toolpathUploadedAt: timestamp("toolpath_uploaded_at"),
   toolpathUploadError: text("toolpath_upload_error"),

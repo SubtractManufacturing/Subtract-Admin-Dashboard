@@ -1,5 +1,5 @@
 {
-  "id": "3280f5e7-a441-4bfb-95ca-b903ead60402",
+  "id": "8bc11a82-afe4-408e-85b0-e765aa7131ad",
   "prevId": "c9ec7a84-e945-4d0a-ba5d-e73a327a06f1",
   "version": "7",
   "dialect": "postgresql",
@@ -2147,6 +2147,12 @@
         },
         "toolpath_part_id": {
           "name": "toolpath_part_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "toolpath_report_url": {
+          "name": "toolpath_report_url",
           "type": "text",
           "primaryKey": false,
           "notNull": false

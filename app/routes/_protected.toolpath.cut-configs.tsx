@@ -28,9 +28,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return withAuthHeaders(json({ cutConfigs }), headers);
   } catch (error) {
     console.error("Failed to load Toolpath cut configs:", error);
-    return withAuthHeaders(
-      json({ error: "Failed to load Toolpath cut configs" }, { status: 500 }),
-      headers,
-    );
+
+    let message = "Failed to load Toolpath cut configs";
+    if (error instanceof Error) {
+      const cause = error.cause as { code?: string } | undefined;
+      if (
+        cause?.code === "UND_ERR_CONNECT_TIMEOUT" ||
+        error.message.includes("fetch failed")
+      ) {
+        message =
+          "Could not reach the Toolpath API. Check your network connection and try again.";
+      } else if (error.message.startsWith("Toolpath API error:")) {
+        message = error.message.replace("Toolpath API error: ", "");
+      }
+    }
+
+    return withAuthHeaders(json({ error: message }, { status: 500 }), headers);
   }
 }

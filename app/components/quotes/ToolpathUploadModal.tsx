@@ -1,5 +1,5 @@
 import { useFetcher } from "@remix-run/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "~/components/shared/Modal";
 
 interface ToolpathCutConfig {
@@ -29,6 +29,7 @@ export interface ToolpathUploadResult {
   partName: string;
   success: boolean;
   toolpathPartId?: string;
+  toolpathReportUrl?: string | null;
   error?: string;
 }
 
@@ -60,13 +61,22 @@ export default function ToolpathUploadModal({
 }: ToolpathUploadModalProps) {
   const cutConfigsFetcher = useFetcher<CutConfigsResponse>();
   const [selections, setSelections] = useState<Record<string, string>>({});
+  const cutConfigsLoadRequestedRef = useRef(false);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      cutConfigsLoadRequestedRef.current = false;
+      return;
+    }
 
     setSelections({});
+
+    if (cutConfigsLoadRequestedRef.current) return;
+    cutConfigsLoadRequestedRef.current = true;
     cutConfigsFetcher.load("/toolpath/cut-configs");
-  }, [cutConfigsFetcher, isOpen]);
+    // Only re-fetch when the modal opens; fetcher identity changes each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const cutConfigs = cutConfigsFetcher.data?.cutConfigs ?? [];
   const failedResultsByPartId = useMemo(
@@ -81,8 +91,9 @@ export default function ToolpathUploadModal({
 
   const allPartsSelected =
     parts.length > 0 && parts.every((part) => selections[part.id]);
+  const hasConfigResponse = cutConfigsFetcher.data !== undefined;
   const isLoadingConfigs =
-    cutConfigsFetcher.state !== "idle" && cutConfigs.length === 0;
+    isOpen && !hasConfigResponse && cutConfigsFetcher.state !== "idle";
   const loadError = cutConfigsFetcher.data?.error;
   const canUpload =
     !isUploading && !isLoadingConfigs && !loadError && allPartsSelected;

@@ -96,6 +96,7 @@ import {
   parseUnitPriceInput,
   quotePositiveSubtotalExcluding,
 } from "~/lib/lineItemPricing";
+import { buildToolpathReportHref } from "~/lib/toolpath";
 import {
   isToolpathEnabled,
   uploadQuotePartToToolpath,
@@ -1295,6 +1296,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               .update(quoteParts)
               .set({
                 toolpathPartId: uploadResult.toolpathPartId,
+                toolpathReportUrl: uploadResult.toolpathReportUrl,
                 toolpathCutConfigId: cutConfigId,
                 toolpathUploadedAt: new Date(),
                 toolpathUploadError: null,
@@ -1307,6 +1309,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               partName: part.partName,
               success: true,
               toolpathPartId: uploadResult.toolpathPartId,
+              toolpathReportUrl: uploadResult.toolpathReportUrl,
             });
           } catch (error) {
             const message =
@@ -4248,15 +4251,24 @@ export default function QuoteDetail() {
               setSelectedDrawing({ drawing, quotePartId });
               setDrawingModalOpen(true);
             }}
-            rowExtraActions={(item: NormalizedLineItem) => (
+            rowExtraActions={(item: NormalizedLineItem) => {
+              const reportHref =
+                item.part?.toolpathPartId && canAccessToolpath
+                  ? buildToolpathReportHref({
+                      toolpathReportUrl: item.part.toolpathReportUrl,
+                      toolpathPartId: item.part.toolpathPartId,
+                    })
+                  : null;
+
+              return (
               <>
-                {item.part?.toolpathPartId && canAccessToolpath ? (
+                {reportHref ? (
                   <a
-                    href={`https://app.toolpath.com/parts/${item.part.toolpathPartId}/report`}
+                    href={reportHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     title="Open Toolpath Report"
-                    className="p-2 rounded transition-colors duration-150 text-[#2596be] hover:text-[#1e7a9a] dark:text-[#2596be] dark:hover:text-[#c5e3d1] hover:bg-[#c5e3d1]/50 dark:hover:bg-[#c5e3d1]/10"
+                    className="p-2 rounded transition-colors duration-150 hover:bg-[#c5e3d1]/50 dark:hover:bg-[#c5e3d1]/10"
                   >
                     <ToolpathIcon className="w-[18px] h-[18px]" />
                   </a>
@@ -4305,7 +4317,8 @@ export default function QuoteDetail() {
                   />
                 ) : null}
               </>
-            )}
+              );
+            }}
           />
 
           <AttachmentsSection
@@ -4508,7 +4521,11 @@ export default function QuoteDetail() {
           parts={toolpathUploadableParts}
           onUpload={handleToolpathUpload}
           isUploading={toolpathFetcher.state !== "idle"}
-          uploadProgressText={`Uploading ${toolpathUploadableParts.length} part(s) to Toolpath...`}
+          uploadProgressText={
+            toolpathUploadableParts.length > 1
+              ? `Uploading ${toolpathUploadableParts.length} parts to Toolpath (paced API limits; waiting for reports may take a minute)...`
+              : "Uploading 1 part to Toolpath (waiting for report may take a minute)..."
+          }
           uploadError={toolpathFetcher.data?.error ?? null}
           uploadResults={toolpathFetcher.data?.results ?? []}
         />

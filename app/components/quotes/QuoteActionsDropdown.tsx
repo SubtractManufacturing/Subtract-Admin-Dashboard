@@ -95,7 +95,7 @@ export default function QuoteActionsDropdown({
     ...(canCalculate && onOpenToolpath
       ? [
           {
-            icon: <ToolpathIcon className="w-5 h-5 text-[#2596be]" />,
+            icon: <ToolpathIcon className="w-5 h-5" />,
             label: "Toolpath",
             onClick: () => {
               if (isToolpathDisabled) return;
