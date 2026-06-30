@@ -1,6 +1,10 @@
 import { json, redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import { eq } from "drizzle-orm";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { db } from "~/lib/db";
+import { quoteParts } from "~/lib/db/schema";
 import { canUserAccessToolpath } from "~/lib/featureFlags";
+import { isAllowedToolpathReportUrl } from "~/lib/toolpath";
 import {
   isToolpathEnabled,
   isValidToolpathPartId,
@@ -18,7 +22,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     );
   }
 
-  if (!partId || !isValidToolpathPartId(partId)) {
+  if (!isValidToolpathPartId(partId)) {
     return withAuthHeaders(
       json({ error: "Invalid Toolpath part ID" }, { status: 400 }),
       headers,
@@ -39,8 +43,25 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     );
   }
 
+  const [linkedQuotePart] = await db
+    .select({ toolpathReportUrl: quoteParts.toolpathReportUrl })
+    .from(quoteParts)
+    .where(eq(quoteParts.toolpathPartId, partId))
+    .limit(1);
+
+  if (!linkedQuotePart) {
+    return withAuthHeaders(
+      json({ error: "Toolpath report not found for this quote part" }, { status: 404 }),
+      headers,
+    );
+  }
+
   try {
-    const reportUrl = await resolveToolpathReportUrl({ partId });
+    let reportUrl = linkedQuotePart.toolpathReportUrl;
+    if (!reportUrl || !isAllowedToolpathReportUrl(reportUrl)) {
+      reportUrl = await resolveToolpathReportUrl({ partId });
+    }
+
     if (!reportUrl) {
       return withAuthHeaders(
         json(
@@ -51,7 +72,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       );
     }
 
-    return redirect(reportUrl);
+    if (!isAllowedToolpathReportUrl(reportUrl)) {
+      return withAuthHeaders(
+        json({ error: "Invalid Toolpath report URL" }, { status: 502 }),
+        headers,
+      );
+    }
+
+    return withAuthHeaders(redirect(reportUrl), headers);
   } catch (error) {
     console.error("Failed to resolve Toolpath report URL:", error);
     return withAuthHeaders(

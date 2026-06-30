@@ -1210,9 +1210,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           );
         }
 
-        let payload: {
-          selections?: Array<{ quotePartId?: string; cutConfigId?: string }>;
-        };
+        let payload: unknown;
         try {
           payload = JSON.parse(String(formData.get("payload") || "{}"));
         } catch {
@@ -1222,13 +1220,60 @@ export async function action({ request, params }: ActionFunctionArgs) {
           );
         }
 
-        const selections = payload.selections ?? [];
+        if (
+          typeof payload !== "object" ||
+          payload === null ||
+          !Array.isArray((payload as { selections?: unknown }).selections)
+        ) {
+          return withAuthHeaders(
+            json({ error: "Invalid Toolpath upload payload" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        const selections = (payload as { selections: unknown[] }).selections;
         if (selections.length === 0) {
           return withAuthHeaders(
             json({ error: "Select at least one part to upload" }, { status: 400 }),
             headers,
           );
         }
+
+        if (selections.length > 25) {
+          return withAuthHeaders(
+            json({ error: "Cannot upload more than 25 parts at once" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        const seenQuotePartIds = new Set<string>();
+        for (const selection of selections) {
+          if (
+            typeof selection !== "object" ||
+            selection === null ||
+            typeof (selection as { quotePartId?: unknown }).quotePartId !== "string" ||
+            typeof (selection as { cutConfigId?: unknown }).cutConfigId !== "string"
+          ) {
+            return withAuthHeaders(
+              json({ error: "Invalid Toolpath upload selection" }, { status: 400 }),
+              headers,
+            );
+          }
+
+          const { quotePartId } = selection as { quotePartId: string; cutConfigId: string };
+          if (seenQuotePartIds.has(quotePartId)) {
+            return withAuthHeaders(
+              json({ error: "Duplicate part selection in upload request" }, { status: 400 }),
+              headers,
+            );
+          }
+          seenQuotePartIds.add(quotePartId);
+        }
+
+        const validatedSelections = selections as Array<{
+          quotePartId: string;
+          cutConfigId: string;
+        }>;
 
         const lineItemPartIds = new Set(
           (quote.lineItems || [])
@@ -1238,7 +1283,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const partsById = new Map((quote.parts || []).map((part) => [part.id, part]));
         const results: ToolpathUploadResult[] = [];
 
-        for (const selection of selections) {
+        for (const selection of validatedSelections) {
           const quotePartId = selection.quotePartId;
           const cutConfigId = selection.cutConfigId;
 
