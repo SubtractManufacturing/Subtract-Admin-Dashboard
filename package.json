@@ -131,7 +131,7 @@
     "fast-xml-builder": "^1.1.7",
     "fast-xml-parser": "^5.7.0",
     "estree-util-value-to-estree": "^3.3.3",
-    "undici": "^6.24.0",
+    "undici": "^6.27.0",
     "flatted": ">=3.4.2",
     "axios": "^1.13.5",
     "minimatch": "^10.0.0",
