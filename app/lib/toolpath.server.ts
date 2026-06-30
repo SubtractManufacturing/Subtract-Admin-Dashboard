@@ -4,8 +4,11 @@ const TOOLPATH_API_BASE = "https://app.toolpath.com/api/public/v0";
 /** Toolpath allows one POST /parts every 2 seconds per team. */
 export const TOOLPATH_PART_CREATION_INTERVAL_MS = 2000;
 const MAX_RATE_LIMIT_RETRIES = 5;
+const TOOLPATH_FETCH_TIMEOUT_MS = 30_000;
+const TOOLPATH_PART_ID_PATTERN = /^[a-z0-9]{8}$/;
 
 let nextPartCreationSlotAt = 0;
+let pacingQueue: Promise<void> = Promise.resolve();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -26,12 +29,14 @@ function parseRetryAfterSeconds(header: string | null): number {
 }
 
 async function waitForPartCreationSlot(): Promise<void> {
-  const now = Date.now();
-  const waitMs = Math.max(0, nextPartCreationSlotAt - now);
-  if (waitMs > 0) {
-    await sleep(waitMs);
-  }
-  nextPartCreationSlotAt = Date.now() + TOOLPATH_PART_CREATION_INTERVAL_MS;
+  pacingQueue = pacingQueue.then(async () => {
+    const waitMs = Math.max(0, nextPartCreationSlotAt - Date.now());
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+    nextPartCreationSlotAt = Date.now() + TOOLPATH_PART_CREATION_INTERVAL_MS;
+  });
+  await pacingQueue;
 }
 
 function reservePartCreationSlotAfterRetry(retryAfterSeconds: number): void {
@@ -42,6 +47,32 @@ function reservePartCreationSlotAfterRetry(retryAfterSeconds: number): void {
 
 export function resetPartCreationPacingForTests(): void {
   nextPartCreationSlotAt = 0;
+  pacingQueue = Promise.resolve();
+}
+
+function assertValidToolpathPartId(partId: string): void {
+  if (!TOOLPATH_PART_ID_PATTERN.test(partId)) {
+    throw new Error("Invalid Toolpath part ID");
+  }
+}
+
+export function isValidToolpathPartId(partId: string): boolean {
+  return TOOLPATH_PART_ID_PATTERN.test(partId);
+}
+
+function toolpathPartPath(partId: string, suffix = ""): string {
+  assertValidToolpathPartId(partId);
+  return `/parts/${encodeURIComponent(partId)}${suffix}`;
+}
+
+function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(TOOLPATH_FETCH_TIMEOUT_MS),
+  });
 }
 
 export interface PublicCutConfig {
@@ -135,7 +166,7 @@ async function toolpathFetch(
       await waitForPartCreationSlot();
     }
 
-    const response = await fetch(`${TOOLPATH_API_BASE}${path}`, {
+    const response = await fetchWithTimeout(`${TOOLPATH_API_BASE}${path}`, {
       ...fetchInit,
       method,
       headers: {
@@ -199,11 +230,10 @@ interface PublicPartEnvelope {
   data: PublicPart;
 }
 
-const TOOLPATH_REPORT_POLL_INTERVAL_MS = 3000;
-const TOOLPATH_REPORT_POLL_TIMEOUT_MS = 120_000;
-
 export async function getToolpathPart(partId: string): Promise<PublicPart> {
-  const response = await toolpathFetch(`/parts/${partId}`, { method: "GET" });
+  const response = await toolpathFetch(toolpathPartPath(partId), {
+    method: "GET",
+  });
   const body = (await response.json()) as PublicPartEnvelope;
   return body.data;
 }
@@ -211,7 +241,7 @@ export async function getToolpathPart(partId: string): Promise<PublicPart> {
 export async function listToolpathProgramsForPart(
   partId: string,
 ): Promise<PublicProgramListItem[]> {
-  const response = await toolpathFetch(`/parts/${partId}/programs`, {
+  const response = await toolpathFetch(`${toolpathPartPath(partId)}/programs`, {
     method: "GET",
   });
   const body = (await response.json()) as PublicProgramListEnvelope;
@@ -239,21 +269,6 @@ export async function resolveToolpathReportUrl(opts: {
   return program?.url ?? null;
 }
 
-async function waitForToolpathReportUrl(opts: {
-  partId: string;
-  cutConfigId: string;
-}): Promise<string | null> {
-  const deadline = Date.now() + TOOLPATH_REPORT_POLL_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    const reportUrl = await resolveToolpathReportUrl(opts);
-    if (reportUrl) return reportUrl;
-    await sleep(TOOLPATH_REPORT_POLL_INTERVAL_MS);
-  }
-
-  return null;
-}
-
 export async function listCutConfigs(): Promise<PublicCutConfig[]> {
   const response = await toolpathFetch("/cut-configs", { method: "GET" });
   const body = (await response.json()) as CutConfigsEnvelope;
@@ -267,7 +282,7 @@ export async function uploadQuotePartToToolpath(opts: {
   cutConfigId: string;
   units?: "in" | "mm";
 }): Promise<{ toolpathPartId: string; toolpathReportUrl: string | null }> {
-  const idempotencyKey = crypto.randomUUID();
+  const idempotencyKey = opts.quotePartId;
   const units = opts.units ?? "in";
   const stepFileName = getFileNameFromS3Path(opts.partFileUrl);
 
@@ -289,7 +304,7 @@ export async function uploadQuotePartToToolpath(opts: {
   const createBody = (await createResponse.json()) as CreatePartResponse;
   const fileBuffer = await downloadFromS3(opts.partFileUrl);
 
-  const uploadResponse = await fetch(createBody.upload.url, {
+  const uploadResponse = await fetchWithTimeout(createBody.upload.url, {
     method: createBody.upload.method,
     body: new Uint8Array(fileBuffer),
   });
@@ -299,15 +314,20 @@ export async function uploadQuotePartToToolpath(opts: {
     );
   }
 
-  await toolpathFetch(`/parts/${createBody.data.id}/complete`, {
+  await toolpathFetch(`${toolpathPartPath(createBody.data.id)}/complete`, {
     method: "POST",
     idempotencyKey,
   });
 
-  const toolpathReportUrl = await waitForToolpathReportUrl({
-    partId: createBody.data.id,
-    cutConfigId: opts.cutConfigId,
-  });
+  let toolpathReportUrl: string | null = null;
+  try {
+    toolpathReportUrl = await resolveToolpathReportUrl({
+      partId: createBody.data.id,
+      cutConfigId: opts.cutConfigId,
+    });
+  } catch (error) {
+    console.error("Failed to resolve Toolpath report URL after upload:", error);
+  }
 
   return {
     toolpathPartId: createBody.data.id,

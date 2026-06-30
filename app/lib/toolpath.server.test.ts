@@ -120,9 +120,6 @@ describe("toolpath.server", () => {
   it("uploads a quote part and sends Idempotency-Key on Toolpath writes", async () => {
     const fileBuffer = Buffer.from("step file bytes");
     downloadFromS3.mockResolvedValueOnce(fileBuffer);
-    vi.spyOn(crypto, "randomUUID").mockReturnValue(
-      "00000000-0000-4000-8000-000000000001",
-    );
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(
@@ -196,7 +193,7 @@ describe("toolpath.server", () => {
         method: "POST",
         headers: expect.objectContaining({
           "Content-Type": "application/json",
-          "Idempotency-Key": "00000000-0000-4000-8000-000000000001",
+          "Idempotency-Key": "quote-part-1",
         }),
         body: JSON.stringify({
           name: "Bracket",
@@ -221,7 +218,7 @@ describe("toolpath.server", () => {
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
-          "Idempotency-Key": "00000000-0000-4000-8000-000000000001",
+          "Idempotency-Key": "quote-part-1",
         }),
       }),
     );
@@ -231,9 +228,6 @@ describe("toolpath.server", () => {
     vi.useFakeTimers();
     const fileBuffer = Buffer.from("step file bytes");
     downloadFromS3.mockResolvedValueOnce(fileBuffer);
-    vi.spyOn(crypto, "randomUUID").mockReturnValue(
-      "00000000-0000-4000-8000-000000000002",
-    );
 
     vi.mocked(fetch)
       .mockResolvedValueOnce(
@@ -320,7 +314,7 @@ describe("toolpath.server", () => {
       "https://app.toolpath.com/api/public/v0/parts",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "Idempotency-Key": "00000000-0000-4000-8000-000000000002",
+          "Idempotency-Key": "quote-part-2",
         }),
       }),
     );
@@ -329,7 +323,7 @@ describe("toolpath.server", () => {
       "https://app.toolpath.com/api/public/v0/parts",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "Idempotency-Key": "00000000-0000-4000-8000-000000000002",
+          "Idempotency-Key": "quote-part-2",
         }),
       }),
     );
@@ -339,9 +333,6 @@ describe("toolpath.server", () => {
     vi.useFakeTimers();
     const fileBuffer = Buffer.from("step file bytes");
     downloadFromS3.mockResolvedValue(fileBuffer);
-    vi.spyOn(crypto, "randomUUID")
-      .mockReturnValueOnce("00000000-0000-4000-8000-000000000003")
-      .mockReturnValueOnce("00000000-0000-4000-8000-000000000004");
 
     const createPartResponse = (id: string) =>
       jsonResponse(
@@ -497,5 +488,14 @@ describe("toolpath.server", () => {
         cutConfigId: "q9tclty6",
       }),
     ).resolves.toBe("https://app.toolpath.com/parts/ldxwtu50/report");
+  });
+
+  it("rejects invalid Toolpath part IDs before calling the API", async () => {
+    const { resolveToolpathReportUrl } = await import("./toolpath.server");
+
+    await expect(
+      resolveToolpathReportUrl({ partId: "../secrets" }),
+    ).rejects.toThrow("Invalid Toolpath part ID");
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

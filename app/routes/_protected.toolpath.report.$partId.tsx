@@ -3,6 +3,7 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { canUserAccessToolpath } from "~/lib/featureFlags";
 import {
   isToolpathEnabled,
+  isValidToolpathPartId,
   resolveToolpathReportUrl,
 } from "~/lib/toolpath.server";
 
@@ -13,6 +14,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (!partId) {
     return withAuthHeaders(
       json({ error: "Toolpath part ID is required" }, { status: 400 }),
+      headers,
+    );
+  }
+
+  if (!partId || !isValidToolpathPartId(partId)) {
+    return withAuthHeaders(
+      json({ error: "Invalid Toolpath part ID" }, { status: 400 }),
       headers,
     );
   }

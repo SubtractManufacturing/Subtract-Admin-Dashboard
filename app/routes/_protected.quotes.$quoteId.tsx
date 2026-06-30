@@ -1283,8 +1283,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
             continue;
           }
 
+          let uploadResult:
+            | Awaited<ReturnType<typeof uploadQuotePartToToolpath>>
+            | undefined;
+
           try {
-            const uploadResult = await uploadQuotePartToToolpath({
+            uploadResult = await uploadQuotePartToToolpath({
               quotePartId,
               name: part.partName,
               partFileUrl: part.partFileUrl,
@@ -1314,13 +1318,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
           } catch (error) {
             const message =
               error instanceof Error ? error.message : "Upload failed";
-            await db
-              .update(quoteParts)
-              .set({
-                toolpathUploadError: message,
-                updatedAt: new Date(),
-              })
-              .where(eq(quoteParts.id, quotePartId));
+
+            try {
+              await db
+                .update(quoteParts)
+                .set({
+                  ...(uploadResult
+                    ? {
+                        toolpathPartId: uploadResult.toolpathPartId,
+                        toolpathReportUrl: uploadResult.toolpathReportUrl,
+                        toolpathCutConfigId: cutConfigId,
+                        toolpathUploadedAt: new Date(),
+                      }
+                    : {}),
+                  toolpathUploadError: message,
+                  updatedAt: new Date(),
+                })
+                .where(eq(quoteParts.id, quotePartId));
+            } catch (dbError) {
+              console.error("Failed to persist Toolpath state after error:", dbError);
+            }
 
             results.push({
               quotePartId,
@@ -2608,6 +2625,10 @@ export default function QuoteDetail() {
     results?: ToolpathUploadResult[];
   }>();
   const [isToolpathModalOpen, setIsToolpathModalOpen] = useState(false);
+  const [toolpathModalSession, setToolpathModalSession] = useState(0);
+  const [toolpathResultsSession, setToolpathResultsSession] = useState<
+    number | null
+  >(null);
   const [lastHandledToolpathData, setLastHandledToolpathData] =
     useState<unknown>(null);
   const { download, isDownloading } = useDownload({
@@ -3047,8 +3068,16 @@ export default function QuoteDetail() {
     setCurrentCalculatorPartIndex(0);
   };
 
+  const handleOpenToolpath = () => {
+    setToolpathModalSession((session) => session + 1);
+    setToolpathResultsSession(null);
+    setIsToolpathModalOpen(true);
+  };
+
   const handleToolpathUpload = (selections: ToolpathUploadSelection[]) => {
     if (toolpathFetcher.state !== "idle") return;
+
+    setToolpathResultsSession(toolpathModalSession);
 
     const formData = new FormData();
     formData.append("intent", "uploadToToolpath");
@@ -3370,7 +3399,7 @@ export default function QuoteDetail() {
                         : undefined
                     }
                     onOpenToolpath={
-                      canAccessToolpath ? () => setIsToolpathModalOpen(true) : undefined
+                      canAccessToolpath ? handleOpenToolpath : undefined
                     }
                     isToolpathDisabled={toolpathUploadableParts.length === 0}
                     toolpathDisabledReason="All parts already uploaded or missing CAD files"
@@ -4523,11 +4552,19 @@ export default function QuoteDetail() {
           isUploading={toolpathFetcher.state !== "idle"}
           uploadProgressText={
             toolpathUploadableParts.length > 1
-              ? `Uploading ${toolpathUploadableParts.length} parts to Toolpath (paced API limits; waiting for reports may take a minute)...`
-              : "Uploading 1 part to Toolpath (waiting for report may take a minute)..."
+              ? `Uploading ${toolpathUploadableParts.length} parts to Toolpath (paced API limits)...`
+              : "Uploading 1 part to Toolpath..."
           }
-          uploadError={toolpathFetcher.data?.error ?? null}
-          uploadResults={toolpathFetcher.data?.results ?? []}
+          uploadError={
+            toolpathResultsSession === toolpathModalSession
+              ? (toolpathFetcher.data?.error ?? null)
+              : null
+          }
+          uploadResults={
+            toolpathResultsSession === toolpathModalSession
+              ? (toolpathFetcher.data?.results ?? [])
+              : []
+          }
         />
       )}
 
