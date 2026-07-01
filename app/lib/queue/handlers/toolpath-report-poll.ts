@@ -1,4 +1,4 @@
-import type { Job } from "pg-boss";
+import type { JobWithMetadata } from "pg-boss";
 import { and, eq } from "drizzle-orm";
 import type { ToolpathReportPollPayload } from "../types";
 import { db } from "../../db";
@@ -17,7 +17,7 @@ import {
 } from "../../toolpath-upload.server";
 
 export async function handleToolpathReportPoll(
-  jobs: Job<ToolpathReportPollPayload>[],
+  jobs: JobWithMetadata<ToolpathReportPollPayload>[],
 ) {
   for (const job of jobs) {
     const { quotePartId, toolpathPartId, cutConfigId, quoteId } = job.data;
@@ -79,16 +79,33 @@ export async function handleToolpathReportPoll(
         continue;
       }
 
-      await db
+      const [updated] = await db
         .update(quoteParts)
         .set({
           toolpathReportUrl: reportUrl,
           toolpathUploadedAt: new Date(),
           toolpathUploadStatus: null,
           toolpathUploadError: null,
+          toolpathQueuedAt: null,
           updatedAt: new Date(),
         })
-        .where(eq(quoteParts.id, quotePartId));
+        .where(
+          and(
+            eq(quoteParts.id, quotePartId),
+            eq(
+              quoteParts.toolpathUploadStatus,
+              TOOLPATH_UPLOAD_STATUS.PROCESSING,
+            ),
+          ),
+        )
+        .returning({ id: quoteParts.id });
+
+      if (!updated) {
+        console.log(
+          `[Worker:ToolpathReportPoll] Skipping success write for ${quotePartId} — no longer processing`,
+        );
+        continue;
+      }
 
       try {
         await createEvent({
@@ -119,15 +136,18 @@ export async function handleToolpathReportPoll(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Toolpath report poll failed";
+      const isLastAttempt = job.retryCount >= job.retryLimit;
 
-      await markReportPollFailed({
-        quotePartId,
-        quoteId,
-        partName: part.partName,
-        toolpathPartId,
-        error: message,
-        jobId: job.id,
-      });
+      if (isLastAttempt) {
+        await markReportPollFailed({
+          quotePartId,
+          quoteId,
+          partName: part.partName,
+          toolpathPartId,
+          error: message,
+          jobId: job.id,
+        });
+      }
 
       throw error;
     }
@@ -155,6 +175,7 @@ async function markReportPollFailed(opts: {
     .set({
       toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.FAILED,
       toolpathUploadError: opts.error,
+      toolpathQueuedAt: null,
       updatedAt: new Date(),
     })
     .where(

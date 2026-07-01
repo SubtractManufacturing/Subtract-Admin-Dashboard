@@ -1,5 +1,5 @@
-import type { Job } from "pg-boss";
-import { and, eq } from "drizzle-orm";
+import type { JobWithMetadata } from "pg-boss";
+import { and, eq, or } from "drizzle-orm";
 import type { ToolpathUploadPayload } from "../types";
 import { db } from "../../db";
 import { quoteParts } from "../../db/schema";
@@ -11,7 +11,9 @@ import {
 } from "../../toolpath-upload";
 import { logToolpathUploadAlert } from "../../toolpath-upload.server";
 
-export async function handleToolpathUpload(jobs: Job<ToolpathUploadPayload>[]) {
+export async function handleToolpathUpload(
+  jobs: JobWithMetadata<ToolpathUploadPayload>[],
+) {
   for (const job of jobs) {
     const { quotePartId, cutConfigId, quoteId, triggeredByUserId } = job.data;
     const start = Date.now();
@@ -25,19 +27,30 @@ export async function handleToolpathUpload(jobs: Job<ToolpathUploadPayload>[]) {
       .set({
         toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.IN_PROGRESS,
         toolpathUploadJobId: job.id,
+        toolpathPartId: null,
+        toolpathReportUrl: null,
+        toolpathUploadedAt: null,
         updatedAt: new Date(),
       })
       .where(
         and(
           eq(quoteParts.id, quotePartId),
-          eq(quoteParts.toolpathUploadStatus, TOOLPATH_UPLOAD_STATUS.QUEUED),
+          or(
+            eq(quoteParts.toolpathUploadStatus, TOOLPATH_UPLOAD_STATUS.QUEUED),
+            and(
+              eq(
+                quoteParts.toolpathUploadStatus,
+                TOOLPATH_UPLOAD_STATUS.IN_PROGRESS,
+              ),
+              eq(quoteParts.toolpathUploadJobId, job.id),
+            ),
+          ),
         ),
       )
       .returning({
         id: quoteParts.id,
         partName: quoteParts.partName,
         partFileUrl: quoteParts.partFileUrl,
-        toolpathPartId: quoteParts.toolpathPartId,
       });
 
     if (claimed.length === 0) {
@@ -48,13 +61,6 @@ export async function handleToolpathUpload(jobs: Job<ToolpathUploadPayload>[]) {
     }
 
     const part = claimed[0];
-
-    if (part.toolpathPartId) {
-      console.log(
-        `[Worker:ToolpathUpload] Skipping ${quotePartId} — already has toolpathPartId`,
-      );
-      continue;
-    }
 
     if (!part.partFileUrl) {
       await markToolpathUploadFailed({
@@ -85,6 +91,7 @@ export async function handleToolpathUpload(jobs: Job<ToolpathUploadPayload>[]) {
           toolpathCutConfigId: cutConfigId,
           toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.PROCESSING,
           toolpathUploadError: null,
+          toolpathQueuedAt: null,
           updatedAt: new Date(),
         })
         .where(eq(quoteParts.id, quotePartId));
@@ -106,15 +113,32 @@ export async function handleToolpathUpload(jobs: Job<ToolpathUploadPayload>[]) {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Toolpath upload failed";
+      const isLastAttempt = job.retryCount >= job.retryLimit;
 
-      await markToolpathUploadFailed({
-        quotePartId,
-        quoteId,
-        partName: part.partName,
-        error: message,
-        jobId: job.id,
-        triggeredByUserId,
-      });
+      if (isLastAttempt) {
+        await markToolpathUploadFailed({
+          quotePartId,
+          quoteId,
+          partName: part.partName,
+          error: message,
+          jobId: job.id,
+          triggeredByUserId,
+        });
+      } else {
+        await db
+          .update(quoteParts)
+          .set({
+            toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.QUEUED,
+            toolpathUploadError: message,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(quoteParts.id, quotePartId),
+              eq(quoteParts.toolpathUploadJobId, job.id),
+            ),
+          );
+      }
 
       throw error;
     }
@@ -141,6 +165,7 @@ async function markToolpathUploadFailed(opts: {
     .set({
       toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.FAILED,
       toolpathUploadError: opts.error,
+      toolpathQueuedAt: null,
       updatedAt: new Date(),
     })
     .where(eq(quoteParts.id, opts.quotePartId));

@@ -386,6 +386,7 @@ export const quoteParts = pgTable(
     toolpathUploadError: text("toolpath_upload_error"),
     toolpathUploadStatus: text("toolpath_upload_status"),
     toolpathUploadJobId: text("toolpath_upload_job_id"),
+    toolpathQueuedAt: timestamp("toolpath_queued_at"),
     specifications: jsonb("specifications"),
     isArchived: boolean("is_archived").default(false).notNull(),
     archivedAt: timestamp("archived_at"),

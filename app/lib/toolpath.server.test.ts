@@ -579,4 +579,53 @@ describe("pollToolpathReportUrl", () => {
       }),
     ).resolves.toBeNull();
   });
+
+  it("retries through transient poll errors", async () => {
+    const readyPartBody = {
+      data: {
+        id: "5x92lwfl",
+        status: "ready",
+        name: "Bracket",
+        units: "in",
+        currentProgramId: "ldxwtu50",
+        failureCode: null,
+        failureReason: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    };
+    const programsBody = {
+      data: {
+        programs: [
+          {
+            id: "ldxwtu50",
+            url: "https://app.toolpath.com/parts/ldxwtu50/report",
+            partId: "5x92lwfl",
+            status: "ready",
+            cutConfigId: "cfg00001",
+            cutConfigName: "Default",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+
+    vi.mocked(fetch)
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(jsonResponse(readyPartBody))
+      .mockResolvedValueOnce(jsonResponse(readyPartBody))
+      .mockResolvedValueOnce(jsonResponse(programsBody));
+
+    const { pollToolpathReportUrl } = await import("./toolpath.server");
+
+    await expect(
+      pollToolpathReportUrl({
+        partId: "5x92lwfl",
+        cutConfigId: "cfg00001",
+        maxWaitMs: 1000,
+        intervalMs: 10,
+        sleepFn: async () => undefined,
+      }),
+    ).resolves.toBe("https://app.toolpath.com/parts/ldxwtu50/report");
+  });
 });

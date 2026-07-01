@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "./db";
 import { quoteParts } from "./db/schema";
 import {
@@ -26,12 +26,26 @@ export function formatToolpathQueueError(error: unknown): string {
   return message;
 }
 
-export async function failStaleToolpathQueuedParts(
-  quotePartIds: string[],
-): Promise<void> {
-  if (quotePartIds.length === 0) return;
+function staleQueuedBeforeCondition(staleBefore: Date) {
+  return lt(
+    sql`COALESCE(${quoteParts.toolpathQueuedAt}, ${quoteParts.updatedAt})`,
+    staleBefore,
+  );
+}
 
+export async function failStaleToolpathQueuedParts(
+  quotePartIds?: string[],
+): Promise<number> {
   const staleBefore = new Date(Date.now() - TOOLPATH_STALE_QUEUED_MS);
+
+  const filters = [
+    eq(quoteParts.toolpathUploadStatus, TOOLPATH_UPLOAD_STATUS.QUEUED),
+    staleQueuedBeforeCondition(staleBefore),
+  ];
+
+  if (quotePartIds && quotePartIds.length > 0) {
+    filters.push(inArray(quoteParts.id, quotePartIds));
+  }
 
   const staleParts = await db
     .select({
@@ -40,13 +54,7 @@ export async function failStaleToolpathQueuedParts(
       quoteId: quoteParts.quoteId,
     })
     .from(quoteParts)
-    .where(
-      and(
-        inArray(quoteParts.id, quotePartIds),
-        eq(quoteParts.toolpathUploadStatus, TOOLPATH_UPLOAD_STATUS.QUEUED),
-        lt(quoteParts.updatedAt, staleBefore),
-      ),
-    );
+    .where(and(...filters));
 
   for (const part of staleParts) {
     await db
@@ -54,6 +62,7 @@ export async function failStaleToolpathQueuedParts(
       .set({
         toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.FAILED,
         toolpathUploadError: TOOLPATH_STALE_QUEUED_ERROR,
+        toolpathQueuedAt: null,
         updatedAt: new Date(),
       })
       .where(
@@ -69,6 +78,8 @@ export async function failStaleToolpathQueuedParts(
       partName: part.partName,
     });
   }
+
+  return staleParts.length;
 }
 
 export { TOOLPATH_REPORT_TIMEOUT_ERROR };

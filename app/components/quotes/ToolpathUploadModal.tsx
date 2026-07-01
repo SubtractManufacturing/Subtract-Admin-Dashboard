@@ -85,8 +85,17 @@ export default function ToolpathUploadModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
+  const hasQueueFailures =
+    !!uploadError ||
+    uploadResults.some((result) => !result.success);
+
   useEffect(() => {
-    if (isUploading || queuedCount == null || queuedCount <= 0) {
+    if (
+      isUploading ||
+      queuedCount == null ||
+      queuedCount <= 0 ||
+      hasQueueFailures
+    ) {
       return;
     }
 
@@ -106,7 +115,7 @@ export default function ToolpathUploadModal({
         autoCloseTimerRef.current = null;
       }
     };
-  }, [isUploading, queuedCount, onClose]);
+  }, [isUploading, queuedCount, hasQueueFailures, onClose]);
 
   const cutConfigs = cutConfigsFetcher.data?.cutConfigs ?? [];
   const failedResultsByPartId = useMemo(

@@ -357,28 +357,66 @@ export async function pollToolpathReportUrl(opts: {
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
-    const part = await getToolpathPart(opts.partId);
+    try {
+      const part = await getToolpathPart(opts.partId);
 
-    if (part.status === "failed") {
-      throw new Error(
-        part.failureReason ||
-          part.failureCode ||
-          "Toolpath part processing failed",
-      );
-    }
-
-    if (part.status === "ready") {
-      const reportUrl = await resolveToolpathReportUrl({
-        partId: opts.partId,
-        cutConfigId: opts.cutConfigId,
-      });
-      if (reportUrl) {
-        return reportUrl;
+      if (part.status === "failed") {
+        throw new Error(
+          part.failureReason ||
+            part.failureCode ||
+            "Toolpath part processing failed",
+        );
       }
+
+      if (part.status === "ready") {
+        const reportUrl = await resolveToolpathReportUrl({
+          partId: opts.partId,
+          cutConfigId: opts.cutConfigId,
+        });
+        if (reportUrl) {
+          return reportUrl;
+        }
+      }
+    } catch (error) {
+      if (!isTransientToolpathPollError(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `[ToolpathPoll] Transient error polling part ${opts.partId}; will retry`,
+        error,
+      );
     }
 
     await sleepFn(intervalMs);
   }
 
   return null;
+}
+
+function isTransientToolpathPollError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return true;
+  }
+
+  if (error.name === "TimeoutError" || error.name === "AbortError") {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+  if (
+    message.includes("fetch failed") ||
+    message.includes("network") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("socket")
+  ) {
+    return true;
+  }
+
+  if (message.includes("toolpath api error")) {
+    return /status 5\d\d/.test(message) || message.includes("too many requests");
+  }
+
+  return false;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Job } from "pg-boss";
+import type { JobWithMetadata } from "pg-boss";
 
 const mocks = vi.hoisted(() => ({
   mockUpdate: vi.fn(),
@@ -42,6 +42,28 @@ function chainReturning(rows: unknown[]) {
   return chain;
 }
 
+function makeJob(
+  data: {
+    quotePartId: string;
+    cutConfigId: string;
+    quoteId: number;
+  },
+  retry: { retryCount: number; retryLimit: number } = {
+    retryCount: 0,
+    retryLimit: 3,
+  },
+): JobWithMetadata<typeof data> {
+  return {
+    id: "job-1",
+    name: "toolpath-upload",
+    data,
+    expireInSeconds: 300,
+    heartbeatSeconds: null,
+    signal: new AbortController().signal,
+    ...retry,
+  } as unknown as JobWithMetadata<typeof data>;
+}
+
 describe("handleToolpathUpload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -59,30 +81,20 @@ describe("handleToolpathUpload", () => {
         id: "part-1",
         partName: "Bracket",
         partFileUrl: "quote-parts/part-1/source/file.step",
-        toolpathPartId: null,
       },
     ]);
     const persistChain = chainReturning([]);
 
     mocks.mockUpdate
       .mockReturnValueOnce(claimChain)
-      .mockReturnValueOnce(persistChain)
       .mockReturnValueOnce(persistChain);
 
     await handleToolpathUpload([
-      {
-        id: "job-1",
-        name: "toolpath-upload",
-        data: {
-          quotePartId: "part-1",
-          cutConfigId: "cfg00001",
-          quoteId: 42,
-        },
-      } as Job<{
-        quotePartId: string;
-        cutConfigId: string;
-        quoteId: number;
-      }>,
+      makeJob({
+        quotePartId: "part-1",
+        cutConfigId: "cfg00001",
+        quoteId: 42,
+      }),
     ]);
 
     expect(mocks.mockUpload).toHaveBeenCalledWith({
@@ -105,22 +117,86 @@ describe("handleToolpathUpload", () => {
     mocks.mockUpdate.mockReturnValueOnce(chainReturning([]));
 
     await handleToolpathUpload([
-      {
-        id: "job-2",
-        name: "toolpath-upload",
-        data: {
-          quotePartId: "part-1",
-          cutConfigId: "cfg00001",
-          quoteId: 42,
-        },
-      } as Job<{
-        quotePartId: string;
-        cutConfigId: string;
-        quoteId: number;
-      }>,
+      makeJob({
+        quotePartId: "part-1",
+        cutConfigId: "cfg00001",
+        quoteId: 42,
+      }),
     ]);
 
     expect(mocks.mockUpload).not.toHaveBeenCalled();
     expect(mocks.mockSendPoll).not.toHaveBeenCalled();
+  });
+
+  it("resets to queued on transient failure when retries remain", async () => {
+    const claimChain = chainReturning([
+      {
+        id: "part-1",
+        partName: "Bracket",
+        partFileUrl: "quote-parts/part-1/source/file.step",
+      },
+    ]);
+    const retryChain = chainReturning([]);
+
+    mocks.mockUpdate
+      .mockReturnValueOnce(claimChain)
+      .mockReturnValueOnce(retryChain);
+    mocks.mockUpload.mockRejectedValueOnce(new Error("network blip"));
+
+    await expect(
+      handleToolpathUpload([
+        makeJob(
+          {
+            quotePartId: "part-1",
+            cutConfigId: "cfg00001",
+            quoteId: 42,
+          },
+          { retryCount: 0, retryLimit: 3 },
+        ),
+      ]),
+    ).rejects.toThrow("network blip");
+
+    expect(retryChain.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolpathUploadStatus: "queued",
+      }),
+    );
+    expect(mocks.mockLogAlert).not.toHaveBeenCalled();
+  });
+
+  it("marks failed on the final retry attempt", async () => {
+    const claimChain = chainReturning([
+      {
+        id: "part-1",
+        partName: "Bracket",
+        partFileUrl: "quote-parts/part-1/source/file.step",
+      },
+    ]);
+    const failedChain = chainReturning([]);
+
+    mocks.mockUpdate
+      .mockReturnValueOnce(claimChain)
+      .mockReturnValueOnce(failedChain);
+    mocks.mockUpload.mockRejectedValueOnce(new Error("network blip"));
+
+    await expect(
+      handleToolpathUpload([
+        makeJob(
+          {
+            quotePartId: "part-1",
+            cutConfigId: "cfg00001",
+            quoteId: 42,
+          },
+          { retryCount: 3, retryLimit: 3 },
+        ),
+      ]),
+    ).rejects.toThrow("network blip");
+
+    expect(failedChain.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolpathUploadStatus: "failed",
+      }),
+    );
+    expect(mocks.mockLogAlert).toHaveBeenCalled();
   });
 });

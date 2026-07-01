@@ -92,7 +92,7 @@ import {
   quoteParts,
   type AttachmentDocumentKind,
 } from "~/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, or, isNull } from "drizzle-orm";
 import {
   parseLineTotalInput,
   parseUnitPriceInput,
@@ -105,7 +105,6 @@ import {
 } from "~/lib/toolpath.server";
 import { sendToolpathUploadJob } from "~/lib/queue/producer.server";
 import {
-  failStaleToolpathQueuedParts,
   formatToolpathQueueError,
   logToolpathUploadAlert,
 } from "~/lib/toolpath-upload.server";
@@ -165,18 +164,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Quote ID is required", { status: 400 });
   }
 
-  let quote = await getQuote(parseInt(quoteId));
+  const quote = await getQuote(parseInt(quoteId));
   if (!quote) {
     throw new Response("Quote not found", { status: 404 });
-  }
-
-  const quotePartIds = (quote.parts || []).map((part) => part.id);
-  if (quotePartIds.length > 0) {
-    await failStaleToolpathQueuedParts(quotePartIds);
-    const refreshedQuote = await getQuote(parseInt(quoteId));
-    if (refreshedQuote) {
-      quote = refreshedQuote;
-    }
   }
 
   // Fetch customer and vendor details, plus selectable lists for editing
@@ -1379,18 +1369,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
           }
 
           try {
-            await db
+            const [claimed] = await db
               .update(quoteParts)
               .set({
-                toolpathPartId: null,
-                toolpathReportUrl: null,
-                toolpathUploadedAt: null,
-                toolpathUploadError: null,
                 toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.QUEUED,
                 toolpathCutConfigId: cutConfigId,
+                toolpathQueuedAt: new Date(),
+                toolpathUploadError: null,
+                toolpathUploadJobId: null,
                 updatedAt: new Date(),
               })
-              .where(eq(quoteParts.id, quotePartId));
+              .where(
+                and(
+                  eq(quoteParts.id, quotePartId),
+                  or(
+                    isNull(quoteParts.toolpathUploadStatus),
+                    eq(
+                      quoteParts.toolpathUploadStatus,
+                      TOOLPATH_UPLOAD_STATUS.FAILED,
+                    ),
+                  ),
+                ),
+              )
+              .returning({
+                id: quoteParts.id,
+                partName: quoteParts.partName,
+              });
+
+            if (!claimed) {
+              results.push({
+                quotePartId,
+                partName: part.partName,
+                success: false,
+                error: "Part upload is already in progress",
+              });
+              continue;
+            }
 
             const jobId = await sendToolpathUploadJob(
               {
@@ -1411,9 +1425,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 .set({
                   toolpathUploadStatus: null,
                   toolpathCutConfigId: null,
+                  toolpathQueuedAt: null,
+                  toolpathUploadJobId: null,
                   updatedAt: new Date(),
                 })
-                .where(eq(quoteParts.id, quotePartId));
+                .where(
+                  and(
+                    eq(quoteParts.id, quotePartId),
+                    eq(
+                      quoteParts.toolpathUploadStatus,
+                      TOOLPATH_UPLOAD_STATUS.QUEUED,
+                    ),
+                  ),
+                );
 
               logToolpathUploadAlert("Failed to enqueue Toolpath upload job", {
                 quotePartId,
@@ -1435,13 +1459,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 toolpathUploadJobId: jobId,
                 updatedAt: new Date(),
               })
-              .where(eq(quoteParts.id, quotePartId));
+              .where(
+                and(
+                  eq(quoteParts.id, quotePartId),
+                  eq(
+                    quoteParts.toolpathUploadStatus,
+                    TOOLPATH_UPLOAD_STATUS.QUEUED,
+                  ),
+                ),
+              );
 
             staggerIndex += 1;
             queuedCount += 1;
             results.push({
               quotePartId,
-              partName: part.partName,
+              partName: claimed.partName,
               success: true,
             });
           } catch (error) {
@@ -1461,10 +1493,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
                 .set({
                   toolpathUploadStatus: null,
                   toolpathCutConfigId: null,
+                  toolpathQueuedAt: null,
+                  toolpathUploadJobId: null,
                   toolpathUploadError: message,
                   updatedAt: new Date(),
                 })
-                .where(eq(quoteParts.id, quotePartId));
+                .where(
+                  and(
+                    eq(quoteParts.id, quotePartId),
+                    eq(
+                      quoteParts.toolpathUploadStatus,
+                      TOOLPATH_UPLOAD_STATUS.QUEUED,
+                    ),
+                  ),
+                );
             } catch (dbError) {
               console.error(
                 "Failed to revert Toolpath state after enqueue error:",
