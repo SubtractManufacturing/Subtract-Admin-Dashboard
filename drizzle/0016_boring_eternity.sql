@@ -1,0 +1,1 @@
+ALTER TABLE "quote_parts" ADD COLUMN "toolpath_queued_at" timestamp;

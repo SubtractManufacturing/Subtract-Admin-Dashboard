@@ -1,5 +1,5 @@
 import { PgBoss } from "pg-boss";
-import { getQueueDatabaseUrl } from "../db/connection-string.server";
+import { getQueueDatabaseUrl, PGBOSS_MAX_CONNECTIONS } from "../db/connection-string.server";
 import { QUEUES } from "./types";
 
 let boss: PgBoss | null = null;
@@ -19,6 +19,7 @@ export async function startWorkerQueue(): Promise<PgBoss> {
     ssl: { rejectUnauthorized: false },
     application_name: "subtract-worker",
     schema: "pgboss",
+    max: PGBOSS_MAX_CONNECTIONS,
   });
 
   boss.on("error", (err: Error) => {
@@ -29,7 +30,11 @@ export async function startWorkerQueue(): Promise<PgBoss> {
   console.log("[PgBoss:Worker] Started");
 
   for (const name of Object.values(QUEUES)) {
-    await boss.createQueue(name);
+    if (name === QUEUES.TOOLPATH_UPLOAD) {
+      await boss.createQueue(name, { policy: "key_strict_fifo" });
+    } else {
+      await boss.createQueue(name);
+    }
     console.log(`[PgBoss:Worker] Queue ensured: ${name}`);
   }
 

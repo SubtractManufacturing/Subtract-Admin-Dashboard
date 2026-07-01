@@ -15,6 +15,8 @@ interface QuoteActionsDropdownProps {
   onOpenToolpath?: () => void;
   isToolpathDisabled?: boolean;
   toolpathDisabledReason?: string;
+  toolpathHasFailures?: boolean;
+  toolpathIsProcessing?: boolean;
   isDownloading?: boolean;
   hasCustomer?: boolean;
 }
@@ -33,6 +35,8 @@ export default function QuoteActionsDropdown({
   onOpenToolpath,
   isToolpathDisabled = false,
   toolpathDisabledReason,
+  toolpathHasFailures = false,
+  toolpathIsProcessing = false,
   isDownloading = false,
   hasCustomer = false,
 }: QuoteActionsDropdownProps) {
@@ -95,7 +99,16 @@ export default function QuoteActionsDropdown({
     ...(canCalculate && onOpenToolpath
       ? [
           {
-            icon: <ToolpathIcon className="w-5 h-5" />,
+            icon: (
+              <span className="relative inline-flex">
+                <ToolpathIcon className="w-5 h-5" />
+                {toolpathHasFailures && !toolpathIsProcessing ? (
+                  <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                    !
+                  </span>
+                ) : null}
+              </span>
+            ),
             label: "Toolpath",
             onClick: () => {
               if (isToolpathDisabled) return;

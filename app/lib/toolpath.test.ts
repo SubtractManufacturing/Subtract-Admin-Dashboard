@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildToolpathReportHref, isAllowedToolpathReportUrl } from "./toolpath";
+import {
+  buildToolpathReportHref,
+  getToolpathReportHrefForUi,
+  isAllowedToolpathReportUrl,
+} from "./toolpath";
 
 describe("isAllowedToolpathReportUrl", () => {
   it("accepts valid Toolpath report URLs", () => {
@@ -38,5 +42,23 @@ describe("buildToolpathReportHref", () => {
         toolpathPartId: "xyz98765",
       }),
     ).toBe("/toolpath/report/xyz98765");
+  });
+});
+
+describe("getToolpathReportHrefForUi", () => {
+  it("returns validated report URL only", () => {
+    expect(
+      getToolpathReportHrefForUi({
+        toolpathReportUrl: "https://app.toolpath.com/parts/abc12345/report",
+      }),
+    ).toBe("https://app.toolpath.com/parts/abc12345/report");
+  });
+
+  it("does not fall back to app redirect route", () => {
+    expect(
+      getToolpathReportHrefForUi({
+        toolpathReportUrl: null,
+      }),
+    ).toBeNull();
   });
 });

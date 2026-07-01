@@ -281,9 +281,11 @@ export async function uploadQuotePartToToolpath(opts: {
   partFileUrl: string;
   cutConfigId: string;
   units?: "in" | "mm";
+  resolveReport?: boolean;
 }): Promise<{ toolpathPartId: string; toolpathReportUrl: string | null }> {
   const idempotencyKey = opts.quotePartId;
   const units = opts.units ?? "in";
+  const resolveReport = opts.resolveReport ?? true;
   const stepFileName = getFileNameFromS3Path(opts.partFileUrl);
 
   const createResponse = await toolpathFetch(
@@ -319,6 +321,13 @@ export async function uploadQuotePartToToolpath(opts: {
     idempotencyKey,
   });
 
+  if (!resolveReport) {
+    return {
+      toolpathPartId: createBody.data.id,
+      toolpathReportUrl: null,
+    };
+  }
+
   let toolpathReportUrl: string | null = null;
   try {
     toolpathReportUrl = await resolveToolpathReportUrl({
@@ -333,4 +342,81 @@ export async function uploadQuotePartToToolpath(opts: {
     toolpathPartId: createBody.data.id,
     toolpathReportUrl,
   };
+}
+
+export async function pollToolpathReportUrl(opts: {
+  partId: string;
+  cutConfigId: string;
+  intervalMs?: number;
+  maxWaitMs?: number;
+  sleepFn?: (ms: number) => Promise<void>;
+}): Promise<string | null> {
+  const intervalMs = opts.intervalMs ?? 5_000;
+  const maxWaitMs = opts.maxWaitMs ?? 10 * 60 * 1000;
+  const sleepFn = opts.sleepFn ?? sleep;
+  const deadline = Date.now() + maxWaitMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const part = await getToolpathPart(opts.partId);
+
+      if (part.status === "failed") {
+        throw new Error(
+          part.failureReason ||
+            part.failureCode ||
+            "Toolpath part processing failed",
+        );
+      }
+
+      if (part.status === "ready") {
+        const reportUrl = await resolveToolpathReportUrl({
+          partId: opts.partId,
+          cutConfigId: opts.cutConfigId,
+        });
+        if (reportUrl) {
+          return reportUrl;
+        }
+      }
+    } catch (error) {
+      if (!isTransientToolpathPollError(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `[ToolpathPoll] Transient error polling part ${opts.partId}; will retry`,
+        error,
+      );
+    }
+
+    await sleepFn(intervalMs);
+  }
+
+  return null;
+}
+
+function isTransientToolpathPollError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return true;
+  }
+
+  if (error.name === "TimeoutError" || error.name === "AbortError") {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+  if (
+    message.includes("fetch failed") ||
+    message.includes("network") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("socket")
+  ) {
+    return true;
+  }
+
+  if (message.includes("toolpath api error")) {
+    return /status 5\d\d/.test(message) || message.includes("too many requests");
+  }
+
+  return false;
 }
