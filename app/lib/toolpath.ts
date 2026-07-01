@@ -20,3 +20,16 @@ export function buildToolpathReportHref(opts: {
   if (opts.toolpathPartId) return `/toolpath/report/${opts.toolpathPartId}`;
   return null;
 }
+
+/** UI-only: never link to the redirect route until a validated report URL exists. */
+export function getToolpathReportHrefForUi(opts: {
+  toolpathReportUrl?: string | null;
+}): string | null {
+  if (
+    opts.toolpathReportUrl &&
+    isAllowedToolpathReportUrl(opts.toolpathReportUrl)
+  ) {
+    return opts.toolpathReportUrl;
+  }
+  return null;
+}

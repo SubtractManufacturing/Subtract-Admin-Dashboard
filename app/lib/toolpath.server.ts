@@ -281,9 +281,11 @@ export async function uploadQuotePartToToolpath(opts: {
   partFileUrl: string;
   cutConfigId: string;
   units?: "in" | "mm";
+  resolveReport?: boolean;
 }): Promise<{ toolpathPartId: string; toolpathReportUrl: string | null }> {
   const idempotencyKey = opts.quotePartId;
   const units = opts.units ?? "in";
+  const resolveReport = opts.resolveReport ?? true;
   const stepFileName = getFileNameFromS3Path(opts.partFileUrl);
 
   const createResponse = await toolpathFetch(
@@ -319,6 +321,13 @@ export async function uploadQuotePartToToolpath(opts: {
     idempotencyKey,
   });
 
+  if (!resolveReport) {
+    return {
+      toolpathPartId: createBody.data.id,
+      toolpathReportUrl: null,
+    };
+  }
+
   let toolpathReportUrl: string | null = null;
   try {
     toolpathReportUrl = await resolveToolpathReportUrl({
@@ -333,4 +342,43 @@ export async function uploadQuotePartToToolpath(opts: {
     toolpathPartId: createBody.data.id,
     toolpathReportUrl,
   };
+}
+
+export async function pollToolpathReportUrl(opts: {
+  partId: string;
+  cutConfigId: string;
+  intervalMs?: number;
+  maxWaitMs?: number;
+  sleepFn?: (ms: number) => Promise<void>;
+}): Promise<string | null> {
+  const intervalMs = opts.intervalMs ?? 5_000;
+  const maxWaitMs = opts.maxWaitMs ?? 10 * 60 * 1000;
+  const sleepFn = opts.sleepFn ?? sleep;
+  const deadline = Date.now() + maxWaitMs;
+
+  while (Date.now() < deadline) {
+    const part = await getToolpathPart(opts.partId);
+
+    if (part.status === "failed") {
+      throw new Error(
+        part.failureReason ||
+          part.failureCode ||
+          "Toolpath part processing failed",
+      );
+    }
+
+    if (part.status === "ready") {
+      const reportUrl = await resolveToolpathReportUrl({
+        partId: opts.partId,
+        cutConfigId: opts.cutConfigId,
+      });
+      if (reportUrl) {
+        return reportUrl;
+      }
+    }
+
+    await sleepFn(intervalMs);
+  }
+
+  return null;
 }

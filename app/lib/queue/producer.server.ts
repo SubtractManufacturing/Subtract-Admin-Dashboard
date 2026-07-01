@@ -4,11 +4,16 @@ import {
   CAD_CONVERSION_OPTIONS,
   DEFAULT_RETRY_OPTIONS,
   SEND_EMAIL_OPTIONS,
+  TOOLPATH_REPORT_POLL_OPTIONS,
+  TOOLPATH_UPLOAD_OPTIONS,
   QUEUES,
   type CadConversionPayload,
   type MockJobPayload,
   type SendEmailPayload,
+  type ToolpathReportPollPayload,
+  type ToolpathUploadPayload,
 } from "./types";
+import { TOOLPATH_PART_CREATION_SINGLETON_KEY } from "../toolpath-upload";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -83,4 +88,29 @@ export async function sendEmailJob(
     options.startAfter = delayMinutes * 60; // pg-boss startAfter is in seconds
   }
   return producer.send(QUEUES.SEND_EMAIL, payload, options);
+}
+
+export async function sendToolpathUploadJob(
+  payload: ToolpathUploadPayload,
+  options: { startAfterSeconds?: number } = {},
+): Promise<string | null> {
+  const producer = await getProducer();
+  const sendOptions: Record<string, unknown> = {
+    ...TOOLPATH_UPLOAD_OPTIONS,
+    singletonKey: TOOLPATH_PART_CREATION_SINGLETON_KEY,
+  };
+  if (options.startAfterSeconds != null && options.startAfterSeconds > 0) {
+    sendOptions.startAfter = options.startAfterSeconds;
+  }
+  return producer.send(QUEUES.TOOLPATH_UPLOAD, payload, sendOptions);
+}
+
+export async function sendToolpathReportPollJob(
+  payload: ToolpathReportPollPayload,
+): Promise<string | null> {
+  const producer = await getProducer();
+  return producer.send(QUEUES.TOOLPATH_REPORT_POLL, payload, {
+    ...TOOLPATH_REPORT_POLL_OPTIONS,
+    singletonKey: payload.quotePartId,
+  });
 }

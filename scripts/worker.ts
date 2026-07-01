@@ -7,10 +7,14 @@ import {
   type MockJobPayload,
   type PurgeArchivedLineItemsPayload,
   type SendEmailPayload,
+  type ToolpathReportPollPayload,
+  type ToolpathUploadPayload,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
 import { handlePurgeArchivedLineItems } from "../app/lib/queue/handlers/purge-archived-line-items";
 import { handleSendEmail } from "../app/lib/queue/handlers/send-email";
+import { handleToolpathReportPoll } from "../app/lib/queue/handlers/toolpath-report-poll";
+import { handleToolpathUpload } from "../app/lib/queue/handlers/toolpath-upload";
 import { startWorkerQueue, stopWorkerQueue } from "../app/lib/queue/worker.server";
 
 let isShuttingDown = false;
@@ -83,6 +87,20 @@ async function main() {
   console.log(
     `[Worker] Scheduled hourly purge: ${QUEUES.PURGE_ARCHIVED_LINE_ITEMS}`,
   );
+
+  await boss.work<ToolpathUploadPayload>(
+    QUEUES.TOOLPATH_UPLOAD,
+    { batchSize: 1 },
+    handleToolpathUpload,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.TOOLPATH_UPLOAD}`);
+
+  await boss.work<ToolpathReportPollPayload>(
+    QUEUES.TOOLPATH_REPORT_POLL,
+    { batchSize: 1 },
+    handleToolpathReportPoll,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.TOOLPATH_REPORT_POLL}`);
 
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {

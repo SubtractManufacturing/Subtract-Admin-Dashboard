@@ -25,6 +25,7 @@ export interface NormalizedPart {
   toolpathPartId?: string | null;
   toolpathReportUrl?: string | null;
   toolpathUploadError?: string | null;
+  toolpathUploadStatus?: string | null;
   /** True when CAD slot uses global placeholder (drawing-only part) */
   usesPlaceholderCad?: boolean;
 }
@@ -72,6 +73,7 @@ type QuotePartInput = {
   toolpathPartId?: string | null;
   toolpathReportUrl?: string | null;
   toolpathUploadError?: string | null;
+  toolpathUploadStatus?: string | null;
   signedFileUrl?: string;
   signedMeshUrl?: string;
   signedThumbnailUrl?: string;
@@ -154,6 +156,7 @@ export function normalizeQuoteLineItems(
             toolpathPartId: part.toolpathPartId ?? undefined,
             toolpathReportUrl: part.toolpathReportUrl ?? undefined,
             toolpathUploadError: part.toolpathUploadError ?? undefined,
+            toolpathUploadStatus: part.toolpathUploadStatus ?? undefined,
             usesPlaceholderCad: part.usesPlaceholderCad,
           }
         : undefined,
