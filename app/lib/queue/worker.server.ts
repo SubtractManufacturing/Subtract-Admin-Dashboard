@@ -1,5 +1,5 @@
 import { PgBoss } from "pg-boss";
-import { getQueueDatabaseUrl } from "../db/connection-string.server";
+import { getQueueDatabaseUrl, PGBOSS_MAX_CONNECTIONS } from "../db/connection-string.server";
 import { QUEUES } from "./types";
 
 let boss: PgBoss | null = null;
@@ -19,6 +19,7 @@ export async function startWorkerQueue(): Promise<PgBoss> {
     ssl: { rejectUnauthorized: false },
     application_name: "subtract-worker",
     schema: "pgboss",
+    max: PGBOSS_MAX_CONNECTIONS,
   });
 
   boss.on("error", (err: Error) => {

@@ -106,6 +106,7 @@ import {
 import { sendToolpathUploadJob } from "~/lib/queue/producer.server";
 import {
   failStaleToolpathQueuedParts,
+  formatToolpathQueueError,
   logToolpathUploadAlert,
 } from "~/lib/toolpath-upload.server";
 import {
@@ -1444,8 +1445,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
               success: true,
             });
           } catch (error) {
-            const message =
-              error instanceof Error ? error.message : "Failed to queue upload";
+            const message = formatToolpathQueueError(error);
+
+            if (message.includes("connection limit")) {
+              logToolpathUploadAlert("Toolpath enqueue hit DB connection limit", {
+                quotePartId,
+                quoteId: quote.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
 
             try {
               await db

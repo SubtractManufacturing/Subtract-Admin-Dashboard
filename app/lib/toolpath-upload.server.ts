@@ -15,6 +15,17 @@ export function logToolpathUploadAlert(
   console.error("[ToolpathUpload:ALERT]", message, context ?? "");
 }
 
+export function formatToolpathQueueError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.includes("EMAXCONNSESSION") ||
+    message.includes("max clients reached")
+  ) {
+    return "Database connection limit reached. Wait a moment and try again.";
+  }
+  return message;
+}
+
 export async function failStaleToolpathQueuedParts(
   quotePartIds: string[],
 ): Promise<void> {

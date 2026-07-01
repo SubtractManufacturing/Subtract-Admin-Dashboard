@@ -1,5 +1,5 @@
 import { PgBoss } from "pg-boss";
-import { getQueueDatabaseUrl } from "../db/connection-string.server";
+import { getQueueDatabaseUrl, PGBOSS_MAX_CONNECTIONS } from "../db/connection-string.server";
 import {
   CAD_CONVERSION_OPTIONS,
   DEFAULT_RETRY_OPTIONS,
@@ -45,6 +45,7 @@ async function initProducer(): Promise<PgBoss> {
     ssl: { rejectUnauthorized: false },
     application_name: "subtract-producer",
     schema: "pgboss",
+    max: PGBOSS_MAX_CONNECTIONS,
     // Producer-only: no background maintenance, no migrations, no scheduling.
     // start() is still required to populate the queue cache that send() depends on.
     supervise: false,
