@@ -2007,7 +2007,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         try {
-          await archiveQuoteLineItem(parseInt(lineItemId, 10), eventContext);
+          await archiveQuoteLineItem(
+            parseInt(lineItemId, 10),
+            quote.id,
+            eventContext,
+          );
           return redirect(`/quotes/${quoteId}`);
         } catch (error) {
           console.error("Error archiving line item:", error);
@@ -2030,7 +2034,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         try {
-          await restoreQuoteLineItem(parseInt(lineItemId, 10), eventContext);
+          await restoreQuoteLineItem(
+            parseInt(lineItemId, 10),
+            quote.id,
+            eventContext,
+          );
           return redirect(`/quotes/${quoteId}`);
         } catch (error) {
           console.error("Error restoring line item:", error);

@@ -58,7 +58,7 @@ describe("line item archive lifecycle", () => {
   });
 
   it("archives and restores a quote line item", async () => {
-    await archiveQuoteLineItem(seeded.quoteLineItemId);
+    await archiveQuoteLineItem(seeded.quoteLineItemId, seeded.quoteId);
 
     const active = await getQuoteLineItems(seeded.quoteId);
     expect(active.some((item) => item.id === seeded.quoteLineItemId)).toBe(
@@ -80,7 +80,7 @@ describe("line item archive lifecycle", () => {
     const totalsAfterArchive = await calculateQuoteTotals(seeded.quoteId);
     expect(totalsAfterArchive?.subtotal).toBe(0);
 
-    await restoreQuoteLineItem(seeded.quoteLineItemId);
+    await restoreQuoteLineItem(seeded.quoteLineItemId, seeded.quoteId);
 
     const activeAfterRestore = await getQuoteLineItems(seeded.quoteId);
     expect(
@@ -92,7 +92,7 @@ describe("line item archive lifecycle", () => {
   });
 
   it("archives and restores an order line item while keeping the part", async () => {
-    await archiveOrderLineItem(seeded.orderLineItemId);
+    await archiveOrderLineItem(seeded.orderLineItemId, seeded.orderId);
 
     const active = await getLineItemsByOrderId(seeded.orderId);
     expect(
@@ -106,7 +106,7 @@ describe("line item archive lifecycle", () => {
       .limit(1);
     expect(part?.customerId).toBe(seeded.customerId);
 
-    await restoreOrderLineItem(seeded.orderLineItemId);
+    await restoreOrderLineItem(seeded.orderLineItemId, seeded.orderId);
 
     const activeAfterRestore = await getLineItemsByOrderId(seeded.orderId);
     expect(
@@ -199,9 +199,9 @@ describe("line item archive lifecycle", () => {
       })
       .returning({ id: quoteLineItems.id });
 
-    await expect(restoreQuoteLineItem(freshLineItem.id)).rejects.toThrow(
-      "Line item is not archived",
-    );
+    await expect(
+      restoreQuoteLineItem(freshLineItem.id, seeded.quoteId),
+    ).rejects.toThrow("Line item is not archived");
 
     await hardDeleteQuoteLineItem(freshLineItem.id);
   });

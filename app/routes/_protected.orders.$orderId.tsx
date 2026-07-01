@@ -985,7 +985,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         };
 
         try {
-          await archiveOrderLineItem(lineItemId, eventContext);
+          await archiveOrderLineItem(lineItemId, order.id, eventContext);
           return withAuthHeaders(json({ success: true }), headers);
         } catch (error) {
           return json(
@@ -1013,7 +1013,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         };
 
         try {
-          await restoreOrderLineItem(lineItemId, eventContext);
+          await restoreOrderLineItem(lineItemId, order.id, eventContext);
           return withAuthHeaders(json({ success: true }), headers);
         } catch (error) {
           return json(

@@ -407,7 +407,7 @@ export const quoteLineItems = pgTable(
       .notNull()
       .references(() => quotes.id),
     quotePartId: uuid("quote_part_id").references(() => quoteParts.id, {
-      onDelete: "cascade",
+      onDelete: "set null",
     }),
     name: text("name"),
     quantity: integer("quantity").notNull(),

@@ -52,12 +52,18 @@ const CLEAR_ARCHIVE_FIELDS = {
 
 export async function archiveQuoteLineItem(
   lineItemId: number,
+  quoteId: number,
   eventContext?: LineItemArchiveEventContext,
 ): Promise<{ quoteId: number }> {
   const [lineItemRow] = await db
     .select()
     .from(quoteLineItems)
-    .where(eq(quoteLineItems.id, lineItemId))
+    .where(
+      and(
+        eq(quoteLineItems.id, lineItemId),
+        eq(quoteLineItems.quoteId, quoteId),
+      ),
+    )
     .limit(1);
 
   if (!lineItemRow) {
@@ -130,12 +136,18 @@ export async function archiveQuoteLineItem(
 
 export async function archiveOrderLineItem(
   lineItemId: number,
+  orderId: number,
   eventContext?: LineItemArchiveEventContext,
 ): Promise<{ orderId: number }> {
   const [lineItemRow] = await db
     .select()
     .from(orderLineItems)
-    .where(eq(orderLineItems.id, lineItemId))
+    .where(
+      and(
+        eq(orderLineItems.id, lineItemId),
+        eq(orderLineItems.orderId, orderId),
+      ),
+    )
     .limit(1);
 
   if (!lineItemRow) {
@@ -182,12 +194,18 @@ export async function archiveOrderLineItem(
 
 export async function restoreQuoteLineItem(
   lineItemId: number,
+  quoteId: number,
   eventContext?: LineItemArchiveEventContext,
 ): Promise<{ quoteId: number }> {
   const [lineItemRow] = await db
     .select()
     .from(quoteLineItems)
-    .where(eq(quoteLineItems.id, lineItemId))
+    .where(
+      and(
+        eq(quoteLineItems.id, lineItemId),
+        eq(quoteLineItems.quoteId, quoteId),
+      ),
+    )
     .limit(1);
 
   if (!lineItemRow) {
@@ -240,12 +258,18 @@ export async function restoreQuoteLineItem(
 
 export async function restoreOrderLineItem(
   lineItemId: number,
+  orderId: number,
   eventContext?: LineItemArchiveEventContext,
 ): Promise<{ orderId: number }> {
   const [lineItemRow] = await db
     .select()
     .from(orderLineItems)
-    .where(eq(orderLineItems.id, lineItemId))
+    .where(
+      and(
+        eq(orderLineItems.id, lineItemId),
+        eq(orderLineItems.orderId, orderId),
+      ),
+    )
     .limit(1);
 
   if (!lineItemRow) {
@@ -314,7 +338,11 @@ export async function hardDeleteQuoteLineItem(
   const quotePartId = lineItemRow.quotePartId;
   let quotePart: QuotePart | null = null;
   const filesToDelete: string[] = [];
-  const drawingAttachmentIds: string[] = [];
+  const drawingAttachments: Array<{
+    id: string;
+    s3Key: string | null;
+    thumbnailS3Key: string | null;
+  }> = [];
 
   if (quotePartId) {
     const [part] = await db
@@ -341,9 +369,11 @@ export async function hardDeleteQuoteLineItem(
         .where(eq(quotePartDrawings.quotePartId, quotePartId));
 
       for (const { attachment } of drawingsData) {
-        if (attachment.s3Key) filesToDelete.push(attachment.s3Key);
-        if (attachment.thumbnailS3Key) filesToDelete.push(attachment.thumbnailS3Key);
-        drawingAttachmentIds.push(attachment.id);
+        drawingAttachments.push({
+          id: attachment.id,
+          s3Key: attachment.s3Key,
+          thumbnailS3Key: attachment.thumbnailS3Key,
+        });
       }
 
       const cadVersions = await db
@@ -367,7 +397,10 @@ export async function hardDeleteQuoteLineItem(
         .delete(quotePartDrawings)
         .where(eq(quotePartDrawings.quotePartId, quotePartId));
 
-      if (drawingAttachmentIds.length > 0) {
+      if (drawingAttachments.length > 0) {
+        const drawingAttachmentIds = drawingAttachments.map(
+          (attachment) => attachment.id,
+        );
         const referencedByParts = await tx
           .select({ attachmentId: partDrawings.attachmentId })
           .from(partDrawings)
@@ -382,6 +415,15 @@ export async function hardDeleteQuoteLineItem(
           await tx
             .delete(attachments)
             .where(inArray(attachments.id, safeToDelete));
+
+          const safeIds = new Set(safeToDelete);
+          for (const attachment of drawingAttachments) {
+            if (!safeIds.has(attachment.id)) continue;
+            if (attachment.s3Key) filesToDelete.push(attachment.s3Key);
+            if (attachment.thumbnailS3Key) {
+              filesToDelete.push(attachment.thumbnailS3Key);
+            }
+          }
         }
       }
 
