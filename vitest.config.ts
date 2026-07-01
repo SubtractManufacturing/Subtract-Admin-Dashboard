@@ -16,7 +16,7 @@ export default defineConfig({
     },
     // Load .env before each worker's module graph is built
     setupFiles: ["dotenv/config"],
-    include: ["app/**/*.test.ts", "app/**/*.integration.test.ts"],
+    include: ["app/**/*.test.ts", "app/**/*.test.tsx", "app/**/*.integration.test.ts"],
     exclude: ["**/node_modules/**", "**/build/**"],
     pool: "forks",
     coverage: {

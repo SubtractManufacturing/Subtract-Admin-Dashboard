@@ -1,6 +1,6 @@
 {
-  "id": "8bc11a82-afe4-408e-85b0-e765aa7131ad",
-  "prevId": "c9ec7a84-e945-4d0a-ba5d-e73a327a06f1",
+  "id": "bc203b61-7ae1-42f4-bc77-69784a7b1530",
+  "prevId": "8bc11a82-afe4-408e-85b0-e765aa7131ad",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1315,9 +1315,50 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hard_delete_at": {
+          "name": "hard_delete_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "order_line_items_archive_purge_idx": {
+          "name": "order_line_items_archive_purge_idx",
+          "columns": [
+            {
+              "expression": "is_archived",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "hard_delete_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "order_line_items_order_id_orders_id_fk": {
           "name": "order_line_items_order_id_orders_id_fk",
@@ -1918,6 +1959,25 @@
           "notNull": false,
           "default": 0
         },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hard_delete_at": {
+          "name": "hard_delete_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -1933,7 +1993,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "quote_line_items_archive_purge_idx": {
+          "name": "quote_line_items_archive_purge_idx",
+          "columns": [
+            {
+              "expression": "is_archived",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "hard_delete_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "quote_line_items_quote_id_quotes_id_fk": {
           "name": "quote_line_items_quote_id_quotes_id_fk",
@@ -2181,6 +2263,25 @@
           "primaryKey": false,
           "notNull": false
         },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hard_delete_at": {
+          "name": "hard_delete_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -2196,7 +2297,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "quote_parts_archive_purge_idx": {
+          "name": "quote_parts_archive_purge_idx",
+          "columns": [
+            {
+              "expression": "is_archived",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "hard_delete_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "quote_parts_quote_id_quotes_id_fk": {
           "name": "quote_parts_quote_id_quotes_id_fk",

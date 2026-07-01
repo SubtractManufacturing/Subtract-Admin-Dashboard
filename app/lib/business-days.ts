@@ -10,6 +10,8 @@ export const APP_TIMEZONE = "America/New_York" as const;
 
 const usHolidays = new Holidays("US");
 
+export type AppInstantInput = Date | string | number;
+
 type EtParts = {
   year: number;
   month: number;
@@ -17,7 +19,34 @@ type EtParts = {
   hour: number;
 };
 
-function getEtParts(instant: Date): EtParts {
+export function parseAppInstant(value: unknown): Date | null {
+  let date: Date;
+
+  if (value instanceof Date) {
+    date = value;
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    date = new Date(trimmed);
+  } else if (typeof value === "number") {
+    date = new Date(value);
+  } else {
+    return null;
+  }
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function requireAppInstant(value: AppInstantInput, context: string): Date {
+  const date = parseAppInstant(value);
+  if (!date) {
+    throw new RangeError(`${context}: invalid date value`);
+  }
+  return date;
+}
+
+function getEtParts(instant: AppInstantInput): EtParts {
+  const date = requireAppInstant(instant, "getEtParts");
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: APP_TIMEZONE,
     year: "numeric",
@@ -26,7 +55,7 @@ function getEtParts(instant: Date): EtParts {
     hour: "numeric",
     hour12: false,
   });
-  const parts = formatter.formatToParts(instant);
+  const parts = formatter.formatToParts(date);
   const get = (type: Intl.DateTimeFormatPartTypes) =>
     parseInt(parts.find((p) => p.type === type)?.value ?? "0", 10);
 
@@ -39,13 +68,13 @@ function getEtParts(instant: Date): EtParts {
 }
 
 /** Normalize any instant to midnight ET on its ET calendar day. */
-export function toAppCalendarDate(instant: Date): Date {
+export function toAppCalendarDate(instant: AppInstantInput): Date {
   const { year, month, day } = getEtParts(instant);
   return fromAppCalendarDate(year, month, day);
 }
 
 /** ET calendar year/month/day for a stored or clicked instant. */
-export function getAppCalendarParts(instant: Date): {
+export function getAppCalendarParts(instant: AppInstantInput): {
   year: number;
   month: number;
   day: number;
@@ -68,7 +97,7 @@ export function parseAppCalendarDateString(isoDate: string): Date {
 }
 
 /** Format an instant as `YYYY-MM-DD` in ET. */
-export function toAppCalendarDateIsoString(instant: Date): string {
+export function toAppCalendarDateIsoString(instant: AppInstantInput): string {
   const { year, month, day } = getAppCalendarParts(instant);
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
@@ -94,23 +123,23 @@ export function fromAppCalendarDate(
   return new Date(Date.UTC(year, month - 1, day, 5, 0, 0, 0));
 }
 
-function isWeekendEt(instant: Date): boolean {
+function isWeekendEt(instant: AppInstantInput): boolean {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: APP_TIMEZONE,
     weekday: "short",
   });
-  const weekday = formatter.format(instant);
+  const weekday = formatter.format(requireAppInstant(instant, "isWeekendEt"));
   return weekday === "Sat" || weekday === "Sun";
 }
 
-export function isBusinessDay(date: Date): boolean {
+export function isBusinessDay(date: AppInstantInput): boolean {
   const calendar = toAppCalendarDate(date);
   if (isWeekendEt(calendar)) return false;
   const holiday = usHolidays.isHoliday(calendar);
   return !holiday || (Array.isArray(holiday) && holiday.length === 0);
 }
 
-export function getNextBusinessDay(date: Date): Date {
+export function getNextBusinessDay(date: AppInstantInput): Date {
   let current = toAppCalendarDate(date);
   do {
     current = addCalendarDays(current, 1);
@@ -128,7 +157,7 @@ export function startOfTodayInAppTz(): Date {
   return toAppCalendarDate(new Date());
 }
 
-export function addBusinessDays(start: Date, n: number): Date {
+export function addBusinessDays(start: AppInstantInput, n: number): Date {
   if (n < 0) throw new Error("addBusinessDays: n must be >= 0");
   if (n === 0) return toAppCalendarDate(start);
 
@@ -141,7 +170,10 @@ export function addBusinessDays(start: Date, n: number): Date {
   return current;
 }
 
-export function countBusinessDays(start: Date, end: Date): number {
+export function countBusinessDays(
+  start: AppInstantInput,
+  end: AppInstantInput
+): number {
   const startCal = toAppCalendarDate(start);
   const endCal = toAppCalendarDate(end);
   if (endCal < startCal) return 0;
@@ -156,7 +188,10 @@ export function countBusinessDays(start: Date, end: Date): number {
 }
 
 /** Signed business days from start to end (negative when end is before start). */
-export function signedBusinessDaysBetween(start: Date, end: Date): number {
+export function signedBusinessDaysBetween(
+  start: AppInstantInput,
+  end: AppInstantInput
+): number {
   const startCal = toAppCalendarDate(start);
   const endCal = toAppCalendarDate(end);
   if (endCal.getTime() === startCal.getTime()) return 0;
@@ -170,7 +205,10 @@ export function signedBusinessDaysBetween(start: Date, end: Date): number {
  * Business days from start (ET calendar day) to end.
  * Same day → 0. End before start → negative count.
  */
-export function businessDaysFrom(start: Date, end: Date): number {
+export function businessDaysFrom(
+  start: AppInstantInput,
+  end: AppInstantInput
+): number {
   const startCal = toAppCalendarDate(start);
   const endCal = toAppCalendarDate(end);
   if (endCal.getTime() === startCal.getTime()) return 0;
@@ -181,7 +219,7 @@ export function businessDaysFrom(start: Date, end: Date): number {
 }
 
 /** Business days from today (ET) to target; negative if target is in the past. */
-export function businessDaysUntil(target: Date): number {
+export function businessDaysUntil(target: AppInstantInput): number {
   return businessDaysFrom(startOfTodayInAppTz(), target);
 }
 
