@@ -20,6 +20,14 @@ export const STRIPE_SETTINGS = {
   LIMIT_PAYMENTS_COUNT: "stripe_limit_payments_count",
 } as const;
 
+export const DATA_RETENTION_SETTINGS = {
+  LINE_ITEM_ARCHIVE_RETENTION_DAYS: "line_item_archive_retention_days",
+} as const;
+
+export const LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS = 1;
+export const LINE_ITEM_ARCHIVE_RETENTION_MAX_DAYS = 90;
+export const LINE_ITEM_ARCHIVE_RETENTION_DEFAULT_DAYS = 7;
+
 export interface StripeDefaults {
   collectBillingAddress: boolean;
   collectShippingAddress: boolean;
@@ -44,6 +52,64 @@ export async function getStripeDefaults(): Promise<StripeDefaults> {
     limitPayments: limit !== "false",
     limitPaymentsCount: parseInt(limitCount || "1", 10) || 1,
   };
+}
+
+export async function getLineItemArchiveRetentionDays(): Promise<number> {
+  const raw = await getDeveloperSetting(
+    DATA_RETENTION_SETTINGS.LINE_ITEM_ARCHIVE_RETENTION_DAYS,
+  );
+  if (raw == null || raw.trim() === "") {
+    return LINE_ITEM_ARCHIVE_RETENTION_DEFAULT_DAYS;
+  }
+  const parsed = parseInt(raw, 10);
+  if (
+    Number.isNaN(parsed) ||
+    parsed < LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS ||
+    parsed > LINE_ITEM_ARCHIVE_RETENTION_MAX_DAYS
+  ) {
+    return LINE_ITEM_ARCHIVE_RETENTION_DEFAULT_DAYS;
+  }
+  return parsed;
+}
+
+export async function setLineItemArchiveRetentionDays(
+  days: number,
+  updatedBy?: string,
+): Promise<boolean> {
+  return setDeveloperSetting(
+    DATA_RETENTION_SETTINGS.LINE_ITEM_ARCHIVE_RETENTION_DAYS,
+    String(days),
+    updatedBy,
+  );
+}
+
+export function parseLineItemRetentionDaysInput(
+  value: FormDataEntryValue | null,
+): { ok: true; days: number } | { ok: false; error: string } {
+  if (value == null || String(value).trim() === "") {
+    return { ok: false, error: "Retention days is required" };
+  }
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) {
+    return { ok: false, error: "Retention days must be a whole number" };
+  }
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed)) {
+    return { ok: false, error: "Retention days must be a whole number" };
+  }
+  if (parsed < LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS) {
+    return {
+      ok: false,
+      error: `Retention days must be at least ${LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS}`,
+    };
+  }
+  if (parsed > LINE_ITEM_ARCHIVE_RETENTION_MAX_DAYS) {
+    return {
+      ok: false,
+      error: `Retention days must be at most ${LINE_ITEM_ARCHIVE_RETENTION_MAX_DAYS}`,
+    };
+  }
+  return { ok: true, days: parsed };
 }
 
 /**
@@ -211,6 +277,7 @@ export async function pruneStaleDeveloperSettings(): Promise<string[]> {
   const validKeys = [
     ...Object.values(DEV_SETTINGS),
     ...Object.values(STRIPE_SETTINGS),
+    ...Object.values(DATA_RETENTION_SETTINGS),
   ] as string[];
   const stale = await db
     .select({ key: developerSettings.key })

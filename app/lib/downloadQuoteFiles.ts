@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { quotes, quoteParts, quotePartDrawings, attachments } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client, extractS3Key } from "./s3.server";
 import { quotePartUsesPlaceholderCad } from "./quote-part-assets.server";
@@ -30,7 +30,12 @@ export async function downloadQuoteFiles(quoteId: number) {
   const parts = await db
     .select()
     .from(quoteParts)
-    .where(eq(quoteParts.quoteId, quoteId));
+    .where(
+      and(
+        eq(quoteParts.quoteId, quoteId),
+        eq(quoteParts.isArchived, false),
+      ),
+    );
 
   if (parts.length === 0) {
     throw new Error("No parts found for this quote");

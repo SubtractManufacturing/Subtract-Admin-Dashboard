@@ -157,7 +157,10 @@ export async function getQuotes(
       .select()
       .from(quoteLineItems)
       .where(
-        sql`${quoteLineItems.quoteId} IN ${sql.raw(`(${quoteIds.join(",")})`)}`
+        and(
+          sql`${quoteLineItems.quoteId} IN ${sql.raw(`(${quoteIds.join(",")})`)}`,
+          eq(quoteLineItems.isArchived, false),
+        ),
       )
       .orderBy(quoteLineItems.sortOrder);
 
@@ -166,7 +169,10 @@ export async function getQuotes(
       .select()
       .from(quoteParts)
       .where(
-        sql`${quoteParts.quoteId} IN ${sql.raw(`(${quoteIds.join(",")})`)}`
+        and(
+          sql`${quoteParts.quoteId} IN ${sql.raw(`(${quoteIds.join(",")})`)}`,
+          eq(quoteParts.isArchived, false),
+        ),
       )
       .orderBy(asc(quoteParts.createdAt));
 
@@ -231,9 +237,23 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
       db
         .select()
         .from(quoteLineItems)
-        .where(eq(quoteLineItems.quoteId, quote.id))
+        .where(
+          and(
+            eq(quoteLineItems.quoteId, quote.id),
+            eq(quoteLineItems.isArchived, false),
+          ),
+        )
         .orderBy(quoteLineItems.sortOrder),
-      db.select().from(quoteParts).where(eq(quoteParts.quoteId, quote.id)).orderBy(asc(quoteParts.createdAt)),
+      db
+        .select()
+        .from(quoteParts)
+        .where(
+          and(
+            eq(quoteParts.quoteId, quote.id),
+            eq(quoteParts.isArchived, false),
+          ),
+        )
+        .orderBy(asc(quoteParts.createdAt)),
     ]);
 
     return {
@@ -1583,7 +1603,12 @@ export async function calculateQuoteTotals(quoteId: number): Promise<{
     const lineItems = await db
       .select()
       .from(quoteLineItems)
-      .where(eq(quoteLineItems.quoteId, quoteId));
+      .where(
+        and(
+          eq(quoteLineItems.quoteId, quoteId),
+          eq(quoteLineItems.isArchived, false),
+        ),
+      );
 
     const subtotal = lineItems.reduce((sum, item) => {
       const totalPrice = parseFloat(item.totalPrice || "0");

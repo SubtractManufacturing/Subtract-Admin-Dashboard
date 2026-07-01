@@ -7,7 +7,7 @@ import {
   type NewOrderLineItem,
   type Part,
 } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { createEvent } from "./events";
 
 export type PartDrawing = {
@@ -39,22 +39,30 @@ export async function getLineItemsByOrderId(
     })
     .from(orderLineItems)
     .leftJoin(parts, eq(orderLineItems.partId, parts.id))
-    .where(eq(orderLineItems.orderId, orderId));
+    .where(
+      and(
+        eq(orderLineItems.orderId, orderId),
+        eq(orderLineItems.isArchived, false),
+      ),
+    );
 }
 
-// Helper function to recalculate and update order total
-async function updateOrderTotal(orderId: number): Promise<number> {
+export async function recalculateOrderTotal(orderId: number): Promise<number> {
   const lineItems = await db
     .select()
     .from(orderLineItems)
-    .where(eq(orderLineItems.orderId, orderId));
+    .where(
+      and(
+        eq(orderLineItems.orderId, orderId),
+        eq(orderLineItems.isArchived, false),
+      ),
+    );
 
   const total = lineItems.reduce((sum, item) => {
     const itemTotal = parseFloat(item.unitPrice || "0") * (item.quantity || 0);
     return sum + itemTotal;
   }, 0);
 
-  // Update the order's totalPrice
   await db
     .update(orders)
     .set({
@@ -64,6 +72,11 @@ async function updateOrderTotal(orderId: number): Promise<number> {
     .where(eq(orders.id, orderId));
 
   return total;
+}
+
+// Helper function to recalculate and update order total
+async function updateOrderTotal(orderId: number): Promise<number> {
+  return recalculateOrderTotal(orderId);
 }
 
 export async function createLineItem(
@@ -126,7 +139,12 @@ export async function updateLineItem(
   const allLineItems = await db
     .select()
     .from(orderLineItems)
-    .where(eq(orderLineItems.orderId, currentLineItem.orderId));
+    .where(
+      and(
+        eq(orderLineItems.orderId, currentLineItem.orderId),
+        eq(orderLineItems.isArchived, false),
+      ),
+    );
 
   const oldOrderTotal = allLineItems.reduce((sum, item) => {
     const itemTotal = parseFloat(item.unitPrice || "0") * (item.quantity || 0);
