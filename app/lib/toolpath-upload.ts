@@ -25,6 +25,9 @@ export const TOOLPATH_REPORT_POLL_MAX_MS = 10 * 60 * 1000;
 export const TOOLPATH_STALE_QUEUED_ERROR =
   "Upload never started — worker may not be running";
 
+export const TOOLPATH_FAILED_JOB_UNBLOCK_ERROR =
+  "Upload job failed permanently — automatic queue recovery applied";
+
 export const TOOLPATH_REPORT_TIMEOUT_ERROR =
   "Toolpath report not ready after 10 minutes";
 

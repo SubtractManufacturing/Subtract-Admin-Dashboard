@@ -5,7 +5,10 @@ import { db } from "../../db";
 import { quoteParts } from "../../db/schema";
 import { createEvent } from "../../events";
 import { sendToolpathReportPollJob } from "../producer.server";
-import { uploadQuotePartToToolpath } from "../../toolpath.server";
+import {
+  isToolpathEnabled,
+  uploadQuotePartToToolpath,
+} from "../../toolpath.server";
 import {
   TOOLPATH_UPLOAD_STATUS,
 } from "../../toolpath-upload";
@@ -21,6 +24,18 @@ export async function handleToolpathUpload(
     console.log(
       `[Worker:ToolpathUpload] Processing quote part ${quotePartId} (job ${job.id})`,
     );
+
+    if (!isToolpathEnabled()) {
+      await markToolpathUploadFailed({
+        quotePartId,
+        quoteId,
+        error: "Toolpath API not configured",
+        jobId: job.id,
+        triggeredByUserId,
+        onlyIfInFlight: true,
+      });
+      continue;
+    }
 
     const claimed = await db
       .update(quoteParts)
@@ -124,21 +139,22 @@ export async function handleToolpathUpload(
           jobId: job.id,
           triggeredByUserId,
         });
-      } else {
-        await db
-          .update(quoteParts)
-          .set({
-            toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.QUEUED,
-            toolpathUploadError: message,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(quoteParts.id, quotePartId),
-              eq(quoteParts.toolpathUploadJobId, job.id),
-            ),
-          );
+        continue;
       }
+
+      await db
+        .update(quoteParts)
+        .set({
+          toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.QUEUED,
+          toolpathUploadError: message,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(quoteParts.id, quotePartId),
+            eq(quoteParts.toolpathUploadJobId, job.id),
+          ),
+        );
 
       throw error;
     }
@@ -148,19 +164,27 @@ export async function handleToolpathUpload(
 async function markToolpathUploadFailed(opts: {
   quotePartId: string;
   quoteId: number;
-  partName: string;
+  partName?: string;
   error: string;
   jobId: string;
   triggeredByUserId?: string;
-}): Promise<void> {
-  logToolpathUploadAlert("Toolpath upload failed", {
-    quotePartId: opts.quotePartId,
-    quoteId: opts.quoteId,
-    jobId: opts.jobId,
-    error: opts.error,
-  });
+  onlyIfInFlight?: boolean;
+}): Promise<boolean> {
+  const whereConditions = [eq(quoteParts.id, opts.quotePartId)];
+  if (opts.onlyIfInFlight) {
+    const inFlightCondition = or(
+      eq(quoteParts.toolpathUploadStatus, TOOLPATH_UPLOAD_STATUS.QUEUED),
+      eq(
+        quoteParts.toolpathUploadStatus,
+        TOOLPATH_UPLOAD_STATUS.IN_PROGRESS,
+      ),
+    );
+    if (inFlightCondition) {
+      whereConditions.push(inFlightCondition);
+    }
+  }
 
-  await db
+  const [updated] = await db
     .update(quoteParts)
     .set({
       toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.FAILED,
@@ -168,7 +192,21 @@ async function markToolpathUploadFailed(opts: {
       toolpathQueuedAt: null,
       updatedAt: new Date(),
     })
-    .where(eq(quoteParts.id, opts.quotePartId));
+    .where(and(...whereConditions))
+    .returning({ partName: quoteParts.partName });
+
+  if (!updated) {
+    return false;
+  }
+
+  const partName = opts.partName ?? updated.partName;
+
+  logToolpathUploadAlert("Toolpath upload failed", {
+    quotePartId: opts.quotePartId,
+    quoteId: opts.quoteId,
+    jobId: opts.jobId,
+    error: opts.error,
+  });
 
   try {
     await createEvent({
@@ -177,11 +215,11 @@ async function markToolpathUploadFailed(opts: {
       eventType: "toolpath_upload",
       eventCategory: "manufacturing",
       title: "Toolpath upload failed",
-      description: `Failed to upload ${opts.partName} to Toolpath: ${opts.error}`,
+      description: `Failed to upload ${partName} to Toolpath: ${opts.error}`,
       metadata: {
         quoteId: opts.quoteId,
         quotePartId: opts.quotePartId,
-        partName: opts.partName,
+        partName,
         success: false,
         error: opts.error,
         jobId: opts.jobId,
@@ -191,4 +229,6 @@ async function markToolpathUploadFailed(opts: {
   } catch (eventError) {
     console.error("Failed to log Toolpath upload failure event:", eventError);
   }
+
+  return true;
 }

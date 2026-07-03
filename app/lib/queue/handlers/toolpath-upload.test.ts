@@ -4,6 +4,7 @@ import type { JobWithMetadata } from "pg-boss";
 const mocks = vi.hoisted(() => ({
   mockUpdate: vi.fn(),
   mockUpload: vi.fn(),
+  mockIsToolpathEnabled: vi.fn(),
   mockSendPoll: vi.fn(),
   mockCreateEvent: vi.fn(),
   mockLogAlert: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock("../producer.server", () => ({
 
 vi.mock("../../toolpath.server", () => ({
   uploadQuotePartToToolpath: mocks.mockUpload,
+  isToolpathEnabled: mocks.mockIsToolpathEnabled,
 }));
 
 vi.mock("../../toolpath-upload.server", () => ({
@@ -67,6 +69,7 @@ function makeJob(
 describe("handleToolpathUpload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.mockIsToolpathEnabled.mockReturnValue(true);
     mocks.mockSendPoll.mockResolvedValue("poll-job-1");
     mocks.mockUpload.mockResolvedValue({
       toolpathPartId: "abc12345",
@@ -164,7 +167,7 @@ describe("handleToolpathUpload", () => {
     expect(mocks.mockLogAlert).not.toHaveBeenCalled();
   });
 
-  it("marks failed on the final retry attempt", async () => {
+  it("marks failed on the final retry attempt without rethrowing", async () => {
     const claimChain = chainReturning([
       {
         id: "part-1",
@@ -172,29 +175,50 @@ describe("handleToolpathUpload", () => {
         partFileUrl: "quote-parts/part-1/source/file.step",
       },
     ]);
-    const failedChain = chainReturning([]);
+    const failedChain = chainReturning([{ partName: "Bracket" }]);
 
     mocks.mockUpdate
       .mockReturnValueOnce(claimChain)
       .mockReturnValueOnce(failedChain);
     mocks.mockUpload.mockRejectedValueOnce(new Error("network blip"));
 
-    await expect(
-      handleToolpathUpload([
-        makeJob(
-          {
-            quotePartId: "part-1",
-            cutConfigId: "cfg00001",
-            quoteId: 42,
-          },
-          { retryCount: 3, retryLimit: 3 },
-        ),
-      ]),
-    ).rejects.toThrow("network blip");
+    await handleToolpathUpload([
+      makeJob(
+        {
+          quotePartId: "part-1",
+          cutConfigId: "cfg00001",
+          quoteId: 42,
+        },
+        { retryCount: 3, retryLimit: 3 },
+      ),
+    ]);
 
     expect(failedChain.set).toHaveBeenCalledWith(
       expect.objectContaining({
         toolpathUploadStatus: "failed",
+      }),
+    );
+    expect(mocks.mockLogAlert).toHaveBeenCalled();
+  });
+
+  it("fails fast when Toolpath API is not configured", async () => {
+    mocks.mockIsToolpathEnabled.mockReturnValue(false);
+    const failedChain = chainReturning([{ partName: "Bracket" }]);
+    mocks.mockUpdate.mockReturnValueOnce(failedChain);
+
+    await handleToolpathUpload([
+      makeJob({
+        quotePartId: "part-1",
+        cutConfigId: "cfg00001",
+        quoteId: 42,
+      }),
+    ]);
+
+    expect(mocks.mockUpload).not.toHaveBeenCalled();
+    expect(failedChain.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolpathUploadStatus: "failed",
+        toolpathUploadError: "Toolpath API not configured",
       }),
     );
     expect(mocks.mockLogAlert).toHaveBeenCalled();
