@@ -5,7 +5,10 @@ import { db } from "../../db";
 import { quoteParts } from "../../db/schema";
 import { createEvent } from "../../events";
 import { sendToolpathReportPollJob } from "../producer.server";
-import { uploadQuotePartToToolpath } from "../../toolpath.server";
+import {
+  isToolpathEnabled,
+  uploadQuotePartToToolpath,
+} from "../../toolpath.server";
 import {
   TOOLPATH_UPLOAD_STATUS,
 } from "../../toolpath-upload";
@@ -21,6 +24,33 @@ export async function handleToolpathUpload(
     console.log(
       `[Worker:ToolpathUpload] Processing quote part ${quotePartId} (job ${job.id})`,
     );
+
+    if (!isToolpathEnabled()) {
+      const [partRow] = await db
+        .select({
+          partName: quoteParts.partName,
+          toolpathUploadStatus: quoteParts.toolpathUploadStatus,
+        })
+        .from(quoteParts)
+        .where(eq(quoteParts.id, quotePartId))
+        .limit(1);
+
+      if (
+        partRow &&
+        (partRow.toolpathUploadStatus === TOOLPATH_UPLOAD_STATUS.QUEUED ||
+          partRow.toolpathUploadStatus === TOOLPATH_UPLOAD_STATUS.IN_PROGRESS)
+      ) {
+        await markToolpathUploadFailed({
+          quotePartId,
+          quoteId,
+          partName: partRow.partName,
+          error: "Toolpath API not configured",
+          jobId: job.id,
+          triggeredByUserId,
+        });
+      }
+      continue;
+    }
 
     const claimed = await db
       .update(quoteParts)
@@ -124,21 +154,22 @@ export async function handleToolpathUpload(
           jobId: job.id,
           triggeredByUserId,
         });
-      } else {
-        await db
-          .update(quoteParts)
-          .set({
-            toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.QUEUED,
-            toolpathUploadError: message,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(quoteParts.id, quotePartId),
-              eq(quoteParts.toolpathUploadJobId, job.id),
-            ),
-          );
+        continue;
       }
+
+      await db
+        .update(quoteParts)
+        .set({
+          toolpathUploadStatus: TOOLPATH_UPLOAD_STATUS.QUEUED,
+          toolpathUploadError: message,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(quoteParts.id, quotePartId),
+            eq(quoteParts.toolpathUploadJobId, job.id),
+          ),
+        );
 
       throw error;
     }
