@@ -3,7 +3,6 @@ import type { JobWithMetadata } from "pg-boss";
 
 const mocks = vi.hoisted(() => ({
   mockUpdate: vi.fn(),
-  mockSelect: vi.fn(),
   mockUpload: vi.fn(),
   mockIsToolpathEnabled: vi.fn(),
   mockSendPoll: vi.fn(),
@@ -14,7 +13,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../db", () => ({
   db: {
     update: mocks.mockUpdate,
-    select: mocks.mockSelect,
   },
 }));
 
@@ -42,15 +40,6 @@ function chainReturning(rows: unknown[]) {
     set: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     returning: vi.fn().mockResolvedValue(rows),
-  };
-  return chain;
-}
-
-function selectChainReturning(rows: unknown[]) {
-  const chain = {
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockResolvedValue(rows),
   };
   return chain;
 }
@@ -186,7 +175,7 @@ describe("handleToolpathUpload", () => {
         partFileUrl: "quote-parts/part-1/source/file.step",
       },
     ]);
-    const failedChain = chainReturning([]);
+    const failedChain = chainReturning([{ partName: "Bracket" }]);
 
     mocks.mockUpdate
       .mockReturnValueOnce(claimChain)
@@ -214,15 +203,7 @@ describe("handleToolpathUpload", () => {
 
   it("fails fast when Toolpath API is not configured", async () => {
     mocks.mockIsToolpathEnabled.mockReturnValue(false);
-    mocks.mockSelect.mockReturnValueOnce(
-      selectChainReturning([
-        {
-          partName: "Bracket",
-          toolpathUploadStatus: "queued",
-        },
-      ]),
-    );
-    const failedChain = chainReturning([]);
+    const failedChain = chainReturning([{ partName: "Bracket" }]);
     mocks.mockUpdate.mockReturnValueOnce(failedChain);
 
     await handleToolpathUpload([
