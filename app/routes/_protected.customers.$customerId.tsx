@@ -1,7 +1,8 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/react";
 import { useState, useEffect, type ReactElement } from "react";
-import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext } from "~/lib/customers";
+import { Eye, FileText } from "lucide-react";
+import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerQuotes, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext, type CustomerQuote } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
@@ -27,6 +28,7 @@ import {
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { EventTimeline } from "~/components/EventTimeline";
 import { getEventsByEntity } from "~/lib/events";
+import { statusStyles } from "~/utils/tw-styles";
 
 type CustomerOrder = {
   id: number;
@@ -55,8 +57,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, stats, notes, rawParts, canUploadMesh, events, canRevise, bananaEnabled] = await Promise.all([
+  const [orders, quotes, stats, notes, rawParts, canUploadMesh, events, canRevise, bananaEnabled] = await Promise.all([
     getCustomerOrders(customer.id),
+    getCustomerQuotes(customer.id),
     getCustomerStats(customer.id),
     getNotes("customer", customer.id.toString()),
     getPartsByCustomerId(customer.id),
@@ -145,7 +148,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, stats, notes, parts: partsWithSignedUrls, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl }),
+    json({ customer, orders, quotes, stats, notes, parts: partsWithSignedUrls, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl }),
     headers
   );
 }
@@ -713,7 +716,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
+  const { customer, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/customers/${customer.id}`
     : undefined;
@@ -723,6 +726,7 @@ export default function CustomerDetails() {
   const [isEditingBillingAddress, setIsEditingBillingAddress] = useState(false);
   const [isEditingShippingAddress, setIsEditingShippingAddress] = useState(false);
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
+  const [showExpiredQuotes, setShowExpiredQuotes] = useState(true);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [partsModalOpen, setPartsModalOpen] = useState(false);
   const [selectedPart, setSelectedPart] = useState<Part | null>(null);
@@ -1056,6 +1060,30 @@ export default function CustomerDetails() {
         return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
     }
   };
+
+  const getQuoteStatusStyle = (status: string) => {
+    switch (status.toLowerCase()) {
+      case "rfq":
+      case "draft":
+        return statusStyles.pending;
+      case "sent":
+        return statusStyles.inProduction;
+      case "accepted":
+        return statusStyles.completed;
+      case "rejected":
+      case "dropped":
+        return statusStyles.cancelled;
+      case "expired":
+        return statusStyles.archived;
+      default:
+        return "";
+    }
+  };
+
+  const visibleQuotes = (quotes as CustomerQuote[]).filter((quote) => (
+    showExpiredQuotes ||
+    (quote.status.toLowerCase() !== "expired" && quote.status.toLowerCase() !== "dropped")
+  ));
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -1485,6 +1513,87 @@ export default function CustomerDetails() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Quote History */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                Quote History
+              </h3>
+              <ToggleSlider
+                checked={showExpiredQuotes}
+                onChange={setShowExpiredQuotes}
+                label="Show expired"
+              />
+            </div>
+            <div className="p-6">
+              {visibleQuotes.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                    <thead>
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Quote #
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Date
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Status
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Total
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Valid Until
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                      {visibleQuotes.map((quote) => (
+                        <tr key={quote.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                          <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                            {quote.quoteNumber}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {formatDate(quote.createdAt)}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            <span className={`${statusStyles.base} ${getQuoteStatusStyle(quote.status)}`}>
+                              {quote.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                            {quote.total ? formatCurrency(parseFloat(quote.total)) : "--"}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                            {formatDate(quote.validUntil)}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm">
+                            <Link
+                              to={`/quotes/${quote.id}`}
+                              className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300"
+                            >
+                              <Eye className="w-4 h-4" />
+                              View
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
+                  No quotes found for this customer.
+                </p>
+              )}
             </div>
           </div>
 

@@ -1,11 +1,13 @@
 import { json, redirect } from "@remix-run/node"
-import { useLoaderData, useFetcher, Link } from "@remix-run/react"
+import { useLoaderData, useFetcher, Link, useNavigate } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
+import { Archive, ArrowUpDown } from "lucide-react"
 
 import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
 import type { Customer, CustomerInput, CustomerEventContext } from "~/lib/customers"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
+import { parseCustomerSortBy } from "~/lib/customer-sort"
 
 import SearchHeader from "~/components/SearchHeader"
 import Button from "~/components/shared/Button"
@@ -17,17 +19,19 @@ import { listCardStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request)
+  const url = new URL(request.url)
+  const sortBy = parseCustomerSortBy(url.searchParams.get("sort"))
   
   try {
-    const customers = await getCustomers()
+    const customers = await getCustomers({ sortBy })
     return withAuthHeaders(
-      json({ customers, user, userDetails }),
+      json({ customers, sortBy, user, userDetails }),
       headers
     )
   } catch (error) {
     console.error("Customers loader error:", error)
     return withAuthHeaders(
-      json({ customers: [], user, userDetails }),
+      json({ customers: [], sortBy, user, userDetails }),
       headers
     )
   }
@@ -85,8 +89,9 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers } = useLoaderData<typeof loader>()
+  const { customers, sortBy } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
+  const navigate = useNavigate()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -119,6 +124,10 @@ export default function Customers() {
     }
   }
 
+  const handleSortChange = (nextSortBy: string) => {
+    navigate(`/customers?sort=${nextSortBy}`)
+  }
+
   const formatDate = (date: Date | string) => {
     const dateObj = typeof date === 'string' ? new Date(date) : date
     return dateObj.toLocaleDateString('en-US', {
@@ -128,21 +137,7 @@ export default function Customers() {
     })
   }
 
-  const archiveIcon = (
-    <svg
-      className="w-[18px] h-[18px]"
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-      />
-    </svg>
-  )
+  const archiveIcon = <Archive className="w-[18px] h-[18px]" />
 
   return (
     <div className="max-w-[1920px] mx-auto">
@@ -158,6 +153,23 @@ export default function Customers() {
         <div className="flex justify-between items-center mb-5 gap-3">
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">Customers ({filteredCustomers.length})</h2>
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label htmlFor="customer-sort" className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1 whitespace-nowrap">
+                <ArrowUpDown className="w-4 h-4" />
+                Sort by
+              </label>
+              <select
+                id="customer-sort"
+                value={sortBy}
+                onChange={(event) => handleSortChange(event.target.value)}
+                className="h-10 px-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              >
+                <option value="default">Newest first (default)</option>
+                <option value="recentOrders">Recent orders</option>
+                <option value="recentQuotes">Recent quotes</option>
+                <option value="name">Name (A-Z)</option>
+              </select>
+            </div>
             <ViewToggle view={view} onChange={setView} />
             <Button onClick={handleAdd}>Add Customer</Button>
           </div>
