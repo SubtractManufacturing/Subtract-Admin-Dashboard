@@ -6,6 +6,30 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.6.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.5.0...v1.6.0) (2026-07-06)
+
+
+### Features
+
+* **customers:** add sorting and quote history ([1517b85](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/1517b85765d1e41fa6b32466d05cfbfee1307406))
+* **quotes:** add Toolpath upload workflow ([b666ef5](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/b666ef5f5e9a0d091f4f8266841c4e42228aed9c))
+* **quotes:** integrate Toolpath API upload and report links ([6e749bd](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/6e749bda2059b2cb3f70f759aca245795e7c6afd))
+* **schema:** add toolpath fields to quote parts ([12a5dae](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/12a5dae9a11169c05ca1f01a3b76f787a8acd866))
+* **toolpath:** add public API client ([66050c4](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/66050c485104760f991c4287638c1fdcb6607a0e))
+
+
+### Bug Fixes
+
+* async uploads via queue worker ([6ac5176](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/6ac51763b45fdaaaa3f7b1f4a053deceb46b2ceb))
+* integrate Toolpath API ([6e749bd](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/6e749bda2059b2cb3f70f759aca245795e7c6afd))
+* line item soft delete with restore ([33a5f3d](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/33a5f3d588568060fb1e96725ff81d8c703b578a))
+* **security:** update undici override ([9441433](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/9441433d7e7d6f98fb0a302c6ea37cab455c5ad4))
+* **settings:** show Toolpath feature flag ([2cdcd90](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/2cdcd9076038e34305368fdcd11e6defade3ba79))
+* **toolpath:** address PR review feedback on reliability and UX ([907f411](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/907f4111295e46bda690f6965620bc337f29149e))
+* **toolpath:** harden report route and upload payload validation ([42d7b15](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/42d7b15c75c4213b4d6f4c05393439df7395dc54))
+* **toolpath:** prevent key_strict_fifo queue blockage on failed jobs ([#145](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/145)) ([3e76a89](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/3e76a89368eb9bb6521b69babdccce2b667b3eeb))
+* **toolpath:** rate limits, report URLs, icon, and cut-config loading ([fa1eea1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/fa1eea1d9bc2d1ec094049fcfbaea69e79e1631e))
+
 ## [1.5.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.4.2...v1.5.0) (2026-06-16)
 
 
