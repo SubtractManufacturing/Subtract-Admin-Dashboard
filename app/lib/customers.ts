@@ -1,9 +1,10 @@
 import { db } from "./db/index.js"
-import { customers, orders, vendors } from "./db/schema.js"
-import { eq, desc, inArray } from 'drizzle-orm'
-import type { Customer } from "./db/schema.js"
+import { customers, orders, quotes, vendors } from "./db/schema.js"
+import { and, asc, desc, eq, inArray, max } from 'drizzle-orm'
+import type { Customer, Vendor } from "./db/schema.js"
 import { getCustomerAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
+import type { CustomerSortBy } from "./customer-sort.js"
 
 export type { Customer }
 
@@ -41,8 +42,100 @@ export type CustomerEventContext = {
   }
 }
 
-export async function getCustomers(): Promise<Customer[]> {
+export type CustomerQuote = {
+  id: number
+  quoteNumber: string
+  customerId: number
+  vendorId: number | null
+  status: string
+  total: string | null
+  validUntil: Date | null
+  createdAt: Date
+  convertedToOrderId: number | null
+  vendor: Vendor | null
+}
+
+function sortCustomersByLatestActivity(
+  customerRows: Customer[],
+  activityRows: Array<{ customerId: number | null; latestAt: Date | null }>
+): Customer[] {
+  const latestByCustomerId = new Map<number, number>()
+
+  for (const activity of activityRows) {
+    if (activity.customerId && activity.latestAt) {
+      latestByCustomerId.set(activity.customerId, activity.latestAt.getTime())
+    }
+  }
+
+  return [...customerRows].sort((a, b) => {
+    const aLatest = latestByCustomerId.get(a.id)
+    const bLatest = latestByCustomerId.get(b.id)
+
+    if (aLatest === undefined && bLatest === undefined) {
+      return b.createdAt.getTime() - a.createdAt.getTime()
+    }
+
+    if (aLatest === undefined) return 1
+    if (bLatest === undefined) return -1
+
+    const activityDelta = bLatest - aLatest
+    if (activityDelta !== 0) {
+      return activityDelta
+    }
+
+    return b.createdAt.getTime() - a.createdAt.getTime()
+  })
+}
+
+export async function getCustomers(options: { sortBy?: CustomerSortBy } = {}): Promise<Customer[]> {
   try {
+    if (options.sortBy === "name") {
+      const result = await db
+        .select()
+        .from(customers)
+        .where(eq(customers.isArchived, false))
+        .orderBy(asc(customers.displayName))
+
+      return result
+    }
+
+    if (options.sortBy === "recentOrders") {
+      const [customerRows, latestOrders] = await Promise.all([
+        db
+          .select()
+          .from(customers)
+          .where(eq(customers.isArchived, false)),
+        db
+          .select({
+            customerId: orders.customerId,
+            latestAt: max(orders.createdAt)
+          })
+          .from(orders)
+          .groupBy(orders.customerId)
+      ])
+
+      return sortCustomersByLatestActivity(customerRows, latestOrders)
+    }
+
+    if (options.sortBy === "recentQuotes") {
+      const [customerRows, latestQuotes] = await Promise.all([
+        db
+          .select()
+          .from(customers)
+          .where(eq(customers.isArchived, false)),
+        db
+          .select({
+            customerId: quotes.customerId,
+            latestAt: max(quotes.createdAt)
+          })
+          .from(quotes)
+          .where(eq(quotes.isArchived, false))
+          .groupBy(quotes.customerId)
+      ])
+
+      return sortCustomersByLatestActivity(customerRows, latestQuotes)
+    }
+
     const result = await db
       .select()
       .from(customers)
@@ -221,6 +314,33 @@ export async function getCustomerOrders(customerId: number) {
     return result
   } catch (error) {
     console.error('Error fetching customer orders:', error)
+    return []
+  }
+}
+
+export async function getCustomerQuotes(customerId: number): Promise<CustomerQuote[]> {
+  try {
+    const result = await db
+      .select({
+        id: quotes.id,
+        quoteNumber: quotes.quoteNumber,
+        customerId: quotes.customerId,
+        vendorId: quotes.vendorId,
+        status: quotes.status,
+        total: quotes.total,
+        validUntil: quotes.validUntil,
+        createdAt: quotes.createdAt,
+        convertedToOrderId: quotes.convertedToOrderId,
+        vendor: vendors
+      })
+      .from(quotes)
+      .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
+      .where(and(eq(quotes.customerId, customerId), eq(quotes.isArchived, false)))
+      .orderBy(desc(quotes.createdAt))
+
+    return result
+  } catch (error) {
+    console.error('Error fetching customer quotes:', error)
     return []
   }
 }
