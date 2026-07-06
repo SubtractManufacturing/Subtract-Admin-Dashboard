@@ -810,6 +810,7 @@ export function QuotePdfTemplate({
                             contentEditable={editable}
                             suppressContentEditableWarning
                           >
+                            {/* Customer-facing line item name wins; quote part name is underlying CAD identity only. */}
                             {item.name || quotePart?.partName || ""}
                           </span>
                         </td>

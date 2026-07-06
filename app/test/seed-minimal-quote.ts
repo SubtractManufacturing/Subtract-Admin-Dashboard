@@ -8,7 +8,7 @@
  */
 
 import { db } from "~/lib/db";
-import { customers, quotes } from "~/lib/db/schema";
+import { customers, quoteLineItems, quoteParts, quotes } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 export type SeededQuoteIds = {
@@ -56,6 +56,8 @@ export async function seedMinimalQuote(): Promise<SeededQuoteIds> {
  * Deletes the rows inserted by seedMinimalQuote in the correct FK order.
  */
 export async function cleanupMinimalQuote(ids: SeededQuoteIds): Promise<void> {
+  await db.delete(quoteLineItems).where(eq(quoteLineItems.quoteId, ids.quoteId));
+  await db.delete(quoteParts).where(eq(quoteParts.quoteId, ids.quoteId));
   await db.delete(quotes).where(eq(quotes.id, ids.quoteId));
   await db.delete(customers).where(eq(customers.id, ids.customerId));
 }
