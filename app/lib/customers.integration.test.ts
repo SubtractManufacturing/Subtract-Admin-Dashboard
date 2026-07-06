@@ -45,8 +45,8 @@ describe("customer quote history", () => {
   it("excludes archived quotes from customer history", async () => {
     const customerQuotes = await getCustomerQuotes(seeded.alphaCustomerId);
 
-    expect(customerQuotes.map((quote) => quote.quoteNumber)).not.toContain(
-      expect.stringContaining("Q-ALPHA-ARCHIVED"),
+    expect(customerQuotes.map((quote) => quote.quoteNumber)).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("Q-ALPHA-ARCHIVED")]),
     );
   });
 

@@ -78,7 +78,12 @@ function sortCustomersByLatestActivity(
     if (aLatest === undefined) return 1
     if (bLatest === undefined) return -1
 
-    return bLatest - aLatest
+    const activityDelta = bLatest - aLatest
+    if (activityDelta !== 0) {
+      return activityDelta
+    }
+
+    return b.createdAt.getTime() - a.createdAt.getTime()
   })
 }
 

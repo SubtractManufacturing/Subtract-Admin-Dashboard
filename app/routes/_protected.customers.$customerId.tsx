@@ -1573,7 +1573,7 @@ export default function CustomerDetails() {
                             {quote.total ? formatCurrency(parseFloat(quote.total)) : "--"}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                            {formatDate(quote.validUntil)}
+                            {quote.validUntil ? formatDate(quote.validUntil) : "--"}
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm">
                             <Link

@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node"
-import { useLoaderData, useFetcher, Link, useNavigate } from "@remix-run/react"
+import { useLoaderData, useFetcher, Link, useNavigate, useSearchParams } from "@remix-run/react"
 import { useState } from "react"
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node"
 import { Archive, ArrowUpDown } from "lucide-react"
@@ -92,6 +92,7 @@ export default function Customers() {
   const { customers, sortBy } = useLoaderData<typeof loader>()
   const fetcher = useFetcher()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -125,7 +126,9 @@ export default function Customers() {
   }
 
   const handleSortChange = (nextSortBy: string) => {
-    navigate(`/customers?sort=${nextSortBy}`)
+    const nextSearchParams = new URLSearchParams(searchParams)
+    nextSearchParams.set("sort", nextSortBy)
+    navigate(`/customers?${nextSearchParams.toString()}`)
   }
 
   const formatDate = (date: Date | string) => {
