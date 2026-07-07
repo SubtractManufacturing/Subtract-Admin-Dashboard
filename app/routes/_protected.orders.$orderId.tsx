@@ -58,7 +58,12 @@ import {
   handleEmailQueueAction,
 } from "~/lib/email/outbound-email-route-actions.server";
 import { hasBlockingOrderContextSend } from "~/lib/sent-emails.server";
-import type { AttachmentDocumentKind , Attachment, Vendor } from "~/lib/db/schema";
+import type {
+  AttachmentDocumentKind,
+  Attachment,
+  OrderTrackingNumber,
+  Vendor,
+} from "~/lib/db/schema";
 import { formatCurrency } from "~/lib/email/resolve/formatters";
 import { getBananaModelUrls, getLineItemArchiveRetentionDays } from "~/lib/developerSettings";
 import {
@@ -88,6 +93,9 @@ import SendOrderConfirmationModal from "~/components/orders/SendOrderConfirmatio
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import GeneratePackingSlipPdfModal from "~/components/orders/GeneratePackingSlipPdfModal";
+import OrderTrackingModal, {
+  type OrderTrackingActionData,
+} from "~/components/orders/OrderTrackingModal";
 import {
   getNotes,
   createNote,
@@ -122,6 +130,16 @@ import {
   orderPositiveSubtotalExcluding,
   parseUnitPriceInput,
 } from "~/lib/lineItemPricing";
+import {
+  addTrackingNumbers,
+  deleteTrackingNumbers,
+  getTrackingNumbersByOrderId,
+  updateTrackingNumbers,
+  willHaveTrackingNumbersAfterChanges,
+  type TrackingEntry,
+  type TrackingNumberUpdate,
+} from "~/lib/order-tracking";
+import { CarrierBadge, TrackLink } from "~/components/orders/CarrierBadge";
 
 import {
   useState,
@@ -249,6 +267,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   // Hydrate thumbnails for customer parts (convert S3 keys to signed URLs)
   parts = await hydratePartThumbnails(parts);
+  const trackingNumbers = await getTrackingNumbersByOrderId(order.id);
 
   // Get feature flags and events
   const [
@@ -397,6 +416,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       stripePaymentLinksEnabled,
       stripeConfigured,
       quoteStripePaymentLinkId,
+      trackingNumbers,
       archivedLineItems: archivedLineItems.map((item) => ({
         id: item.id,
         name: item.name,
@@ -412,6 +432,92 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+function parsePositiveIntegerId(value: unknown, fieldName: string): number {
+  const id =
+    typeof value === "number" ? value : Number(String(value).trim());
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error(`${fieldName} must contain only positive integer ids`);
+  }
+
+  return id;
+}
+
+function parseJsonNumberArray(formData: FormData, fieldName: string): number[] {
+  const rawValue = formData.get(fieldName);
+  if (!rawValue) return [];
+
+  const parsed = JSON.parse(rawValue.toString());
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+
+  return parsed.map((value) => parsePositiveIntegerId(value, fieldName));
+}
+
+function parseTrackingEntries(
+  formData: FormData,
+  fieldName: string,
+): TrackingEntry[] {
+  const rawValue = formData.get(fieldName);
+  if (!rawValue) return [];
+
+  const parsed = JSON.parse(rawValue.toString());
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+
+  const result: TrackingEntry[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
+    const trackingNumber =
+      typeof entry.trackingNumber === "string" ? entry.trackingNumber.trim() : "";
+    if (!trackingNumber) continue;
+    const carrier =
+      typeof entry.carrier === "string" ? entry.carrier : null;
+    const carrierDetails =
+      entry.carrierDetails &&
+      typeof entry.carrierDetails === "object" &&
+      typeof entry.carrierDetails.name === "string"
+        ? { name: entry.carrierDetails.name as string }
+        : null;
+    result.push({ trackingNumber, carrier, carrierDetails });
+  }
+  return result;
+}
+
+function parseTrackingNumberUpdates(
+  formData: FormData,
+  fieldName: string,
+): TrackingNumberUpdate[] {
+  const rawValue = formData.get(fieldName);
+  if (!rawValue) return [];
+
+  const parsed = JSON.parse(rawValue.toString());
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+
+  const result: TrackingNumberUpdate[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
+    const id = parsePositiveIntegerId(entry.id, `${fieldName}.id`);
+    const trackingNumber =
+      typeof entry.trackingNumber === "string" ? entry.trackingNumber : "";
+    if (!trackingNumber.trim()) continue;
+    const carrier =
+      typeof entry.carrier === "string" ? entry.carrier : null;
+    const carrierDetails =
+      entry.carrierDetails &&
+      typeof entry.carrierDetails === "object" &&
+      typeof entry.carrierDetails.name === "string"
+        ? { name: entry.carrierDetails.name as string }
+        : null;
+    result.push({ id, trackingNumber, carrier, carrierDetails });
+  }
+  return result;
+}
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -454,6 +560,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
         "importCheckoutAddressesQuick",
         "applyCheckoutAddressImportChoices",
+        "manageTrackingNumbers",
+        "shipOrder",
       ];
       if (specialIntents.includes(intent)) {
         // These intents handle form data differently, let them fall through
@@ -1052,11 +1160,177 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return withAuthHeaders(json({ lineItem }), headers);
       }
 
+      case "manageTrackingNumbers": {
+        if (order.status === "Archived") {
+          return withAuthHeaders(
+            json({ error: "Archived orders cannot be updated" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        try {
+          const newTrackingEntries = parseTrackingEntries(
+            formData,
+            "newTrackingEntries",
+          );
+          const deletedIds = parseJsonNumberArray(formData, "deletedIds");
+          const updatedTrackingNumbers = parseTrackingNumberUpdates(
+            formData,
+            "updatedTrackingEntries",
+          );
+          const orderEventContext: OrderEventContext = {
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          };
+
+          if (deletedIds.length > 0) {
+            await deleteTrackingNumbers(order.id, deletedIds, orderEventContext);
+          }
+          if (updatedTrackingNumbers.length > 0) {
+            await updateTrackingNumbers(
+              order.id,
+              updatedTrackingNumbers,
+              orderEventContext,
+            );
+          }
+          if (newTrackingEntries.length > 0) {
+            await addTrackingNumbers(
+              order.id,
+              newTrackingEntries,
+              orderEventContext,
+            );
+          }
+
+          return withAuthHeaders(json({ success: true }), headers);
+        } catch (error) {
+          return withAuthHeaders(
+            json(
+              {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to update tracking numbers",
+              },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+      }
+
+      case "shipOrder": {
+        if (order.status === "Archived") {
+          return withAuthHeaders(
+            json({ error: "Archived orders cannot be shipped" }, { status: 400 }),
+            headers,
+          );
+        }
+        if (order.status !== "In_Inspection") {
+          return withAuthHeaders(
+            json(
+              { error: "Only orders in inspection can be moved to shipped" },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+
+        try {
+          const newTrackingEntries = parseTrackingEntries(
+            formData,
+            "newTrackingEntries",
+          );
+          const deletedIds = parseJsonNumberArray(formData, "deletedIds");
+          const updatedTrackingNumbers = parseTrackingNumberUpdates(
+            formData,
+            "updatedTrackingEntries",
+          );
+          const skipTrackingOverride =
+            formData.get("skipTrackingOverride") === "true";
+          const orderEventContext: OrderEventContext = {
+            userId: user?.id,
+            userEmail: user?.email || userDetails?.name || undefined,
+          };
+
+          if (
+            !skipTrackingOverride &&
+            !(await willHaveTrackingNumbersAfterChanges(
+              order.id,
+              deletedIds,
+              updatedTrackingNumbers,
+              newTrackingEntries,
+            ))
+          ) {
+            return withAuthHeaders(
+              json(
+                {
+                  error:
+                    "Add at least one tracking number before shipping this order, or use the override.",
+                },
+                { status: 400 },
+              ),
+              headers,
+            );
+          }
+
+          if (deletedIds.length > 0) {
+            await deleteTrackingNumbers(order.id, deletedIds, orderEventContext);
+          }
+          if (updatedTrackingNumbers.length > 0) {
+            await updateTrackingNumbers(
+              order.id,
+              updatedTrackingNumbers,
+              orderEventContext,
+            );
+          }
+          if (newTrackingEntries.length > 0) {
+            await addTrackingNumbers(
+              order.id,
+              newTrackingEntries,
+              orderEventContext,
+            );
+          }
+
+          await updateOrder(
+            order.id,
+            {
+              status: "Shipped",
+            },
+            orderEventContext,
+          );
+
+          return withAuthHeaders(json({ success: true }), headers);
+        } catch (error) {
+          return withAuthHeaders(
+            json(
+              {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to ship order",
+              },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+      }
+
       case "updateStatus": {
         const status = formData.get("status") as string;
 
         if (!status) {
           return json({ error: "Missing status" }, { status: 400 });
+        }
+
+        if (status === "Shipped") {
+          return json(
+            {
+              error:
+                "Use the ship order action to move orders to Shipped status",
+            },
+            { status: 400 },
+          );
         }
 
         const orderEventContext: OrderEventContext = {
@@ -1769,6 +2043,7 @@ export default function OrderDetails() {
     stripePaymentLinksEnabled,
     stripeConfigured,
     quoteStripePaymentLinkId,
+    trackingNumbers,
     archivedLineItems,
     archiveRetentionDays,
   } = useLoaderData<typeof loader>();
@@ -1803,6 +2078,10 @@ export default function OrderDetails() {
   const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
   const [editOrderModalOpen, setEditOrderModalOpen] = useState(false);
+  const [trackingModalOpen, setTrackingModalOpen] = useState(false);
+  const [trackingModalMode, setTrackingModalMode] = useState<
+    "advance" | "manage"
+  >("manage");
   const [editOrderForm, setEditOrderForm] = useState({
     deliveryDate: "",
     leadTime: "",
@@ -1810,11 +2089,13 @@ export default function OrderDetails() {
     vendorPayPercent: "",
   });
   const lineItemFetcher = useFetcher();
+  const directShipPendingRef = useRef(false);
   const restoreLineItemFetcher = useFetcher();
   const [restoringArchivedLineItemId, setRestoringArchivedLineItemId] =
     useState<number | null>(null);
   const notesFetcher = useFetcher();
   const orderEditFetcher = useFetcher();
+  const trackingFetcher = useFetcher<OrderTrackingActionData>();
   const drawingFetcher = useFetcher();
   const drawingDeleteFetcher = useFetcher();
   const [drawingUploadingPartId, setDrawingUploadingPartId] = useState<
@@ -1940,6 +2221,20 @@ export default function OrderDetails() {
       }
     }
   }, [lineItemFetcher.state, lineItemFetcher.data, revalidator]);
+
+  useEffect(() => {
+    if (trackingFetcher.state === "idle" && trackingFetcher.data) {
+      if (trackingFetcher.data.success) {
+        revalidator.revalidate();
+      } else if (
+        trackingFetcher.data.error &&
+        directShipPendingRef.current
+      ) {
+        alert(`Failed to ship order: ${trackingFetcher.data.error}`);
+      }
+      directShipPendingRef.current = false;
+    }
+  }, [trackingFetcher.state, trackingFetcher.data, revalidator]);
 
   useEffect(() => {
     if (restoreLineItemFetcher.state === "idle" && restoreLineItemFetcher.data) {
@@ -2444,13 +2739,28 @@ export default function OrderDetails() {
     }
   };
 
+  const submitShipOrder = () => {
+    const formData = new FormData();
+    formData.append("intent", "shipOrder");
+    formData.append("newTrackingEntries", "[]");
+    formData.append("updatedTrackingEntries", "[]");
+    formData.append("deletedIds", "[]");
+    trackingFetcher.submit(formData, { method: "post" });
+  };
+
   const handleShipOrder = () => {
-    if (confirm("Are you sure you want to mark this order as shipped?")) {
-      const formData = new FormData();
-      formData.append("intent", "updateStatus");
-      formData.append("status", "Shipped");
-      lineItemFetcher.submit(formData, { method: "post" });
+    if (trackingNumbers.length > 0) {
+      directShipPendingRef.current = true;
+      submitShipOrder();
+      return;
     }
+    setTrackingModalMode("advance");
+    setTrackingModalOpen(true);
+  };
+
+  const handleManageTracking = () => {
+    setTrackingModalMode("manage");
+    setTrackingModalOpen(true);
   };
 
   const handleMarkAsDelivered = () => {
@@ -2759,6 +3069,9 @@ export default function OrderDetails() {
                 onGenerateInvoice={handleGenerateInvoice}
                 onGeneratePO={handleGeneratePO}
                 onGeneratePackingSlip={handleGeneratePackingSlip}
+                onManageTracking={
+                  order.status === "Archived" ? undefined : handleManageTracking
+                }
                 onManageVendor={handleManageVendor}
                 onSendOrderConfirmation={() =>
                   setSendOrderConfirmationModalOpen(true)
@@ -2834,8 +3147,13 @@ export default function OrderDetails() {
                 onClick={handleShipOrder}
                 variant="primary"
                 className="bg-teal-600 hover:bg-teal-700"
+                disabled={
+                  trackingFetcher.state !== "idle" && !trackingModalOpen
+                }
               >
-                Ship Order
+                {trackingFetcher.state !== "idle" && !trackingModalOpen
+                  ? "Shipping..."
+                  : "Ship Order"}
               </Button>
             )}
             {order.status === "Shipped" && (
@@ -3195,42 +3513,31 @@ export default function OrderDetails() {
             }}
           />
 
-          {/* Notes and Event Log Section - Side by Side */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Notes */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
-              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-                  Order Notes
-                </h3>
-                {!isAddingNote && (
-                  <Button size="sm" onClick={() => setIsAddingNote(true)}>
-                    Add Note
-                  </Button>
-                )}
-              </div>
-              <div className="p-6">
-                <Notes
-                  entityType="order"
-                  entityId={order.id.toString()}
-                  initialNotes={notes}
-                  currentUserId={user.id || user.email}
-                  currentUserName={userDetails?.name || user.email}
-                  showHeader={false}
-                  onAddNoteClick={() => setIsAddingNote(false)}
-                  isAddingNote={isAddingNote}
-                  externalControl={true}
-                />
-              </div>
+          {/* Order Notes - full width */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+            <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                Order Notes
+              </h3>
+              {!isAddingNote && (
+                <Button size="sm" onClick={() => setIsAddingNote(true)}>
+                  Add Note
+                </Button>
+              )}
             </div>
-
-            {/* Event Log */}
-            <EventTimeline
-              entityType="order"
-              entityId={order.id.toString()}
-              entityName={order.orderNumber}
-              initialEvents={events}
-            />
+            <div className="p-6">
+              <Notes
+                entityType="order"
+                entityId={order.id.toString()}
+                initialNotes={notes}
+                currentUserId={user.id || user.email}
+                currentUserName={userDetails?.name || user.email}
+                showHeader={false}
+                onAddNoteClick={() => setIsAddingNote(false)}
+                isAddingNote={isAddingNote}
+                externalControl={true}
+              />
+            </div>
           </div>
 
           {/* Vendor Information */}
@@ -3307,6 +3614,77 @@ export default function OrderDetails() {
             entityType="order"
             entityId={order.id}
           />
+
+          {/* Shipping and Event Log - Side by Side at bottom */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
+              <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                  Shipping
+                </h3>
+                {order.status !== "Archived" && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleManageTracking}
+                  >
+                    Manage
+                  </Button>
+                )}
+              </div>
+              <div className="p-6">
+                {trackingNumbers.length > 0 ? (
+                  <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                    {trackingNumbers.map(
+                      (trackingNumber: OrderTrackingNumber) => {
+                        const customName =
+                          trackingNumber.carrier === "OTHER"
+                            ? ((trackingNumber.carrierDetails as { name: string } | null)?.name ?? null)
+                            : null;
+                        return (
+                          <li
+                            key={trackingNumber.id}
+                            className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <CarrierBadge
+                                code={trackingNumber.carrier}
+                                customName={customName}
+                                size="md"
+                              />
+                              <span className="truncate text-sm text-gray-900 dark:text-gray-100">
+                                {trackingNumber.trackingNumber}
+                              </span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <TrackLink
+                                code={trackingNumber.carrier}
+                                trackingNumber={trackingNumber.trackingNumber}
+                              />
+                              <span className="text-sm text-gray-500 dark:text-gray-400">
+                                {formatDate(trackingNumber.createdAt)}
+                              </span>
+                            </div>
+                          </li>
+                        );
+                      },
+                    )}
+                  </ul>
+                ) : (
+                  <p className="text-gray-500 dark:text-gray-400">
+                    No tracking numbers yet.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <EventTimeline
+              entityType="order"
+              entityId={order.id.toString()}
+              entityName={order.orderNumber}
+              initialEvents={events}
+            />
+          </div>
         </div>
       </div>
 
@@ -3360,6 +3738,15 @@ export default function OrderDetails() {
         positiveSubtotalForDiscount={orderPositiveSubForAddLineModal}
         customerId={order.customerId}
         existingParts={parts}
+      />
+
+      <OrderTrackingModal
+        isOpen={trackingModalOpen}
+        onClose={() => setTrackingModalOpen(false)}
+        mode={trackingModalMode}
+        existingTrackingNumbers={trackingNumbers}
+        fetcher={trackingFetcher}
+        disabled={order.status === "Archived"}
       />
 
       {/* 3D Viewer Modal */}

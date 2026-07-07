@@ -11,6 +11,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { SeededQuoteIds } from "~/test/seed-minimal-quote";
 import { seedMinimalQuote, cleanupMinimalQuote } from "~/test/seed-minimal-quote";
+import { db } from "~/lib/db";
+import { quoteLineItems, quoteParts } from "~/lib/db/schema";
 import { resolveQuoteTokens } from "./quote.server";
 
 describe("resolveQuoteTokens", () => {
@@ -55,6 +57,33 @@ describe("resolveQuoteTokens", () => {
   it("resolves subtotal as a formatted currency string", async () => {
     const tokens = await resolveQuoteTokens(String(seeded.quoteId));
     expect(tokens.subtotal).toBe("$90.00");
+  });
+
+  it("resolves quote part tokens from the line item display name", async () => {
+    const [quotePart] = await db
+      .insert(quoteParts)
+      .values({
+        quoteId: seeded.quoteId,
+        partNumber: "QP-DISPLAY-NAME",
+        partName: "step-file-base",
+        material: "6061",
+      })
+      .returning({ id: quoteParts.id });
+
+    await db.insert(quoteLineItems).values({
+      quoteId: seeded.quoteId,
+      quotePartId: quotePart.id,
+      name: "Display Name",
+      quantity: 2,
+      unitPrice: "10.00",
+      totalPrice: "20.00",
+    });
+
+    const tokens = await resolveQuoteTokens(String(seeded.quoteId));
+
+    expect(tokens.partNames).toBe("Display Name");
+    expect(tokens.partSpecs).toContain("Name: Display Name");
+    expect(tokens.partSpecs).not.toContain("Name: step-file-base");
   });
 
   it("resolves documentDate as a readable date string", async () => {

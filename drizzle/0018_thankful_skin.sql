@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "order_tracking_numbers_order_tracking_number_unique_idx" ON "order_tracking_numbers" USING btree ("order_id","tracking_number");

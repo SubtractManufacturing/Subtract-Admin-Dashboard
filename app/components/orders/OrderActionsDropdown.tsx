@@ -8,6 +8,7 @@ interface OrderActionsDropdownProps {
   onGenerateInvoice?: () => void;
   onGeneratePO?: () => void;
   onGeneratePackingSlip?: () => void;
+  onManageTracking?: () => void;
   onManageVendor?: () => void;
   /** Order confirmation email (in-menu when not on Pending) */
   onSendOrderConfirmation?: () => void;
@@ -30,6 +31,7 @@ export default function OrderActionsDropdown({
   onGenerateInvoice,
   onGeneratePO,
   onGeneratePackingSlip,
+  onManageTracking,
   onManageVendor,
   onSendOrderConfirmation,
   hasVendor = false,
@@ -198,6 +200,33 @@ export default function OrderActionsDropdown({
               onClose();
             },
             disabled: !hasCustomer,
+          },
+        ]
+      : []),
+    ...(onManageTracking
+      ? [
+          {
+            icon: (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 12L3.269 3.126A59.77 59.77 0 0121.485 12 59.768 59.768 0 013.27 20.876L5.999 12zm0 0h7.5"
+                />
+              </svg>
+            ),
+            label: "Ship",
+            onClick: () => {
+              onManageTracking();
+              onClose();
+            },
+            disabled: false,
           },
         ]
       : []),

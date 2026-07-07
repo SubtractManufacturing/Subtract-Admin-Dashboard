@@ -99,11 +99,14 @@ export async function resolveQuoteTokens(entityId: string): Promise<ResolvedToke
     // QuotePart uses `finish` (not `finishing`) — normalize to the DTO field name.
     // Quantity: sum line items linked to each quote part (same part may appear on multiple lines).
     const normalized: NormalizedPart[] = parts.map((p) => {
-      const qtySum = lineItems
-        .filter((li) => li.quotePartId === p.id)
-        .reduce((sum, li) => sum + li.quantity, 0);
+      const linkedLineItems = lineItems.filter((li) => li.quotePartId === p.id);
+      const displayName =
+        linkedLineItems.find((li) => li.name?.trim())?.name?.trim() || p.partName;
+      const qtySum = linkedLineItems.reduce((sum, li) => sum + li.quantity, 0);
       return {
-        name: p.partName,
+        // Customer-facing name: line item label wins; quote_parts.part_name is the
+        // underlying CAD identity shown as "Part: ..." subtext and is not renamed.
+        name: displayName,
         material: p.material,
         tolerance: p.tolerance,
         finishing: p.finish,

@@ -12,6 +12,7 @@ import {
   boolean,
   jsonb,
   index,
+  uniqueIndex,
   foreignKey,
 } from "drizzle-orm/pg-core";
 
@@ -237,6 +238,26 @@ export const orders = pgTable("orders", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export const orderTrackingNumbers = pgTable(
+  "order_tracking_numbers",
+  {
+    id: serial("id").primaryKey(),
+    orderId: integer("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    trackingNumber: text("tracking_number").notNull(),
+    carrier: text("carrier"),
+    carrierDetails: jsonb("carrier_details").$type<{ name: string }>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    orderIdx: index("order_tracking_numbers_order_idx").on(table.orderId),
+    orderTrackingNumberUniqueIdx: uniqueIndex(
+      "order_tracking_numbers_order_tracking_number_unique_idx",
+    ).on(table.orderId, table.trackingNumber),
+  })
+);
 
 export const meshConversionStatusEnum = pgEnum("mesh_conversion_status", [
   "pending",
@@ -639,6 +660,8 @@ export type Quote = typeof quotes.$inferSelect;
 export type NewQuote = typeof quotes.$inferInsert;
 export type Order = typeof orders.$inferSelect;
 export type NewOrder = typeof orders.$inferInsert;
+export type OrderTrackingNumber = typeof orderTrackingNumbers.$inferSelect;
+export type NewOrderTrackingNumber = typeof orderTrackingNumbers.$inferInsert;
 export type Part = typeof parts.$inferSelect;
 export type NewPart = typeof parts.$inferInsert;
 export type Attachment = typeof attachments.$inferSelect;

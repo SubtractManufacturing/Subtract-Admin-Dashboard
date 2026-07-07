@@ -1018,7 +1018,9 @@ export async function convertQuoteToOrder(
               await tx.insert(orderLineItems).values({
                 orderId: order.id,
                 partId: customerPart.id,
-                name: quotePart.partName,
+                // Use the quote line item's customer-facing label; quote part name
+                // remains the underlying CAD identity and is not updated on rename.
+                name: lineItem.name?.trim() || quotePart.partName,
                 description:
                   lineItem.description || quotePart.description || "",
                 quantity: lineItem.quantity,
