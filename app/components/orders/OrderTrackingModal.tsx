@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FetcherWithComponents } from "@remix-run/react";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
+import { CARRIERS, detectCarrier } from "~/lib/carriers";
+import { CarrierBadge } from "~/components/orders/CarrierBadge";
 
 export type OrderTrackingActionData = {
   error?: string;
@@ -11,6 +13,8 @@ export type OrderTrackingActionData = {
 type TrackingNumber = {
   id: number;
   trackingNumber: string;
+  carrier?: string | null;
+  carrierDetails?: { name: string } | null;
   createdAt?: string | Date;
 };
 
@@ -19,6 +23,11 @@ type Row = {
   existingId: number | null;
   original: string;
   value: string;
+  originalCarrier: string;
+  carrier: string;
+  originalCustomCarrierName: string;
+  customCarrierName: string;
+  detecting: boolean;
   createdAt?: string | Date;
   deleted: boolean;
 };
@@ -39,14 +48,41 @@ function nextLocalId() {
 }
 
 function buildInitialRows(existing: TrackingNumber[]): Row[] {
-  return existing.map((tracking) => ({
+  return existing.map((tracking) => {
+    const carrier = tracking.carrier ?? "";
+    const customName =
+      tracking.carrier === "OTHER"
+        ? (tracking.carrierDetails?.name ?? "")
+        : "";
+    return {
+      localId: nextLocalId(),
+      existingId: tracking.id,
+      original: tracking.trackingNumber,
+      value: tracking.trackingNumber,
+      originalCarrier: carrier,
+      carrier,
+      originalCustomCarrierName: customName,
+      customCarrierName: customName,
+      detecting: false,
+      createdAt: tracking.createdAt,
+      deleted: false,
+    };
+  });
+}
+
+function newEmptyRow(): Row {
+  return {
     localId: nextLocalId(),
-    existingId: tracking.id,
-    original: tracking.trackingNumber,
-    value: tracking.trackingNumber,
-    createdAt: tracking.createdAt,
+    existingId: null,
+    original: "",
+    value: "",
+    originalCarrier: "",
+    carrier: "",
+    originalCustomCarrierName: "",
+    customCarrierName: "",
+    detecting: false,
     deleted: false,
-  }));
+  };
 }
 
 export default function OrderTrackingModal({
@@ -64,12 +100,25 @@ export default function OrderTrackingModal({
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const isSubmitting = fetcher.state !== "idle";
 
+  // Per-row debounce timers for carrier auto-detection
+  const debounceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+
   useEffect(() => {
     if (!isOpen) return;
     setRows(buildInitialRows(existingTrackingNumbers));
     setShowOverrideConfirm(false);
     setHasSubmitted(false);
   }, [isOpen, existingTrackingNumbers]);
+
+  // Clean up all debounce timers when modal closes
+  useEffect(() => {
+    if (isOpen) return;
+    const timers = debounceTimers.current;
+    timers.forEach((timer) => clearTimeout(timer));
+    timers.clear();
+  }, [isOpen]);
 
   useEffect(() => {
     if (
@@ -85,56 +134,141 @@ export default function OrderTrackingModal({
   const activeRows = useMemo(() => rows.filter((row) => !row.deleted), [rows]);
 
   const staged = useMemo(() => {
-    const newTrackingNumbers: string[] = [];
-    const updatedTrackingNumbers: { id: number; trackingNumber: string }[] = [];
+    const newTrackingEntries: {
+      trackingNumber: string;
+      carrier: string | null;
+      carrierDetails: { name: string } | null;
+    }[] = [];
+    const updatedTrackingEntries: {
+      id: number;
+      trackingNumber: string;
+      carrier: string | null;
+      carrierDetails: { name: string } | null;
+    }[] = [];
     const deletedIds: number[] = [];
 
     for (const row of rows) {
       const trimmed = row.value.trim();
+      const carrier = row.carrier || null;
+      const carrierDetails =
+        row.carrier === "OTHER" && row.customCarrierName.trim()
+          ? { name: row.customCarrierName.trim() }
+          : null;
+
       if (row.existingId === null) {
         if (row.deleted) continue;
-        if (trimmed) newTrackingNumbers.push(trimmed);
+        if (trimmed) {
+          newTrackingEntries.push({ trackingNumber: trimmed, carrier, carrierDetails });
+        }
         continue;
       }
       if (row.deleted) {
         deletedIds.push(row.existingId);
         continue;
       }
-      if (trimmed && trimmed !== row.original) {
-        updatedTrackingNumbers.push({
+      const trackingChanged = trimmed && trimmed !== row.original;
+      const carrierChanged = row.carrier !== row.originalCarrier;
+      const customNameChanged =
+        row.customCarrierName !== row.originalCustomCarrierName;
+      if (trackingChanged || carrierChanged || customNameChanged) {
+        updatedTrackingEntries.push({
           id: row.existingId,
-          trackingNumber: trimmed,
+          trackingNumber: trimmed || row.original,
+          carrier,
+          carrierDetails,
         });
       }
     }
 
-    return { newTrackingNumbers, updatedTrackingNumbers, deletedIds };
+    return { newTrackingEntries, updatedTrackingEntries, deletedIds };
   }, [rows]);
 
   const hasChanges =
-    staged.newTrackingNumbers.length > 0 ||
-    staged.updatedTrackingNumbers.length > 0 ||
+    staged.newTrackingEntries.length > 0 ||
+    staged.updatedTrackingEntries.length > 0 ||
     staged.deletedIds.length > 0;
+
   const hasTrackingAfterSave = activeRows.some((row) => row.value.trim());
-  const canSubmitManage = hasChanges && !disabled && !isSubmitting;
-  const canSubmitAdvance = hasTrackingAfterSave && !disabled && !isSubmitting;
+
+  // New rows require a carrier (and custom name if OTHER)
+  const newRowsValid = activeRows
+    .filter((row) => row.existingId === null && row.value.trim())
+    .every(
+      (row) =>
+        row.carrier !== "" &&
+        (row.carrier !== "OTHER" || row.customCarrierName.trim() !== ""),
+    );
+
+  const canSubmitManage =
+    hasChanges && newRowsValid && !disabled && !isSubmitting;
+  const canSubmitAdvance =
+    hasTrackingAfterSave && newRowsValid && !disabled && !isSubmitting;
+
+  // Validation errors to highlight (only shown after submit attempt)
+  const rowsWithCarrierError = useMemo(() => {
+    if (!hasSubmitted) return new Set<string>();
+    const errorSet = new Set<string>();
+    for (const row of activeRows) {
+      if (row.existingId !== null || !row.value.trim()) continue;
+      if (row.carrier === "") {
+        errorSet.add(row.localId);
+      } else if (row.carrier === "OTHER" && !row.customCarrierName.trim()) {
+        errorSet.add(row.localId);
+      }
+    }
+    return errorSet;
+  }, [hasSubmitted, activeRows]);
 
   const addRow = () => {
-    setRows((current) => [
-      ...current,
-      {
-        localId: nextLocalId(),
-        existingId: null,
-        original: "",
-        value: "",
-        deleted: false,
-      },
-    ]);
+    setRows((current) => [...current, newEmptyRow()]);
   };
 
   const updateRowValue = (localId: string, value: string) => {
     setRows((current) =>
-      current.map((row) => (row.localId === localId ? { ...row, value } : row)),
+      current.map((row) =>
+        row.localId === localId ? { ...row, value, detecting: value.trim() !== "" } : row,
+      ),
+    );
+
+    // Clear existing timer and start a new one
+    const timers = debounceTimers.current;
+    const existing = timers.get(localId);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      timers.delete(localId);
+      const detected = detectCarrier(value);
+      setRows((current) =>
+        current.map((row) => {
+          if (row.localId !== localId) return row;
+          const shouldAutoFill = detected !== null && row.carrier === "";
+          return {
+            ...row,
+            detecting: false,
+            carrier: shouldAutoFill ? detected : row.carrier,
+          };
+        }),
+      );
+    }, 300);
+
+    timers.set(localId, timer);
+  };
+
+  const updateRowCarrier = (localId: string, carrier: string) => {
+    setRows((current) =>
+      current.map((row) =>
+        row.localId === localId
+          ? { ...row, carrier, customCarrierName: carrier !== "OTHER" ? "" : row.customCarrierName }
+          : row,
+      ),
+    );
+  };
+
+  const updateRowCustomCarrierName = (localId: string, customCarrierName: string) => {
+    setRows((current) =>
+      current.map((row) =>
+        row.localId === localId ? { ...row, customCarrierName } : row,
+      ),
     );
   };
 
@@ -160,27 +294,36 @@ export default function OrderTrackingModal({
   };
 
   const submit = (skipTrackingOverride = false) => {
+    if (!skipTrackingOverride) {
+      setHasSubmitted(true);
+      if (mode === "advance" ? !canSubmitAdvance : !canSubmitManage) return;
+    }
+
     const formData = new FormData();
     formData.append(
       "intent",
       mode === "advance" ? "shipOrder" : "manageTrackingNumbers",
     );
     formData.append(
-      "newTrackingNumbers",
-      JSON.stringify(staged.newTrackingNumbers),
+      "newTrackingEntries",
+      JSON.stringify(staged.newTrackingEntries),
     );
     formData.append(
-      "updatedTrackingNumbers",
-      JSON.stringify(staged.updatedTrackingNumbers),
+      "updatedTrackingEntries",
+      JSON.stringify(staged.updatedTrackingEntries),
     );
     formData.append("deletedIds", JSON.stringify(staged.deletedIds));
     if (skipTrackingOverride) {
       formData.append("skipTrackingOverride", "true");
     }
 
-    setHasSubmitted(true);
     fetcher.submit(formData, { method: "post" });
     setShowOverrideConfirm(false);
+  };
+
+  const handleSubmitClick = () => {
+    setHasSubmitted(true);
+    submit(false);
   };
 
   return (
@@ -228,7 +371,8 @@ export default function OrderTrackingModal({
           ) : (
             <ul className="space-y-2">
               {rows.map((row) => (
-                <li key={row.localId} className="flex items-center gap-2">
+                <li key={row.localId} className="flex items-start gap-2">
+                  {/* Tracking number input */}
                   <input
                     type="text"
                     value={row.value}
@@ -243,6 +387,67 @@ export default function OrderTrackingModal({
                         : "border-gray-300 bg-white text-gray-900 dark:border-gray-600"
                     }`}
                   />
+
+                  {/* Carrier select (with spinner while detecting) */}
+                  {!row.deleted && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {row.carrier && (
+                        <CarrierBadge
+                          code={row.carrier}
+                          customName={row.customCarrierName}
+                        />
+                      )}
+                      {row.detecting ? (
+                        <div className="flex h-[38px] w-[130px] items-center justify-center rounded-md border border-gray-300 bg-white text-gray-400 dark:border-gray-600 dark:bg-gray-700">
+                          <SpinnerIcon />
+                        </div>
+                      ) : (
+                        <select
+                          value={row.carrier}
+                          onChange={(event) =>
+                            updateRowCarrier(row.localId, event.target.value)
+                          }
+                          disabled={disabled || isSubmitting}
+                          className={`h-[38px] w-[130px] rounded-md border px-2 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed dark:bg-gray-700 dark:text-gray-100 ${
+                            rowsWithCarrierError.has(row.localId)
+                              ? "border-red-400 dark:border-red-500"
+                              : "border-gray-300 dark:border-gray-600"
+                          }`}
+                        >
+                          <option value="" />
+                          {CARRIERS.map((c) => (
+                            <option key={c.code} value={c.code}>
+                              {c.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Custom carrier name input (shown when OTHER is selected) */}
+                  {!row.deleted && row.carrier === "OTHER" && (
+                    <input
+                      type="text"
+                      value={row.customCarrierName}
+                      onChange={(event) =>
+                        updateRowCustomCarrierName(
+                          row.localId,
+                          event.target.value,
+                        )
+                      }
+                      disabled={disabled || isSubmitting}
+                      placeholder="Carrier name"
+                      className={`min-w-0 w-[130px] rounded-md border px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed dark:bg-gray-700 dark:text-gray-100 ${
+                        rowsWithCarrierError.has(row.localId) &&
+                        !row.customCarrierName.trim()
+                          ? "border-red-400 bg-white text-gray-900 dark:border-red-500"
+                          : "border-gray-300 bg-white text-gray-900 dark:border-gray-600"
+                      }`}
+                    />
+                  )}
+
+                  {/* Trash / Undo */}
                   {row.deleted ? (
                     <button
                       type="button"
@@ -259,7 +464,7 @@ export default function OrderTrackingModal({
                       disabled={disabled || isSubmitting}
                       aria-label="Remove tracking number"
                       title="Remove tracking number"
-                      className="rounded-md p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                      className="mt-0.5 rounded-md p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
                     >
                       <TrashIcon />
                     </button>
@@ -307,8 +512,10 @@ export default function OrderTrackingModal({
               </Button>
               <Button
                 type="button"
-                onClick={() => submit(false)}
-                disabled={mode === "advance" ? !canSubmitAdvance : !canSubmitManage}
+                onClick={handleSubmitClick}
+                disabled={
+                  mode === "advance" ? !canSubmitAdvance : !canSubmitManage
+                }
                 className={
                   mode === "advance" ? "bg-teal-600 hover:bg-teal-700" : ""
                 }
@@ -391,6 +598,30 @@ function TrashIcon() {
         strokeLinejoin="round"
         strokeWidth={2}
         d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg
+      className="h-4 w-4 animate-spin text-gray-400"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
       />
     </svg>
   );

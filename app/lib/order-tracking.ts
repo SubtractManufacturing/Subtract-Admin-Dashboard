@@ -8,16 +8,33 @@ import {
 import { createEvent } from "./events.js";
 import type { OrderEventContext } from "./orders.js";
 
-function normalizeTrackingNumbers(numbers: string[]) {
-  const seen = new Set<string>();
-  const normalized: string[] = [];
+export type TrackingEntry = {
+  trackingNumber: string;
+  carrier?: string | null;
+  carrierDetails?: { name: string } | null;
+};
 
-  for (const number of numbers) {
-    const trackingNumber = number.trim();
+export type TrackingNumberUpdate = {
+  id: number;
+  trackingNumber: string;
+  carrier?: string | null;
+  carrierDetails?: { name: string } | null;
+};
+
+function normalizeEntries(entries: TrackingEntry[]): TrackingEntry[] {
+  const seen = new Set<string>();
+  const normalized: TrackingEntry[] = [];
+
+  for (const entry of entries) {
+    const trackingNumber = entry.trackingNumber.trim();
     if (!trackingNumber || seen.has(trackingNumber)) continue;
 
     seen.add(trackingNumber);
-    normalized.push(trackingNumber);
+    normalized.push({
+      trackingNumber,
+      carrier: entry.carrier ?? null,
+      carrierDetails: entry.carrierDetails ?? null,
+    });
   }
 
   return normalized;
@@ -35,19 +52,19 @@ export async function getTrackingNumbersByOrderId(
 
 export async function addTrackingNumbers(
   orderId: number,
-  numbers: string[],
+  entries: TrackingEntry[],
   eventContext?: OrderEventContext,
 ): Promise<OrderTrackingNumber[]> {
-  const normalizedNumbers = normalizeTrackingNumbers(numbers);
-  if (normalizedNumbers.length === 0) return [];
+  const normalizedEntries = normalizeEntries(entries);
+  if (normalizedEntries.length === 0) return [];
 
   const existingNumbers = await getTrackingNumbersByOrderId(orderId);
   const existingSet = new Set(
     existingNumbers.map((row) => row.trackingNumber),
   );
-  const duplicates = normalizedNumbers.filter((number) =>
-    existingSet.has(number),
-  );
+  const duplicates = normalizedEntries
+    .map((e) => e.trackingNumber)
+    .filter((number) => existingSet.has(number));
 
   if (duplicates.length > 0) {
     throw new Error(
@@ -55,12 +72,12 @@ export async function addTrackingNumbers(
     );
   }
 
-  const values: NewOrderTrackingNumber[] = normalizedNumbers.map(
-    (trackingNumber) => ({
-      orderId,
-      trackingNumber,
-    }),
-  );
+  const values: NewOrderTrackingNumber[] = normalizedEntries.map((entry) => ({
+    orderId,
+    trackingNumber: entry.trackingNumber,
+    carrier: entry.carrier ?? null,
+    carrierDetails: entry.carrierDetails ?? null,
+  }));
 
   const inserted = await db
     .insert(orderTrackingNumbers)
@@ -74,11 +91,15 @@ export async function addTrackingNumbers(
     eventCategory: "status",
     title: "Tracking number added",
     description:
-      normalizedNumbers.length === 1
-        ? `Added tracking number ${normalizedNumbers[0]}`
-        : `Added ${normalizedNumbers.length} tracking numbers`,
+      normalizedEntries.length === 1
+        ? `Added tracking number ${normalizedEntries[0].trackingNumber}`
+        : `Added ${normalizedEntries.length} tracking numbers`,
     metadata: {
-      trackingNumbers: normalizedNumbers,
+      trackingNumbers: normalizedEntries.map((e) => ({
+        trackingNumber: e.trackingNumber,
+        carrier: e.carrier ?? null,
+        carrierDetails: e.carrierDetails ?? null,
+      })),
     },
     userId: eventContext?.userId,
     userEmail: eventContext?.userEmail,
@@ -132,7 +153,11 @@ export async function deleteTrackingNumbers(
         : `Deleted ${deleted.length} tracking numbers`,
     metadata: {
       deletedIds: uniqueIds,
-      trackingNumbers: deleted.map((row) => row.trackingNumber),
+      trackingNumbers: deleted.map((row) => ({
+        trackingNumber: row.trackingNumber,
+        carrier: row.carrier ?? null,
+        carrierDetails: row.carrierDetails ?? null,
+      })),
     },
     userId: eventContext?.userId,
     userEmail: eventContext?.userEmail,
@@ -140,11 +165,6 @@ export async function deleteTrackingNumbers(
 
   return deleted;
 }
-
-export type TrackingNumberUpdate = {
-  id: number;
-  trackingNumber: string;
-};
 
 export async function updateTrackingNumbers(
   orderId: number,
@@ -155,6 +175,8 @@ export async function updateTrackingNumbers(
     .map((update) => ({
       id: update.id,
       trackingNumber: update.trackingNumber.trim(),
+      carrier: update.carrier ?? null,
+      carrierDetails: update.carrierDetails ?? null,
     }))
     .filter((update) => Number.isFinite(update.id) && update.trackingNumber);
 
@@ -181,9 +203,29 @@ export async function updateTrackingNumbers(
   }
 
   const ownedById = new Map(ownedRows.map((row) => [row.id, row]));
-  const changed = normalized.filter(
-    (update) => ownedById.get(update.id)?.trackingNumber !== update.trackingNumber,
+
+  // Snapshot previous state before mutations so audit metadata is accurate
+  const previousById = new Map(
+    ownedRows.map((row) => [
+      row.id,
+      {
+        trackingNumber: row.trackingNumber,
+        carrier: row.carrier ?? null,
+        carrierDetails: row.carrierDetails ?? null,
+      },
+    ]),
   );
+
+  const changed = normalized.filter((update) => {
+    const owned = ownedById.get(update.id);
+    if (!owned) return false;
+    const trackingChanged = owned.trackingNumber !== update.trackingNumber;
+    const carrierChanged = owned.carrier !== update.carrier;
+    const carrierDetailsChanged =
+      JSON.stringify(owned.carrierDetails) !==
+      JSON.stringify(update.carrierDetails);
+    return trackingChanged || carrierChanged || carrierDetailsChanged;
+  });
 
   if (changed.length === 0) return [];
 
@@ -218,7 +260,11 @@ export async function updateTrackingNumbers(
   for (const update of changed) {
     const [row] = await db
       .update(orderTrackingNumbers)
-      .set({ trackingNumber: update.trackingNumber })
+      .set({
+        trackingNumber: update.trackingNumber,
+        carrier: update.carrier,
+        carrierDetails: update.carrierDetails,
+      })
       .where(
         and(
           eq(orderTrackingNumbers.orderId, orderId),
@@ -240,11 +286,22 @@ export async function updateTrackingNumbers(
         ? `Updated tracking number to ${updated[0].trackingNumber}`
         : `Updated ${updated.length} tracking numbers`,
     metadata: {
-      updates: changed.map((update) => ({
-        id: update.id,
-        previous: ownedById.get(update.id)?.trackingNumber ?? null,
-        next: update.trackingNumber,
-      })),
+      updates: changed.map((update) => {
+        const previous = previousById.get(update.id);
+        return {
+          id: update.id,
+          previous: {
+            trackingNumber: previous?.trackingNumber ?? null,
+            carrier: previous?.carrier ?? null,
+            carrierDetails: previous?.carrierDetails ?? null,
+          },
+          next: {
+            trackingNumber: update.trackingNumber,
+            carrier: update.carrier,
+            carrierDetails: update.carrierDetails,
+          },
+        };
+      }),
     },
     userId: eventContext?.userId,
     userEmail: eventContext?.userEmail,

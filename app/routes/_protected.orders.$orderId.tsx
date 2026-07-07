@@ -136,8 +136,10 @@ import {
   getTrackingNumbersByOrderId,
   hasTrackingNumbers,
   updateTrackingNumbers,
+  type TrackingEntry,
   type TrackingNumberUpdate,
 } from "~/lib/order-tracking";
+import { CarrierBadge, TrackLink } from "~/components/orders/CarrierBadge";
 
 import {
   useState,
@@ -431,17 +433,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
-function parseJsonStringArray(formData: FormData, fieldName: string): string[] {
-  const rawValue = formData.get(fieldName);
-  if (!rawValue) return [];
-
-  const parsed = JSON.parse(rawValue.toString());
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${fieldName} must be an array`);
-  }
-
-  return parsed.filter((value): value is string => typeof value === "string");
-}
 
 function parseJsonNumberArray(formData: FormData, fieldName: string): number[] {
   const rawValue = formData.get(fieldName);
@@ -459,6 +450,37 @@ function parseJsonNumberArray(formData: FormData, fieldName: string): number[] {
     .filter((value) => Number.isFinite(value));
 }
 
+function parseTrackingEntries(
+  formData: FormData,
+  fieldName: string,
+): TrackingEntry[] {
+  const rawValue = formData.get(fieldName);
+  if (!rawValue) return [];
+
+  const parsed = JSON.parse(rawValue.toString());
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+
+  const result: TrackingEntry[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
+    const trackingNumber =
+      typeof entry.trackingNumber === "string" ? entry.trackingNumber.trim() : "";
+    if (!trackingNumber) continue;
+    const carrier =
+      typeof entry.carrier === "string" ? entry.carrier : null;
+    const carrierDetails =
+      entry.carrierDetails &&
+      typeof entry.carrierDetails === "object" &&
+      typeof entry.carrierDetails.name === "string"
+        ? { name: entry.carrierDetails.name as string }
+        : null;
+    result.push({ trackingNumber, carrier, carrierDetails });
+  }
+  return result;
+}
+
 function parseTrackingNumberUpdates(
   formData: FormData,
   fieldName: string,
@@ -471,19 +493,27 @@ function parseTrackingNumberUpdates(
     throw new Error(`${fieldName} must be an array`);
   }
 
-  return parsed
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") return null;
-      const id =
-        typeof entry.id === "number"
-          ? entry.id
-          : Number.parseInt(String(entry.id), 10);
-      const trackingNumber =
-        typeof entry.trackingNumber === "string" ? entry.trackingNumber : "";
-      if (!Number.isFinite(id) || !trackingNumber.trim()) return null;
-      return { id, trackingNumber };
-    })
-    .filter((entry): entry is TrackingNumberUpdate => entry !== null);
+  const result: TrackingNumberUpdate[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
+    const id =
+      typeof entry.id === "number"
+        ? entry.id
+        : Number.parseInt(String(entry.id), 10);
+    const trackingNumber =
+      typeof entry.trackingNumber === "string" ? entry.trackingNumber : "";
+    if (!Number.isFinite(id) || !trackingNumber.trim()) continue;
+    const carrier =
+      typeof entry.carrier === "string" ? entry.carrier : null;
+    const carrierDetails =
+      entry.carrierDetails &&
+      typeof entry.carrierDetails === "object" &&
+      typeof entry.carrierDetails.name === "string"
+        ? { name: entry.carrierDetails.name as string }
+        : null;
+    result.push({ id, trackingNumber, carrier, carrierDetails });
+  }
+  return result;
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -1136,14 +1166,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         try {
-          const newTrackingNumbers = parseJsonStringArray(
+          const newTrackingEntries = parseTrackingEntries(
             formData,
-            "newTrackingNumbers",
+            "newTrackingEntries",
           );
           const deletedIds = parseJsonNumberArray(formData, "deletedIds");
           const updatedTrackingNumbers = parseTrackingNumberUpdates(
             formData,
-            "updatedTrackingNumbers",
+            "updatedTrackingEntries",
           );
           const orderEventContext: OrderEventContext = {
             userId: user?.id,
@@ -1160,10 +1190,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
               orderEventContext,
             );
           }
-          if (newTrackingNumbers.length > 0) {
+          if (newTrackingEntries.length > 0) {
             await addTrackingNumbers(
               order.id,
-              newTrackingNumbers,
+              newTrackingEntries,
               orderEventContext,
             );
           }
@@ -1203,14 +1233,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         try {
-          const newTrackingNumbers = parseJsonStringArray(
+          const newTrackingEntries = parseTrackingEntries(
             formData,
-            "newTrackingNumbers",
+            "newTrackingEntries",
           );
           const deletedIds = parseJsonNumberArray(formData, "deletedIds");
           const updatedTrackingNumbers = parseTrackingNumberUpdates(
             formData,
-            "updatedTrackingNumbers",
+            "updatedTrackingEntries",
           );
           const skipTrackingOverride =
             formData.get("skipTrackingOverride") === "true";
@@ -1229,10 +1259,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
               orderEventContext,
             );
           }
-          if (newTrackingNumbers.length > 0) {
+          if (newTrackingEntries.length > 0) {
             await addTrackingNumbers(
               order.id,
-              newTrackingNumbers,
+              newTrackingEntries,
               orderEventContext,
             );
           }
@@ -2038,6 +2068,7 @@ export default function OrderDetails() {
     vendorPayPercent: "",
   });
   const lineItemFetcher = useFetcher();
+  const directShipPendingRef = useRef(false);
   const restoreLineItemFetcher = useFetcher();
   const [restoringArchivedLineItemId, setRestoringArchivedLineItemId] =
     useState<number | null>(null);
@@ -2169,6 +2200,20 @@ export default function OrderDetails() {
       }
     }
   }, [lineItemFetcher.state, lineItemFetcher.data, revalidator]);
+
+  useEffect(() => {
+    if (trackingFetcher.state === "idle" && trackingFetcher.data) {
+      if (trackingFetcher.data.success) {
+        revalidator.revalidate();
+      } else if (
+        trackingFetcher.data.error &&
+        directShipPendingRef.current
+      ) {
+        alert(`Failed to ship order: ${trackingFetcher.data.error}`);
+      }
+      directShipPendingRef.current = false;
+    }
+  }, [trackingFetcher.state, trackingFetcher.data, revalidator]);
 
   useEffect(() => {
     if (restoreLineItemFetcher.state === "idle" && restoreLineItemFetcher.data) {
@@ -2673,7 +2718,21 @@ export default function OrderDetails() {
     }
   };
 
+  const submitShipOrder = () => {
+    const formData = new FormData();
+    formData.append("intent", "shipOrder");
+    formData.append("newTrackingEntries", "[]");
+    formData.append("updatedTrackingEntries", "[]");
+    formData.append("deletedIds", "[]");
+    trackingFetcher.submit(formData, { method: "post" });
+  };
+
   const handleShipOrder = () => {
+    if (trackingNumbers.length > 0) {
+      directShipPendingRef.current = true;
+      submitShipOrder();
+      return;
+    }
     setTrackingModalMode("advance");
     setTrackingModalOpen(true);
   };
@@ -3067,8 +3126,13 @@ export default function OrderDetails() {
                 onClick={handleShipOrder}
                 variant="primary"
                 className="bg-teal-600 hover:bg-teal-700"
+                disabled={
+                  trackingFetcher.state !== "idle" && !trackingModalOpen
+                }
               >
-                Ship Order
+                {trackingFetcher.state !== "idle" && !trackingModalOpen
+                  ? "Shipping..."
+                  : "Ship Order"}
               </Button>
             )}
             {order.status === "Shipped" && (
@@ -3551,19 +3615,38 @@ export default function OrderDetails() {
                 {trackingNumbers.length > 0 ? (
                   <ul className="divide-y divide-gray-200 dark:divide-gray-700">
                     {trackingNumbers.map(
-                      (trackingNumber: OrderTrackingNumber) => (
-                        <li
-                          key={trackingNumber.id}
-                          className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0"
-                        >
-                          <span className="text-base text-gray-900 dark:text-gray-100">
-                            {trackingNumber.trackingNumber}
-                          </span>
-                          <span className="text-sm text-gray-500 dark:text-gray-400">
-                            {formatDate(trackingNumber.createdAt)}
-                          </span>
-                        </li>
-                      ),
+                      (trackingNumber: OrderTrackingNumber) => {
+                        const customName =
+                          trackingNumber.carrier === "OTHER"
+                            ? ((trackingNumber.carrierDetails as { name: string } | null)?.name ?? null)
+                            : null;
+                        return (
+                          <li
+                            key={trackingNumber.id}
+                            className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <CarrierBadge
+                                code={trackingNumber.carrier}
+                                customName={customName}
+                                size="md"
+                              />
+                              <span className="truncate text-sm text-gray-900 dark:text-gray-100">
+                                {trackingNumber.trackingNumber}
+                              </span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <TrackLink
+                                code={trackingNumber.carrier}
+                                trackingNumber={trackingNumber.trackingNumber}
+                              />
+                              <span className="text-sm text-gray-500 dark:text-gray-400">
+                                {formatDate(trackingNumber.createdAt)}
+                              </span>
+                            </div>
+                          </li>
+                        );
+                      },
                     )}
                   </ul>
                 ) : (

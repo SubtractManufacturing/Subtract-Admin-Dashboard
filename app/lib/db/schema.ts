@@ -246,6 +246,8 @@ export const orderTrackingNumbers = pgTable(
       .notNull()
       .references(() => orders.id, { onDelete: "cascade" }),
     trackingNumber: text("tracking_number").notNull(),
+    carrier: text("carrier"),
+    carrierDetails: jsonb("carrier_details").$type<{ name: string }>(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({

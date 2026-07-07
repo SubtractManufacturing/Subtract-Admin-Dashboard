@@ -4,6 +4,8 @@ type TrackingRow = {
   id: number;
   orderId: number;
   trackingNumber: string;
+  carrier: string | null;
+  carrierDetails: { name: string } | null;
   createdAt: Date;
 };
 
@@ -61,35 +63,54 @@ const mocks = vi.hoisted(() => {
   }));
 
   const insert = vi.fn(() => ({
-    values: vi.fn((values: Array<{ orderId: number; trackingNumber: string }>) => ({
-      returning: vi.fn(async () => {
-        const inserted = values.map((value) => ({
-          id: state.nextId++,
-          orderId: value.orderId,
-          trackingNumber: value.trackingNumber,
-          createdAt: new Date(),
-        }));
-        state.rows.push(...inserted);
-        return inserted;
+    values: vi.fn(
+      (
+        values: Array<{
+          orderId: number;
+          trackingNumber: string;
+          carrier?: string | null;
+          carrierDetails?: { name: string } | null;
+        }>,
+      ) => ({
+        returning: vi.fn(async () => {
+          const inserted = values.map((value) => ({
+            id: state.nextId++,
+            orderId: value.orderId,
+            trackingNumber: value.trackingNumber,
+            carrier: value.carrier ?? null,
+            carrierDetails: value.carrierDetails ?? null,
+            createdAt: new Date(),
+          }));
+          state.rows.push(...inserted);
+          return inserted;
+        }),
       }),
-    })),
+    ),
   }));
 
   const update = vi.fn(() => ({
-    set: vi.fn((values: { trackingNumber: string }) => ({
-      where: vi.fn((condition: TestCondition) => ({
-        returning: vi.fn(async () => {
-          const updated: Row[] = [];
-          for (const row of state.rows) {
-            if (matchesCondition(row, condition)) {
-              row.trackingNumber = values.trackingNumber;
-              updated.push(row);
+    set: vi.fn(
+      (values: {
+        trackingNumber: string;
+        carrier?: string | null;
+        carrierDetails?: { name: string } | null;
+      }) => ({
+        where: vi.fn((condition: TestCondition) => ({
+          returning: vi.fn(async () => {
+            const updated: Row[] = [];
+            for (const row of state.rows) {
+              if (matchesCondition(row, condition)) {
+                row.trackingNumber = values.trackingNumber;
+                row.carrier = values.carrier ?? null;
+                row.carrierDetails = values.carrierDetails ?? null;
+                updated.push(row);
+              }
             }
-          }
-          return updated;
-        }),
-      })),
-    })),
+            return updated;
+          }),
+        })),
+      }),
+    ),
   }));
 
   const remove = vi.fn(() => ({
@@ -98,7 +119,9 @@ const mocks = vi.hoisted(() => {
         const deleted = state.rows.filter((row) =>
           matchesCondition(row, condition),
         );
-        state.rows = state.rows.filter((row) => !matchesCondition(row, condition));
+        state.rows = state.rows.filter(
+          (row) => !matchesCondition(row, condition),
+        );
         return deleted;
       }),
     })),
@@ -148,6 +171,7 @@ import {
   hasTrackingNumbers,
   updateTrackingNumbers,
 } from "./order-tracking";
+import { detectCarrier } from "./carriers";
 
 beforeEach(() => {
   mocks.state.rows = [];
@@ -157,10 +181,15 @@ beforeEach(() => {
 
 describe("order tracking numbers", () => {
   it("adds multiple tracking numbers at once after trimming input", async () => {
-    const rows = await addTrackingNumbers(42, ["  1Z999  ", "", "940011"], {
-      userId: "user-1",
-      userEmail: "ops@example.com",
-    });
+    const rows = await addTrackingNumbers(
+      42,
+      [
+        { trackingNumber: "  1Z999  " },
+        { trackingNumber: "" },
+        { trackingNumber: "940011" },
+      ],
+      { userId: "user-1", userEmail: "ops@example.com" },
+    );
 
     expect(rows.map((row) => row.trackingNumber)).toEqual(["1Z999", "940011"]);
     expect(await getTrackingNumbersByOrderId(42)).toHaveLength(2);
@@ -170,25 +199,66 @@ describe("order tracking numbers", () => {
         entityId: "42",
         eventType: "tracking_numbers_added",
         metadata: expect.objectContaining({
-          trackingNumbers: ["1Z999", "940011"],
+          trackingNumbers: expect.arrayContaining([
+            expect.objectContaining({ trackingNumber: "1Z999" }),
+            expect.objectContaining({ trackingNumber: "940011" }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("stores carrier and carrierDetails when provided", async () => {
+    const rows = await addTrackingNumbers(42, [
+      { trackingNumber: "1Z999AA10123456784", carrier: "UPS", carrierDetails: null },
+    ]);
+
+    expect(rows[0].carrier).toBe("UPS");
+    expect(rows[0].carrierDetails).toBeNull();
+  });
+
+  it("stores OTHER carrier with carrierDetails name", async () => {
+    const rows = await addTrackingNumbers(42, [
+      {
+        trackingNumber: "XYZ123",
+        carrier: "OTHER",
+        carrierDetails: { name: "Joe's Freight" },
+      },
+    ]);
+
+    expect(rows[0].carrier).toBe("OTHER");
+    expect(rows[0].carrierDetails).toEqual({ name: "Joe's Freight" });
+  });
+
+  it("carrier metadata is included in the added event", async () => {
+    await addTrackingNumbers(42, [
+      { trackingNumber: "1Z999AA10123456784", carrier: "UPS", carrierDetails: null },
+    ]);
+
+    expect(mocks.createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          trackingNumbers: expect.arrayContaining([
+            expect.objectContaining({ carrier: "UPS", carrierDetails: null }),
+          ]),
         }),
       }),
     );
   });
 
   it("rejects duplicate tracking numbers already linked to the same order", async () => {
-    await addTrackingNumbers(42, ["1Z999"]);
+    await addTrackingNumbers(42, [{ trackingNumber: "1Z999" }]);
 
-    await expect(addTrackingNumbers(42, ["1Z999"])).rejects.toThrow(
-      /already exists/i,
-    );
+    await expect(
+      addTrackingNumbers(42, [{ trackingNumber: "1Z999" }]),
+    ).rejects.toThrow(/already exists/i);
 
     expect(await getTrackingNumbersByOrderId(42)).toHaveLength(1);
   });
 
   it("deletes tracking numbers only when they belong to the order", async () => {
-    const [owned] = await addTrackingNumbers(42, ["1Z999"]);
-    const [otherOrder] = await addTrackingNumbers(7, ["940011"]);
+    const [owned] = await addTrackingNumbers(42, [{ trackingNumber: "1Z999" }]);
+    const [otherOrder] = await addTrackingNumbers(7, [{ trackingNumber: "940011" }]);
 
     await deleteTrackingNumbers(42, [owned.id]);
 
@@ -201,7 +271,7 @@ describe("order tracking numbers", () => {
   });
 
   it("rejects deleting tracking numbers from another order", async () => {
-    const [otherOrder] = await addTrackingNumbers(7, ["940011"]);
+    const [otherOrder] = await addTrackingNumbers(7, [{ trackingNumber: "940011" }]);
 
     await expect(deleteTrackingNumbers(42, [otherOrder.id])).rejects.toThrow(
       /belong to this order/i,
@@ -211,13 +281,13 @@ describe("order tracking numbers", () => {
   it("reports whether an order has tracking numbers", async () => {
     await expect(hasTrackingNumbers(42)).resolves.toBe(false);
 
-    await addTrackingNumbers(42, ["1Z999"]);
+    await addTrackingNumbers(42, [{ trackingNumber: "1Z999" }]);
 
     await expect(hasTrackingNumbers(42)).resolves.toBe(true);
   });
 
   it("updates existing tracking numbers in place", async () => {
-    const [row] = await addTrackingNumbers(42, ["1Z999"]);
+    const [row] = await addTrackingNumbers(42, [{ trackingNumber: "1Z999" }]);
 
     const updated = await updateTrackingNumbers(42, [
       { id: row.id, trackingNumber: "  1Z999-CORRECTED  " },
@@ -232,18 +302,96 @@ describe("order tracking numbers", () => {
     );
   });
 
-  it("skips rows whose tracking number did not change", async () => {
-    const [row] = await addTrackingNumbers(42, ["1Z999"]);
+  it("updates carrier only without changing tracking number", async () => {
+    const [row] = await addTrackingNumbers(42, [
+      { trackingNumber: "1Z999", carrier: null },
+    ]);
+
+    const updated = await updateTrackingNumbers(42, [
+      { id: row.id, trackingNumber: "1Z999", carrier: "UPS" },
+    ]);
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0].carrier).toBe("UPS");
+  });
+
+  it("records before/after carrier in update event metadata", async () => {
+    const [row] = await addTrackingNumbers(42, [
+      { trackingNumber: "1Z999", carrier: "FEDEX" },
+    ]);
+
+    await updateTrackingNumbers(42, [
+      { id: row.id, trackingNumber: "1Z999", carrier: "UPS" },
+    ]);
+
+    expect(mocks.createEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        eventType: "tracking_numbers_updated",
+        metadata: expect.objectContaining({
+          updates: expect.arrayContaining([
+            expect.objectContaining({
+              previous: expect.objectContaining({ carrier: "FEDEX" }),
+              next: expect.objectContaining({ carrier: "UPS" }),
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("records before/after carrierDetails in update event metadata", async () => {
+    const [row] = await addTrackingNumbers(42, [
+      {
+        trackingNumber: "XYZ123",
+        carrier: "OTHER",
+        carrierDetails: { name: "Old Freight" },
+      },
+    ]);
+
+    await updateTrackingNumbers(42, [
+      {
+        id: row.id,
+        trackingNumber: "XYZ123",
+        carrier: "OTHER",
+        carrierDetails: { name: "New Freight" },
+      },
+    ]);
+
+    expect(mocks.createEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          updates: expect.arrayContaining([
+            expect.objectContaining({
+              previous: expect.objectContaining({
+                carrierDetails: { name: "Old Freight" },
+              }),
+              next: expect.objectContaining({
+                carrierDetails: { name: "New Freight" },
+              }),
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("skips rows whose tracking number and carrier did not change", async () => {
+    const [row] = await addTrackingNumbers(42, [
+      { trackingNumber: "1Z999", carrier: "UPS" },
+    ]);
 
     const result = await updateTrackingNumbers(42, [
-      { id: row.id, trackingNumber: "1Z999" },
+      { id: row.id, trackingNumber: "1Z999", carrier: "UPS" },
     ]);
 
     expect(result).toEqual([]);
   });
 
   it("rejects updating a tracking number to one already on the order", async () => {
-    const [row1, row2] = await addTrackingNumbers(42, ["1Z999", "940011"]);
+    const [row1, row2] = await addTrackingNumbers(42, [
+      { trackingNumber: "1Z999" },
+      { trackingNumber: "940011" },
+    ]);
 
     await expect(
       updateTrackingNumbers(42, [{ id: row1.id, trackingNumber: "940011" }]),
@@ -255,12 +403,72 @@ describe("order tracking numbers", () => {
   });
 
   it("rejects updating a tracking number that belongs to another order", async () => {
-    const [otherOrder] = await addTrackingNumbers(7, ["940011"]);
+    const [otherOrder] = await addTrackingNumbers(7, [{ trackingNumber: "940011" }]);
 
     await expect(
       updateTrackingNumbers(42, [
         { id: otherOrder.id, trackingNumber: "1Z999" },
       ]),
     ).rejects.toThrow(/belong to this order/i);
+  });
+});
+
+describe("detectCarrier", () => {
+  it("detects UPS from 1Z prefix", () => {
+    expect(detectCarrier("1Z999AA10123456784")).toBe("UPS");
+    expect(detectCarrier("1z999AA10123456784")).toBe("UPS");
+  });
+
+  it("detects USPS from 94 service-indicator prefix", () => {
+    expect(detectCarrier("9400111899223397670009")).toBe("USPS");
+    expect(detectCarrier("9261290100830368622798")).toBe("USPS");
+  });
+
+  it("detects USPS international format", () => {
+    expect(detectCarrier("EA123456789US")).toBe("USPS");
+    expect(detectCarrier("LZ123456789CN")).not.toBe("UPS");
+  });
+
+  it("detects FedEx 12-digit", () => {
+    expect(detectCarrier("123456789012")).toBe("FEDEX");
+  });
+
+  it("detects FedEx 15-digit", () => {
+    expect(detectCarrier("123456789012345")).toBe("FEDEX");
+  });
+
+  it("detects FedEx SmartPost 96 prefix 22-digit", () => {
+    expect(detectCarrier("9612345678901234567890")).toBe("FEDEX");
+  });
+
+  it("detects DHL JD prefix", () => {
+    expect(detectCarrier("JD014600006161590967")).toBe("DHL");
+  });
+
+  it("detects DHL 10-digit", () => {
+    expect(detectCarrier("1234567890")).toBe("DHL");
+  });
+
+  it("detects OnTrac C prefix 15 chars", () => {
+    expect(detectCarrier("C12345678901234")).toBe("ONTRAC");
+  });
+
+  it("returns null for empty string", () => {
+    expect(detectCarrier("")).toBeNull();
+    expect(detectCarrier("   ")).toBeNull();
+  });
+
+  it("returns null for unrecognized format", () => {
+    expect(detectCarrier("UNKNOWN-FORMAT-123")).toBeNull();
+  });
+
+  it("never returns OTHER", () => {
+    const results = [
+      "1Z999AA10123456784",
+      "9400111899223397670009",
+      "123456789012",
+      "UNKNOWN",
+    ].map(detectCarrier);
+    expect(results.every((r) => r !== "OTHER")).toBe(true);
   });
 });
