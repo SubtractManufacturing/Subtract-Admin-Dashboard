@@ -6,6 +6,13 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.6.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.6.0...v1.6.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* add tracking/shipping information to orders ([cbc98b1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/cbc98b15e9679e347b68d99c2fa4ecb8ab9850c9))
+
 ## [1.6.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.5.0...v1.6.0) (2026-07-06)
 
 
