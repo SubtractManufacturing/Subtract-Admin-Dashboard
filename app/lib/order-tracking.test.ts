@@ -170,6 +170,7 @@ import {
   getTrackingNumbersByOrderId,
   hasTrackingNumbers,
   updateTrackingNumbers,
+  willHaveTrackingNumbersAfterChanges,
 } from "./order-tracking";
 import { detectCarrier } from "./carriers";
 
@@ -284,6 +285,38 @@ describe("order tracking numbers", () => {
     await addTrackingNumbers(42, [{ trackingNumber: "1Z999" }]);
 
     await expect(hasTrackingNumbers(42)).resolves.toBe(true);
+  });
+
+  it("predicts whether tracking will remain after pending changes", async () => {
+    const [row] = await addTrackingNumbers(42, [{ trackingNumber: "1Z999" }]);
+
+    await expect(
+      willHaveTrackingNumbersAfterChanges(42, [row.id], [], []),
+    ).resolves.toBe(false);
+
+    await expect(
+      willHaveTrackingNumbersAfterChanges(
+        42,
+        [],
+        [{ id: row.id, trackingNumber: "   " }],
+        [],
+      ),
+    ).resolves.toBe(false);
+
+    await expect(
+      willHaveTrackingNumbersAfterChanges(42, [], [], [
+        { trackingNumber: "940011" },
+      ]),
+    ).resolves.toBe(true);
+
+    await expect(
+      willHaveTrackingNumbersAfterChanges(
+        42,
+        [row.id],
+        [],
+        [{ trackingNumber: "940011" }],
+      ),
+    ).resolves.toBe(true);
   });
 
   it("updates existing tracking numbers in place", async () => {

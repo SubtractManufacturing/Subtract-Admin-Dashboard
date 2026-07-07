@@ -12,6 +12,7 @@ import {
   boolean,
   jsonb,
   index,
+  uniqueIndex,
   foreignKey,
 } from "drizzle-orm/pg-core";
 
@@ -252,6 +253,9 @@ export const orderTrackingNumbers = pgTable(
   },
   (table) => ({
     orderIdx: index("order_tracking_numbers_order_idx").on(table.orderId),
+    orderTrackingNumberUniqueIdx: uniqueIndex(
+      "order_tracking_numbers_order_tracking_number_unique_idx",
+    ).on(table.orderId, table.trackingNumber),
   })
 );
 

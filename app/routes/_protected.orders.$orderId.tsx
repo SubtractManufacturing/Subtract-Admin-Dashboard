@@ -134,8 +134,8 @@ import {
   addTrackingNumbers,
   deleteTrackingNumbers,
   getTrackingNumbersByOrderId,
-  hasTrackingNumbers,
   updateTrackingNumbers,
+  willHaveTrackingNumbersAfterChanges,
   type TrackingEntry,
   type TrackingNumberUpdate,
 } from "~/lib/order-tracking";
@@ -433,6 +433,16 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
+function parsePositiveIntegerId(value: unknown, fieldName: string): number {
+  const id =
+    typeof value === "number" ? value : Number(String(value).trim());
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error(`${fieldName} must contain only positive integer ids`);
+  }
+
+  return id;
+}
 
 function parseJsonNumberArray(formData: FormData, fieldName: string): number[] {
   const rawValue = formData.get(fieldName);
@@ -443,11 +453,7 @@ function parseJsonNumberArray(formData: FormData, fieldName: string): number[] {
     throw new Error(`${fieldName} must be an array`);
   }
 
-  return parsed
-    .map((value) =>
-      typeof value === "number" ? value : Number.parseInt(String(value), 10),
-    )
-    .filter((value) => Number.isFinite(value));
+  return parsed.map((value) => parsePositiveIntegerId(value, fieldName));
 }
 
 function parseTrackingEntries(
@@ -496,13 +502,10 @@ function parseTrackingNumberUpdates(
   const result: TrackingNumberUpdate[] = [];
   for (const entry of parsed) {
     if (!entry || typeof entry !== "object") continue;
-    const id =
-      typeof entry.id === "number"
-        ? entry.id
-        : Number.parseInt(String(entry.id), 10);
+    const id = parsePositiveIntegerId(entry.id, `${fieldName}.id`);
     const trackingNumber =
       typeof entry.trackingNumber === "string" ? entry.trackingNumber : "";
-    if (!Number.isFinite(id) || !trackingNumber.trim()) continue;
+    if (!trackingNumber.trim()) continue;
     const carrier =
       typeof entry.carrier === "string" ? entry.carrier : null;
     const carrierDetails =
@@ -1249,6 +1252,27 @@ export async function action({ request, params }: ActionFunctionArgs) {
             userEmail: user?.email || userDetails?.name || undefined,
           };
 
+          if (
+            !skipTrackingOverride &&
+            !(await willHaveTrackingNumbersAfterChanges(
+              order.id,
+              deletedIds,
+              updatedTrackingNumbers,
+              newTrackingEntries,
+            ))
+          ) {
+            return withAuthHeaders(
+              json(
+                {
+                  error:
+                    "Add at least one tracking number before shipping this order, or use the override.",
+                },
+                { status: 400 },
+              ),
+              headers,
+            );
+          }
+
           if (deletedIds.length > 0) {
             await deleteTrackingNumbers(order.id, deletedIds, orderEventContext);
           }
@@ -1264,19 +1288,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
               order.id,
               newTrackingEntries,
               orderEventContext,
-            );
-          }
-
-          if (!skipTrackingOverride && !(await hasTrackingNumbers(order.id))) {
-            return withAuthHeaders(
-              json(
-                {
-                  error:
-                    "Add at least one tracking number before shipping this order, or use the override.",
-                },
-                { status: 400 },
-              ),
-              headers,
             );
           }
 
@@ -1310,6 +1321,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         if (!status) {
           return json({ error: "Missing status" }, { status: 400 });
+        }
+
+        if (status === "Shipped") {
+          return json(
+            {
+              error:
+                "Use the ship order action to move orders to Shipped status",
+            },
+            { status: 400 },
+          );
         }
 
         const orderEventContext: OrderEventContext = {

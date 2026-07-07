@@ -314,3 +314,28 @@ export async function hasTrackingNumbers(orderId: number): Promise<boolean> {
   const trackingNumbers = await getTrackingNumbersByOrderId(orderId);
   return trackingNumbers.length > 0;
 }
+
+export async function willHaveTrackingNumbersAfterChanges(
+  orderId: number,
+  deletedIds: number[],
+  updatedTrackingNumbers: TrackingNumberUpdate[],
+  newTrackingEntries: TrackingEntry[],
+): Promise<boolean> {
+  if (
+    newTrackingEntries.some((entry) => entry.trackingNumber.trim() !== "")
+  ) {
+    return true;
+  }
+
+  const deletedIdSet = new Set(deletedIds);
+  const updatesById = new Map(
+    updatedTrackingNumbers.map((entry) => [entry.id, entry]),
+  );
+  const existingTrackingNumbers = await getTrackingNumbersByOrderId(orderId);
+
+  return existingTrackingNumbers.some((entry) => {
+    if (deletedIdSet.has(entry.id)) return false;
+    const updated = updatesById.get(entry.id);
+    return (updated?.trackingNumber ?? entry.trackingNumber).trim() !== "";
+  });
+}
