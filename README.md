@@ -136,19 +136,36 @@ chore: update dependencies to latest versions
 - Don't end subject with a period
 - Reference issues in footer: `Closes #123`
 
+## Architecture
+
+Steering docs for navigating the codebase:
+
+| Doc | Purpose |
+|-----|---------|
+| [CONTEXT.md](CONTEXT.md) | Domain vocabulary, entity lifecycles, naming conventions |
+| [docs/architecture-map.md](docs/architecture-map.md) | Where routes, lib modules, queues, and downloads live |
+| [docs/adr/README.md](docs/adr/README.md) | Architecture decision backlog and accepted conventions |
+| [CLAUDE.md](CLAUDE.md) | Dev commands, DB rules, download patterns |
+
+The app covers CRM (customers, vendors), quoting, orders, parts/CAD, outbound email, Toolpath integration, and platform admin. `npm run dev` starts Remix and the pg-boss worker (`scripts/worker.ts`) for async email, CAD conversion, and Toolpath jobs.
+
 ## Project Structure
 
 ```
 Subtract-Cloud-Frontend/
 ├── app/
-│   ├── components/     # React components
-│   ├── lib/            # Backend logic and utilities
-│   │   ├── db/         # Database schema and config
-│   │   └── *.ts        # Data access layer modules
-│   ├── routes/         # Remix route components
-│   └── utils/          # Helper functions and styles
+│   ├── components/     # React UI (orders, quotes, email, admin, shared)
+│   ├── lib/            # Server logic and data access
+│   │   ├── db/         # Drizzle schema and client
+│   │   ├── email/      # Outbound email subsystem
+│   │   └── queue/      # pg-boss producers and handlers
+│   ├── routes/         # Remix routes (~41 files)
+│   ├── emails/         # React Email layouts
+│   └── hooks/          # useDownload, useMeshConversion
+├── docs/               # Architecture map, ADRs, email/PDF guides
+├── scripts/            # worker.ts (pg-boss consumer)
 ├── public/             # Static assets
-└── package.json        # Dependencies and scripts
+└── package.json
 ```
 
 ## Contributing
