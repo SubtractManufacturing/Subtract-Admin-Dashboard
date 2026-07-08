@@ -1,0 +1,33 @@
+# PR-Agent configuration for automated PR code review.
+# Docs: docs/pr-code-review.md
+# Upstream reference: https://github.com/qodo-ai/pr-agent/blob/main/pr_agent/settings/configuration.toml
+
+[config]
+model = "gpt-5.4-mini"
+fallback_models = ["gpt-5.4-mini"]
+reasoning_effort = "low"
+max_model_tokens = 32000
+repo_context_files = ["CONTEXT.md", "CLAUDE.md"]
+repo_context_from_default_branch = true
+repo_context_max_lines = 500
+patch_extension_skip_types = [".md", ".txt", ".json"]
+ignore_pr_title = ["^\\[Auto\\]", "^Auto", "^chore\\(.*\\): release"]
+
+[pr_reviewer]
+extra_instructions = """
+- Remix (Vite) + Drizzle + PostgreSQL admin dashboard for Subtract Manufacturing
+- Soft deletes use isArchived (boolean) — never hard-delete entities
+- Order numbers follow YY[LETTER][5-DIGIT] (e.g., 25Z00001)
+- Never suggest running db:generate or drizzle-kit generate automatically; migrations are manual, one per feature
+- db:push is acceptable in dev only (npm run dev)
+- All file downloads go through app/routes/_protected.download.$.ts; client code uses useDownload()
+- Schema lives in app/lib/db/schema.ts
+- Ignore drizzle/meta/* snapshot JSON unless schema logic itself is wrong
+- Domain vocabulary is in CONTEXT.md
+"""
+
+[pr_code_suggestions]
+# Applies when someone runs /improve manually in a PR comment
+auto_extended_mode = false
+max_number_of_calls = 2
+num_code_suggestions_per_chunk = 3

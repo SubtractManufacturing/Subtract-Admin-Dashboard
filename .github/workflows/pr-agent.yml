@@ -2,9 +2,13 @@ name: PR Agent
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   pr_agent_job:
@@ -14,15 +18,18 @@ jobs:
       issues: write
       pull-requests: write
       contents: write
-    name: Run pr agent on every pull request, respond to user comments
+    name: Run PR Agent on open/reopen; respond to slash commands in comments
     steps:
       - name: PR Agent action step
         id: pragent
-        uses: the-pr-agent/pr-agent@main
+        uses: the-pr-agent/pr-agent@v0.39.0
         env:
           OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          config.model: "gpt-5.4-mini"
+          config.fallback_models: '["gpt-5.4-mini"]'
+          config.reasoning_effort: "low"
           github_action_config.auto_review: "true"
-          github_action_config.auto_describe: "true"
-          github_action_config.auto_improve: "true"
-          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_improve: "false"
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review"]'
