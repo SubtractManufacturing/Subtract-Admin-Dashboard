@@ -31,12 +31,16 @@ export interface EventFilters {
   dismissedOnly?: boolean;
 }
 
-export async function createEvent(eventData: EventLogInput): Promise<EventLog> {
+export async function createEvent(
+  eventData: EventLogInput,
+  tx?: Parameters<Parameters<typeof db.transaction>[0]>[0],
+): Promise<EventLog> {
   const newEvent: NewEventLog = {
     ...eventData,
   };
 
-  const [event] = await db.insert(eventLogs).values(newEvent).returning();
+  const queryClient = tx || db;
+  const [event] = await queryClient.insert(eventLogs).values(newEvent).returning();
   return event;
 }
 

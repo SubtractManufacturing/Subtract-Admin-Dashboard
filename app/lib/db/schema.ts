@@ -87,6 +87,13 @@ export const attachmentDocumentKindEnum = pgEnum("attachment_document_kind", [
   "packing_slip",
 ]);
 
+export const communicationMethodEnum = pgEnum("communication_method", [
+  "call",
+  "text",
+  "email",
+  "social_media_dm",
+]);
+
 export const users = pgTable("users", {
   id: text("id").primaryKey(), // Will match Supabase auth.users.id
   name: text("name"),
@@ -541,6 +548,33 @@ export const notes = pgTable("notes", {
   isArchived: boolean("is_archived").default(false).notNull(),
 });
 
+export const customerCommunications = pgTable(
+  "customer_communications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    customerId: integer("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    method: communicationMethodEnum("method").notNull(),
+    note: text("note").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    // No updatedAt in v1 — log entries are append-only.
+    // Soft-archive reserved for a later admin cleanup if needed:
+    isArchived: boolean("is_archived").default(false).notNull(),
+  },
+  (table) => ({
+    customerIdx: index("customer_communications_customer_idx").on(
+      table.customerId,
+    ),
+    createdAtIdx: index("customer_communications_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
 export const featureFlags = pgTable("feature_flags", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
@@ -692,6 +726,9 @@ export type LoginAuditLog = typeof loginAuditLogs.$inferSelect;
 export type NewLoginAuditLog = typeof loginAuditLogs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
+export type CustomerCommunication = typeof customerCommunications.$inferSelect;
+export type NewCustomerCommunication =
+  typeof customerCommunications.$inferInsert;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
 export type NewFeatureFlag = typeof featureFlags.$inferInsert;
 export type EventLog = typeof eventLogs.$inferSelect;
