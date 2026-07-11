@@ -83,6 +83,7 @@ export const ALLOWED_AUTH_REDIRECTS = [
   "/",
   "/dashboard",
   "/customers",
+  "/crm",
   "/vendors",
   "/orders",
   "/ActionItems",
