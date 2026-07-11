@@ -126,26 +126,31 @@ export async function createCustomerCommunication(
     createdBy: data.createdBy,
   };
 
-  const [created] = await db
-    .insert(customerCommunications)
-    .values(insertValues)
-    .returning();
+  return await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(customerCommunications)
+      .values(insertValues)
+      .returning();
 
-  await createEvent({
-    entityType: "customer",
-    entityId: String(data.customerId),
-    eventType: "crm_communication_logged",
-    eventCategory: "communication",
-    title: "Communication logged",
-    description: `${COMMUNICATION_METHOD_LABELS[data.method]} with ${customer.displayName}`,
-    metadata: {
-      communicationId: created.id,
-      method: data.method,
-      notePreview: note.substring(0, 100),
-    },
-    userId: eventContext?.userId,
-    userEmail: eventContext?.userEmail,
+    await createEvent(
+      {
+        entityType: "customer",
+        entityId: String(data.customerId),
+        eventType: "crm_communication_logged",
+        eventCategory: "communication",
+        title: "Communication logged",
+        description: `${COMMUNICATION_METHOD_LABELS[data.method]} with ${customer.displayName}`,
+        metadata: {
+          communicationId: created.id,
+          method: data.method,
+          notePreview: note.substring(0, 100),
+        },
+        userId: eventContext?.userId,
+        userEmail: eventContext?.userEmail,
+      },
+      tx,
+    );
+
+    return created;
   });
-
-  return created;
 }

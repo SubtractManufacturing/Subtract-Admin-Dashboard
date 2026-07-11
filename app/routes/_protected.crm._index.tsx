@@ -120,7 +120,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const eventContext: CrmEventContext = {
     userId: user.id,
-    userEmail: user.email || userDetails?.name || undefined,
+    userEmail: user.email || userDetails?.email || undefined,
   };
 
   try {
