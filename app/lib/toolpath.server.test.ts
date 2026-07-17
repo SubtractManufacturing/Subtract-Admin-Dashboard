@@ -60,11 +60,14 @@ describe("toolpath.server", () => {
   });
 
   it("reports whether Toolpath is configured", async () => {
+    const { clearEnvCache } = await import("./env.server");
+    clearEnvCache();
     const { isToolpathEnabled } = await import("./toolpath.server");
 
     expect(isToolpathEnabled()).toBe(true);
 
     delete process.env.TOOLPATH_API_KEY;
+    clearEnvCache();
 
     expect(isToolpathEnabled()).toBe(false);
   });

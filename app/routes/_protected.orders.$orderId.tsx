@@ -77,6 +77,7 @@ import {
   deleteFile,
   getDownloadUrl,
 } from "~/lib/s3.server";
+import { getEnv } from "~/lib/env.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import Button from "~/components/shared/Button";
@@ -940,7 +941,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               const [attachment] = await db
                 .insert(attachments)
                 .values({
-                  s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                  s3Bucket: getEnv("S3_BUCKET") || "default-bucket",
                   s3Key: drawingUpload.key,
                   fileName: drawing.name,
                   contentType: drawing.type || "application/pdf",
@@ -1804,7 +1805,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
               const [attachment] = await db
                 .insert(attachments)
                 .values({
-                  s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                  s3Bucket: getEnv("S3_BUCKET") || "default-bucket",
                   s3Key: uploadResult.key,
                   fileName: drawing.name,
                   contentType: drawing.type || "application/pdf",

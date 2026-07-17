@@ -1,4 +1,4 @@
-import { createServerClient } from "./supabase";
+import { createServerClient } from "./supabase.server";
 import { redirect } from "@remix-run/node";
 import { ensureUserExists } from "./users";
 

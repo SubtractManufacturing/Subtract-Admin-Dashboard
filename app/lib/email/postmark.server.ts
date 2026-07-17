@@ -1,8 +1,9 @@
 import type { SentEmail } from "../db/schema";
+import { getEnv } from "../env.server";
 
 const SERVER_TOKEN =
-  process.env.POSTMARK_SERVER_TOKEN ?? process.env.POSTMARK_API_TOKEN;
-const MESSAGE_STREAM = process.env.POSTMARK_MESSAGE_STREAM;
+  getEnv("POSTMARK_SERVER_TOKEN") ?? getEnv("POSTMARK_API_TOKEN");
+const MESSAGE_STREAM = getEnv("POSTMARK_MESSAGE_STREAM");
 
 /** Avoid hanging indefinitely when outbound HTTPS to Postmark is blocked or stalled. */
 const POSTMARK_REQUEST_TIMEOUT_MS = 60_000;

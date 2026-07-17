@@ -4,6 +4,8 @@
  * Service is completely optional - app works without it
  */
 
+import { getEnv } from "./env.server";
+
 export interface ConversionResponse {
   job_id: string;
   status: "pending" | "in_progress" | "completed" | "failed";
@@ -30,9 +32,9 @@ export interface SupportedFormats {
 }
 
 // Environment configuration
-const CONVERSION_API_URL = process.env.CONVERSION_API_URL;
-const CONVERSION_API_TIMEOUT = parseInt(process.env.CONVERSION_API_TIMEOUT || "60000");
-const CONVERSION_POLLING_INTERVAL = parseInt(process.env.CONVERSION_POLLING_INTERVAL || "2000");
+const CONVERSION_API_URL = getEnv("CONVERSION_API_URL");
+const CONVERSION_API_TIMEOUT = parseInt(getEnv("CONVERSION_API_TIMEOUT") || "60000");
+const CONVERSION_POLLING_INTERVAL = parseInt(getEnv("CONVERSION_POLLING_INTERVAL") || "2000");
 
 /**
  * Create a timeout wrapper for fetch requests
