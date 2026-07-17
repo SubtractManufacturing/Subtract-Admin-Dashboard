@@ -20,6 +20,7 @@ type Props = {
   onClose: () => void;
   customers: CustomerOption[];
   defaultCustomerId?: number | null;
+  lockCustomer?: boolean;
 };
 
 export default function LogCommunicationModal({
@@ -27,6 +28,7 @@ export default function LogCommunicationModal({
   onClose,
   customers,
   defaultCustomerId = null,
+  lockCustomer = false,
 }: Props) {
   const fetcher = useFetcher<{ error?: string; success?: boolean }>();
   const [customerId, setCustomerId] = useState(
@@ -83,19 +85,31 @@ export default function LogCommunicationModal({
         <input type="hidden" name="intent" value="create" />
         <input type="hidden" name="customerId" value={customerId} />
 
-        <SearchableSelect
-          label="Customer"
-          value={customerId}
-          onChange={setCustomerId}
-          options={customers.map((customer) => ({
-            value: customer.id.toString(),
-            label: customer.displayName,
-            secondaryLabel: customer.email || undefined,
-          }))}
-          placeholder="Search for a customer..."
-          required
-          emptyMessage="No customers found"
-        />
+        {lockCustomer ? (
+          <div>
+            <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Customer
+            </span>
+            <p className="text-sm text-gray-900 dark:text-gray-100">
+              {customers.find((c) => c.id === defaultCustomerId)?.displayName ??
+                "—"}
+            </p>
+          </div>
+        ) : (
+          <SearchableSelect
+            label="Customer"
+            value={customerId}
+            onChange={setCustomerId}
+            options={customers.map((customer) => ({
+              value: customer.id.toString(),
+              label: customer.displayName,
+              secondaryLabel: customer.email || undefined,
+            }))}
+            placeholder="Search for a customer..."
+            required
+            emptyMessage="No customers found"
+          />
+        )}
 
         <div>
           <label

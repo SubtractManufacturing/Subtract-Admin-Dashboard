@@ -106,4 +106,19 @@ describe("LogCommunicationModal", () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("hides customer select when lockCustomer is true", () => {
+    render(
+      <LogCommunicationModal
+        isOpen={true}
+        onClose={() => {}}
+        customers={customers}
+        defaultCustomerId={1}
+        lockCustomer
+      />,
+    );
+
+    expect(screen.getByText("Acme")).toBeInTheDocument();
+    expect(screen.queryByText("Search for a customer...")).not.toBeInTheDocument();
+  });
 });
