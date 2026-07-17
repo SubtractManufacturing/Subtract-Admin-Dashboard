@@ -6,6 +6,13 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.6.3](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.6.2...v1.6.3) (2026-07-17)
+
+
+### Bug Fixes
+
+* crm fixes and new feat ([21d25c8](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/21d25c8b18a2a92c6b5b0a1c18c199c796854b23))
+
 ## [1.6.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.6.1...v1.6.2) (2026-07-11)
 
 
