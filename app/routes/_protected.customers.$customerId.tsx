@@ -1,7 +1,7 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/react";
 import { useState, useEffect, type ReactElement } from "react";
-import { Eye, FileText } from "lucide-react";
+import { Eye } from "lucide-react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerQuotes, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext, type CustomerQuote } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
@@ -28,7 +28,10 @@ import {
 import { HiddenThumbnailGenerator } from "~/components/HiddenThumbnailGenerator";
 import { EventTimeline } from "~/components/EventTimeline";
 import { getEventsByEntity } from "~/lib/events";
+import { listCustomerCommunications } from "~/lib/crm";
 import { statusStyles } from "~/utils/tw-styles";
+import CustomerCommunicationsSection from "~/components/crm/CustomerCommunicationsSection";
+import LogCommunicationModal from "~/components/crm/LogCommunicationModal";
 
 type CustomerOrder = {
   id: number;
@@ -57,7 +60,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
 
   // Get customer data in parallel
-  const [orders, quotes, stats, notes, rawParts, canUploadMesh, events, canRevise, bananaEnabled] = await Promise.all([
+  const [orders, quotes, stats, notes, rawParts, canUploadMesh, events, canRevise, bananaEnabled, communicationsResult] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerQuotes(customer.id),
     getCustomerStats(customer.id),
@@ -67,6 +70,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     getEventsByEntity("customer", customer.id.toString(), 10),
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
+    listCustomerCommunications({ customerId: customer.id, pageSize: 5 }),
   ]);
 
   // Get banana model URL if feature is enabled
@@ -148,7 +152,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   );
 
   return withAuthHeaders(
-    json({ customer, orders, quotes, stats, notes, parts: partsWithSignedUrls, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl }),
+    json({
+      customer,
+      orders,
+      quotes,
+      stats,
+      notes,
+      parts: partsWithSignedUrls,
+      user,
+      userDetails,
+      canUploadMesh,
+      events,
+      canRevise,
+      bananaEnabled,
+      bananaModelUrl,
+      communications: communicationsResult.items,
+      communicationsTotalCount: communicationsResult.totalCount,
+    }),
     headers
   );
 }
@@ -716,7 +736,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl } = useLoaderData<typeof loader>();
+  const { customer, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl, communications, communicationsTotalCount } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/customers/${customer.id}`
     : undefined;
@@ -728,6 +748,7 @@ export default function CustomerDetails() {
   const [showCompletedOrders, setShowCompletedOrders] = useState(true);
   const [showExpiredQuotes, setShowExpiredQuotes] = useState(true);
   const [isAddingNote, setIsAddingNote] = useState(false);
+  const [isLogCommunicationOpen, setIsLogCommunicationOpen] = useState(false);
   const [partsModalOpen, setPartsModalOpen] = useState(false);
   const [selectedPart, setSelectedPart] = useState<Part | null>(null);
   const [partsMode, setPartsMode] = useState<"create" | "edit">("create");
@@ -1519,8 +1540,7 @@ export default function CustomerDetails() {
           {/* Quote History */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <FileText className="w-5 h-5" />
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
                 Quote History
               </h3>
               <ToggleSlider
@@ -1706,6 +1726,13 @@ export default function CustomerDetails() {
             />
           </div>
 
+          <CustomerCommunicationsSection
+            items={communications}
+            totalCount={communicationsTotalCount}
+            customerId={customer.id}
+            onLogClick={() => setIsLogCommunicationOpen(true)}
+          />
+
           <AttachmentsSection
             attachments={customer.attachments || []}
             entityType="customer"
@@ -1880,6 +1907,21 @@ export default function CustomerDetails() {
           </div>
         </div>
       </div>
+
+      {/* Log Communication Modal */}
+      <LogCommunicationModal
+        isOpen={isLogCommunicationOpen}
+        onClose={() => setIsLogCommunicationOpen(false)}
+        customers={[
+          {
+            id: customer.id,
+            displayName: customer.displayName,
+            email: customer.email,
+          },
+        ]}
+        defaultCustomerId={customer.id}
+        lockCustomer
+      />
 
       {/* Parts Modal */}
       <PartsModal

@@ -1,5 +1,5 @@
 import { useFetcher } from "@remix-run/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Modal from "~/components/shared/Modal";
 import Button from "~/components/shared/Button";
 import SearchableSelect from "~/components/shared/SearchableSelect";
@@ -20,6 +20,7 @@ type Props = {
   onClose: () => void;
   customers: CustomerOption[];
   defaultCustomerId?: number | null;
+  lockCustomer?: boolean;
 };
 
 export default function LogCommunicationModal({
@@ -27,6 +28,7 @@ export default function LogCommunicationModal({
   onClose,
   customers,
   defaultCustomerId = null,
+  lockCustomer = false,
 }: Props) {
   const fetcher = useFetcher<{ error?: string; success?: boolean }>();
   const [customerId, setCustomerId] = useState(
@@ -34,20 +36,34 @@ export default function LogCommunicationModal({
   );
   const [method, setMethod] = useState<CommunicationMethod | "">("");
   const [note, setNote] = useState("");
+  // Remix keeps fetcher.data after success; only close for a submit in this open session.
+  const submittedThisOpenRef = useRef(false);
 
   useEffect(() => {
-    if (isOpen) {
-      setCustomerId(defaultCustomerId ? String(defaultCustomerId) : "");
-      setMethod("");
-      setNote("");
-    }
+    if (!isOpen) return;
+    setCustomerId(defaultCustomerId ? String(defaultCustomerId) : "");
+    setMethod("");
+    setNote("");
   }, [isOpen, defaultCustomerId]);
 
   useEffect(() => {
-    if (fetcher.data?.success) {
-      onClose();
+    if (isOpen) {
+      submittedThisOpenRef.current = false;
     }
-  }, [fetcher.data, onClose]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (
+      !isOpen ||
+      !submittedThisOpenRef.current ||
+      fetcher.state !== "idle" ||
+      !fetcher.data?.success
+    ) {
+      return;
+    }
+    submittedThisOpenRef.current = false;
+    onClose();
+  }, [fetcher.data, fetcher.state, isOpen, onClose]);
 
   const isSubmitting = fetcher.state !== "idle";
 
@@ -58,23 +74,42 @@ export default function LogCommunicationModal({
       title="Log Communication"
       size="md"
     >
-      <fetcher.Form method="post" action="/crm" className="space-y-4">
+      <fetcher.Form
+        method="post"
+        action="/crm"
+        className="space-y-4"
+        onSubmit={() => {
+          submittedThisOpenRef.current = true;
+        }}
+      >
         <input type="hidden" name="intent" value="create" />
         <input type="hidden" name="customerId" value={customerId} />
 
-        <SearchableSelect
-          label="Customer"
-          value={customerId}
-          onChange={setCustomerId}
-          options={customers.map((customer) => ({
-            value: customer.id.toString(),
-            label: customer.displayName,
-            secondaryLabel: customer.email || undefined,
-          }))}
-          placeholder="Search for a customer..."
-          required
-          emptyMessage="No customers found"
-        />
+        {lockCustomer ? (
+          <div>
+            <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Customer
+            </span>
+            <p className="text-sm text-gray-900 dark:text-gray-100">
+              {customers.find((c) => c.id === defaultCustomerId)?.displayName ??
+                "—"}
+            </p>
+          </div>
+        ) : (
+          <SearchableSelect
+            label="Customer"
+            value={customerId}
+            onChange={setCustomerId}
+            options={customers.map((customer) => ({
+              value: customer.id.toString(),
+              label: customer.displayName,
+              secondaryLabel: customer.email || undefined,
+            }))}
+            placeholder="Search for a customer..."
+            required
+            emptyMessage="No customers found"
+          />
+        )}
 
         <div>
           <label
