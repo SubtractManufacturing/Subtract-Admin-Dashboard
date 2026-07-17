@@ -1,7 +1,7 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/react";
 import { useState, useEffect, type ReactElement } from "react";
-import { Eye, FileText } from "lucide-react";
+import { Eye } from "lucide-react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerQuotes, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext, type CustomerQuote } from "~/lib/customers";
 import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
@@ -1540,8 +1540,7 @@ export default function CustomerDetails() {
           {/* Quote History */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
             <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <FileText className="w-5 h-5" />
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">
                 Quote History
               </h3>
               <ToggleSlider
