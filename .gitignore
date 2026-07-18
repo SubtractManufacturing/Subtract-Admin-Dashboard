@@ -3,6 +3,8 @@ node_modules
 /.cache
 /build
 .env
+.env.bak
+.secrets/
 # Python bytecode
 __pycache__/
 *.py[cod]
@@ -129,9 +131,3 @@ CLAUDE.md
 
 /planning
 /logs
-/scripts
-!/scripts/
-/scripts/*
-!/scripts/worker.ts
-!/scripts/prepare-husky.mjs
-!/scripts/build-worker.mjs
