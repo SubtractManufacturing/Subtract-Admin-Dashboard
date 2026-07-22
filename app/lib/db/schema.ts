@@ -85,6 +85,7 @@ export const attachmentDocumentKindEnum = pgEnum("attachment_document_kind", [
   "invoice",
   "purchase_order",
   "packing_slip",
+  "order_confirmation",
 ]);
 
 export const communicationMethodEnum = pgEnum("communication_method", [

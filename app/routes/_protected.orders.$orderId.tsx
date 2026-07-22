@@ -78,6 +78,7 @@ import {
   getDownloadUrl,
 } from "~/lib/s3.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
+import { resolveInvoiceGenerationMeta } from "~/lib/invoice-pdf-output";
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -1625,18 +1626,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
       case "generateInvoice": {
         const htmlContent = formData.get("htmlContent") as string;
+        const presetId = formData.get("presetId") as string | null;
 
         if (!htmlContent) {
           return json({ error: "Missing HTML content" }, { status: 400 });
         }
 
         try {
+          const { documentKind, filename } = resolveInvoiceGenerationMeta(
+            presetId,
+            order.orderNumber,
+          );
+
           const { attachmentId } = await generateDocumentPdf({
             entityType: "order",
             entityId: order.id,
             htmlContent,
-            filename: `Invoice-${order.orderNumber}.pdf`,
-            documentKind: "invoice",
+            filename,
+            documentKind,
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
           });
@@ -1659,7 +1666,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             success: true,
             downloadUrl,
             attachmentId,
-            filename: `Invoice-${order.orderNumber}.pdf`,
+            filename,
           });
         } catch (pdfError) {
           console.error("PDF generation failed:", pdfError);
@@ -2107,7 +2114,7 @@ export default function OrderDetails() {
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
   const [invoiceModalSource, setInvoiceModalSource] = useState<
-    "standard" | "order_confirmation"
+    "standard" | "confirmation_invoice" | "confirmation_order_confirmation"
   >("standard");
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
@@ -3814,12 +3821,14 @@ export default function OrderDetails() {
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
         initialPresetId={
-          invoiceModalSource === "order_confirmation" ? "paid" : "default"
+          invoiceModalSource === "confirmation_invoice"
+            ? "paid"
+            : invoiceModalSource === "confirmation_order_confirmation"
+              ? "order_confirmation"
+              : "default"
         }
         autoDownload={
-          invoiceModalSource === "order_confirmation"
-            ? false
-            : pdfAutoDownload
+          invoiceModalSource === "standard" ? pdfAutoDownload : false
         }
       />
 
@@ -3867,7 +3876,12 @@ export default function OrderDetails() {
           }
           onRequestGenerateForDocumentKind={(kind) => {
             if (kind === "invoice") {
-              setInvoiceModalSource("order_confirmation");
+              setInvoiceModalSource("confirmation_invoice");
+              setIsInvoiceModalOpen(true);
+              return;
+            }
+            if (kind === "order_confirmation") {
+              setInvoiceModalSource("confirmation_order_confirmation");
               setIsInvoiceModalOpen(true);
               return;
             }
@@ -3880,6 +3894,7 @@ export default function OrderDetails() {
             }
           }}
           invoiceGenerateDisabled={!order.customerId}
+          orderConfirmationGenerateDisabled={!order.customerId}
           purchaseOrderGenerateDisabled={!order.vendorId}
           packingSlipGenerateDisabled={!order.customerId}
         />

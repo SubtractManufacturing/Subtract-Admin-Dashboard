@@ -52,6 +52,8 @@ interface PdfGenerationModalProps {
   headerNotice?: ReactNode;
   autoDownload?: boolean;
   intent: string;
+  /** Extra FormData fields sent with generate (e.g. presetId). Not included in PDF HTML. */
+  formFields?: Record<string, string>;
 }
 
 /**
@@ -68,6 +70,7 @@ export default function PdfGenerationModal({
   headerNotice,
   autoDownload = true,
   intent,
+  formFields,
 }: PdfGenerationModalProps) {
   const templateRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -146,6 +149,11 @@ export default function PdfGenerationModal({
       const formData = new FormData();
       formData.append("htmlContent", htmlContent);
       formData.append("intent", intent);
+      if (formFields) {
+        for (const [key, value] of Object.entries(formFields)) {
+          formData.append(key, value);
+        }
+      }
 
       // Determine the route name based on the endpoint
       let routeName = "";

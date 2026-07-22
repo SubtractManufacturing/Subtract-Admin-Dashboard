@@ -41,11 +41,12 @@ type EditableSlot = {
 type SendQueueDelivery = "queued" | "awaiting_approval";
 
 /** Kinds the order page can create via PDF modals (see Generate*PdfModal on order route). */
-const ORDER_PDF_GENERATABLE_KINDS: readonly AttachmentDocumentKind[] = [
+const ORDER_PDF_GENERATABLE_KINDS = [
   "invoice",
+  "order_confirmation",
   "purchase_order",
   "packing_slip",
-];
+] as const satisfies readonly AttachmentDocumentKind[];
 
 function isGeneratableOnOrderPage(
   kind: AttachmentDocumentKind,
@@ -59,12 +60,13 @@ function generateButtonText(
   switch (kind) {
     case "invoice":
       return "Generate invoice";
+    case "order_confirmation":
+      return "Generate order confirmation";
     case "purchase_order":
       return "Generate purchase order";
     case "packing_slip":
       return "Generate packing slip";
   }
-  return "Generate";
 }
 
 /** Outbound order confirmation: registry ~/lib/email/email-context-registry (ORDER_CONFIRMATION) */
@@ -79,12 +81,14 @@ interface SendOrderConfirmationModalProps {
   editableSlots: EditableSlot[];
   requiredAttachmentDocumentKinds: AttachmentDocumentKind[];
   /**
-   * Opens the matching in-app PDF flow (invoice, purchase order, packing slip).
+   * Opens the matching in-app PDF flow (invoice, order confirmation, purchase order, packing slip).
    * Quote PDFs are not generated on the order page — use upload or existing attachments.
    */
   onRequestGenerateForDocumentKind?: (kind: AttachmentDocumentKind) => void;
   /** No customer — invoice / packing slip generation unavailable */
   invoiceGenerateDisabled?: boolean;
+  /** No customer — order confirmation PDF generation unavailable */
+  orderConfirmationGenerateDisabled?: boolean;
   /** No vendor — purchase order generation unavailable */
   purchaseOrderGenerateDisabled?: boolean;
   /** No customer — packing slip generation unavailable */
@@ -205,6 +209,7 @@ export default function SendOrderConfirmationModal({
   requiredAttachmentDocumentKinds,
   onRequestGenerateForDocumentKind,
   invoiceGenerateDisabled = false,
+  orderConfirmationGenerateDisabled = false,
   purchaseOrderGenerateDisabled = false,
   packingSlipGenerateDisabled = false,
 }: SendOrderConfirmationModalProps) {
@@ -448,6 +453,9 @@ export default function SendOrderConfirmationModal({
         return true;
       }
       if (kind === "invoice" && invoiceGenerateDisabled) return true;
+      if (kind === "order_confirmation" && orderConfirmationGenerateDisabled) {
+        return true;
+      }
       if (kind === "purchase_order" && purchaseOrderGenerateDisabled) return true;
       if (kind === "packing_slip" && packingSlipGenerateDisabled) return true;
       return false;
@@ -455,6 +463,7 @@ export default function SendOrderConfirmationModal({
     [
       onRequestGenerateForDocumentKind,
       invoiceGenerateDisabled,
+      orderConfirmationGenerateDisabled,
       purchaseOrderGenerateDisabled,
       packingSlipGenerateDisabled,
     ],
@@ -463,6 +472,9 @@ export default function SendOrderConfirmationModal({
   const generateDisabledTitle = (kind: AttachmentDocumentKind) => {
     if (kind === "invoice" && invoiceGenerateDisabled) {
       return "Invoices require a customer on the order";
+    }
+    if (kind === "order_confirmation" && orderConfirmationGenerateDisabled) {
+      return "Order confirmations require a customer on the order";
     }
     if (kind === "purchase_order" && purchaseOrderGenerateDisabled) {
       return "Purchase orders require a vendor on the order";
