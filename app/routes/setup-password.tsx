@@ -1,7 +1,7 @@
 import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
 import { Form, useActionData, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createServerClient } from "~/lib/supabase";
+import { createServerClient } from "~/lib/supabase.server";
 import { withAuthHeaders } from "~/lib/auth.server";
 import { styles, formStyles } from "~/utils/tw-styles";
 import {

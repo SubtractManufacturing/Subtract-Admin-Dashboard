@@ -1,5 +1,5 @@
 import { ActionFunctionArgs, redirect } from "@remix-run/node";
-import { createServerClient } from "~/lib/supabase";
+import { createServerClient } from "~/lib/supabase.server";
 import { withAuthHeaders } from "~/lib/auth.server";
 
 export async function action({ request }: ActionFunctionArgs) {

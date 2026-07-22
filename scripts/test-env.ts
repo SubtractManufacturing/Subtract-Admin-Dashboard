@@ -11,7 +11,7 @@ if (process.env.DATABASE_URL) {
   console.log('DATABASE_URL points to:', isLocalhost ? 'localhost (incorrect for Supabase)' : 'remote database (correct)');
   
   // Show just the host part (safe to display)
-  const match = process.env.DATABASE_URL.match(/postgresql:\/\/[^@]+@([^:\/]+)/);
+  const match = process.env.DATABASE_URL.match(/postgresql:\/\/[^@]+@([^:/]+)/);
   if (match) {
     console.log('Database host:', match[1]);
   }

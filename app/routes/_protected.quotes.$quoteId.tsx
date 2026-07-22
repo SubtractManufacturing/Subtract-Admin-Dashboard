@@ -58,6 +58,7 @@ import {
   getDownloadUrl,
   extractS3Key,
 } from "~/lib/s3.server";
+import { getEnv } from "~/lib/env.server";
 import {
   getBananaModelUrls,
   getPlaceholderPartUrls,
@@ -688,7 +689,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             const [attachment] = await db
               .insert(attachments)
               .values({
-                s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                s3Bucket: getEnv("S3_BUCKET") || "default-bucket",
                 s3Key: drawingUploadResult.key,
                 fileName: file.name,
                 contentType: drawingContentType,
@@ -747,7 +748,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   const [att2] = await db
                     .insert(attachments)
                     .values({
-                      s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                      s3Bucket: getEnv("S3_BUCKET") || "default-bucket",
                       s3Key: dUpload.key,
                       fileName: drawing.name,
                       contentType: ct,
@@ -884,7 +885,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
                   const [attachment] = await db
                     .insert(attachments)
                     .values({
-                      s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                      s3Bucket: getEnv("S3_BUCKET") || "default-bucket",
                       s3Key: drawingUploadResult.key,
                       fileName: drawing.name,
                       contentType: drawing.type || "application/pdf",
@@ -1061,7 +1062,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             const [attachment] = await db
               .insert(attachments)
               .values({
-                s3Bucket: process.env.S3_BUCKET || "default-bucket",
+                s3Bucket: getEnv("S3_BUCKET") || "default-bucket",
                 s3Key: drawingUploadResult.key,
                 fileName: drawing.name,
                 contentType: drawing.type || "application/pdf",

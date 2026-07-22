@@ -45,6 +45,7 @@ import {
 import { createEvent } from "./events.js";
 import { isFeatureEnabled, FEATURE_FLAGS } from "./featureFlags.js";
 import { uploadFile, copyFile } from "./s3.server.js";
+import { getEnv } from "./env.server.js";
 import { triggerQuotePartMeshConversion } from "./quote-part-mesh-converter.server.js";
 import { generatePdfThumbnail, isPdfFile } from "./pdf-thumbnail.server.js";
 import {
@@ -1842,14 +1843,15 @@ export async function createQuoteWithParts(
           }
 
           // Create attachment record
-          if (!process.env.S3_BUCKET) {
+          const s3Bucket = getEnv("S3_BUCKET");
+          if (!s3Bucket) {
             throw new Error("S3_BUCKET environment variable is not configured");
           }
 
           const [attachment] = await db
             .insert(attachments)
             .values({
-              s3Bucket: process.env.S3_BUCKET,
+              s3Bucket,
               s3Key: uploadResult.key,
               fileName: drawing.fileName,
               contentType,

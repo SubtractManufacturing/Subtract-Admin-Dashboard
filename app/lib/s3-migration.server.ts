@@ -9,8 +9,9 @@ import { getS3Client } from './s3.server'
 import { db } from './db/index'
 import { quoteParts } from './db/schema'
 import { eq, like, and, isNotNull } from 'drizzle-orm'
+import { getEnv } from './env.server'
 
-const S3_BUCKET = process.env.S3_BUCKET || 'subtract-attachments'
+const S3_BUCKET = getEnv('S3_BUCKET') || 'subtract-attachments'
 
 export type MigrationResult = {
   success: boolean

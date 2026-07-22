@@ -6,7 +6,7 @@ async function testConnection() {
   console.log('Testing connection to Supabase...\n');
   
   // Extract host for logging
-  const hostMatch = url.match(/@([^:\/]+)/);
+  const hostMatch = url.match(/@([^:/]+)/);
   if (hostMatch) {
     console.log('Connecting to:', hostMatch[1]);
   }
@@ -32,18 +32,23 @@ async function testConnection() {
     // End connection
     await sql.end();
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('\n❌ Connection failed!');
-    console.error('Error:', error.message);
+    const message = error instanceof Error ? error.message : String(error);
+    const code =
+      error && typeof error === 'object' && 'code' in error
+        ? String((error as { code: unknown }).code)
+        : undefined;
+    console.error('Error:', message);
     
-    if (error.code === 'ENETUNREACH') {
+    if (code === 'ENETUNREACH') {
       console.log('\n💡 Network unreachable. Possible solutions:');
       console.log('1. Check your internet connection');
       console.log('2. Try using a VPN if you\'re behind a restrictive firewall');
       console.log('3. Check if your Supabase project is paused (free tier)');
-    } else if (error.code === 'ENOTFOUND') {
+    } else if (code === 'ENOTFOUND') {
       console.log('\n💡 Host not found. Check your DATABASE_URL');
-    } else if (error.message.includes('password')) {
+    } else if (message.includes('password')) {
       console.log('\n💡 Authentication failed. Check your database password');
     }
   }

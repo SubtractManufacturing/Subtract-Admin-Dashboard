@@ -1,4 +1,5 @@
 import { downloadFromS3 } from "./s3.server";
+import { getEnv } from "./env.server";
 
 const TOOLPATH_API_BASE = "https://app.toolpath.com/api/public/v0";
 /** Toolpath allows one POST /parts every 2 seconds per team. */
@@ -129,7 +130,7 @@ type ToolpathRequestInit = RequestInit & {
 };
 
 export function isToolpathEnabled(): boolean {
-  return !!process.env.TOOLPATH_API_KEY;
+  return !!getEnv("TOOLPATH_API_KEY");
 }
 
 async function parseToolpathError(response: Response): Promise<string> {
@@ -150,7 +151,7 @@ async function toolpathFetch(
   init: ToolpathRequestInit = {},
   options: { pacePartCreation?: boolean } = {},
 ): Promise<Response> {
-  const key = process.env.TOOLPATH_API_KEY;
+  const key = getEnv("TOOLPATH_API_KEY");
   if (!key) throw new Error("Toolpath API not configured");
 
   const method = (init.method ?? "GET").toUpperCase();

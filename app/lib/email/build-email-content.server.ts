@@ -27,6 +27,7 @@ import {
 import { validateMergeTokens } from "~/lib/email/resolve";
 import { resolveActorMergeTokens } from "~/lib/email/resolve/actor-merge.server";
 import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
+import { getEnv } from "~/lib/env.server";
 
 export type BuildEmailContentResult =
   | {
@@ -63,7 +64,7 @@ export function collectBodyCopyStrings(copy: Record<string, unknown>): string[] 
 }
 
 function getPublicAssetUrl(path: string): string {
-  const appUrl = process.env.PUBLIC_APP_URL?.trim();
+  const appUrl = getEnv("PUBLIC_APP_URL")?.trim();
   if (!appUrl) {
     throw new Error("PUBLIC_APP_URL must be configured to render email assets");
   }
