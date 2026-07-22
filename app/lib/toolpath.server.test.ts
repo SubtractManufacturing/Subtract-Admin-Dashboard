@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const downloadFromS3 = vi.fn();
 
@@ -51,6 +51,9 @@ function mockReadyReportPolling(
 }
 
 describe("toolpath.server", () => {
+  const prevToolpathKey = process.env.TOOLPATH_API_KEY;
+  const prevToolpathKeyFile = process.env.TOOLPATH_API_KEY_FILE;
+
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -62,16 +65,27 @@ describe("toolpath.server", () => {
     vi.useRealTimers();
   });
 
+  afterEach(() => {
+    if (prevToolpathKey === undefined) {
+      delete process.env.TOOLPATH_API_KEY;
+    } else {
+      process.env.TOOLPATH_API_KEY = prevToolpathKey;
+    }
+    if (prevToolpathKeyFile === undefined) {
+      delete process.env.TOOLPATH_API_KEY_FILE;
+    } else {
+      process.env.TOOLPATH_API_KEY_FILE = prevToolpathKeyFile;
+    }
+  });
+
   it("reports whether Toolpath is configured", async () => {
-    const [{ isToolpathEnabled }, { clearEnvCache }] = await Promise.all([
-      import("./toolpath.server"),
-      import("./env.server"),
-    ]);
+    const { clearEnvCache } = await import("./env.server");
+    clearEnvCache();
+    const { isToolpathEnabled } = await import("./toolpath.server");
 
     expect(isToolpathEnabled()).toBe(true);
 
     delete process.env.TOOLPATH_API_KEY;
-    delete process.env.TOOLPATH_API_KEY_FILE;
     clearEnvCache();
 
     expect(isToolpathEnabled()).toBe(false);
@@ -509,6 +523,17 @@ describe("toolpath.server", () => {
 });
 
 describe("pollToolpathReportUrl", () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    delete process.env.TOOLPATH_API_KEY_FILE;
+    process.env.TOOLPATH_API_KEY = "tp_test_123";
+    const { clearEnvCache } = await import("./env.server");
+    clearEnvCache();
+    globalThis.fetch = vi.fn();
+    vi.useRealTimers();
+  });
+
   it("returns report URL when part becomes ready", async () => {
     const readyPartBody = {
       data: {

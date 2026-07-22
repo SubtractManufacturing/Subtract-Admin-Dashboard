@@ -80,6 +80,27 @@ Required variables:
 - `NEXT_PUBLIC_SUPABASE_URL` - Supabase URL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabase anonymous key
 
+### File-based secrets (`*_FILE`) for Docker Swarm / Compose
+
+App-owned config is resolved via `getEnv` / `requireEnv` (`app/lib/env.server.ts`).
+For any variable `FOO`, you may set `FOO_FILE` to a path whose contents become the value:
+
+```bash
+# Swarm / Compose secrets (file wins over plain env when FOO_FILE is set)
+DATABASE_URL_FILE=/run/secrets/database_url
+DATABASE_DIRECT_URL_FILE=/run/secrets/database_direct_url
+SUPABASE_SERVICE_ROLE_KEY_FILE=/run/secrets/supabase_service_role_key
+S3_SECRET_ACCESS_KEY_FILE=/run/secrets/s3_secret_access_key
+STRIPE_SECRET_KEY_FILE=/run/secrets/stripe_secret_key
+```
+
+Rules:
+- If `FOO_FILE` is a non-empty path, the file **wins** — there is no fallback to `FOO` if the file is missing, unreadable, or empty.
+- An empty/`""` `FOO_FILE` is an error; unset `FOO_FILE` to use plain `FOO` instead.
+- Local/dev can keep using plain env vars (or `.env`); `*_FILE` is optional.
+
+**Infra follow-up:** production compose lives in `SubtractManufacturing/infra`. Mount Docker secrets and pass `*_FILE=/run/secrets/...` there when adopting Swarm secrets; no compose change is required in this repo for the app helper to work.
+
 ## Container Management
 
 ### View Logs
