@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearEnvCache } from "./env.server";
 
 const downloadFromS3 = vi.fn();
 
@@ -52,21 +51,27 @@ function mockReadyReportPolling(
 }
 
 describe("toolpath.server", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
+    delete process.env.TOOLPATH_API_KEY_FILE;
     process.env.TOOLPATH_API_KEY = "tp_test_123";
+    const { clearEnvCache } = await import("./env.server");
     clearEnvCache();
     globalThis.fetch = vi.fn();
     vi.useRealTimers();
   });
 
   it("reports whether Toolpath is configured", async () => {
-    const { isToolpathEnabled } = await import("./toolpath.server");
+    const [{ isToolpathEnabled }, { clearEnvCache }] = await Promise.all([
+      import("./toolpath.server"),
+      import("./env.server"),
+    ]);
 
     expect(isToolpathEnabled()).toBe(true);
 
     delete process.env.TOOLPATH_API_KEY;
+    delete process.env.TOOLPATH_API_KEY_FILE;
     clearEnvCache();
 
     expect(isToolpathEnabled()).toBe(false);
