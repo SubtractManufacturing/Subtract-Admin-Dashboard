@@ -25,6 +25,7 @@ export type OrderWithRelations = {
   status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   totalPrice: string | null
   vendorPay: string | null
+  poNumber: string | null
   deliveryDate: Date | null
   deliveryDateStart: Date | null
   leadTimeBusinessDaysMin: number | null
@@ -45,6 +46,7 @@ export type OrderInput = {
   status?: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   vendorPay?: string | null
   vendorPayPercentage?: number
+  poNumber?: string | null
   deliveryDate?: Date | null
   leadTime?: number | null
   deliveryDateStart?: Date | null
@@ -69,6 +71,7 @@ export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
+        poNumber: orders.poNumber,
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
@@ -120,6 +123,7 @@ export async function getOrder(id: number): Promise<OrderWithRelations | null> {
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
+        poNumber: orders.poNumber,
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
@@ -155,6 +159,7 @@ export async function getOrderByNumber(orderNumber: string): Promise<OrderWithRe
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
+        poNumber: orders.poNumber,
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
@@ -248,6 +253,7 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
+        poNumber: orders.poNumber,
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
@@ -343,6 +349,14 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       changes.newNotes = restData.notes as string | null;
       changedFields.push('notes');
     }
+    if ('poNumber' in restData) {
+      const newPo = restData.poNumber ?? null;
+      const oldPo = currentOrder.poNumber ?? null;
+      if (newPo !== oldPo) {
+        changes.poNumber = { old: oldPo, new: newPo };
+        changedFields.push('poNumber');
+      }
+    }
 
     // Log specific status change event for better visibility
     if (orderData.status && orderData.status !== currentOrder.status) {
@@ -412,6 +426,7 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
+        poNumber: orders.poNumber,
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
