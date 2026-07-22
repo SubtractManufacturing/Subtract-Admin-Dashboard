@@ -84,6 +84,7 @@ export const attachmentDocumentKindEnum = pgEnum("attachment_document_kind", [
   "quote",
   "invoice",
   "purchase_order",
+  "customer_purchase_order",
   "packing_slip",
   "order_confirmation",
 ]);
@@ -238,6 +239,8 @@ export const orders = pgTable("orders", {
   status: orderStatusEnum("status").default("Pending").notNull(),
   totalPrice: numeric("total_price", { precision: 10, scale: 2 }),
   vendorPay: numeric("vendor_pay", { precision: 10, scale: 2 }),
+  /** Customer purchase order number (inbound); distinct from vendor-generated PO PDFs. */
+  poNumber: text("po_number"),
   deliveryDate: timestamp("delivery_date"),
   deliveryDateStart: timestamp("delivery_date_start"),
   leadTimeBusinessDaysMin: integer("lead_time_business_days_min"),
