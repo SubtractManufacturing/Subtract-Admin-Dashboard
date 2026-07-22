@@ -222,6 +222,16 @@ export function formatEventForTimeline(event: EventLog): {
     };
   }
 
+  if (event.eventType === "customer_po_received") {
+    const poNumber = metadata?.poNumber;
+    return {
+      title: "Customer PO Received",
+      description: poNumber
+        ? `PO ${poNumber}${metadata?.orderNumber ? ` → Order #${metadata.orderNumber}` : ""}`
+        : event.description,
+    };
+  }
+
   // Handle financial events
   if (event.eventCategory === "financial") {
     if (event.title.includes("Invoice")) {

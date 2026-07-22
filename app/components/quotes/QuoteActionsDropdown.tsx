@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { FileCheck } from "lucide-react";
 import { ToolpathIcon } from "~/components/icons/ToolpathIcon";
 
 interface QuoteActionsDropdownProps {
@@ -12,6 +13,7 @@ interface QuoteActionsDropdownProps {
   onDownloadFiles?: () => void;
   onGeneratePdf?: () => void;
   onGenerateInvoice?: () => void;
+  onReceivePo?: () => void;
   onOpenToolpath?: () => void;
   isToolpathDisabled?: boolean;
   toolpathDisabledReason?: string;
@@ -32,6 +34,7 @@ export default function QuoteActionsDropdown({
   onDownloadFiles,
   onGeneratePdf,
   onGenerateInvoice,
+  onReceivePo,
   onOpenToolpath,
   isToolpathDisabled = false,
   toolpathDisabledReason,
@@ -68,6 +71,7 @@ export default function QuoteActionsDropdown({
     quoteStatus
   );
   const canCalculate = ["Draft", "RFQ"].includes(quoteStatus);
+  const canReceivePo = quoteStatus === "Sent" && !!onReceivePo;
 
   const actionButtons = [
     ...(canCalculate && onCalculatePricing
@@ -239,6 +243,18 @@ export default function QuoteActionsDropdown({
               onClose();
             },
             disabled: !hasCustomer,
+          },
+        ]
+      : []),
+    ...(canReceivePo
+      ? [
+          {
+            icon: <FileCheck className="w-5 h-5" />,
+            label: "Receive PO",
+            onClick: () => {
+              onReceivePo();
+              onClose();
+            },
           },
         ]
       : []),

@@ -15,6 +15,10 @@ import {
   type OrderEventContext,
   type OrderInput,
 } from "~/lib/orders";
+import {
+  resolveInvoiceModalInitialPresetId,
+  resolveInvoiceGenerationMeta,
+} from "~/lib/invoice-pdf-output";
 import { getCustomer } from "~/lib/customers";
 import { getVendor, getVendors } from "~/lib/vendors";
 import {
@@ -79,6 +83,7 @@ import {
 } from "~/lib/s3.server";
 import { getEnv } from "~/lib/env.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
+
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -1388,6 +1393,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const deliveryDate = formData.get("deliveryDate") as string | null;
         const leadTime = formData.get("leadTime") as string | null;
         const vendorPay = formData.get("vendorPay") as string | null;
+        const poNumberRaw = formData.get("poNumber");
+        const poNumberProvided = poNumberRaw !== null;
 
         const orderEventContext: OrderEventContext = {
           userId: user?.id,
@@ -1407,6 +1414,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
           updates.leadTime = parseInt(leadTime);
         }
         if (vendorPay) updates.vendorPay = vendorPay;
+        if (poNumberProvided) {
+          const trimmed = String(poNumberRaw).trim();
+          updates.poNumber = trimmed || null;
+        }
 
         await updateOrder(order.id, updates, orderEventContext);
 
@@ -1626,18 +1637,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
       case "generateInvoice": {
         const htmlContent = formData.get("htmlContent") as string;
+        const presetId = formData.get("presetId") as string | null;
 
         if (!htmlContent) {
           return json({ error: "Missing HTML content" }, { status: 400 });
         }
 
         try {
+          const { documentKind, filename } = resolveInvoiceGenerationMeta(
+            presetId,
+            order.orderNumber,
+          );
+
           const { attachmentId } = await generateDocumentPdf({
             entityType: "order",
             entityId: order.id,
             htmlContent,
-            filename: `Invoice-${order.orderNumber}.pdf`,
-            documentKind: "invoice",
+            filename,
+            documentKind,
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
           });
@@ -1660,7 +1677,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
             success: true,
             downloadUrl,
             attachmentId,
-            filename: `Invoice-${order.orderNumber}.pdf`,
+            filename,
           });
         } catch (pdfError) {
           console.error("PDF generation failed:", pdfError);
@@ -2088,6 +2105,7 @@ export default function OrderDetails() {
     leadTime: "",
     vendorPayDollar: "",
     vendorPayPercent: "",
+    poNumber: "",
   });
   const lineItemFetcher = useFetcher();
   const directShipPendingRef = useRef(false);
@@ -2108,7 +2126,7 @@ export default function OrderDetails() {
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isPOModalOpen, setIsPOModalOpen] = useState(false);
   const [invoiceModalSource, setInvoiceModalSource] = useState<
-    "standard" | "order_confirmation"
+    "standard" | "confirmation_invoice" | "confirmation_order_confirmation"
   >("standard");
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isPackingSlipModalOpen, setIsPackingSlipModalOpen] = useState(false);
@@ -2807,6 +2825,7 @@ export default function OrderDetails() {
       vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
       vendorPayPercent:
         vendorPayPercentCalc > 0 ? vendorPayPercentCalc.toFixed(1) : "",
+      poNumber: order.poNumber || "",
     });
     setEditOrderModalOpen(true);
   };
@@ -2838,6 +2857,8 @@ export default function OrderDetails() {
       // Default to 0 if invalid
       formData.append("vendorPay", "0.00");
     }
+
+    formData.append("poNumber", editOrderForm.poNumber.trim());
 
     orderEditFetcher.submit(formData, { method: "post" });
     setEditOrderModalOpen(false);
@@ -3347,6 +3368,16 @@ export default function OrderDetails() {
                       {order.orderNumber}
                     </p>
                   </div>
+                  {order.poNumber ? (
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                        PO Number
+                      </p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">
+                        {order.poNumber}
+                      </p>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                       Order Date
@@ -3814,13 +3845,12 @@ export default function OrderDetails() {
         entity={order}
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
-        initialPresetId={
-          invoiceModalSource === "order_confirmation" ? "paid" : "default"
-        }
+        initialPresetId={resolveInvoiceModalInitialPresetId(
+          invoiceModalSource,
+          order.poNumber,
+        )}
         autoDownload={
-          invoiceModalSource === "order_confirmation"
-            ? false
-            : pdfAutoDownload
+          invoiceModalSource === "standard" ? pdfAutoDownload : false
         }
       />
 
@@ -3868,7 +3898,12 @@ export default function OrderDetails() {
           }
           onRequestGenerateForDocumentKind={(kind) => {
             if (kind === "invoice") {
-              setInvoiceModalSource("order_confirmation");
+              setInvoiceModalSource("confirmation_invoice");
+              setIsInvoiceModalOpen(true);
+              return;
+            }
+            if (kind === "order_confirmation") {
+              setInvoiceModalSource("confirmation_order_confirmation");
               setIsInvoiceModalOpen(true);
               return;
             }
@@ -3881,6 +3916,7 @@ export default function OrderDetails() {
             }
           }}
           invoiceGenerateDisabled={!order.customerId}
+          orderConfirmationGenerateDisabled={!order.customerId}
           purchaseOrderGenerateDisabled={!order.vendorId}
           packingSlipGenerateDisabled={!order.customerId}
         />
@@ -4049,6 +4085,28 @@ export default function OrderDetails() {
             </div>
 
             <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="po-number-input"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  PO Number
+                </label>
+                <input
+                  id="po-number-input"
+                  type="text"
+                  value={editOrderForm.poNumber}
+                  onChange={(e) =>
+                    setEditOrderForm({
+                      ...editOrderForm,
+                      poNumber: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  placeholder="Customer PO number (optional)"
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Delivery Date

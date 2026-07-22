@@ -110,6 +110,7 @@ pgdata/
 *~
 
 # Secrets
+.secrets/
 *.pem
 *.key
 secrets.json
@@ -125,9 +126,6 @@ CLAUDE.md
 
 .cursorrules
 .cursor
-.agents
-
-.agents
 
 /planning
 /logs

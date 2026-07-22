@@ -8,6 +8,8 @@ import {
   commonPdfStyles,
   type PdfPresetOption,
 } from "~/lib/pdf-utils";
+import { getInvoiceDocumentTitle } from "~/lib/invoice-pdf-output";
+import { normalizePoNumber } from "~/lib/customer-po";
 import {
   extractBillingAddress,
   extractShippingAddress,
@@ -17,9 +19,16 @@ import {
 export const INVOICE_PDF_PRESETS = [
   { id: "default", label: "Default" },
   { id: "paid", label: "Paid" },
+  { id: "order_confirmation", label: "Order Confirmation" },
 ] as const satisfies readonly PdfPresetOption[];
 
 export type InvoicePdfPresetId = (typeof INVOICE_PDF_PRESETS)[number]["id"];
+
+/** Presets available when generating from an order (includes order confirmation). */
+export function invoicePresetsForEntity(isOrder: boolean) {
+  if (isOrder) return INVOICE_PDF_PRESETS;
+  return INVOICE_PDF_PRESETS.filter((p) => p.id !== "order_confirmation");
+}
 
 type InvoicePresetFields = {
   amountPaidDisplay: string;
@@ -33,7 +42,7 @@ type InvoicePresetFields = {
 };
 
 /** Initial field values for a preset; extend with new cases when adding presets. */
-function getInvoicePresetFields(
+export function getInvoicePresetFields(
   presetId: InvoicePdfPresetId,
   ctx: {
     total: number;
@@ -54,6 +63,15 @@ function getInvoicePresetFields(
       : "Net 30";
   const defaultTerms = ctx.customerPaymentTerms || "Net 30";
 
+  const unpaidDefaults = {
+    amountPaidDisplay: formatCurrency(0),
+    amountDueDisplay: formatCurrency(ctx.total),
+    amountPaidDefaultText: formatCurrency(0),
+    amountPaidUsePlaceholder: true,
+    dueDateDisplay: defaultDue,
+    paymentTermsDisplay: defaultTerms,
+  };
+
   switch (presetId) {
     case "paid":
       return {
@@ -66,15 +84,16 @@ function getInvoicePresetFields(
         notesOverride:
           "Thank you for your payment. Your business is greatly appreciated.",
       };
+    case "order_confirmation":
+      return {
+        ...unpaidDefaults,
+        notesOverride:
+          "We've received your purchase order and confirm the line items and amounts below. Payment is still due",
+      };
     case "default":
     default:
       return {
-        amountPaidDisplay: formatCurrency(0),
-        amountDueDisplay: formatCurrency(ctx.total),
-        amountPaidDefaultText: formatCurrency(0),
-        amountPaidUsePlaceholder: true,
-        dueDateDisplay: defaultDue,
-        paymentTermsDisplay: defaultTerms,
+        ...unpaidDefaults,
         notesOverride: null,
       };
   }
@@ -101,6 +120,11 @@ export function InvoicePdfTemplate({
   const documentNumber = isOrder
     ? entity.orderNumber
     : (entity as QuoteWithRelations).quoteNumber;
+  const customerPoNumber = isOrder
+    ? normalizePoNumber((entity as OrderWithRelations).poNumber)
+    : null;
+  const poNumberDisplay = customerPoNumber || "N/A";
+  const poNumberIsPlaceholder = !customerPoNumber;
 
   // Handle placeholder behavior for fields
   useEffect(() => {
@@ -472,7 +496,7 @@ export function InvoicePdfTemplate({
                 />
               </div>
               <div className="invoice-title">
-                <h2>INVOICE</h2>
+                <h2>{getInvoiceDocumentTitle(presetId)}</h2>
               </div>
               <div style={{ width: "50px" }}></div>
             </div>
@@ -485,12 +509,16 @@ export function InvoicePdfTemplate({
                 <span className="label">PO Number</span>
                 <span className="value">
                   <span
-                    className={editable ? "editable invoice-placeholder" : ""}
+                    className={
+                      editable
+                        ? `editable invoice-placeholder${poNumberIsPlaceholder ? " placeholder-text" : ""}`
+                        : ""
+                    }
                     contentEditable={editable}
                     suppressContentEditableWarning
                     data-default-text="N/A"
                   >
-                    N/A
+                    {poNumberDisplay}
                   </span>
                 </span>
               </div>
