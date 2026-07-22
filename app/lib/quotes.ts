@@ -38,6 +38,7 @@ import type {
   Quote,
   NewQuote,
 } from "./db/schema.js";
+import { normalizePoNumber } from "./customer-po.js";
 import {
   getNextQuoteNumber,
   generateUniqueOrderNumber,
@@ -576,9 +577,22 @@ export async function restoreQuote(
   }
 }
 
+export type ConvertQuoteToOrderOptions = {
+  /** Customer PO number stored on the new order. */
+  poNumber?: string | null;
+  /**
+   * When true, emit a distinct "Customer PO received" timeline event.
+   * Used by the Receive PO accept path (not Mark as Accepted).
+   */
+  viaCustomerPo?: boolean;
+  /** Attachment id for the uploaded customer PO file (metadata only). */
+  customerPoAttachmentId?: number | string;
+};
+
 export async function convertQuoteToOrder(
   quoteId: number,
-  context?: QuoteEventContext
+  context?: QuoteEventContext,
+  options?: ConvertQuoteToOrderOptions,
 ): Promise<{
   success: boolean;
   orderId?: number;
@@ -737,18 +751,21 @@ export async function convertQuoteToOrder(
           status: "Pending",
           totalPrice: calculatedTotal.toFixed(2),
           vendorPay: defaultVendorPay,
+          poNumber: normalizePoNumber(options?.poNumber),
           ...deliveryFields,
         })
         .returning();
 
       // Update quote with converted order ID and status
       // Use atomic check to prevent race condition - only update if not already converted
+      const acceptedAt = new Date();
       const updatedQuotes = await tx
         .update(quotes)
         .set({
           convertedToOrderId: order.id,
           status: "Accepted",
-          updatedAt: new Date(),
+          acceptedAt,
+          updatedAt: acceptedAt,
         })
         .where(and(eq(quotes.id, quoteId), isNull(quotes.convertedToOrderId)))
         .returning();
@@ -1136,7 +1153,9 @@ export async function convertQuoteToOrder(
       eventType: "order_created",
       eventCategory: "system",
       title: "Order Created",
-      description: `Quote ${quote.quoteNumber} accepted`,
+      description: options?.viaCustomerPo
+        ? `Quote ${quote.quoteNumber} accepted via customer PO`
+        : `Quote ${quote.quoteNumber} accepted`,
       metadata: {
         orderNumber: result.orderNumber,
         sourceQuoteId: quoteId,
@@ -1144,10 +1163,52 @@ export async function convertQuoteToOrder(
         customerId: quote.customerId,
         vendorId: quote.vendorId,
         initialStatus: "Pending",
+        ...(options?.poNumber
+          ? { poNumber: normalizePoNumber(options.poNumber) }
+          : {}),
+        ...(options?.viaCustomerPo ? { viaCustomerPo: true } : {}),
       },
       userId: context?.userId,
       userEmail: context?.userEmail,
     });
+
+    if (options?.viaCustomerPo) {
+      const poLabel = normalizePoNumber(options.poNumber) || "unknown";
+      await createEvent({
+        entityType: "order",
+        entityId: result.orderId.toString(),
+        eventType: "customer_po_received",
+        eventCategory: "system",
+        title: "Customer PO Received",
+        description: `Quote ${quote.quoteNumber} accepted via customer PO ${poLabel}`,
+        metadata: {
+          quoteNumber: quote.quoteNumber,
+          quoteId,
+          orderNumber: result.orderNumber,
+          poNumber: normalizePoNumber(options.poNumber),
+          attachmentId: options.customerPoAttachmentId ?? null,
+        },
+        userId: context?.userId,
+        userEmail: context?.userEmail,
+      });
+      await createEvent({
+        entityType: "quote",
+        entityId: quoteId.toString(),
+        eventType: "customer_po_received",
+        eventCategory: "system",
+        title: "Customer PO Received",
+        description: `Accepted via customer PO ${poLabel}; converted to order ${result.orderNumber}`,
+        metadata: {
+          quoteNumber: quote.quoteNumber,
+          orderId: result.orderId,
+          orderNumber: result.orderNumber,
+          poNumber: normalizePoNumber(options.poNumber),
+          attachmentId: options.customerPoAttachmentId ?? null,
+        },
+        userId: context?.userId,
+        userEmail: context?.userEmail,
+      });
+    }
 
     const { tryAutoFillBlankCustomerFromQuoteCheckout } = await import(
       "~/lib/stripe/checkout-addresses.server"
