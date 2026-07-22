@@ -65,6 +65,7 @@ COPY --from=builder --chown=nodejs:nodejs /app/public ./public
 
 # Copy database schema and config files from builder stage
 COPY --from=builder --chown=nodejs:nodejs /app/app/lib/db ./app/lib/db
+COPY --from=builder --chown=nodejs:nodejs /app/app/lib/env.server.ts ./app/lib/env.server.ts
 COPY --from=builder --chown=nodejs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
 
 # Copy migration files for runtime execution
