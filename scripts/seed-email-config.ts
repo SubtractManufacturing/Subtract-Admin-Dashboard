@@ -37,9 +37,9 @@ async function main() {
     }
   }
 
-  // 2. Seed email_identities
+  // 2. Seed email_identities (placeholder — archived until an admin configures a real sender)
   const defaultIdentityEmail = "quotes@subtract.com"; // Placeholder, should be updated by admin
-  const existingIdentity = await db
+  const existingDefault = await db
     .select()
     .from(emailIdentities)
     .where(eq(emailIdentities.isDefault, true))
@@ -47,21 +47,35 @@ async function main() {
 
   let identityId: number;
 
-  if (existingIdentity.length === 0) {
-    const [newIdentity] = await db
-      .insert(emailIdentities)
-      .values({
-        fromEmail: defaultIdentityEmail,
-        fromDisplayName: "Subtract Manufacturing",
-        isDefault: true,
-        updatedBy: "system",
-      })
-      .returning();
-    identityId = newIdentity.id;
-    console.log(`Inserted default identity: ${defaultIdentityEmail}`);
+  if (existingDefault.length > 0) {
+    identityId = existingDefault[0].id;
+    console.log(`Default identity already exists: ${existingDefault[0].fromEmail}`);
   } else {
-    identityId = existingIdentity[0].id;
-    console.log(`Default identity already exists: ${existingIdentity[0].fromEmail}`);
+    const existingPlaceholder = await db
+      .select()
+      .from(emailIdentities)
+      .where(eq(emailIdentities.fromEmail, defaultIdentityEmail))
+      .limit(1);
+
+    if (existingPlaceholder.length > 0) {
+      identityId = existingPlaceholder[0].id;
+      console.log(`Placeholder identity already exists: ${defaultIdentityEmail}`);
+    } else {
+      const [newIdentity] = await db
+        .insert(emailIdentities)
+        .values({
+          fromEmail: defaultIdentityEmail,
+          fromDisplayName: "Subtract Manufacturing",
+          isDefault: false,
+          isArchived: true,
+          updatedBy: "system",
+        })
+        .returning();
+      identityId = newIdentity.id;
+      console.log(
+        `Inserted archived placeholder identity: ${defaultIdentityEmail} (not default — configure in admin)`,
+      );
+    }
   }
 
   // 3. Seed email_templates (quote send — Styled quote layout)

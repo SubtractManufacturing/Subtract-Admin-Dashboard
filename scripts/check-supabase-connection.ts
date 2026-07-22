@@ -10,7 +10,7 @@ if (!dbUrl) {
 }
 
 // Parse the connection string - handle both postgres:// and postgresql://
-const urlMatch = dbUrl.match(/(?:postgresql|postgres):\/\/([^:]+):([^@]+)@([^:\/]+):(\d+)\/(.+?)(\?.*)?$/);
+const urlMatch = dbUrl.match(/(?:postgresql|postgres):\/\/([^:]+):([^@]+)@([^:/]+):(\d+)\/(.+?)(\?.*)?$/);
 
 if (!urlMatch) {
   console.error('❌ DATABASE_URL format is invalid');

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const downloadFromS3 = vi.fn();
 
@@ -51,12 +51,29 @@ function mockReadyReportPolling(
 }
 
 describe("toolpath.server", () => {
+  const prevToolpathKey = process.env.TOOLPATH_API_KEY;
+  const prevToolpathKeyFile = process.env.TOOLPATH_API_KEY_FILE;
+
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    delete process.env.TOOLPATH_API_KEY_FILE;
     process.env.TOOLPATH_API_KEY = "tp_test_123";
     globalThis.fetch = vi.fn();
     vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    if (prevToolpathKey === undefined) {
+      delete process.env.TOOLPATH_API_KEY;
+    } else {
+      process.env.TOOLPATH_API_KEY = prevToolpathKey;
+    }
+    if (prevToolpathKeyFile === undefined) {
+      delete process.env.TOOLPATH_API_KEY_FILE;
+    } else {
+      process.env.TOOLPATH_API_KEY_FILE = prevToolpathKeyFile;
+    }
   });
 
   it("reports whether Toolpath is configured", async () => {

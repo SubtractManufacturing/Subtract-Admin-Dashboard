@@ -54,12 +54,15 @@ is_allowlisted() {
 }
 
 # Strip outer quotes; for unquoted values, drop trailing " # comment".
+# Also handles quoted values followed by inline comments: FOO="bar" # comment
 normalize_value() {
   local value="$1"
-  if [[ "$value" =~ ^\".*\"$ ]]; then
-    value="${value:1:${#value}-2}"
-  elif [[ "$value" =~ ^\'.*\'$ ]]; then
-    value="${value:1:${#value}-2}"
+  local dquote_re='^"(.*)"[[:space:]]*(#.*)?$'
+  local squote_re="^'(.*)'[[:space:]]*(#.*)?$"
+  if [[ "$value" =~ $dquote_re ]]; then
+    value="${BASH_REMATCH[1]}"
+  elif [[ "$value" =~ $squote_re ]]; then
+    value="${BASH_REMATCH[1]}"
   else
     value="${value%% #*}"
     # trim trailing whitespace
@@ -101,10 +104,13 @@ convert() {
 
   local tmp
   tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
   local converted=()
   local skipped_empty=()
 
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # Strip trailing carriage return for CRLF compatibility
+    line="${line%$'\r'}"
     # Preserve blank lines and full-line comments
     if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
       printf '%s\n' "$line" >>"$tmp"
@@ -140,6 +146,7 @@ convert() {
   done <"$ENV_FILE"
 
   mv "$tmp" "$ENV_FILE"
+  trap - EXIT
 
   echo "Backed up .env → .env.bak"
   echo "Converted ${#converted[@]} key(s) to *_FILE under .secrets/:"

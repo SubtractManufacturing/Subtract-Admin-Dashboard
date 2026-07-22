@@ -30,7 +30,7 @@ async function testSupabaseConnection() {
     
     // Test database via Supabase client
     console.log('\nTesting database query via Supabase client...');
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('users')
       .select('count')
       .limit(1);
@@ -44,8 +44,9 @@ async function testSupabaseConnection() {
       console.log('✅ Database accessible via Supabase client');
     }
     
-  } catch (error: any) {
-    console.error('\n❌ Unexpected error:', error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('\n❌ Unexpected error:', message);
   }
   
   console.log('\n📌 Next steps:');

@@ -5,6 +5,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,8 +14,10 @@ const binPath = join(root, "node_modules", "drizzle-kit", "bin.cjs");
 let bin;
 try {
   bin = readFileSync(binPath, "utf8");
-} catch {
-  process.exit(0);
+} catch (error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error(`Failed to read drizzle-kit bin at ${binPath}: ${detail}`);
+  process.exit(1);
 }
 
 const migrateFrom = `      render(status) {
@@ -70,10 +73,21 @@ let changed = false;
 if (next.includes(migrateFrom)) {
   next = next.replace(migrateFrom, migrateTo);
   changed = true;
+} else if (!next.includes(migrateTo)) {
+  console.error(
+    "Could not find migrate progress render block in drizzle-kit bin.cjs (neither original nor already patched).",
+  );
+  process.exit(1);
 }
+
 if (next.includes(pushFrom)) {
   next = next.replace(pushFrom, pushTo);
   changed = true;
+} else if (!next.includes(pushTo)) {
+  console.error(
+    "Could not find push progress render block in drizzle-kit bin.cjs (neither original nor already patched).",
+  );
+  process.exit(1);
 }
 
 if (changed) {
