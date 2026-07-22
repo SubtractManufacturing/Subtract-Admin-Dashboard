@@ -1,5 +1,7 @@
+import { getEnv } from "../env.server";
+
 export function getAllowedEmailDomains(): string[] {
-  const domainsEnv = process.env.EMAIL_DOMAIN || "";
+  const domainsEnv = getEnv("EMAIL_DOMAIN") || "";
   return domainsEnv
     .split(/[\s,]+/)
     .map((d) => d.trim().toLowerCase())

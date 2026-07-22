@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { defineConfig } from "drizzle-kit";
+import { getEnv } from "./app/lib/env.server";
 
 export default defineConfig({
   dialect: "postgresql",
@@ -7,6 +8,6 @@ export default defineConfig({
   out: "./drizzle",
   dbCredentials: {
     // Prefer session pooler (DATABASE_URL) — see getQueueDatabaseUrl() for pg-boss.
-    url: process.env.DATABASE_URL || process.env.DATABASE_DIRECT_URL!,
+    url: getEnv("DATABASE_URL") || getEnv("DATABASE_DIRECT_URL")!,
   },
 });

@@ -2,6 +2,8 @@
  * Postgres URLs and pool sizing for app vs queue clients.
  */
 
+import { getEnv } from "../env.server";
+
 /** Supabase session pooler (:5432) caps total clients (often 15). */
 export function isSupabaseSessionPooler(connectionString: string): boolean {
   return (
@@ -15,12 +17,12 @@ export function isSupabaseSessionPooler(connectionString: string): boolean {
  * do not exhaust the shared Supabase connection budget.
  */
 export function getAppDatabaseMaxConnections(): number {
-  const configured = process.env.DATABASE_POOL_MAX;
+  const configured = getEnv("DATABASE_POOL_MAX");
   if (configured != null && configured !== "") {
     return Math.max(1, Number(configured) || 3);
   }
 
-  const pooler = process.env.DATABASE_URL ?? "";
+  const pooler = getEnv("DATABASE_URL") ?? "";
   return isSupabaseSessionPooler(pooler) ? 3 : 10;
 }
 
@@ -33,8 +35,8 @@ export const PGBOSS_MAX_CONNECTIONS = 2;
  * the Supabase session pooler connection limit.
  */
 export function getQueueDatabaseUrl(): string {
-  const pooler = process.env.DATABASE_URL;
-  const direct = process.env.DATABASE_DIRECT_URL;
+  const pooler = getEnv("DATABASE_URL");
+  const direct = getEnv("DATABASE_DIRECT_URL");
 
   return direct || pooler || "";
 }

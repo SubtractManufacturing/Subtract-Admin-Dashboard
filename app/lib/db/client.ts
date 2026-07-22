@@ -1,12 +1,13 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
+import { getEnv } from "../env.server.js";
 import {
   getAppDatabaseMaxConnections,
   isSupabaseSessionPooler,
 } from "./connection-string.server.js";
 
-const connectionString = process.env.DATABASE_URL ?? "";
+const connectionString = getEnv("DATABASE_URL") ?? "";
 
 /** Transaction pooler / PgBouncer (e.g. Supabase :6543) breaks prepared statements for some queries. */
 const useTransactionPool =
@@ -17,11 +18,11 @@ const useTransactionPool =
 // All remote/Supabase connections still require SSL.
 const isLocalHost = /localhost|127\.0\.0\.1/.test(connectionString);
 const sslMode: "require" | false =
-  isLocalHost || process.env.DATABASE_SSL === "false" ? false : "require";
+  isLocalHost || getEnv("DATABASE_SSL") === "false" ? false : "require";
 
 if (
   isSupabaseSessionPooler(connectionString) &&
-  !process.env.DATABASE_DIRECT_URL
+  !getEnv("DATABASE_DIRECT_URL")
 ) {
   console.warn(
     "[DB] DATABASE_URL uses Supabase session pooler without DATABASE_DIRECT_URL. " +
@@ -38,6 +39,6 @@ export const client = postgres(connectionString, {
     application_name: "subtract-admin",
     statement_timeout: 60_000,
   },
-  prepare: process.env.DATABASE_USE_PREPARE === "true" ? true : !useTransactionPool,
+  prepare: getEnv("DATABASE_USE_PREPARE") === "true" ? true : !useTransactionPool,
 });
 export const db = drizzle(client, { schema });

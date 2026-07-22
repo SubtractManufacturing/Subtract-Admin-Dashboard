@@ -4,6 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client, extractS3Key } from "./s3.server";
 import { quotePartUsesPlaceholderCad } from "./quote-part-assets.server";
+import { getEnv } from "./env.server";
 import archiver from "archiver";
 
 interface FileToZip {
@@ -85,7 +86,7 @@ export async function downloadQuoteFiles(quoteId: number) {
           try {
             const s3Key = extractS3Key(part.partFileUrl!);
             const command = new GetObjectCommand({
-              Bucket: process.env.S3_BUCKET!,
+              Bucket: getEnv("S3_BUCKET")!,
               Key: s3Key,
             });
             const response = await s3Client.send(command);
@@ -123,7 +124,7 @@ export async function downloadQuoteFiles(quoteId: number) {
             try {
               const s3Key = extractS3Key(drawing.attachment.s3Key!);
               const command = new GetObjectCommand({
-                Bucket: process.env.S3_BUCKET!,
+                Bucket: getEnv("S3_BUCKET")!,
                 Key: s3Key,
               });
               const response = await s3Client.send(command);

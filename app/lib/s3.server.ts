@@ -2,12 +2,13 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, Head
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 import https from 'https'
+import { getEnv } from './env.server'
 
-const S3_ENDPOINT = process.env.S3_ENDPOINT
-const S3_REGION = process.env.S3_REGION || 'us-east-1'
-const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID
-const S3_SECRET_ACCESS_KEY = process.env.S3_SECRET_ACCESS_KEY
-const S3_BUCKET = process.env.S3_BUCKET || 'subtract-attachments'
+const S3_ENDPOINT = getEnv('S3_ENDPOINT')
+const S3_REGION = getEnv('S3_REGION') || 'us-east-1'
+const S3_ACCESS_KEY_ID = getEnv('S3_ACCESS_KEY_ID')
+const S3_SECRET_ACCESS_KEY = getEnv('S3_SECRET_ACCESS_KEY')
+const S3_BUCKET = getEnv('S3_BUCKET') || 'subtract-attachments'
 
 // Create S3 client lazily to avoid initialization errors
 let s3Client: S3Client | null = null

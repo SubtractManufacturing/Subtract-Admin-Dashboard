@@ -1,18 +1,20 @@
 import Stripe from "stripe";
 import { getStripeDefaults } from "./developerSettings";
+import { getEnv } from "./env.server";
 
 let stripeClient: Stripe | null = null;
 
 export function getStripeClient(): Stripe | null {
-  if (!process.env.STRIPE_SECRET_KEY) return null;
+  const secretKey = getEnv("STRIPE_SECRET_KEY");
+  if (!secretKey) return null;
   if (!stripeClient) {
-    stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY);
+    stripeClient = new Stripe(secretKey);
   }
   return stripeClient;
 }
 
 export function isStripeConfigured(): boolean {
-  return !!process.env.STRIPE_SECRET_KEY;
+  return !!getEnv("STRIPE_SECRET_KEY");
 }
 
 interface CreatePaymentLinkParams {
