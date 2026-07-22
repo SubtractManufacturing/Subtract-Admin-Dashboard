@@ -15,6 +15,7 @@ import {
   type OrderEventContext,
   type OrderInput,
 } from "~/lib/orders";
+import { resolveDefaultInvoicePresetId , resolveInvoiceGenerationMeta } from "~/lib/invoice-pdf-output";
 import { getCustomer } from "~/lib/customers";
 import { getVendor, getVendors } from "~/lib/vendors";
 import {
@@ -78,7 +79,7 @@ import {
   getDownloadUrl,
 } from "~/lib/s3.server";
 import { generateDocumentPdf } from "~/lib/pdf-service.server";
-import { resolveInvoiceGenerationMeta } from "~/lib/invoice-pdf-output";
+
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
@@ -1388,6 +1389,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const deliveryDate = formData.get("deliveryDate") as string | null;
         const leadTime = formData.get("leadTime") as string | null;
         const vendorPay = formData.get("vendorPay") as string | null;
+        const poNumberRaw = formData.get("poNumber");
+        const poNumberProvided = poNumberRaw !== null;
 
         const orderEventContext: OrderEventContext = {
           userId: user?.id,
@@ -1407,6 +1410,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
           updates.leadTime = parseInt(leadTime);
         }
         if (vendorPay) updates.vendorPay = vendorPay;
+        if (poNumberProvided) {
+          const trimmed = String(poNumberRaw).trim();
+          updates.poNumber = trimmed || null;
+        }
 
         await updateOrder(order.id, updates, orderEventContext);
 
@@ -2094,6 +2101,7 @@ export default function OrderDetails() {
     leadTime: "",
     vendorPayDollar: "",
     vendorPayPercent: "",
+    poNumber: "",
   });
   const lineItemFetcher = useFetcher();
   const directShipPendingRef = useRef(false);
@@ -2813,6 +2821,7 @@ export default function OrderDetails() {
       vendorPayDollar: vendorPayAmount > 0 ? vendorPayAmount.toFixed(2) : "",
       vendorPayPercent:
         vendorPayPercentCalc > 0 ? vendorPayPercentCalc.toFixed(1) : "",
+      poNumber: order.poNumber || "",
     });
     setEditOrderModalOpen(true);
   };
@@ -2844,6 +2853,8 @@ export default function OrderDetails() {
       // Default to 0 if invalid
       formData.append("vendorPay", "0.00");
     }
+
+    formData.append("poNumber", editOrderForm.poNumber.trim());
 
     orderEditFetcher.submit(formData, { method: "post" });
     setEditOrderModalOpen(false);
@@ -3353,6 +3364,16 @@ export default function OrderDetails() {
                       {order.orderNumber}
                     </p>
                   </div>
+                  {order.poNumber ? (
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                        PO Number
+                      </p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">
+                        {order.poNumber}
+                      </p>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                       Order Date
@@ -3825,7 +3846,7 @@ export default function OrderDetails() {
             ? "paid"
             : invoiceModalSource === "confirmation_order_confirmation"
               ? "order_confirmation"
-              : "default"
+              : resolveDefaultInvoicePresetId(order.poNumber)
         }
         autoDownload={
           invoiceModalSource === "standard" ? pdfAutoDownload : false
@@ -4063,6 +4084,28 @@ export default function OrderDetails() {
             </div>
 
             <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="po-number-input"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  PO Number
+                </label>
+                <input
+                  id="po-number-input"
+                  type="text"
+                  value={editOrderForm.poNumber}
+                  onChange={(e) =>
+                    setEditOrderForm({
+                      ...editOrderForm,
+                      poNumber: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  placeholder="Customer PO number (optional)"
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Delivery Date
