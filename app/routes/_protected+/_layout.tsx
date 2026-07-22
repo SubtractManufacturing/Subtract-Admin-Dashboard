@@ -1,7 +1,7 @@
 import { LoaderFunctionArgs, ActionFunctionArgs, json, redirect } from "@remix-run/node";
 import { Outlet, useLoaderData, useLocation } from "@remix-run/react";
 import { requireAuth, withAuthHeaders, canUsePartAssetAdmin } from "~/lib/auth.server";
-import { createServerClient } from "~/lib/supabase";
+import { createServerClient } from "~/lib/supabase.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserAccessAdminConsole, shouldShowEventsInNav, shouldShowVersionInHeader, isOutboundEmailEnabled } from "~/lib/featureFlags";
 import { getEmailSettings } from "~/lib/email/templates.server";

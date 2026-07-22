@@ -1,7 +1,7 @@
 import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
 import { Form, useActionData, useNavigation, useLoaderData, useNavigate } from "@remix-run/react";
 import { useEffect } from "react";
-import { createServerClient } from "~/lib/supabase";
+import { createServerClient } from "~/lib/supabase.server";
 import { withAuthHeaders } from "~/lib/auth.server";
 import { styles } from "~/utils/tw-styles";
 import { loginRateLimiter } from "~/lib/rate-limiter";

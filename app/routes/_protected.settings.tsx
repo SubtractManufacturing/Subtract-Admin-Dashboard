@@ -11,7 +11,7 @@ import { useDownload } from "~/hooks/useDownload";
 import Modal from "~/components/shared/Modal";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getAppConfig } from "~/lib/config.server";
-import { createServerClient } from "~/lib/supabase";
+import { createServerClient } from "~/lib/supabase.server";
 import Button from "~/components/shared/Button";
 import { InputField } from "~/components/shared/FormField";
 import {
