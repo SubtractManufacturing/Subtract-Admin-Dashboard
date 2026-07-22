@@ -16,7 +16,7 @@ import {
   type OrderInput,
 } from "~/lib/orders";
 import {
-  resolveDefaultInvoicePresetId,
+  resolveInvoiceModalInitialPresetId,
   resolveInvoiceGenerationMeta,
 } from "~/lib/invoice-pdf-output";
 import { getCustomer } from "~/lib/customers";
@@ -3845,13 +3845,10 @@ export default function OrderDetails() {
         entity={order}
         lineItems={lineItems.map((item: LineItemWithPart) => item.lineItem)}
         parts={lineItems.map((item: LineItemWithPart) => item.part)}
-        initialPresetId={
-          invoiceModalSource === "confirmation_invoice"
-            ? "paid"
-            : invoiceModalSource === "confirmation_order_confirmation"
-              ? "order_confirmation"
-              : resolveDefaultInvoicePresetId(order.poNumber)
-        }
+        initialPresetId={resolveInvoiceModalInitialPresetId(
+          invoiceModalSource,
+          order.poNumber,
+        )}
         autoDownload={
           invoiceModalSource === "standard" ? pdfAutoDownload : false
         }

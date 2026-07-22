@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getInvoiceDocumentTitle,
   resolveDefaultInvoicePresetId,
+  resolveInvoiceModalInitialPresetId,
   resolveInvoiceGenerationMeta,
 } from "./invoice-pdf-output";
 
@@ -18,6 +19,38 @@ describe("resolveDefaultInvoicePresetId", () => {
     expect(resolveDefaultInvoicePresetId(undefined)).toBe("default");
     expect(resolveDefaultInvoicePresetId("")).toBe("default");
     expect(resolveDefaultInvoicePresetId("   ")).toBe("default");
+  });
+});
+
+describe("resolveInvoiceModalInitialPresetId", () => {
+  it("lets PO override the confirmation-invoice Paid default", () => {
+    expect(
+      resolveInvoiceModalInitialPresetId("confirmation_invoice", "PO-9"),
+    ).toBe("order_confirmation");
+  });
+
+  it("keeps Paid for confirmation-invoice when there is no PO", () => {
+    expect(
+      resolveInvoiceModalInitialPresetId("confirmation_invoice", null),
+    ).toBe("paid");
+  });
+
+  it("always uses order_confirmation when opened for that document kind", () => {
+    expect(
+      resolveInvoiceModalInitialPresetId(
+        "confirmation_order_confirmation",
+        null,
+      ),
+    ).toBe("order_confirmation");
+  });
+
+  it("uses PO soft-default for the standard Actions → Invoice path", () => {
+    expect(resolveInvoiceModalInitialPresetId("standard", "PO-1")).toBe(
+      "order_confirmation",
+    );
+    expect(resolveInvoiceModalInitialPresetId("standard", null)).toBe(
+      "default",
+    );
   });
 });
 
