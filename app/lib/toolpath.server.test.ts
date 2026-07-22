@@ -54,11 +54,13 @@ describe("toolpath.server", () => {
   const prevToolpathKey = process.env.TOOLPATH_API_KEY;
   const prevToolpathKeyFile = process.env.TOOLPATH_API_KEY_FILE;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
     delete process.env.TOOLPATH_API_KEY_FILE;
     process.env.TOOLPATH_API_KEY = "tp_test_123";
+    const { clearEnvCache } = await import("./env.server");
+    clearEnvCache();
     globalThis.fetch = vi.fn();
     vi.useRealTimers();
   });
@@ -521,6 +523,17 @@ describe("toolpath.server", () => {
 });
 
 describe("pollToolpathReportUrl", () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    delete process.env.TOOLPATH_API_KEY_FILE;
+    process.env.TOOLPATH_API_KEY = "tp_test_123";
+    const { clearEnvCache } = await import("./env.server");
+    clearEnvCache();
+    globalThis.fetch = vi.fn();
+    vi.useRealTimers();
+  });
+
   it("returns report URL when part becomes ready", async () => {
     const readyPartBody = {
       data: {
