@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearEnvCache } from "./env.server";
 
 const downloadFromS3 = vi.fn();
 
@@ -55,6 +56,7 @@ describe("toolpath.server", () => {
     vi.resetModules();
     vi.clearAllMocks();
     process.env.TOOLPATH_API_KEY = "tp_test_123";
+    clearEnvCache();
     globalThis.fetch = vi.fn();
     vi.useRealTimers();
   });
@@ -65,6 +67,7 @@ describe("toolpath.server", () => {
     expect(isToolpathEnabled()).toBe(true);
 
     delete process.env.TOOLPATH_API_KEY;
+    clearEnvCache();
 
     expect(isToolpathEnabled()).toBe(false);
   });
