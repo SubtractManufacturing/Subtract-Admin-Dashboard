@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   getInvoiceDocumentTitle,
+  resolveDefaultInvoicePresetId,
   resolveInvoiceGenerationMeta,
 } from "./invoice-pdf-output";
+
+describe("resolveDefaultInvoicePresetId", () => {
+  it("defaults to order_confirmation when a PO number is set", () => {
+    expect(resolveDefaultInvoicePresetId("PO-12345")).toBe("order_confirmation");
+    expect(resolveDefaultInvoicePresetId("  PO-12345  ")).toBe(
+      "order_confirmation",
+    );
+  });
+
+  it("defaults to default when PO number is missing or blank", () => {
+    expect(resolveDefaultInvoicePresetId(null)).toBe("default");
+    expect(resolveDefaultInvoicePresetId(undefined)).toBe("default");
+    expect(resolveDefaultInvoicePresetId("")).toBe("default");
+    expect(resolveDefaultInvoicePresetId("   ")).toBe("default");
+  });
+});
 
 describe("resolveInvoiceGenerationMeta", () => {
   it("maps order_confirmation preset to order_confirmation kind and filename", () => {

@@ -12,6 +12,7 @@ import {
   isAddressComplete,
   type Address,
 } from "~/lib/address-utils";
+import { normalizePoNumber } from "~/lib/customer-po";
 
 /** Rows that represent shippable parts only (exclude services and non-part lines). */
 function filterPackingSlipLineItems(items: OrderLineItem[]): OrderLineItem[] {
@@ -90,6 +91,7 @@ export function PackingSlipPdfTemplate({
     () => filterPackingSlipLineItems(lineItems),
     [lineItems],
   );
+  const customerPoNumber = normalizePoNumber(order.poNumber);
 
   useEffect(() => {
     if (!editable) return;
@@ -211,7 +213,7 @@ export function PackingSlipPdfTemplate({
 
           .slip-header-info {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(${customerPoNumber ? 3 : 2}, 1fr);
             gap: 20px;
             margin-top: 15px;
             padding-top: 15px;
@@ -524,21 +526,20 @@ export function PackingSlipPdfTemplate({
                   </span>
                 </span>
               </div>
-              <div className="info-item">
-                <span className="label">PO #</span>
-                <span className="value">
-                  <span
-                    className={
-                      editable ? "editable packing-slip-placeholder" : ""
-                    }
-                    contentEditable={editable}
-                    suppressContentEditableWarning
-                    data-default-text="N/A"
-                  >
-                    N/A
+              {customerPoNumber ? (
+                <div className="info-item">
+                  <span className="label">PO #</span>
+                  <span className="value">
+                    <span
+                      className={editable ? "editable" : ""}
+                      contentEditable={editable}
+                      suppressContentEditableWarning
+                    >
+                      {customerPoNumber}
+                    </span>
                   </span>
-                </span>
-              </div>
+                </div>
+              ) : null}
             </div>
           </div>
 

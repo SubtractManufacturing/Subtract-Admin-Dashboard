@@ -1,4 +1,15 @@
 import type { AttachmentDocumentKind } from "~/lib/db/schema";
+import { normalizePoNumber } from "~/lib/customer-po";
+
+/**
+ * Soft default for Generate Invoice when an order has a customer PO number.
+ * Caller may still let the user switch presets.
+ */
+export function resolveDefaultInvoicePresetId(
+  poNumber: string | null | undefined,
+): "order_confirmation" | "default" {
+  return normalizePoNumber(poNumber) ? "order_confirmation" : "default";
+}
 
 /**
  * Maps invoice PDF preset → persisted attachment metadata for order generation.

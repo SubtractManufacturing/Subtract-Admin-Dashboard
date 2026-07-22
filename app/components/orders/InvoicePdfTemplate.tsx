@@ -9,6 +9,7 @@ import {
   type PdfPresetOption,
 } from "~/lib/pdf-utils";
 import { getInvoiceDocumentTitle } from "~/lib/invoice-pdf-output";
+import { normalizePoNumber } from "~/lib/customer-po";
 import {
   extractBillingAddress,
   extractShippingAddress,
@@ -119,6 +120,11 @@ export function InvoicePdfTemplate({
   const documentNumber = isOrder
     ? entity.orderNumber
     : (entity as QuoteWithRelations).quoteNumber;
+  const customerPoNumber = isOrder
+    ? normalizePoNumber((entity as OrderWithRelations).poNumber)
+    : null;
+  const poNumberDisplay = customerPoNumber || "N/A";
+  const poNumberIsPlaceholder = !customerPoNumber;
 
   // Handle placeholder behavior for fields
   useEffect(() => {
@@ -503,12 +509,16 @@ export function InvoicePdfTemplate({
                 <span className="label">PO Number</span>
                 <span className="value">
                   <span
-                    className={editable ? "editable invoice-placeholder" : ""}
+                    className={
+                      editable
+                        ? `editable invoice-placeholder${poNumberIsPlaceholder ? " placeholder-text" : ""}`
+                        : ""
+                    }
                     contentEditable={editable}
                     suppressContentEditableWarning
                     data-default-text="N/A"
                   >
-                    N/A
+                    {poNumberDisplay}
                   </span>
                 </span>
               </div>
