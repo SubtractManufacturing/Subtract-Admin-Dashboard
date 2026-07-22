@@ -126,6 +126,8 @@ import { LineItemsSection } from "~/components/shared/LineItemsSection";
 import { IconButton } from "~/components/shared/IconButton";
 import { FilePlusCorner } from "lucide-react";
 import QuoteActionsDropdown from "~/components/quotes/QuoteActionsDropdown";
+import ReceivePoModal from "~/components/quotes/ReceivePoModal";
+import type { ReceivePoActionData } from "~/components/quotes/ReceivePoModal";
 import QuotePriceCalculatorModal from "~/components/quotes/QuotePriceCalculatorModal";
 import QuoteDeliveryDateCard from "~/components/quotes/QuoteDeliveryDateCard";
 import {
@@ -1084,6 +1086,148 @@ export async function action({ request, params }: ActionFunctionArgs) {
       } catch (error) {
         console.error("Error adding drawings to existing part:", error);
         return json({ error: "Failed to add drawings" }, { status: 500 });
+      }
+    }
+
+    // Handle Receive PO — upload customer PO + convert quote to order
+    if (intent === "receivePo") {
+      if (quote.status !== "Sent") {
+        return json(
+          { error: "Quote must be Sent to receive a customer PO" },
+          { status: 400 },
+        );
+      }
+      if (quote.convertedToOrderId) {
+        return json(
+          { error: "Quote has already been converted to an order" },
+          { status: 400 },
+        );
+      }
+
+      const poNumberRaw = (formData.get("poNumber") as string | null) || "";
+      const poNumber = poNumberRaw.trim();
+      const file = formData.get("file") as File | null;
+
+      if (!poNumber) {
+        return json({ error: "PO number is required" }, { status: 400 });
+      }
+      if (!file || file.size <= 0) {
+        return json(
+          { error: "Customer PO file is required" },
+          { status: 400 },
+        );
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
+      }
+
+      const { isAllowedCustomerPoFile } = await import("~/lib/customer-po");
+      if (!isAllowedCustomerPoFile(file.type, file.name)) {
+        return json(
+          {
+            error:
+              "Customer PO must be a PDF or image (PNG, JPG, or WebP)",
+          },
+          { status: 400 },
+        );
+      }
+
+      // Same conversion prechecks as Mark as Accepted
+      const validationErrors: string[] = [];
+      const quoteTotal = parseFloat(quote.total || "0");
+      if (quoteTotal <= 0) {
+        validationErrors.push(
+          "Quote must have a valid total greater than $0. Please add pricing to line items.",
+        );
+      }
+      if (!quote.lineItems || quote.lineItems.length === 0) {
+        validationErrors.push("Quote must have at least one line item.");
+      }
+      if (quote.parts && quote.parts.length > 0) {
+        const pendingConversions = quote.parts.filter(
+          (part) =>
+            part.conversionStatus === "in_progress" ||
+            part.conversionStatus === "queued" ||
+            (part.conversionStatus === "pending" && part.partFileUrl),
+        );
+        if (pendingConversions.length > 0) {
+          validationErrors.push(
+            `Cannot accept quote while ${pendingConversions.length} part(s) have pending mesh conversions.`,
+          );
+        }
+      }
+      if (validationErrors.length > 0) {
+        return json(
+          { error: "Cannot accept quote", validationErrors },
+          { status: 400 },
+        );
+      }
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const key = generateFileKey(quote.id, file.name);
+        const uploadResult = await uploadFile({
+          key,
+          buffer,
+          contentType: file.type || "application/octet-stream",
+          fileName: file.name,
+        });
+
+        const attachment = await createAttachment(
+          {
+            s3Bucket: uploadResult.bucket,
+            s3Key: uploadResult.key,
+            fileName: uploadResult.fileName,
+            contentType: uploadResult.contentType,
+            fileSize: uploadResult.size,
+            source: "user_upload",
+            documentKind: "customer_purchase_order",
+          },
+          eventContext,
+        );
+
+        await db.insert(quoteAttachments).values({
+          quoteId: quote.id,
+          attachmentId: attachment.id,
+        });
+
+        if (quote.stripePaymentLinkId) {
+          const stripeOn = await isStripePaymentLinksEnabled();
+          if (stripeOn) {
+            try {
+              await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
+              await updateQuote(
+                quote.id,
+                { stripePaymentLinkActive: false },
+                eventContext,
+              );
+            } catch (stripeError) {
+              console.error("Stripe deactivation failed:", stripeError);
+            }
+          }
+        }
+
+        const result = await convertQuoteToOrder(quote.id, eventContext, {
+          poNumber,
+          viaCustomerPo: true,
+          customerPoAttachmentId: attachment.id,
+        });
+
+        if (result.success && result.orderNumber) {
+          return redirect(`/orders/${result.orderNumber}`);
+        }
+
+        return json(
+          { error: result.error || "Failed to convert quote to order" },
+          { status: 400 },
+        );
+      } catch (error) {
+        console.error("Receive PO error:", error);
+        return json(
+          { error: "Failed to receive customer PO" },
+          { status: 500 },
+        );
       }
     }
 
@@ -2558,6 +2702,7 @@ export default function QuoteDetail() {
     ? `/quotes/${quote.id}`
     : undefined;
   const fetcher = useFetcher();
+  const receivePoFetcher = useFetcher<ReceivePoActionData>();
   const revalidator = useRevalidator();
   const [isAddingNote, setIsAddingNote] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -2667,6 +2812,7 @@ export default function QuoteDetail() {
   });
   const [isGeneratePdfModalOpen, setIsGeneratePdfModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isReceivePoModalOpen, setIsReceivePoModalOpen] = useState(false);
   const [part3DModalOpen, setPart3DModalOpen] = useState(false);
   const [selectedPart3D, setSelectedPart3D] = useState<{
     partId: string;
@@ -3481,6 +3627,11 @@ export default function QuoteDetail() {
                     onDownloadFiles={handleDownloadFiles}
                     onGeneratePdf={handleGeneratePdf}
                     onGenerateInvoice={handleGenerateInvoice}
+                    onReceivePo={
+                      quote.status === "Sent"
+                        ? () => setIsReceivePoModalOpen(true)
+                        : undefined
+                    }
                     isDownloading={isDownloading}
                     hasCustomer={!!quote.customerId}
                   />
@@ -4697,6 +4848,12 @@ export default function QuoteDetail() {
         lineItems={quote.lineItems || []}
         parts={quote.parts || []}
         autoDownload={pdfAutoDownload}
+      />
+
+      <ReceivePoModal
+        isOpen={isReceivePoModalOpen}
+        onClose={() => setIsReceivePoModalOpen(false)}
+        fetcher={receivePoFetcher}
       />
 
       <Modal
