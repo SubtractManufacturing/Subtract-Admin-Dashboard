@@ -6,6 +6,19 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.7.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.6.3...v1.7.0) (2026-07-22)
+
+
+### Features
+
+* **orders:** order confirmations and customer POs ([#154](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/154)) ([e993ac5](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/e993ac59a365265f82d7494a88c48af17dbd5d4b))
+
+
+### Bug Fixes
+
+* **docker:** include env.server.ts in production image for migrate ([97307a0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/97307a0dde5cb147df3d95e320df1e58735066ad))
+* imlement *_FILE based variables ([#153](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/153)) ([bdfba5e](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/bdfba5e9f98d7a3c02352dab3c6606b909a65b42))
+
 ## [1.6.3](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.6.2...v1.6.3) (2026-07-17)
 
 
