@@ -6,6 +6,13 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.7.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.7.0...v1.7.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* Add source quote link on order detail page ([3e183cf](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/3e183cf1890236e0796012f6feedfd5a50f6b6b5))
+
 ## [1.7.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.6.3...v1.7.0) (2026-07-22)
 
 
