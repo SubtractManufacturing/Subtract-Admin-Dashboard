@@ -37,9 +37,10 @@ export async function generatePdf(
     page.setDefaultTimeout(30000);
 
     await page.setContent(html, {
-      waitUntil: "networkidle0", // Wait for all network requests (including images) to complete
+      waitUntil: "load",
       timeout: 30000,
     });
+    await page.waitForNetworkIdle({ timeout: 30000 });
 
     const pdfBuffer = await page.pdf({
       format: "Letter",
