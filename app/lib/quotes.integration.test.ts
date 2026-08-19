@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { businessDaysFrom } from "./business-days";
 import { getOrder } from "./orders";
-import { convertQuoteToOrder } from "./quotes";
+import { convertQuoteToOrder, getQuote } from "./quotes";
 import type { SeededConversionQuoteIds } from "~/test/seed-quote-for-conversion";
 import {
   cleanupQuoteForConversion,
@@ -49,5 +49,10 @@ describe("convertQuoteToOrder delivery fields", () => {
     expect(order!.leadTime).toBe(
       businessDaysFrom(order!.createdAt, order!.deliveryDate!)
     );
+
+    expect(order!.sourceQuoteId).toBe(seeded.quoteId);
+    const quote = await getQuote(seeded.quoteId);
+    expect(quote?.quoteNumber).toBe(seeded.quoteNumber);
+    expect(quote?.convertedToOrderId).toBe(result.orderId);
   });
 });
