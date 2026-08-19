@@ -6,7 +6,12 @@ import {
   unstable_parseMultipartFormData,
   unstable_createMemoryUploadHandler,
 } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import {
+  Link,
+  useLoaderData,
+  useFetcher,
+  useRevalidator,
+} from "@remix-run/react";
 import {
   getOrderByNumberWithAttachments,
   updateOrder,
@@ -387,13 +392,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   ]);
 
   let quoteStripePaymentLinkId: string | null = null;
+  let sourceQuote: { id: number; quoteNumber: string } | null = null;
   if (order.sourceQuoteId) {
     const [qr] = await db
-      .select({ stripePaymentLinkId: quotes.stripePaymentLinkId })
+      .select({
+        stripePaymentLinkId: quotes.stripePaymentLinkId,
+        quoteNumber: quotes.quoteNumber,
+      })
       .from(quotes)
       .where(eq(quotes.id, order.sourceQuoteId))
       .limit(1);
     quoteStripePaymentLinkId = qr?.stripePaymentLinkId ?? null;
+    if (qr?.quoteNumber) {
+      sourceQuote = {
+        id: order.sourceQuoteId,
+        quoteNumber: qr.quoteNumber,
+      };
+    }
   }
 
   return withAuthHeaders(
@@ -422,6 +437,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       stripePaymentLinksEnabled,
       stripeConfigured,
       quoteStripePaymentLinkId,
+      sourceQuote,
       trackingNumbers,
       archivedLineItems: archivedLineItems.map((item) => ({
         id: item.id,
@@ -2061,6 +2077,7 @@ export default function OrderDetails() {
     stripePaymentLinksEnabled,
     stripeConfigured,
     quoteStripePaymentLinkId,
+    sourceQuote,
     trackingNumbers,
     archivedLineItems,
     archiveRetentionDays,
@@ -3368,6 +3385,19 @@ export default function OrderDetails() {
                       {order.orderNumber}
                     </p>
                   </div>
+                  {sourceQuote ? (
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                        Source Quote
+                      </p>
+                      <Link
+                        to={`/quotes/${sourceQuote.id}`}
+                        className="text-lg font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                      >
+                        {sourceQuote.quoteNumber}
+                      </Link>
+                    </div>
+                  ) : null}
                   {order.poNumber ? (
                     <div>
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
