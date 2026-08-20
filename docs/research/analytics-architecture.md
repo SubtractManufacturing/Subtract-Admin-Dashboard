@@ -28,8 +28,8 @@ Mixing these up is the usual way teams buy the wrong tool.
 | Kind | Question it answers | Typical tools | Fit here |
 |------|---------------------|---------------|----------|
 | **Business / operational analytics** | How many quotes this week? Average order value? Win rate by vendor? | SQL + charts, Metabase, Cube, Lightdash, dbt Semantic Layer | **This is what you described.** |
-| **Product analytics** | Which screens do users click? Where do they drop off? | PostHog, Mixpanel, Amplitude | Useful later for *admin UX*, not for quote dollar values. PostHog’s own docs say product analytics runs on events you send about *what people do in the product*. |
-| **Time-series / observability** | Sensor readings, CPU, request latency, millions of points/sec | InfluxDB, Prometheus, Timescale hypertables | Wrong grain. InfluxDB’s examples are industrial sensors, server metrics, heartbeats, rainfall, stock ticks. |
+| **Product analytics** | Which screens do users click? Where do they drop off? | PostHog, Mixpanel, Amplitude | Useful later for *admin UX*, not for quote dollar values. PostHog’s docs: product analytics runs on events about *what people do in the product*. Mixpanel calls itself a product analytics platform on Events/Users/Properties and tells you to **compare revenue totals against your finance warehouse**. Amplitude: “tracking and understanding user behavior.” None of these is a quoting ledger. |
+| **Time-series / observability** | Sensor readings, CPU, request latency, millions of points/sec | InfluxDB, Prometheus, Timescale hypertables | Wrong grain. InfluxDB’s FAQ: use a TSDB for a continuous stream of measurements; use a relational DB for transactional, relationship-heavy data. Prometheus’s own overview: not for 100% accuracy such as per-request billing. |
 
 Your examples — quote count, average quote value, quotes converted to orders, parts per quote vs per order — are **business facts** sitting in Postgres today. They are not clickstream, and they are not IoT.
 
@@ -70,11 +70,13 @@ For Subtract, three grains already exist in the OLTP schema:
 
 “Average parts per quote” is **quote grain** (count of child rows, then average). “Average dollar amount of a part” is **line-item grain**. Those must not be averaged together as if they were the same thing.
 
-Kimball also names three fact *types*:
+Store **additive** facts (counts, dollar sums) in SQL; compute **ratios** (averages, conversion rate) after aggregation so a monthly dashboard is never an average-of-weekly-averages. Those facts can live in views. Kimball still names three fact *types*:
 
 - **Transaction grain** — a quote was created, a quote was sent, an order shipped. One row per event.
 - **Periodic snapshot** — “how many quotes were sitting in `Sent` at the end of each day.” Requires a daily snapshot; current status on `quotes` cannot answer this after the fact.
 - **Accumulating snapshot** — one row per quote with `created_at`, `sent_at`, `accepted_at`, `converted_at`. We already have most of these columns on `quotes`.
+
+**Event sourcing is not a BI architecture.** Fowler’s event-sourcing pattern stores every state change and derives current state by replay; snapshots there are an optimization, not a warehouse. We already persist current-state rows. Projecting `event_logs` into facts would recreate tables we have. Skip it.
 
 ### Layer 2 — semantic layer (the part people skip)
 
@@ -155,7 +157,7 @@ ClickHouse’s own intro: OLTP reads/writes a few rows in milliseconds; OLAP sca
 
 Postgres materialized views exist specifically so a dashboard can graph historical sales without recomputing every page load, accepting that data is only as fresh as the last `REFRESH`.
 
-When analytics queries start competing with quote saves: add `statement_timeout` on the analytics connection, then a **Supabase read replica** ([read replicas](https://supabase.com/docs/guides/platform/read-replicas)) so aggregations do not block writes. That is still the same logical database.
+When analytics queries start competing with quote saves: use a **separate DB role** (read-only, `statement_timeout`) on the **session pooler or a direct connection**, not the Remix write pool in transaction mode. Then a **Supabase read replica** ([read replicas](https://supabase.com/docs/guides/platform/read-replicas)) so aggregations do not block writes. That is still the same logical database.
 
 ### Not a time-series database
 
@@ -163,7 +165,7 @@ Timescale hypertables automatically partition **append-mostly time-series and ev
 
 Quotes are **mutable business entities**: status updates, price edits, archive flags. That is OLTP. Forcing them into a TSDB loses joins to customers/vendors/line items, which is the whole point of “compare quote value vs order value by vendor.”
 
-A *daily snapshot* of pipeline counts is time-series-shaped. Store that snapshot **in Postgres** (one row per day per status). You would consider Timescale only if those snapshots reached tens of millions of rows and query time hurt — far beyond this app.
+A *daily snapshot* of pipeline counts is time-series-shaped. Store that snapshot **in Postgres** (one row per day per status). You would consider Timescale only if those snapshots reached tens of millions of rows and query time hurt — far beyond this app. Timescale is also **not** a default Supabase extension; adopting it means a different host or a self-managed fork.
 
 ### Not ClickHouse / Snowflake yet
 
@@ -192,18 +194,18 @@ Nothing “understands Subtract quotes” out of the box. Everything below still
 |-------|------|--------|
 | TypeScript metrics catalog in `app/lib/analytics` | Semantic layer | One function: `queryMetrics({ metrics, grain, range, dimensions, filters })`. Deep module; routes stay thin. |
 | Drizzle / SQL against `quotes`, `orders`, line items | Query | Use `date_trunc`, explicit archive filters, indexes on time columns. |
-| Recharts, Chart.js, Apache ECharts, or shadcn charts (Recharts-based) | Presentation | Cube’s React client is explicitly visualization-agnostic and documents Chart.js / similar. No chart library is in `package.json` today. |
+| Recharts, Chart.js, Apache ECharts, or shadcn charts (Recharts-based) | Presentation | shadcn’s chart docs: Recharts under the hood and `"use client"`. Remix loaders stay server-side; chart components are client islands. No chart library is in `package.json` today. |
 | Existing Remix auth + feature flags | Access | Internal-only; no multi-tenant embedding problem. |
 
 **Pros:** matches how email, queue, and dashboard already work; testable; no new runtime. **Cons:** “compare anything” is only as flexible as the catalog you ship.
 
 ### B. Sidecar BI on the same Postgres (best for ad-hoc)
 
-**Metabase** is the path Supabase documents first-party: Docker, connect session pooler, explore. Embedding: modular components or full-app iframe; guest JWT embeds work on OSS for view-only charts; SSO / query-builder embeds need Pro.
+**Metabase** is the path Supabase documents first-party: Docker, connect **session pooler** (not the transaction pooler), explore. OSS is AGPL; guest JWT embeds work on OSS for view-only charts (iframe may show “Powered by Metabase”); the React embedding SDK is Pro/Enterprise and Metabase documents it as **not supporting SSR** — in Remix that means a client-only island, not a loader-rendered chart. For an internal admin, running Metabase as a separate tab is simpler than embedding.
 
 This is the closest thing to “plug in and click.” Operators can build bar/line/pie without a deploy. Risk: five people define “average quote value” five ways unless they query **views you wrote** (the semantic layer as SQL).
 
-**Apache Superset** is the heavier open-source BI (SQL Lab, many viz types). Connects to Postgres as a database. More ops, more power, worse fit for a small internal team than Metabase.
+**Apache Superset** is the heavier open-source BI (SQL Lab, many viz types). Connects to Postgres as a database. More ops (Python, Redis, Celery), worse fit for a small internal team than Metabase.
 
 **Evidence.dev** renders a site from markdown + SQL against Postgres (official connector). Excellent if planning reports should live in git next to the app. Not a click-to-explore UI.
 
@@ -211,17 +213,24 @@ This is the closest thing to “plug in and click.” Operators can build bar/li
 
 **Cube** (open-source Core + Cube Cloud): code-first cubes/views, REST/GraphQL/SQL APIs, React embed SDK, pre-aggregations. Official Postgres source (`CUBEJS_DB_TYPE=postgres`). Query JSON is `{ measures, dimensions, timeDimensions }`. Extra Node (or Cloud) service to run, plus a data model to write. Worth it if in-app charts *and* Metabase *and* AI agents must share definitions.
 
-**Lightdash**: YAML metrics/dimensions, generates SQL, Metrics Catalog UI, API. Works with dbt or standalone YAML, including Postgres. Another app to host.
+**Lightdash**: YAML metrics/dimensions, generates SQL, Metrics Catalog UI, React SDK. Official **Supabase** connection uses the **session pooler**, not transaction mode. Another app to host.
 
-**dbt Semantic Layer / MetricFlow**: warehouse-native. Premature here.
+**dbt Semantic Layer / MetricFlow**: warehouse-native (Starter/Enterprise-tier for the hosted layer). Premature here.
+
+**Hasura** can aggregate Postgres over GraphQL. We already have Drizzle; adding Hasura only for charts is a second API compiler with no BI UI.
+
+**GoodData** is a commercial semantic layer + React UI aimed at customer-facing embeds. Overkill for an internal admin.
 
 ### D. Wrong category (do not use as source of truth)
 
 | Tool | Why it looks tempting | Why not |
 |------|----------------------|---------|
-| PostHog / Mixpanel | Funnels, trends, dashboards | Product events, not quote totals. PostHog: “what people actually do in your product.” Their BI notes even point advanced BI elsewhere. |
-| Prometheus | “Metrics” | Ops scrape metrics, not dollar facts. |
+| PostHog / Mixpanel / Amplitude | Funnels, trends, dashboards | Product events, not quote totals. Mixpanel’s revenue guides tell you to import billing data and still **reconcile against the finance warehouse**. |
+| Prometheus | “Metrics” | Ops scrape metrics; official overview disclaims 100% accuracy (e.g. billing). |
 | InfluxDB | Time-based graphs | Measurement streams, not joined business entities. |
+| Tinybird | Fast HTTP analytics APIs | Copies Postgres into a ClickHouse-class engine; their own migrate guide is “when PostgreSQL is doing too much.” |
+
+Supabase itself has **no first-party quote/order BI product**. First-party options around analytics are: Postgres, pooling, official **Metabase** pairing, **Wrappers** (FDW ETL to a warehouse — large batches can tax the primary; no RLS on FDWs), and **Analytics Buckets** (Iceberg, private alpha, BYO ingest). None of those replaces a metrics catalog for this app.
 
 ### Comparison (this repo)
 
@@ -333,7 +342,7 @@ Only with a second data source or real OLTP pain.
 
 - Time-series DB
 - ClickHouse
-- PostHog as financial source of truth
+- PostHog / Mixpanel / Amplitude as financial source of truth
 - Querying `event_logs` for KPIs
 - Unconstrained pivot UI
 - Embedding customer-facing analytics (this is an internal admin)
@@ -410,7 +419,9 @@ When a definition is locked, record it in an ADR (backlog: ADR-0011) so “avera
 - Treat `event_logs` as a fact table.
 - Duplicate metric SQL in loaders, Metabase questions, and CSV exports.
 - Start with Timescale, ClickHouse, or a warehouse “because analytics is time-based.”
-- Use PostHog/Mixpanel dollar events as the financial system of record.
+- Use PostHog / Mixpanel / Amplitude events as the financial system of record.
+- Average already-averaged weekly numbers to get a “monthly average.”
+- Add Hasura (or Tinybird) solely to feed charts — Drizzle already queries Postgres.
 - Mix quote-level and line-level averages in one chart.
 - Build a fully generic “any field vs any field” explorer before ten named metrics are trusted.
 - Drop analytics SQL into `_protected.quotes.$quoteId.tsx`.
@@ -428,6 +439,8 @@ Primary sources only; blogs used only as pointers, not as claims.
 - [Kimball: Fact Tables](https://www.kimballgroup.com/2008/11/fact-tables/)
 - [Kimball: Fact Tables and Dimension Tables](https://www.kimballgroup.com/2003/01/fact-tables-and-dimension-tables/)
 - [Kimball: Keep to the Grain](https://www.kimballgroup.com/2007/07/keep-to-the-grain-in-dimensional-modeling/)
+- [Kimball: Dimensional Modeling Techniques (incl. fact types)](https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/)
+- [Martin Fowler: Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html)
 
 ### Postgres query / cache layer
 
@@ -442,20 +455,32 @@ Primary sources only; blogs used only as pointers, not as claims.
 - [Cube React client](https://docs.cube.dev/reference/javascript-sdk/react)
 - [Cube embedding](https://docs.cube.dev/embedding)
 - [Lightdash semantic layer](https://docs.lightdash.com/guides/lightdash-semantic-layer)
+- [Lightdash connect project (Postgres / Supabase)](https://docs.lightdash.com/get-started/setup-lightdash/connect-project)
 - [dbt MetricFlow / Semantic Layer](https://docs.getdbt.com/docs/build/about-metricflow)
 - [Metabase embedding introduction](https://www.metabase.com/docs/latest/embedding/introduction)
+- [Metabase embedding SDK](https://www.metabase.com/docs/latest/embedding/sdk/introduction)
+- [Metabase license (AGPL / commercial)](https://www.metabase.com/license)
 - [Evidence.dev](https://docs.evidence.dev/)
+- [shadcn charts (Recharts)](https://ui.shadcn.com/docs/components/chart)
 - [Supabase: connect Metabase](https://supabase.com/docs/guides/database/metabase)
 - [Supabase: connecting to Postgres](https://supabase.com/docs/guides/database/connecting-to-postgres)
 - [Supabase: read replicas](https://supabase.com/docs/guides/platform/read-replicas)
+- [Supabase Wrappers / FDW](https://supabase.com/docs/guides/database/extensions/wrappers/overview)
+- [Supabase Analytics Buckets](https://supabase.com/docs/guides/storage/analytics/creating-analytics-buckets)
 
 ### OLAP vs OLTP vs time series
 
 - [ClickHouse: what is ClickHouse / OLAP vs OLTP](https://clickhouse.com/docs/get-started/about/intro)
 - [Timescale: hypertables](https://docs.timescale.com/use-timescale/latest/hypertables/)
 - [InfluxDB 2 get started (time-series examples)](https://docs.influxdata.com/influxdb/v2/get-started/)
+- [InfluxData: when to use a time-series database](https://docs.influxdata.com/platform/faq/)
+- [Prometheus overview (not for billing-grade accuracy)](https://prometheus.io/docs/introduction/overview/)
 - [PostHog product analytics](https://posthog.com/docs/product-analytics)
 - [PostHog BI vs product analytics](https://posthog.com/data-stack/business-intelligence)
+- [Mixpanel: what is Mixpanel](https://docs.mixpanel.com/docs/what-is-mixpanel)
+- [Mixpanel: grow revenue (reconcile to finance warehouse)](https://docs.mixpanel.com/guides/guides-by-use-case/grow-your-usership/grow-revenue)
+- [Amplitude: what is Amplitude](https://docs.amplitude.com/docs/what-is-amplitude)
+- [Tinybird: migrate from PostgreSQL](https://www.tinybird.co/docs/forward/guides/migrate-from-postgres)
 
 ### This repository
 
