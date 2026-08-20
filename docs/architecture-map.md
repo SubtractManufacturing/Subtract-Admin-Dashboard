@@ -66,9 +66,10 @@ docs/
 | **Admin** | `_protected.admin.*` | `users.admin.server.ts`, `audit-log.ts`, data retention |
 | **Settings / flags** | `_protected.settings` | `featureFlags.ts`, developer settings in schema |
 | **Downloads** | `_protected.download.$.ts` | `file-download.server.ts`, `downloadQuoteFiles.ts`, `s3.server.ts` |
-| **Events** | `_protected.events._index` | `events.ts` |
+| **Events (audit)** | `_protected.events._index` | `events.ts` — timeline, not a metrics store |
 | **Auth** | `login`, `auth.callback`, `logout`, `setup-password` | `auth.server.ts`, `supabase.ts` |
 | **Stubs** | `_protected.ActionItems` | Coming soon — linked from nav |
+| **Home dashboard** | `_protected._index` | `dashboard.ts`, `StatCards` — operational tiles, not planning analytics |
 
 ## God routes (high churn — refactor targets)
 
@@ -174,3 +175,4 @@ Feature flags default off for many shipped-adjacent features — see flag audit 
 - [docs/email-template-merge-tokens.md](email-template-merge-tokens.md)
 - [docs/pdf/presets.md](pdf/presets.md)
 - [CONTEXT.md](../CONTEXT.md) — domain glossary
+- [docs/research/analytics-architecture.md](research/analytics-architecture.md) — planning analytics research (metrics catalog, Postgres vs warehouse vs TSDB, Metabase/Cube)
