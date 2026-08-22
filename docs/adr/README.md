@@ -27,6 +27,7 @@ These topics emerged from the [architecture review](../architecture-map.md). Wri
 | ADR-0008 | **Admin vs Settings configuration map** | Feature flags in Settings; Admin search describes them at `/admin` | Operator confusion; duplicate Stripe config |
 | ADR-0009 | **CAD/mesh pipeline interface** | Five+ modules + queue handler for one conceptual pipeline | End-to-end behavior hard to trace and test |
 | ADR-0010 | **Route testing strategy** | Zero route tests; 36 tests mostly in email | Refactor safety before god route extraction |
+| ADR-0011 | **Planning analytics architecture** | Time-based quote/order metrics, charts, and ad-hoc compare need a locked metrics catalog, query path, and (later) BI sidecar vs warehouse | Research: [analytics-architecture.md](../research/analytics-architecture.md). Decision still open: in-app catalog first vs Metabase vs Cube |
 
 ## Accepted (from existing docs and conventions)
 
