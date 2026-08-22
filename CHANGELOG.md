@@ -6,6 +6,13 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.7.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.7.1...v1.7.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **s3:** sanitize filenames in signed metadata ([b3b31f9](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/b3b31f91469feae0ad29154789863a801dac546f))
+
 ## [1.7.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.7.0...v1.7.1) (2026-08-19)
 
 
