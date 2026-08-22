@@ -62,6 +62,14 @@ export interface UploadResult {
   size: number
 }
 
+export function sanitizeS3MetadataFileName(fileName: string): string {
+  return (
+    fileName
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9._-]/g, "") || "file"
+  )
+}
+
 export async function uploadFile(params: UploadParams): Promise<UploadResult> {
   const { key, buffer, contentType, fileName } = params
 
@@ -75,7 +83,7 @@ export async function uploadFile(params: UploadParams): Promise<UploadResult> {
     Body: buffer,
     ContentType: contentType,
     Metadata: {
-      originalFileName: fileName,
+      originalFileName: sanitizeS3MetadataFileName(fileName),
     },
   })
 
