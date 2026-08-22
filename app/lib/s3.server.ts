@@ -62,9 +62,11 @@ export interface UploadResult {
   size: number
 }
 
+/** Returns a stable ASCII filename for metadata included in signed S3 requests. */
 export function sanitizeS3MetadataFileName(fileName: string): string {
   return (
     fileName
+      .trim()
       .replace(/\s+/g, "-")
       .replace(/[^a-zA-Z0-9._-]/g, "") || "file"
   )
