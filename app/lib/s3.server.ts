@@ -62,6 +62,16 @@ export interface UploadResult {
   size: number
 }
 
+/** Returns a stable ASCII filename for metadata included in signed S3 requests. */
+export function sanitizeS3MetadataFileName(fileName: string): string {
+  return (
+    fileName
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9._-]/g, "") || "file"
+  )
+}
+
 export async function uploadFile(params: UploadParams): Promise<UploadResult> {
   const { key, buffer, contentType, fileName } = params
 
@@ -75,7 +85,7 @@ export async function uploadFile(params: UploadParams): Promise<UploadResult> {
     Body: buffer,
     ContentType: contentType,
     Metadata: {
-      originalFileName: fileName,
+      originalFileName: sanitizeS3MetadataFileName(fileName),
     },
   })
 
