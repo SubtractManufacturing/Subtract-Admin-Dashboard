@@ -2,6 +2,9 @@
   "name": "",
   "version": "1.7.2",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "sideEffects": false,
   "type": "module",
   "scripts": {
@@ -60,7 +63,7 @@
     "marked": "^17.0.5",
     "match-sorter": "^6.3.1",
     "mupdf": "^1.26.4",
-    "pg-boss": "^12.14.0",
+    "pg-boss": "^12.33.4",
     "postgres": "^3.4.7",
     "puppeteer": "^24.23.0",
     "react": "^18.2.0",

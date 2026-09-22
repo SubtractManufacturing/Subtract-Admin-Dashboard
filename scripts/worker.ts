@@ -8,9 +8,7 @@ import {
   type MockJobPayload,
   type PurgeArchivedLineItemsPayload,
   type SendEmailPayload,
-  type ToolpathReportPollPayload,
   type ToolpathStaleCleanupPayload,
-  type ToolpathUploadPayload,
   type RfqImportPayload,
   type RfqReceiptScanPayload,
 } from "../app/lib/queue/types";
@@ -121,17 +119,18 @@ async function main() {
     QUEUES.RFQ_RECEIPT_SCAN,
     "*/5 * * * *",
     { triggeredAt: new Date().toISOString() },
+    { missed: "once" },
   );
   console.log(`[Worker] Scheduled every 5 minutes: ${QUEUES.RFQ_RECEIPT_SCAN}`);
 
-  await boss.work<ToolpathUploadPayload>(
+  await boss.work(
     QUEUES.TOOLPATH_UPLOAD,
     { batchSize: 1, includeMetadata: true },
     handleToolpathUpload,
   );
   console.log(`[Worker] Listening on queue: ${QUEUES.TOOLPATH_UPLOAD}`);
 
-  await boss.work<ToolpathReportPollPayload>(
+  await boss.work(
     QUEUES.TOOLPATH_REPORT_POLL,
     { batchSize: 1, includeMetadata: true },
     handleToolpathReportPoll,

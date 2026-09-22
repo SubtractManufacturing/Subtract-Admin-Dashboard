@@ -64,7 +64,8 @@ export interface DrawingThumbnailPayload {
 export const RFQ_IMPORT_OPTIONS = {
   // The import ledger owns the bounded retry schedule.
   retryLimit: 0,
-  expireInSeconds: 4 * 24 * 60 * 60,
+  // pg-boss rejects job expirations longer than 24 hours.
+  expireInSeconds: 24 * 60 * 60,
 } as const;
 
 export const DRAWING_THUMBNAIL_OPTIONS = {
