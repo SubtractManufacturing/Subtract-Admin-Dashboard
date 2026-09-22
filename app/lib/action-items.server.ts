@@ -1,9 +1,18 @@
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "./db";
 import { actionItems, type UserRole } from "./db/schema";
-import { sendRfqImportJob } from "./queue/producer.server";
-import { retryRfqImportNow } from "./rfq-intake/postgres.server";
+import { retryRfqImport } from "./rfq-intake/retry.server";
+
+export class ActionItemCommandError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ActionItemCommandError";
+  }
+}
 
 export type ActionItemActor = {
   userId: string;
@@ -14,6 +23,12 @@ function isElevated(role: UserRole) {
   return role === "Admin" || role === "Dev";
 }
 
+function requireElevated(role: UserRole) {
+  if (!isElevated(role)) {
+    throw new ActionItemCommandError("Admin or Dev role required", 403);
+  }
+}
+
 export async function getActionItemsForUser(userId: string) {
   const items = await db
     .select()
@@ -21,7 +36,7 @@ export async function getActionItemsForUser(userId: string) {
     .where(
       and(
         eq(actionItems.status, "active"),
-        isNull(actionItems.deletedAt),
+        eq(actionItems.isArchived, false),
       ),
     )
     .orderBy(desc(actionItems.createdAt));
@@ -41,7 +56,7 @@ export async function getActionItemCounts(userId: string) {
     .where(
       and(
         eq(actionItems.status, "active"),
-        isNull(actionItems.deletedAt),
+        eq(actionItems.isArchived, false),
       ),
     );
   return {
@@ -57,7 +72,7 @@ export async function markActionItemRead(id: string, actor: ActionItemActor) {
       seenBy: sql`case when not (${actor.userId} = any(${actionItems.seenBy})) then array_append(${actionItems.seenBy}, ${actor.userId}) else ${actionItems.seenBy} end`,
       updatedAt: new Date(),
     })
-    .where(and(eq(actionItems.id, id), isNull(actionItems.deletedAt)))
+    .where(and(eq(actionItems.id, id), eq(actionItems.isArchived, false)))
     .returning();
   return updated ?? null;
 }
@@ -70,11 +85,14 @@ export async function resolveActionItem(
   const [item] = await db
     .select()
     .from(actionItems)
-    .where(and(eq(actionItems.id, id), isNull(actionItems.deletedAt)))
+    .where(and(eq(actionItems.id, id), eq(actionItems.isArchived, false)))
     .limit(1);
-  if (!item) throw new Error("Action Item not found");
+  if (!item) throw new ActionItemCommandError("Action Item not found", 404);
   if (item.type === "rfq_import_failure") {
-    throw new Error("RFQ import failures resolve automatically after a successful import");
+    throw new ActionItemCommandError(
+      "RFQ import failures resolve automatically after a successful import",
+      409,
+    );
   }
   const now = new Date();
   const [updated] = await db
@@ -92,7 +110,7 @@ export async function resolveActionItem(
 }
 
 export async function retryActionItemNow(id: string, actor: ActionItemActor) {
-  if (!isElevated(actor.role)) throw new Error("Admin or Dev role required");
+  requireElevated(actor.role);
   const [item] = await db
     .select()
     .from(actionItems)
@@ -100,23 +118,31 @@ export async function retryActionItemNow(id: string, actor: ActionItemActor) {
       and(
         eq(actionItems.id, id),
         eq(actionItems.type, "rfq_import_failure"),
-        isNull(actionItems.deletedAt),
+        eq(actionItems.status, "active"),
+        eq(actionItems.isArchived, false),
       ),
     )
     .limit(1);
-  if (!item?.entityId) throw new Error("RFQ import Action Item not found");
-  const receiptKey = await retryRfqImportNow(item.entityId);
-  if (!receiptKey) throw new Error("RFQ import ledger entry not found");
-  await sendRfqImportJob({ receiptKey }, { force: true });
+  if (!item?.entityId) {
+    throw new ActionItemCommandError("RFQ import Action Item not found", 404);
+  }
+  if (!(await retryRfqImport(item.entityId))) {
+    throw new ActionItemCommandError("RFQ import ledger entry not found", 404);
+  }
 }
 
 export async function softDeleteActionItem(id: string, actor: ActionItemActor) {
-  if (!isElevated(actor.role)) throw new Error("Admin or Dev role required");
+  requireElevated(actor.role);
   const now = new Date();
   const [updated] = await db
     .update(actionItems)
-    .set({ deletedAt: now, deletedBy: actor.userId, updatedAt: now })
-    .where(and(eq(actionItems.id, id), isNull(actionItems.deletedAt)))
+    .set({
+      isArchived: true,
+      deletedAt: now,
+      deletedBy: actor.userId,
+      updatedAt: now,
+    })
+    .where(and(eq(actionItems.id, id), eq(actionItems.isArchived, false)))
     .returning();
   return updated ?? null;
 }

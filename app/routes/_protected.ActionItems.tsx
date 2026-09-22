@@ -2,6 +2,7 @@ import { ActionFunctionArgs, json, LoaderFunctionArgs, redirect } from "@remix-r
 import { Form, Link, useLoaderData } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import {
+  ActionItemCommandError,
   getActionItemsForUser,
   markActionItemRead,
   resolveActionItem,
@@ -12,6 +13,11 @@ import {
 import SearchHeader from "~/components/SearchHeader";
 import { DeleteActionItemButton } from "~/components/action-items/DeleteActionItemButton";
 import type { ActionItem, UserRole } from "~/lib/db/schema";
+
+type ActionItemsLoaderData = {
+  items: Array<ActionItem & { isUnread: boolean }>;
+  role: UserRole;
+};
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { headers, userDetails } = await requireAuth(request);
@@ -35,18 +41,16 @@ export async function action({ request }: ActionFunctionArgs) {
     else return withAuthHeaders(json({ error: "Unknown action" }, { status: 400 }), headers);
     return withAuthHeaders(redirect("/ActionItems"), headers);
   } catch (error) {
+    if (!(error instanceof ActionItemCommandError)) throw error;
     return withAuthHeaders(
-      json({ error: error instanceof Error ? error.message : "Action failed" }, { status: 400 }),
+      json({ error: error.message }, { status: error.status }),
       headers,
     );
   }
 }
 
 export default function ActionItems() {
-  const { items, role } = useLoaderData<typeof loader>() as unknown as {
-    items: Array<ActionItem & { isUnread: boolean }>;
-    role: UserRole;
-  };
+  const { items, role } = useLoaderData<ActionItemsLoaderData>();
   const elevated = role === "Admin" || role === "Dev";
   return (
     <div className="max-w-[1920px] mx-auto">

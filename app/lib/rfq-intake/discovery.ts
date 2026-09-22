@@ -1,5 +1,10 @@
-import { isReceiptKey } from "./keys";
-import type { ImportLedgerSummary, RfqQueue, RfqStorage } from "./types";
+import { isReceiptKey, receiptKeyForIntakeObject } from "./keys";
+import {
+  RFQ_PROCESSING_LEASE_MS,
+  type ImportLedgerSummary,
+  type RfqQueue,
+  type RfqStorage,
+} from "./types";
 
 export type ScanOutcome = {
   discovered: number;
@@ -15,6 +20,7 @@ export type ReceiptDiscoveryDependencies = {
   getLedgerSummaries(
     receiptKeys: string[],
   ): Promise<Map<string, ImportLedgerSummary>>;
+  getDueLedgerReceiptKeys(now: Date): Promise<string[]>;
 };
 
 function shouldEnqueue(
@@ -24,6 +30,13 @@ function shouldEnqueue(
   if (!ledger) return true;
   if (ledger.status === "pending") return true;
   if (ledger.status === "cleanup_pending") return true;
+  if (ledger.status === "completed") return true;
+  if (ledger.status === "processing") {
+    return (
+      ledger.processingStartedAt === null ||
+      ledger.processingStartedAt.getTime() <= now.getTime() - RFQ_PROCESSING_LEASE_MS
+    );
+  }
   if (ledger.status === "retry_scheduled") {
     return ledger.nextAttemptAt !== null && ledger.nextAttemptAt <= now;
   }
@@ -37,21 +50,36 @@ export async function scanForReceipts(
     return { discovered: 0, enqueued: 0, skipped: 0 };
   }
 
-  const receiptKeys = new Set<string>();
+  const now = dependencies.now();
+  const receiptKeys = new Set<string>(
+    await dependencies.getDueLedgerReceiptKeys(now),
+  );
+  const intakePrefixCandidates = new Set<string>();
   let cursor: string | undefined;
   do {
     const page = await dependencies.storage.list("intake/", cursor);
     for (const object of page.objects) {
-      if (isReceiptKey(object.key)) receiptKeys.add(object.key);
+      if (isReceiptKey(object.key)) {
+        receiptKeys.add(object.key);
+      } else {
+        const candidate = receiptKeyForIntakeObject(object.key);
+        if (candidate) intakePrefixCandidates.add(candidate);
+      }
     }
     cursor = page.nextCursor ?? undefined;
   } while (cursor);
 
+  const summaryKeys = [...new Set([...receiptKeys, ...intakePrefixCandidates])];
+  const summaries = await dependencies.getLedgerSummaries(summaryKeys);
+  for (const candidate of intakePrefixCandidates) {
+    const status = summaries.get(candidate)?.status;
+    if (status === "completed" || status === "cleanup_pending") {
+      receiptKeys.add(candidate);
+    }
+  }
   const keys = [...receiptKeys].sort();
-  const summaries = await dependencies.getLedgerSummaries(keys);
   let enqueued = 0;
   let skipped = 0;
-  const now = dependencies.now();
 
   for (const receiptKey of keys) {
     if (shouldEnqueue(summaries.get(receiptKey), now)) {

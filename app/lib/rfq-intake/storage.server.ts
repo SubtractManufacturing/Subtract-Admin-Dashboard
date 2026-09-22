@@ -17,6 +17,10 @@ function bucket() {
   return getEnv("S3_BUCKET") || "subtract-attachments";
 }
 
+export function getRfqStorageBucket(): string {
+  return bucket();
+}
+
 function metadata(input: {
   key?: string;
   size?: number;
@@ -127,9 +131,12 @@ export const awsRfqStorage: RfqStorage = {
 
   async deletePrefix(prefix) {
     assertDeletableIntakePrefix(prefix);
-    let cursor: string | undefined;
+    let deletedObjectCount: number;
     do {
-      const page = await this.list(prefix, cursor);
+      // Always request the first page. Continuation tokens can skip keys after the
+      // preceding page is deleted because the underlying listing has changed.
+      const page = await this.list(prefix);
+      deletedObjectCount = page.objects.length;
       if (page.objects.length > 0) {
         const response = await getS3Client().send(
           new DeleteObjectsCommand({
@@ -146,8 +153,7 @@ export const awsRfqStorage: RfqStorage = {
           );
         }
       }
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
+    } while (deletedObjectCount > 0);
   },
 };
 

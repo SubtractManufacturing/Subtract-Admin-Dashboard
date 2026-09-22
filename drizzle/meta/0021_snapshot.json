@@ -68,6 +68,13 @@
           "notNull": true,
           "default": "ARRAY[]::text[]"
         },
+        "is_archived": {
+          "name": "is_archived",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "resolved_at": {
           "name": "resolved_at",
           "type": "timestamp",
@@ -128,7 +135,7 @@
           "concurrently": false,
           "method": "btree",
           "with": {},
-          "where": "\"action_items\".\"status\" = 'active' and \"action_items\".\"deleted_at\" is null"
+          "where": "\"action_items\".\"status\" = 'active' and \"action_items\".\"is_archived\" = false"
         },
         "action_items_entity_idx": {
           "name": "action_items_entity_idx",
@@ -177,7 +184,7 @@
           "concurrently": false,
           "method": "btree",
           "with": {},
-          "where": "\"action_items\".\"type\" = 'rfq_import_failure' and \"action_items\".\"deleted_at\" is null"
+          "where": "\"action_items\".\"type\" = 'rfq_import_failure' and \"action_items\".\"is_archived\" = false"
         }
       },
       "foreignKeys": {
@@ -3459,6 +3466,12 @@
           "notNull": true,
           "default": 0
         },
+        "processing_started_at": {
+          "name": "processing_started_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
         "first_failure_at": {
           "name": "first_failure_at",
           "type": "timestamp",
@@ -3535,6 +3548,22 @@
           "method": "btree",
           "with": {},
           "where": "\"rfq_import_ledger\".\"status\" = 'retry_scheduled'"
+        },
+        "rfq_import_ledger_processing_idx": {
+          "name": "rfq_import_ledger_processing_idx",
+          "columns": [
+            {
+              "expression": "processing_started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {},
+          "where": "\"rfq_import_ledger\".\"status\" = 'processing'"
         },
         "rfq_import_ledger_quote_idx": {
           "name": "rfq_import_ledger_quote_idx",

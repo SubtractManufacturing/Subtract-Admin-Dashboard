@@ -11,7 +11,10 @@ export type ImportStatus =
 export type ImportLedgerSummary = {
   status: ImportStatus;
   nextAttemptAt: Date | null;
+  processingStartedAt: Date | null;
 };
+
+export const RFQ_PROCESSING_LEASE_MS = 30 * 60_000;
 
 export type StoredObject = {
   key: string;
@@ -41,8 +44,11 @@ export interface RfqStorage {
 }
 
 export interface RfqQueue {
-  enqueue(receiptKey: string, options?: { force?: boolean }): Promise<void>;
-  enqueueDerivedAssets(quotePartIds: string[]): Promise<void>;
+  enqueue(receiptKey: string): Promise<void>;
+  enqueueDerivedAssets(
+    quotePartIds: string[],
+    drawingAttachmentIds: string[],
+  ): Promise<void>;
 }
 
 export type ReceiptPointer = {
@@ -125,7 +131,11 @@ export interface RfqPersistence {
   claimImport(receipt: ReceiptPointer, now: Date): Promise<ImportClaim>;
   commitImport(
     prepared: PreparedImport,
-  ): Promise<{ quoteId: number; quotePartIds: string[] }>;
+  ): Promise<{
+    quoteId: number;
+    quotePartIds: string[];
+    drawingAttachmentIds: string[];
+  }>;
   recordFailure(input: {
     receipt: ReceiptPointer;
     classification: "validation" | "security" | "infrastructure" | "retry_exhausted";

@@ -627,6 +627,7 @@ export const rfqImportLedger = pgTable(
     quoteId: integer("quote_id").references(() => quotes.id),
     status: rfqImportStatusEnum("status").default("pending").notNull(),
     attemptCount: integer("attempt_count").default(0).notNull(),
+    processingStartedAt: timestamp("processing_started_at"),
     firstFailureAt: timestamp("first_failure_at"),
     lastFailureAt: timestamp("last_failure_at"),
     nextAttemptAt: timestamp("next_attempt_at"),
@@ -642,6 +643,9 @@ export const rfqImportLedger = pgTable(
     dueIdx: index("rfq_import_ledger_due_idx")
       .on(table.nextAttemptAt)
       .where(sql`${table.status} = 'retry_scheduled'`),
+    processingIdx: index("rfq_import_ledger_processing_idx")
+      .on(table.processingStartedAt)
+      .where(sql`${table.status} = 'processing'`),
     quoteIdx: index("rfq_import_ledger_quote_idx").on(table.quoteId),
   }),
 ).enableRLS();
@@ -661,6 +665,7 @@ export const actionItems = pgTable(
       .notNull()
       .default(sql`'{}'::jsonb`),
     seenBy: text("seen_by").array().notNull().default(sql`ARRAY[]::text[]`),
+    isArchived: boolean("is_archived").default(false).notNull(),
     resolvedAt: timestamp("resolved_at"),
     resolvedBy: text("resolved_by").references(() => users.id),
     resolution: text("resolution"),
@@ -672,7 +677,7 @@ export const actionItems = pgTable(
   (table) => ({
     activeIdx: index("action_items_active_idx")
       .on(table.createdAt)
-      .where(sql`${table.status} = 'active' and ${table.deletedAt} is null`),
+      .where(sql`${table.status} = 'active' and ${table.isArchived} = false`),
     entityIdx: index("action_items_entity_idx").on(
       table.entityType,
       table.entityId,
@@ -680,7 +685,7 @@ export const actionItems = pgTable(
     activeFailureUniqueIdx: uniqueIndex("action_items_active_failure_unique_idx")
       .on(table.type, table.entityType, table.entityId)
       .where(
-        sql`${table.type} = 'rfq_import_failure' and ${table.deletedAt} is null`,
+        sql`${table.type} = 'rfq_import_failure' and ${table.isArchived} = false`,
       ),
   }),
 ).enableRLS();

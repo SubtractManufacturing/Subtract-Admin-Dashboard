@@ -28,6 +28,7 @@ import { getCustomer, getCustomers } from "~/lib/customers";
 import { getVendor, getVendors } from "~/lib/vendors";
 import { getOrder } from "~/lib/orders";
 import {
+  authorizeAttachmentDeletion,
   getAttachment,
   createAttachment,
   deleteAttachment,
@@ -2229,10 +2230,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
               { status: 403 },
             );
           }
+          const authorizedAttachment = await authorizeAttachmentDeletion({
+            attachmentId,
+            entityType: "quote",
+            entityId: quote.id,
+            eventContext: { canDeleteProtected },
+          });
+          if (!authorizedAttachment) {
+            return json({ error: "Attachment not found on this Quote" }, { status: 404 });
+          }
           await db
             .delete(quoteAttachments)
             .where(eq(quoteAttachments.attachmentId, attachmentId));
-          await deleteFile(attachment.s3Key);
+          await deleteFile(authorizedAttachment.s3Key);
 
           const eventContext: AttachmentEventContext = {
             userId: user?.id,

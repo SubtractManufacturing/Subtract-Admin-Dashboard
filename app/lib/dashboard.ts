@@ -43,7 +43,7 @@ export async function getDashboardStats(rfqDays: number = 7): Promise<DashboardS
     const actionItemsResult = await db
       .select({ count: count() })
       .from(actionItems)
-      .where(and(eq(actionItems.status, 'active'), sql`${actionItems.deletedAt} is null`))
+      .where(and(eq(actionItems.status, 'active'), eq(actionItems.isArchived, false)))
 
     // Get open PO revenue and count
     const openOrdersResult = await db

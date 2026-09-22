@@ -3,6 +3,7 @@ import { Transform } from "node:stream";
 import { finished } from "node:stream/promises";
 import archiver from "archiver";
 
+import { IntakeValidationError } from "./package";
 import type { RfqStorage, StoredObject } from "./types";
 
 type ArchiveIndexEntry = {
@@ -13,6 +14,13 @@ type ArchiveIndexEntry = {
   etag: string | null;
   sha256: string;
 };
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || codePoint === 127;
+  });
+}
 
 async function listAll(storage: Pick<RfqStorage, "list">, prefix: string) {
   const objects: StoredObject[] = [];
@@ -41,6 +49,23 @@ export async function createRawIntakeArchive(input: {
 
   try {
     for (const object of sourceObjects) {
+      const relativeKey = object.key.slice(input.prefix.length);
+      if (
+        !object.key.startsWith(input.prefix) ||
+        !relativeKey ||
+        relativeKey.includes("\\") ||
+        relativeKey.split("/").some((segment) => segment === "." || segment === "..") ||
+        hasControlCharacter(relativeKey)
+      ) {
+        throw new IntakeValidationError(
+          `Unsafe object key in intake archive: ${object.key}`,
+          "security",
+        );
+      }
+      const current = await input.storage.head(object.key);
+      if (!current) {
+        throw new Error(`Object disappeared while archiving: ${object.key}`);
+      }
       const hash = createHash("sha256");
       let streamedSize = 0;
       const hasher = new Transform({
@@ -53,15 +78,21 @@ export async function createRawIntakeArchive(input: {
       (await input.storage.read(object.key)).pipe(hasher);
       zip.append(hasher, { name: object.key });
       await finished(hasher);
-      if (streamedSize !== object.size) {
+      const after = await input.storage.head(object.key);
+      if (
+        !after ||
+        streamedSize !== current.size ||
+        after.size !== current.size ||
+        (current.etag !== null && after.etag !== current.etag)
+      ) {
         throw new Error(`Object changed while archiving: ${object.key}`);
       }
       index.push({
         key: object.key,
-        size: object.size,
-        contentType: object.contentType,
-        lastModified: object.lastModified?.toISOString() ?? null,
-        etag: object.etag,
+        size: current.size,
+        contentType: current.contentType,
+        lastModified: current.lastModified?.toISOString() ?? null,
+        etag: current.etag,
         sha256: hash.digest("hex"),
       });
     }

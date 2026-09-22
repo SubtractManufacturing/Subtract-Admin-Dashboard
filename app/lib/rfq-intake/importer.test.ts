@@ -16,6 +16,8 @@ const UPLOAD_ID = "018f0f7d-9f65-7eb4-bf9c-0fca82a87a30";
 const RECEIPT_KEY = `intake/${SESSION_ID}/meta/receipt.json`;
 const MANIFEST_KEY = `intake/${SESSION_ID}/meta/manifest.json`;
 const CAD_KEY = `intake/${SESSION_ID}/parts/${PART_ID}/${UPLOAD_ID}-widget.step`;
+const DRAWING_A_KEY = `intake/${SESSION_ID}/parts/${PART_ID}/drawing-a.pdf`;
+const DRAWING_B_KEY = `intake/${SESSION_ID}/parts/${PART_ID}/drawing-b.pdf`;
 const ORPHAN_KEY = `intake/${SESSION_ID}/uploads/orphan.txt`;
 
 class MemoryStorage implements RfqStorage {
@@ -90,6 +92,7 @@ class MemoryStorage implements RfqStorage {
 class MemoryPersistence implements RfqPersistence {
   committed: PreparedImport | null = null;
   failure: Parameters<RfqPersistence["recordFailure"]>[0] | null = null;
+  claimAttemptCount = 1;
 
   async findImportByReceiptKey(): Promise<
     Awaited<ReturnType<RfqPersistence["findImportByReceiptKey"]>>
@@ -98,12 +101,16 @@ class MemoryPersistence implements RfqPersistence {
   }
 
   async claimImport() {
-    return { kind: "claimed" as const, attemptCount: 1 };
+    return { kind: "claimed" as const, attemptCount: this.claimAttemptCount };
   }
 
   async commitImport(prepared: PreparedImport) {
     this.committed = prepared;
-    return { quoteId: 42, quotePartIds: prepared.parts.map((part) => part.quotePartId) };
+    return {
+      quoteId: 42,
+      quotePartIds: prepared.parts.map((part) => part.quotePartId),
+      drawingAttachmentIds: [],
+    };
   }
 
   async recordFailure(input: Parameters<RfqPersistence["recordFailure"]>[0]) {
@@ -141,17 +148,23 @@ function fixture() {
         tolerance: { category: "Standard", detail: "+/- 0.005" },
         target_unit_price: "12.34",
         notes: "Deburr edges",
+        future_part_field: { retained: true },
         cad: {
           key: CAD_KEY,
           original_filename: `${UPLOAD_ID}-widget.step`,
           content_type: "application/step",
         },
-        drawings: [],
+        drawings: [
+          { key: DRAWING_A_KEY, original_filename: "spec.pdf" },
+          { key: DRAWING_B_KEY, original_filename: "spec.pdf" },
+        ],
       },
     ],
     compatible_future_field: { retained: true },
   });
   storage.put(CAD_KEY, "step-data", "application/step");
+  storage.put(DRAWING_A_KEY, "drawing-a", "application/pdf");
+  storage.put(DRAWING_B_KEY, "drawing-b", "application/pdf");
   storage.put(ORPHAN_KEY, "raw audit evidence", "text/plain");
   return storage;
 }
@@ -195,6 +208,13 @@ describe("importReceipt", () => {
       ),
     });
     expect(prepared.parts[0].note).toContain("Customer target unit price: 12.34");
+    expect(prepared.parts[0].note).toContain(
+      'Additional future_part_field: {"retained":true}',
+    );
+    expect(prepared.parts[0].canonicalDrawings.map((drawing) => drawing.key)).toEqual([
+      expect.stringMatching(/\/drawings\/01-spec\.pdf$/),
+      expect.stringMatching(/\/drawings\/02-spec\.pdf$/),
+    ]);
     expect(prepared.quoteNote).toContain("Destination postal code: 94107");
     expect(prepared.quoteNote).not.toContain("RFQ-2026-0001");
     expect(storage.objects.has(prepared.archive.key)).toBe(true);
@@ -250,6 +270,102 @@ describe("importReceipt", () => {
     });
   });
 
+  it("classifies malformed JSON as a permanent validation failure", async () => {
+    const storage = fixture();
+    storage.put(RECEIPT_KEY, "{not-json");
+    const persistence = new MemoryPersistence();
+    const importer = createRfqImporter({
+      storage,
+      persistence,
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toEqual({
+      status: "permanent_failure",
+      classification: "validation",
+    });
+    expect(persistence.failure).toMatchObject({
+      classification: "validation",
+      nextAttemptAt: null,
+    });
+  });
+
+  it("stops retrying after the bounded retry schedule is exhausted", async () => {
+    const storage = fixture();
+    storage.copy = async () => {
+      throw new Error("S3 remains unavailable");
+    };
+    const persistence = new MemoryPersistence();
+    persistence.claimAttemptCount = 8;
+    const importer = createRfqImporter({
+      storage,
+      persistence,
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toEqual({
+      status: "permanent_failure",
+      classification: "retry_exhausted",
+    });
+    expect(persistence.failure).toMatchObject({
+      classification: "retry_exhausted",
+      attemptCount: 8,
+      nextAttemptAt: null,
+    });
+  });
+
+  it("does not fail a committed import when derived work cannot be queued", async () => {
+    const storage = fixture();
+    const persistence = new MemoryPersistence();
+    const importer = createRfqImporter({
+      storage,
+      persistence,
+      queue: {
+        async enqueue() {},
+        async enqueueDerivedAssets() {
+          throw new Error("queue unavailable");
+        },
+      },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toEqual({
+      status: "completed",
+      quoteId: 42,
+    });
+  });
+
+  it("cleans source remnants for an already-completed ledger row", async () => {
+    const storage = fixture();
+    const persistence = new MemoryPersistence();
+    persistence.findImportByReceiptKey = async () => ({
+      receipt: {
+        receiptNumber: "RFQ-2026-0001",
+        sessionId: SESSION_ID,
+        receiptKey: RECEIPT_KEY,
+        manifestKey: MANIFEST_KEY,
+      },
+      status: "completed",
+      quoteId: 42,
+    });
+    const importer = createRfqImporter({
+      storage,
+      persistence,
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toEqual({
+      status: "already_completed",
+      quoteId: 42,
+    });
+    expect(
+      [...storage.objects.keys()].some((key) => key.startsWith(`intake/${SESSION_ID}/`)),
+    ).toBe(false);
+  });
+
   it("retries only cleanup after the Quote commit succeeds", async () => {
     const storage = fixture();
     let deleteAttempts = 0;
@@ -280,7 +396,11 @@ describe("importReceipt", () => {
       commitCount += 1;
       persistence.committed = prepared;
       committedQuoteId = 42;
-      return { quoteId: 42, quotePartIds: prepared.parts.map((part) => part.quotePartId) };
+      return {
+        quoteId: 42,
+        quotePartIds: prepared.parts.map((part) => part.quotePartId),
+        drawingAttachmentIds: [],
+      };
     };
     persistence.markCleanupPending = async () => {
       cleanupPending = true;

@@ -1,13 +1,13 @@
 /** Requires DATABASE_URL with the committed migrations applied. */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "../db";
-import { quotes } from "../db/schema";
+import { quotes, rfqImportLedger } from "../db/schema";
 import { createRfqImporter } from "./importer";
-import { postgresRfqPersistence } from "./postgres.server";
+import { createPostgresRfqPersistence } from "./postgres.server";
 import type { RfqStorage, StoredObject } from "./types";
 
 class IntegrationStorage implements RfqStorage {
@@ -47,6 +47,9 @@ class IntegrationStorage implements RfqStorage {
 }
 
 describe("RFQ importer with Postgres persistence", () => {
+  const postgresRfqPersistence = createPostgresRfqPersistence({
+    attachmentBucket: "integration-test",
+  });
   const receiptNumber = `TEST-RFQ-${randomUUID()}`;
   const sessionId = randomUUID();
   const partId = randomUUID();
@@ -75,6 +78,9 @@ describe("RFQ importer with Postgres persistence", () => {
       await db.delete(quotes).where(eq(quotes.id, quoteId));
       await db.execute(sql`delete from customers where lower(email) = ${email}`);
     }
+    await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${receiptNumber}`);
+    await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${receiptNumber}`);
+    await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${receiptKey}`);
   });
 
   it("atomically creates the normal Quote graph and remains idempotent", async () => {
@@ -97,6 +103,20 @@ describe("RFQ importer with Postgres persistence", () => {
     });
     storage.put(cadKey, "STEP", "application/step");
     storage.put(`intake/${sessionId}/drafts/autosave.json`, { draft: true });
+    const provisionalReceiptNumber = `invalid-${createHash("sha256").update(receiptKey).digest("hex").slice(0, 24)}`;
+    await postgresRfqPersistence.recordFailure({
+      receipt: {
+        receiptNumber: provisionalReceiptNumber,
+        sessionId,
+        receiptKey,
+        manifestKey,
+      },
+      classification: "infrastructure",
+      safeDetail: "Receipt temporarily unavailable",
+      attemptCount: 1,
+      nextAttemptAt: new Date("2026-09-20T00:00:00Z"),
+      now: new Date("2026-09-20T00:00:00Z"),
+    });
     const importer = createRfqImporter({
       storage,
       persistence: postgresRfqPersistence,
@@ -110,6 +130,7 @@ describe("RFQ importer with Postgres persistence", () => {
 
     const [graph] = await db.execute<{
       source_receipt_number: string;
+      created_by_id: string;
       nda_required: boolean;
       part_count: number;
       quantity: number;
@@ -117,7 +138,7 @@ describe("RFQ importer with Postgres persistence", () => {
       archive_count: number;
       note_content: string;
     }>(sql`
-      select q.source_receipt_number, q.nda_required,
+      select q.source_receipt_number, q.created_by_id, q.nda_required,
         (select count(*)::int from quote_parts where quote_id = q.id) part_count,
         (select quantity from quote_line_items where quote_id = q.id limit 1) quantity,
         (select unit_price from quote_line_items where quote_id = q.id limit 1) unit_price,
@@ -127,6 +148,7 @@ describe("RFQ importer with Postgres persistence", () => {
     `);
     expect(graph).toMatchObject({
       source_receipt_number: receiptNumber,
+      created_by_id: "system",
       nda_required: true,
       part_count: 1,
       quantity: 4,
@@ -135,9 +157,63 @@ describe("RFQ importer with Postgres persistence", () => {
     });
     expect(graph.note_content).toContain("Destination postal code: 10001");
 
+    const [promoted] = await db.execute<{
+      receipt_number: string;
+      failure_entity_id: string;
+      failure_status: string;
+    }>(sql`
+      select ledger.receipt_number,
+        failure.entity_id failure_entity_id,
+        failure.status failure_status
+      from rfq_import_ledger ledger
+      join action_items failure
+        on failure.type = 'rfq_import_failure'
+        and failure.entity_type = 'rfq_import'
+        and failure.entity_id = ledger.receipt_number
+      where ledger.receipt_key = ${receiptKey}
+    `);
+    expect(promoted).toMatchObject({
+      receipt_number: receiptNumber,
+      failure_entity_id: receiptNumber,
+      failure_status: "resolved",
+    });
+
     await expect(importer.importReceipt(receiptKey)).resolves.toEqual({
       status: "already_completed",
       quoteId,
     });
+  });
+
+  it("reclaims an abandoned processing lease", async () => {
+    const staleReceiptNumber = `TEST-STALE-${randomUUID()}`;
+    const staleSessionId = randomUUID();
+    const staleReceiptKey = `intake/${staleSessionId}/meta/receipt.json`;
+    const now = new Date("2026-09-21T12:00:00Z");
+    await db.insert(rfqImportLedger).values({
+      receiptNumber: staleReceiptNumber,
+      sessionId: staleSessionId,
+      receiptKey: staleReceiptKey,
+      status: "processing",
+      attemptCount: 1,
+      processingStartedAt: new Date("2026-09-21T00:00:00Z"),
+    });
+
+    try {
+      await expect(
+        postgresRfqPersistence.claimImport(
+          {
+            receiptNumber: staleReceiptNumber,
+            sessionId: staleSessionId,
+            receiptKey: staleReceiptKey,
+            manifestKey: `intake/${staleSessionId}/meta/manifest.json`,
+          },
+          now,
+        ),
+      ).resolves.toEqual({ kind: "claimed", attemptCount: 2 });
+    } finally {
+      await db
+        .delete(rfqImportLedger)
+        .where(eq(rfqImportLedger.receiptNumber, staleReceiptNumber));
+    }
   });
 });

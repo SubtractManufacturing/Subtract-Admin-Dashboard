@@ -40,11 +40,21 @@ describe("receipt discovery", () => {
       async enqueueDerivedAssets() {},
     };
     const summaries = new Map<string, ImportLedgerSummary>([
-      [RECEIPT_B, { status: "completed", nextAttemptAt: null }],
-      [RECEIPT_D, { status: "cleanup_pending", nextAttemptAt: null }],
+      [
+        RECEIPT_B,
+        { status: "completed", nextAttemptAt: null, processingStartedAt: null },
+      ],
+      [
+        RECEIPT_D,
+        { status: "cleanup_pending", nextAttemptAt: null, processingStartedAt: null },
+      ],
       [
         RECEIPT_C,
-        { status: "retry_scheduled", nextAttemptAt: new Date("2026-09-20T23:59:00Z") },
+        {
+          status: "retry_scheduled",
+          nextAttemptAt: new Date("2026-09-20T23:59:00Z"),
+          processingStartedAt: null,
+        },
       ],
     ]);
 
@@ -58,10 +68,11 @@ describe("receipt discovery", () => {
       now: () => new Date("2026-09-21T00:00:00Z"),
       getLedgerSummaries: async (keys) =>
         new Map(keys.flatMap((key) => (summaries.has(key) ? [[key, summaries.get(key)!]] : []))),
+      getDueLedgerReceiptKeys: async () => [],
     });
 
-    expect(outcome).toEqual({ discovered: 4, enqueued: 3, skipped: 1 });
-    expect(enqueued).toEqual([RECEIPT_A, RECEIPT_C, RECEIPT_D]);
+    expect(outcome).toEqual({ discovered: 4, enqueued: 4, skipped: 0 });
+    expect(enqueued).toEqual([RECEIPT_A, RECEIPT_B, RECEIPT_C, RECEIPT_D]);
   });
 
   it("does not enqueue future retries or duplicate keys returned across pages", async () => {
@@ -83,12 +94,77 @@ describe("receipt discovery", () => {
             {
               status: "retry_scheduled",
               nextAttemptAt: new Date("2026-09-22T00:00:00Z"),
+              processingStartedAt: null,
             },
           ],
         ]),
+      getDueLedgerReceiptKeys: async () => [],
     });
 
     expect(outcome).toEqual({ discovered: 1, enqueued: 0, skipped: 1 });
     expect(enqueued).toEqual([]);
+  });
+
+  it("enqueues cleanup and stale processing work even after the receipt disappeared", async () => {
+    const enqueued: string[] = [];
+    const staleReceipt = RECEIPT_A;
+    const cleanupReceipt = RECEIPT_D;
+    const summaries = new Map<string, ImportLedgerSummary>([
+      [
+        staleReceipt,
+        {
+          status: "processing",
+          nextAttemptAt: null,
+          processingStartedAt: new Date("2026-09-20T22:00:00Z"),
+        },
+      ],
+      [
+        cleanupReceipt,
+        {
+          status: "cleanup_pending",
+          nextAttemptAt: null,
+          processingStartedAt: null,
+        },
+      ],
+    ]);
+
+    const outcome = await scanForReceipts({
+      enabled: true,
+      storage: storagePages([[]]),
+      queue: { async enqueue(key) { enqueued.push(key); } },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+      getLedgerSummaries: async () => summaries,
+      getDueLedgerReceiptKeys: async () => [staleReceipt, cleanupReceipt],
+    });
+
+    expect(outcome).toEqual({ discovered: 2, enqueued: 2, skipped: 0 });
+    expect(enqueued).toEqual([staleReceipt, cleanupReceipt]);
+  });
+
+  it("cleans remnants for a completed ledger without treating incomplete uploads as receipts", async () => {
+    const enqueued: string[] = [];
+    const completedOrphan = RECEIPT_B;
+    const incompleteUpload = RECEIPT_C;
+    const summaries = new Map<string, ImportLedgerSummary>([
+      [
+        completedOrphan,
+        { status: "completed", nextAttemptAt: null, processingStartedAt: null },
+      ],
+    ]);
+
+    const outcome = await scanForReceipts({
+      enabled: true,
+      storage: storagePages([[
+        completedOrphan.replace("meta/receipt.json", "uploads/orphan.bin"),
+        incompleteUpload.replace("meta/receipt.json", "parts/in-progress.step"),
+      ]]),
+      queue: { async enqueue(key) { enqueued.push(key); } },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+      getLedgerSummaries: async () => summaries,
+      getDueLedgerReceiptKeys: async () => [],
+    });
+
+    expect(outcome).toEqual({ discovered: 1, enqueued: 1, skipped: 0 });
+    expect(enqueued).toEqual([completedOrphan]);
   });
 });

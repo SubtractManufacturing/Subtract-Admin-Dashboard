@@ -54,6 +54,13 @@ function assertSessionKey(key: string, sessionId: string, label: string): string
   return key;
 }
 
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || codePoint === 127;
+  });
+}
+
 export function parseReceipt(value: unknown, receiptKey: string): ReceiptPointer {
   const input = record(value, "receipt");
   const sessionId = requiredString(input, ["session_id", "sessionId"], "receipt session ID").toLowerCase();
@@ -118,11 +125,21 @@ function asset(
     sessionId,
     `${label} key`,
   );
+  const fileName =
+    optionalString(input, ["original_filename", "originalFilename", "file_name", "fileName"]) ??
+    basename(key);
+  if (
+    fileName !== basename(fileName) ||
+    fileName === "." ||
+    fileName === ".." ||
+    /[\\/]/.test(fileName) ||
+    hasControlCharacter(fileName)
+  ) {
+    throw new IntakeValidationError(`${label} filename is unsafe`, "security");
+  }
   return {
     key,
-    fileName:
-      optionalString(input, ["original_filename", "originalFilename", "file_name", "fileName"]) ??
-      basename(key),
+    fileName,
     contentType: optionalString(input, ["content_type", "contentType"]),
   };
 }
@@ -137,10 +154,32 @@ function formatPartNote(part: Record<string, unknown>): string {
     ["Customer notes", part.notes],
     ["Customer target unit price", part.target_unit_price ?? part.targetUnitPrice],
   ];
-  return labels
+  const lines = labels
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([label, value]) => `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
-    .join("\n");
+    .map(([label, value]) => `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+  const knownKeys = new Set([
+    "id",
+    "part_id",
+    "partId",
+    "quantity",
+    "material",
+    "tolerance",
+    "custom_tolerance",
+    "customTolerance",
+    "threads_features",
+    "threadsFeatures",
+    "notes",
+    "target_unit_price",
+    "targetUnitPrice",
+  ]);
+  for (const key of Object.keys(part).filter((key) => !knownKeys.has(key)).sort()) {
+    const value = part[key];
+    if (value === undefined || value === null || value === "") continue;
+    lines.push(
+      `Additional ${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 function parsePart(value: unknown, sessionId: string): IntakePart {

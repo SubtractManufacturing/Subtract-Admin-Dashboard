@@ -14,9 +14,9 @@ RFQ intake is a deep module whose external behavioral interface is `importReceip
 
 The module owns package validation, deterministic canonical keys, streamed ZIP64 audit archives, retry classification, and cleanup-only recovery. Storage, queue, clock, and persistence are adapters at internal seams. Production uses AWS SDK, pg-boss, and Postgres adapters; tests use controlled in-memory adapters, and the storage contract also runs against MinIO.
 
-S3 preparation happens before the short Postgres transaction. The transaction matches or creates the Customer and atomically inserts the Quote, QuoteParts, line items, Attachments, Notes, audit events, Action Items, and completed ledger state. Database uniqueness on receipt number and Quote source receipt number is the final idempotency guard. The Worker processes one RFQ import at a time per process; the ledger owns bounded retry timing rather than pg-boss.
+S3 preparation happens before the short Postgres transaction. The transaction matches or creates the Customer and atomically inserts the Quote, QuoteParts, line items, Attachments, Notes, audit events, Action Items, and a `cleanup_pending` ledger state. Database uniqueness on receipt number and Quote source receipt number is the final idempotency guard. The Worker processes one RFQ import at a time per receipt; the ledger owns bounded retry timing and a recoverable processing lease rather than pg-boss.
 
-If the database commit succeeds but intake-prefix deletion fails, the ledger enters `cleanup_pending`. A later run deletes only that prefix and never reconstructs the Quote. Derived mesh and thumbnail work is queued after commit and cannot roll back the Quote.
+If the database commit succeeds but intake-prefix deletion fails, the ledger remains `cleanup_pending`. The scanner discovers due ledger work even when the receipt object is absent, and a later run deletes only that prefix without reconstructing the Quote. Derived mesh and drawing-thumbnail work is queued after commit and cannot roll back the Quote.
 
 ## Consequences
 

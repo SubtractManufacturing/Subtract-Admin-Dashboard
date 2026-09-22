@@ -4,6 +4,7 @@ import { createEvent } from "../app/lib/events";
 import {
   QUEUES,
   type CadConversionPayload,
+  type DrawingThumbnailPayload,
   type MockJobPayload,
   type PurgeArchivedLineItemsPayload,
   type SendEmailPayload,
@@ -14,6 +15,7 @@ import {
   type RfqReceiptScanPayload,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
+import { handleDrawingThumbnail } from "../app/lib/queue/handlers/drawing-thumbnail";
 import { handlePurgeArchivedLineItems } from "../app/lib/queue/handlers/purge-archived-line-items";
 import { handleSendEmail } from "../app/lib/queue/handlers/send-email";
 import { handleToolpathReportPoll } from "../app/lib/queue/handlers/toolpath-report-poll";
@@ -72,6 +74,13 @@ async function main() {
     handleCadConversion,
   );
   console.log(`[Worker] Listening on queue: ${QUEUES.CAD_CONVERSION}`);
+
+  await boss.work<DrawingThumbnailPayload>(
+    QUEUES.DRAWING_THUMBNAIL,
+    { batchSize: 1 },
+    handleDrawingThumbnail,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.DRAWING_THUMBNAIL}`);
 
   await boss.work<SendEmailPayload>(
     QUEUES.SEND_EMAIL,

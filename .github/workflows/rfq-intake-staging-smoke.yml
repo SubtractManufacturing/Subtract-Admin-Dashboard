@@ -32,7 +32,7 @@ jobs:
         env:
           STAGING: "true"
           STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
-          EXPECTED_RELEASE: ${{ inputs.expected_release }}
+          EXPECTED_RELEASE: ${{ github.event_name == 'workflow_run' && format('sha-{0}', github.event.workflow_run.head_sha) || inputs.expected_release }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           S3_ENDPOINT: ${{ secrets.STAGING_S3_ENDPOINT }}
           S3_REGION: ${{ vars.STAGING_S3_REGION }}

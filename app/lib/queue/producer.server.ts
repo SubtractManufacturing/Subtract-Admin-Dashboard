@@ -2,12 +2,14 @@ import { PgBoss } from "pg-boss";
 import { getQueueDatabaseUrl, PGBOSS_MAX_CONNECTIONS } from "../db/connection-string.server";
 import {
   CAD_CONVERSION_OPTIONS,
+  DRAWING_THUMBNAIL_OPTIONS,
   DEFAULT_RETRY_OPTIONS,
   SEND_EMAIL_OPTIONS,
   TOOLPATH_REPORT_POLL_OPTIONS,
   TOOLPATH_UPLOAD_OPTIONS,
   QUEUES,
   type CadConversionPayload,
+  type DrawingThumbnailPayload,
   type MockJobPayload,
   type SendEmailPayload,
   type ToolpathReportPollPayload,
@@ -120,11 +122,20 @@ export async function sendToolpathReportPollJob(
 
 export async function sendRfqImportJob(
   payload: RfqImportPayload,
-  options: { force?: boolean } = {},
 ): Promise<string | null> {
   const producer = await getProducer();
   return producer.send(QUEUES.RFQ_IMPORT, payload, {
     ...RFQ_IMPORT_OPTIONS,
-    singletonKey: options.force ? undefined : payload.receiptKey,
+    singletonKey: payload.receiptKey,
+  });
+}
+
+export async function sendDrawingThumbnailJob(
+  payload: DrawingThumbnailPayload,
+): Promise<string | null> {
+  const producer = await getProducer();
+  return producer.send(QUEUES.DRAWING_THUMBNAIL, payload, {
+    ...DRAWING_THUMBNAIL_OPTIONS,
+    singletonKey: payload.attachmentId,
   });
 }

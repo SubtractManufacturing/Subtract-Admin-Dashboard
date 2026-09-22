@@ -31,9 +31,29 @@ const cadKey = `${prefix}parts/${partId}/${uploadId}-${runMarker}.step`;
 const drawingKey = `${prefix}parts/${partId}/${uploadId}-${runMarker}.pdf`;
 const orphanKey = `${prefix}drafts/${runMarker}.json`;
 const cadBody = "ISO-10303-21;END-ISO-10303-21;";
+function deterministicUuid(seed: string): string {
+  const bytes = createHash("sha256").update(seed).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+const quotePartId = deterministicUuid(`${runMarker}:${partId}:1`);
+const canonicalCadKey = `quote-parts/${quotePartId}/source/${uploadId}-${runMarker}.step`;
+const canonicalDrawingKey = `quote-parts/${quotePartId}/drawings/01-${runMarker}.pdf`;
+const archiveKey = `rfq-intake-archives/${runMarker}.zip`;
 const sql = postgres(databaseUrl, { ssl: "require", max: 1, prepare: false });
 const s3 = getS3Client();
-const uploadedKeys = new Set<string>([receiptKey, manifestKey, cadKey, drawingKey, orphanKey]);
+const uploadedKeys = new Set<string>([
+  receiptKey,
+  manifestKey,
+  cadKey,
+  drawingKey,
+  orphanKey,
+  canonicalCadKey,
+  canonicalDrawingKey,
+  archiveKey,
+]);
 
 async function waitForRelease() {
   const deadline = Date.now() + 5 * 60_000;
@@ -217,7 +237,7 @@ try {
       (select a.s3_key from quote_attachments qa join attachments a on a.id = qa.attachment_id where qa.quote_id = q.id and a.document_kind = 'rfq_intake_archive' limit 1) as archive_key,
       (select part_file_url from quote_parts where quote_id = q.id limit 1) as cad_key,
       (select a.s3_key from quote_part_drawings qpd join quote_parts qp on qp.id = qpd.quote_part_id join attachments a on a.id = qpd.attachment_id where qp.quote_id = q.id limit 1) as drawing_key,
-      (select count(*)::int from action_items where entity_type = 'rfq_import' and entity_id = ${runMarker} and status = 'active' and deleted_at is null) as failure_count
+      (select count(*)::int from action_items where entity_type = 'rfq_import' and entity_id = ${runMarker} and status = 'active' and is_archived = false) as failure_count
     from quotes q join customers c on c.id = q.customer_id where q.id = ${importedQuoteId}
   `;
   if (

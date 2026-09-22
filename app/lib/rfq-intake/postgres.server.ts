@@ -1,6 +1,10 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 
 import { db } from "../db";
+import { nextQuoteNumberFromExisting } from "../number-generator";
+import { SYSTEM_ACTOR_ID } from "../system-actor";
+import { provisionalReceiptNumber } from "./keys";
+import { IntakeValidationError } from "./package";
 import {
   actionItems,
   attachments,
@@ -19,94 +23,11 @@ import type {
   PreparedImport,
   RfqPersistence,
 } from "./types";
+import { RFQ_PROCESSING_LEASE_MS } from "./types";
 
 function displayName(contact: PreparedImport["manifest"]["contact"]): string {
   const name = `${contact.firstName} ${contact.lastName}`.trim();
   return contact.company ? `${contact.company} - ${name}` : name;
-}
-
-function nextQuoteNumber(existing: string[], now: Date): string {
-  const year = now.getFullYear().toString().slice(-2);
-  const month = String(now.getMonth() + 1);
-  const prefix = `Q${year}${month}-`;
-  let letter = "A";
-  let sequence = 99;
-  for (const value of existing) {
-    const match = /^Q(\d{2})(\d{1,2})-([A-Z])(\d+)$/.exec(value);
-    if (!match || `Q${match[1]}${match[2]}-` !== prefix) continue;
-    const candidateLetter = match[3];
-    const candidateSequence = Number(match[4]);
-    if (
-      candidateLetter.charCodeAt(0) > letter.charCodeAt(0) ||
-      (candidateLetter === letter && candidateSequence > sequence)
-    ) {
-      letter = candidateLetter;
-      sequence = candidateSequence;
-    }
-  }
-  if (sequence >= 999) {
-    letter = String.fromCharCode(letter.charCodeAt(0) + 1);
-    if (letter > "Z") throw new Error(`Maximum Quote number reached for ${year}/${month}`);
-    sequence = 99;
-  }
-  return `${prefix}${letter}${String(sequence + 1).padStart(3, "0")}`;
-}
-
-async function upsertFailureActionItem(input: {
-  receiptNumber: string;
-  description: string;
-  classification: string;
-  nextAttemptAt: Date | null;
-  now: Date;
-}) {
-  const values = {
-    status: "active" as const,
-    title: `RFQ import failed: ${input.receiptNumber}`,
-    description: input.description,
-    metadata: {
-      receiptNumber: input.receiptNumber,
-      classification: input.classification,
-      nextAttemptAt: input.nextAttemptAt?.toISOString() ?? null,
-    },
-    resolvedAt: null,
-    resolvedBy: null,
-    resolution: null,
-    updatedAt: input.now,
-  };
-
-  await db
-    .insert(actionItems)
-    .values({
-      type: "rfq_import_failure",
-      entityType: "rfq_import",
-      entityId: input.receiptNumber,
-      ...values,
-    })
-    .onConflictDoUpdate({
-      target: [actionItems.type, actionItems.entityType, actionItems.entityId],
-      targetWhere: sql`type = 'rfq_import_failure' and deleted_at is null`,
-      set: values,
-    });
-}
-
-async function resolveFailureActionItem(receiptNumber: string, now: Date) {
-  await db
-    .update(actionItems)
-    .set({
-      status: "resolved",
-      resolvedAt: now,
-      resolution: "Import completed successfully",
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(actionItems.type, "rfq_import_failure"),
-        eq(actionItems.entityType, "rfq_import"),
-        eq(actionItems.entityId, receiptNumber),
-        eq(actionItems.status, "active"),
-        isNull(actionItems.deletedAt),
-      ),
-    );
 }
 
 export async function getRfqLedgerSummaries(
@@ -118,18 +39,51 @@ export async function getRfqLedgerSummaries(
       receiptKey: rfqImportLedger.receiptKey,
       status: rfqImportLedger.status,
       nextAttemptAt: rfqImportLedger.nextAttemptAt,
+      processingStartedAt: rfqImportLedger.processingStartedAt,
     })
     .from(rfqImportLedger)
     .where(inArray(rfqImportLedger.receiptKey, receiptKeys));
   return new Map(
     rows.map((row) => [
       row.receiptKey,
-      { status: row.status, nextAttemptAt: row.nextAttemptAt },
+      {
+        status: row.status,
+        nextAttemptAt: row.nextAttemptAt,
+        processingStartedAt: row.processingStartedAt,
+      },
     ]),
   );
 }
 
-export const postgresRfqPersistence: RfqPersistence = {
+export async function getDueRfqLedgerReceiptKeys(now: Date): Promise<string[]> {
+  const leaseExpiredAt = new Date(now.getTime() - RFQ_PROCESSING_LEASE_MS);
+  const rows = await db
+    .select({ receiptKey: rfqImportLedger.receiptKey })
+    .from(rfqImportLedger)
+    .where(
+      or(
+        eq(rfqImportLedger.status, "pending"),
+        eq(rfqImportLedger.status, "cleanup_pending"),
+        and(
+          eq(rfqImportLedger.status, "retry_scheduled"),
+          lte(rfqImportLedger.nextAttemptAt, now),
+        ),
+        and(
+          eq(rfqImportLedger.status, "processing"),
+          or(
+            sql`${rfqImportLedger.processingStartedAt} is null`,
+            lte(rfqImportLedger.processingStartedAt, leaseExpiredAt),
+          ),
+        ),
+      ),
+    );
+  return rows.map((row) => row.receiptKey);
+}
+
+export function createPostgresRfqPersistence(input: {
+  attachmentBucket: string;
+}): RfqPersistence {
+  return {
   async findImportByReceiptKey(receiptKey) {
     const [ledger] = await db
       .select()
@@ -152,25 +106,88 @@ export const postgresRfqPersistence: RfqPersistence = {
 
   async claimImport(receipt, now) {
     return db.transaction(async (tx) => {
-      await tx
-        .insert(rfqImportLedger)
-        .values({
-          receiptNumber: receipt.receiptNumber,
-          sessionId: receipt.sessionId,
-          receiptKey: receipt.receiptKey,
-          status: "pending",
-        })
-        .onConflictDoNothing({ target: rfqImportLedger.receiptNumber });
-
-      const [ledger] = await tx
+      let [ledger] = await tx
         .select()
         .from(rfqImportLedger)
-        .where(eq(rfqImportLedger.receiptNumber, receipt.receiptNumber))
+        .where(eq(rfqImportLedger.receiptKey, receipt.receiptKey))
         .for("update")
         .limit(1);
+      if (!ledger) {
+        await tx
+          .insert(rfqImportLedger)
+          .values({
+            receiptNumber: receipt.receiptNumber,
+            sessionId: receipt.sessionId,
+            receiptKey: receipt.receiptKey,
+            status: "pending",
+          })
+          .onConflictDoNothing({ target: rfqImportLedger.receiptNumber });
+        [ledger] = await tx
+          .select()
+          .from(rfqImportLedger)
+          .where(eq(rfqImportLedger.receiptNumber, receipt.receiptNumber))
+          .for("update")
+          .limit(1);
+      } else if (ledger.receiptNumber.startsWith("invalid-")) {
+        if (ledger.sessionId !== receipt.sessionId) {
+          throw new IntakeValidationError(
+            "Receipt identity changed after an earlier failure",
+            "security",
+          );
+        }
+        const [receiptNumberOwner] = await tx
+          .select({ id: rfqImportLedger.id })
+          .from(rfqImportLedger)
+          .where(eq(rfqImportLedger.receiptNumber, receipt.receiptNumber))
+          .limit(1);
+        if (receiptNumberOwner && receiptNumberOwner.id !== ledger.id) {
+          throw new IntakeValidationError(
+            "Receipt number was reused by a different intake package",
+            "security",
+          );
+        }
+        const provisionalReceiptNumber = ledger.receiptNumber;
+        [ledger] = await tx
+          .update(rfqImportLedger)
+          .set({
+            receiptNumber: receipt.receiptNumber,
+            sessionId: receipt.sessionId,
+            updatedAt: now,
+          })
+          .where(eq(rfqImportLedger.id, ledger.id))
+          .returning();
+        await tx
+          .update(actionItems)
+          .set({
+            entityId: receipt.receiptNumber,
+            title: `RFQ import failed: ${receipt.receiptNumber}`,
+            metadata: sql`jsonb_set(${actionItems.metadata}, '{receiptNumber}', to_jsonb(${receipt.receiptNumber}::text), true)`,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(actionItems.type, "rfq_import_failure"),
+              eq(actionItems.entityType, "rfq_import"),
+              eq(actionItems.entityId, provisionalReceiptNumber),
+              eq(actionItems.isArchived, false),
+            ),
+          );
+        await tx
+          .update(eventLogs)
+          .set({ entityId: receipt.receiptNumber })
+          .where(
+            and(
+              eq(eventLogs.entityType, "rfq_import"),
+              eq(eventLogs.entityId, provisionalReceiptNumber),
+            ),
+          );
+      }
       if (!ledger) throw new Error("RFQ import ledger claim failed");
       if (ledger.receiptKey !== receipt.receiptKey || ledger.sessionId !== receipt.sessionId) {
-        throw new Error("Receipt number was reused by a different intake package");
+        throw new IntakeValidationError(
+          "Receipt number was reused by a different intake package",
+          "security",
+        );
       }
       if (ledger.status === "completed" && ledger.quoteId) {
         return { kind: "already_completed" as const, quoteId: ledger.quoteId };
@@ -182,7 +199,13 @@ export const postgresRfqPersistence: RfqPersistence = {
           sessionId: ledger.sessionId,
         };
       }
-      if (ledger.status === "processing") return { kind: "already_processing" as const };
+      if (
+        ledger.status === "processing" &&
+        ledger.processingStartedAt &&
+        ledger.processingStartedAt.getTime() > now.getTime() - RFQ_PROCESSING_LEASE_MS
+      ) {
+        return { kind: "already_processing" as const };
+      }
       if (ledger.status === "permanent_failure") {
         return { kind: "already_processing" as const };
       }
@@ -200,6 +223,7 @@ export const postgresRfqPersistence: RfqPersistence = {
         .set({
           status: "processing",
           attemptCount,
+          processingStartedAt: now,
           nextAttemptAt: null,
           updatedAt: now,
         })
@@ -267,7 +291,7 @@ export const postgresRfqPersistence: RfqPersistence = {
         .select({ quoteNumber: quotes.quoteNumber })
         .from(quotes)
         .where(sql`${quotes.quoteNumber} like ${`Q${year}${month}-%`}`);
-      const quoteNumber = nextQuoteNumber(
+      const quoteNumber = nextQuoteNumberFromExisting(
         existing.map((row) => row.quoteNumber),
         prepared.now,
       );
@@ -281,11 +305,13 @@ export const postgresRfqPersistence: RfqPersistence = {
           total: "0.00",
           ndaRequired: prepared.manifest.ndaRequired,
           sourceReceiptNumber: prepared.receipt.receiptNumber,
+          createdById: SYSTEM_ACTOR_ID,
           createdAt: prepared.now,
           updatedAt: prepared.now,
         })
         .returning({ id: quotes.id });
 
+      const drawingAttachmentIds: string[] = [];
       for (const [index, part] of prepared.parts.entries()) {
         await tx.insert(quoteParts).values({
           id: part.quotePartId,
@@ -318,7 +344,7 @@ export const postgresRfqPersistence: RfqPersistence = {
           const [attachment] = await tx
             .insert(attachments)
             .values({
-              s3Bucket: process.env.S3_BUCKET || "subtract-attachments",
+              s3Bucket: input.attachmentBucket,
               s3Key: drawing.key,
               fileName: drawing.fileName,
               contentType: drawing.contentType,
@@ -326,6 +352,7 @@ export const postgresRfqPersistence: RfqPersistence = {
               source: "system",
             })
             .returning({ id: attachments.id });
+          drawingAttachmentIds.push(attachment.id);
           await tx.insert(quotePartDrawings).values({
             quotePartId: part.quotePartId,
             attachmentId: attachment.id,
@@ -336,7 +363,7 @@ export const postgresRfqPersistence: RfqPersistence = {
       const [archiveAttachment] = await tx
         .insert(attachments)
         .values({
-          s3Bucket: process.env.S3_BUCKET || "subtract-attachments",
+          s3Bucket: input.attachmentBucket,
           s3Key: prepared.archive.key,
           fileName: prepared.archive.fileName,
           contentType: prepared.archive.contentType,
@@ -395,6 +422,7 @@ export const postgresRfqPersistence: RfqPersistence = {
           // The quote is durable, but source cleanup still needs to happen. Keeping this
           // explicit makes a crash after commit recover as cleanup-only work.
           status: "cleanup_pending",
+          processingStartedAt: null,
           nextAttemptAt: null,
           errorClassification: null,
           errorDetail: null,
@@ -402,43 +430,67 @@ export const postgresRfqPersistence: RfqPersistence = {
         })
         .where(eq(rfqImportLedger.id, ledger.id));
 
-      return { quoteId: quote.id, quotePartIds: prepared.parts.map((part) => part.quotePartId) };
+      return {
+        quoteId: quote.id,
+        quotePartIds: prepared.parts.map((part) => part.quotePartId),
+        drawingAttachmentIds,
+      };
     });
   },
 
   async recordFailure(input) {
     await db.transaction(async (tx) => {
+      let [ledger] = await tx
+        .select()
+        .from(rfqImportLedger)
+        .where(eq(rfqImportLedger.receiptKey, input.receipt.receiptKey))
+        .for("update")
+        .limit(1);
+      if (!ledger) {
+        const [receiptNumberOwner] = await tx
+          .select({ receiptKey: rfqImportLedger.receiptKey })
+          .from(rfqImportLedger)
+          .where(eq(rfqImportLedger.receiptNumber, input.receipt.receiptNumber))
+          .limit(1);
+        const receiptNumber =
+          receiptNumberOwner && receiptNumberOwner.receiptKey !== input.receipt.receiptKey
+            ? provisionalReceiptNumber(input.receipt.receiptKey)
+            : input.receipt.receiptNumber;
+        await tx
+          .insert(rfqImportLedger)
+          .values({
+            receiptNumber,
+            sessionId: input.receipt.sessionId,
+            receiptKey: input.receipt.receiptKey,
+            status: "pending",
+          })
+          .onConflictDoNothing();
+        [ledger] = await tx
+          .select()
+          .from(rfqImportLedger)
+          .where(eq(rfqImportLedger.receiptKey, input.receipt.receiptKey))
+          .for("update")
+          .limit(1);
+      }
+      if (!ledger) throw new Error("RFQ import failure ledger could not be recorded");
+      const failureReceiptNumber = ledger.receiptNumber;
       await tx
-        .insert(rfqImportLedger)
-        .values({
-          receiptNumber: input.receipt.receiptNumber,
-          sessionId: input.receipt.sessionId,
-          receiptKey: input.receipt.receiptKey,
+        .update(rfqImportLedger)
+        .set({
           status: input.nextAttemptAt ? "retry_scheduled" : "permanent_failure",
           attemptCount: input.attemptCount,
-          firstFailureAt: input.now,
+          processingStartedAt: null,
+          firstFailureAt: sql`coalesce(${rfqImportLedger.firstFailureAt}, ${input.now})`,
           lastFailureAt: input.now,
           nextAttemptAt: input.nextAttemptAt,
           errorClassification: input.classification,
           errorDetail: input.safeDetail,
           updatedAt: input.now,
         })
-        .onConflictDoUpdate({
-          target: rfqImportLedger.receiptNumber,
-          set: {
-            status: input.nextAttemptAt ? "retry_scheduled" : "permanent_failure",
-            attemptCount: input.attemptCount,
-            firstFailureAt: sql`coalesce(${rfqImportLedger.firstFailureAt}, ${input.now})`,
-            lastFailureAt: input.now,
-            nextAttemptAt: input.nextAttemptAt,
-            errorClassification: input.classification,
-            errorDetail: input.safeDetail,
-            updatedAt: input.now,
-          },
-        });
+        .where(eq(rfqImportLedger.id, ledger.id));
       await tx.insert(eventLogs).values({
         entityType: "rfq_import",
-        entityId: input.receipt.receiptNumber,
+        entityId: failureReceiptNumber,
         eventType: input.nextAttemptAt ? "rfq_import_retry_scheduled" : "rfq_import_failed",
         eventCategory: "system",
         title: input.nextAttemptAt ? "RFQ import retry scheduled" : "RFQ import failed",
@@ -451,13 +503,33 @@ export const postgresRfqPersistence: RfqPersistence = {
         userEmail: "System",
         createdAt: input.now,
       });
-    });
-    await upsertFailureActionItem({
-      receiptNumber: input.receipt.receiptNumber,
-      description: input.safeDetail,
-      classification: input.classification,
-      nextAttemptAt: input.nextAttemptAt,
-      now: input.now,
+      const actionValues = {
+        status: "active" as const,
+        title: `RFQ import failed: ${failureReceiptNumber}`,
+        description: input.safeDetail,
+        metadata: {
+          receiptNumber: failureReceiptNumber,
+          classification: input.classification,
+          nextAttemptAt: input.nextAttemptAt?.toISOString() ?? null,
+        },
+        resolvedAt: null,
+        resolvedBy: null,
+        resolution: null,
+        updatedAt: input.now,
+      };
+      await tx
+        .insert(actionItems)
+        .values({
+          type: "rfq_import_failure",
+          entityType: "rfq_import",
+          entityId: failureReceiptNumber,
+          ...actionValues,
+        })
+        .onConflictDoUpdate({
+          target: [actionItems.type, actionItems.entityType, actionItems.entityId],
+          targetWhere: sql`type = 'rfq_import_failure' and is_archived = false`,
+          set: actionValues,
+        });
     });
   },
 
@@ -468,6 +540,7 @@ export const postgresRfqPersistence: RfqPersistence = {
         .set({
           quoteId,
           status: "cleanup_pending",
+          processingStartedAt: null,
           errorClassification: "cleanup",
           errorDetail: safeDetail,
           updatedAt: now,
@@ -494,6 +567,7 @@ export const postgresRfqPersistence: RfqPersistence = {
         .set({
           quoteId,
           status: "completed",
+          processingStartedAt: null,
           nextAttemptAt: null,
           errorClassification: null,
           errorDetail: null,
@@ -511,17 +585,35 @@ export const postgresRfqPersistence: RfqPersistence = {
         userEmail: "System",
         createdAt: now,
       });
+      await tx
+        .update(actionItems)
+        .set({
+          status: "resolved",
+          resolvedAt: now,
+          resolution: "Import completed successfully",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(actionItems.type, "rfq_import_failure"),
+            eq(actionItems.entityType, "rfq_import"),
+            eq(actionItems.entityId, receipt.receiptNumber),
+            eq(actionItems.status, "active"),
+            eq(actionItems.isArchived, false),
+          ),
+        );
     });
-    await resolveFailureActionItem(receipt.receiptNumber, now);
   },
-};
+  };
+}
 
-export async function retryRfqImportNow(receiptNumber: string, now = new Date()) {
+export async function resetRfqImportForRetry(receiptNumber: string, now = new Date()) {
   const [updated] = await db
     .update(rfqImportLedger)
     .set({
       status: "pending",
       attemptCount: 0,
+      processingStartedAt: null,
       nextAttemptAt: now,
       errorClassification: null,
       errorDetail: null,

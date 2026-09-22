@@ -27,6 +27,7 @@ import {
 import { getCustomer } from "~/lib/customers";
 import { getVendor, getVendors } from "~/lib/vendors";
 import {
+  authorizeAttachmentDeletion,
   getAttachment,
   createAttachment,
   deleteAttachment,
@@ -792,12 +793,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
             { status: 403 },
           );
         }
+        const authorizedAttachment = await authorizeAttachmentDeletion({
+          attachmentId,
+          entityType: "order",
+          entityId: order.id,
+          eventContext,
+        });
+        if (!authorizedAttachment) {
+          return json({ error: "Attachment not found on this Order" }, { status: 404 });
+        }
 
         // Unlink from order first
         await unlinkAttachmentFromOrder(order.id, attachmentId, eventContext);
 
         // Delete from S3
-        await deleteFile(attachment.s3Key);
+        await deleteFile(authorizedAttachment.s3Key);
 
         // Delete database record
         await deleteAttachment(attachmentId, eventContext);

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { createRawIntakeArchive } from "./archive";
-import { intakePrefix, parseReceiptKey } from "./keys";
+import { intakePrefix, parseReceiptKey, provisionalReceiptNumber } from "./keys";
 import {
   IntakeValidationError,
   parseManifest,
@@ -52,7 +52,7 @@ function fallbackReceipt(receiptKey: string): ReceiptPointer {
   const parsedKey = parseReceiptKey(receiptKey);
   // A receipt that failed validation cannot supply an idempotency key: allowing its
   // untrusted receipt number to collide with a valid import could corrupt that ledger.
-  const receiptNumber = `invalid-${createHash("sha256").update(receiptKey).digest("hex").slice(0, 24)}`;
+  const receiptNumber = provisionalReceiptNumber(receiptKey);
   const sessionId = parsedKey?.sessionId ?? "00000000-0000-4000-8000-000000000000";
   return {
     receiptNumber,
@@ -65,6 +65,21 @@ function fallbackReceipt(receiptKey: string): ReceiptPointer {
 function nextAttempt(now: Date, attemptCount: number): Date | null {
   const delay = RETRY_DELAYS_MS[attemptCount - 1];
   return delay === undefined ? null : new Date(now.getTime() + delay);
+}
+
+async function readPackageJson(
+  storage: RfqStorage,
+  key: string,
+  label: string,
+): Promise<unknown> {
+  try {
+    return await storage.readJson(key);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new IntakeValidationError(`${label} is not valid JSON`);
+    }
+    throw error;
+  }
 }
 
 async function handleCleanupOnly(
@@ -109,12 +124,12 @@ async function prepareFiles(
     }
 
     const canonicalDrawings = [];
-    for (const drawing of part.drawings) {
+    for (const [drawingIndex, drawing] of part.drawings.entries()) {
       const drawingSource = await dependencies.storage.head(drawing.key);
       if (!drawingSource) {
         throw new IntakeValidationError(`Referenced drawing object is missing: ${drawing.key}`);
       }
-      const key = `quote-parts/${quotePartId}/drawings/${drawing.fileName}`;
+      const key = `quote-parts/${quotePartId}/drawings/${String(drawingIndex + 1).padStart(2, "0")}-${drawing.fileName}`;
       await dependencies.storage.copy(drawing.key, key);
       const copiedDrawing = await dependencies.storage.head(key);
       if (!copiedDrawing || copiedDrawing.size !== drawingSource.size) {
@@ -173,7 +188,11 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
         }
         const existing = await dependencies.persistence.findImportByReceiptKey(receiptKey);
         if (existing?.status === "completed" && existing.quoteId) {
-          return { status: "already_completed", quoteId: existing.quoteId };
+          return handleCleanupOnly(
+            dependencies,
+            existing.receipt,
+            existing.quoteId,
+          );
         }
         if (existing?.status === "cleanup_pending" && existing.quoteId) {
           return handleCleanupOnly(
@@ -182,7 +201,11 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
             existing.quoteId,
           );
         }
-        const rawReceipt = await dependencies.storage.readJson(receiptKey);
+        const rawReceipt = await readPackageJson(
+          dependencies.storage,
+          receiptKey,
+          "receipt",
+        );
         receipt = parseReceipt(rawReceipt, receiptKey);
 
         const claim = await dependencies.persistence.claimImport(
@@ -200,14 +223,21 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
         }
         attemptCount = claim.attemptCount;
 
-        const rawManifest = await dependencies.storage.readJson(receipt.manifestKey);
+        const rawManifest = await readPackageJson(
+          dependencies.storage,
+          receipt.manifestKey,
+          "manifest",
+        );
         const manifest = parseManifest(rawManifest, receipt);
         const prepared = await prepareFiles(dependencies, receipt, manifest);
         const committed = await dependencies.persistence.commitImport(prepared);
 
         // Derived assets are best-effort and never make a committed Quote unavailable.
         await dependencies.queue
-          .enqueueDerivedAssets(committed.quotePartIds)
+          .enqueueDerivedAssets(
+            committed.quotePartIds,
+            committed.drawingAttachmentIds,
+          )
           .catch((error) => console.error("[RFQ Intake] Derived asset enqueue failed", error));
 
         try {

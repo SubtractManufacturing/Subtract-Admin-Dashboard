@@ -15,6 +15,7 @@ CREATE TABLE "rfq_import_ledger" (
 	"quote_id" integer,
 	"status" "rfq_import_status" DEFAULT 'pending' NOT NULL,
 	"attempt_count" integer DEFAULT 0 NOT NULL,
+	"processing_started_at" timestamp,
 	"first_failure_at" timestamp,
 	"last_failure_at" timestamp,
 	"next_attempt_at" timestamp,
@@ -34,6 +35,7 @@ CREATE TABLE "action_items" (
 	"entity_id" text,
 	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"seen_by" text[] DEFAULT ARRAY[]::text[] NOT NULL,
+	"is_archived" boolean DEFAULT false NOT NULL,
 	"resolved_at" timestamp,
 	"resolved_by" text,
 	"resolution" text,
@@ -47,10 +49,14 @@ ALTER TABLE "action_items" ADD CONSTRAINT "action_items_resolved_by_users_id_fk"
 ALTER TABLE "action_items" ADD CONSTRAINT "action_items_deleted_by_users_id_fk" FOREIGN KEY ("deleted_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "rfq_import_ledger_receipt_key_idx" ON "rfq_import_ledger" USING btree ("receipt_key");--> statement-breakpoint
 CREATE INDEX "rfq_import_ledger_due_idx" ON "rfq_import_ledger" USING btree ("next_attempt_at") WHERE "rfq_import_ledger"."status" = 'retry_scheduled';--> statement-breakpoint
+CREATE INDEX "rfq_import_ledger_processing_idx" ON "rfq_import_ledger" USING btree ("processing_started_at") WHERE "rfq_import_ledger"."status" = 'processing';--> statement-breakpoint
 CREATE INDEX "rfq_import_ledger_quote_idx" ON "rfq_import_ledger" USING btree ("quote_id");--> statement-breakpoint
-CREATE INDEX "action_items_active_idx" ON "action_items" USING btree ("created_at") WHERE "action_items"."status" = 'active' and "action_items"."deleted_at" is null;--> statement-breakpoint
+CREATE INDEX "action_items_active_idx" ON "action_items" USING btree ("created_at") WHERE "action_items"."status" = 'active' and "action_items"."is_archived" = false;--> statement-breakpoint
 CREATE INDEX "action_items_entity_idx" ON "action_items" USING btree ("entity_type","entity_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "action_items_active_failure_unique_idx" ON "action_items" USING btree ("type","entity_type","entity_id") WHERE "action_items"."type" = 'rfq_import_failure' and "action_items"."deleted_at" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "action_items_active_failure_unique_idx" ON "action_items" USING btree ("type","entity_type","entity_id") WHERE "action_items"."type" = 'rfq_import_failure' and "action_items"."is_archived" = false;--> statement-breakpoint
 CREATE INDEX "customers_active_email_idx" ON "customers" USING btree (lower(trim("email"))) WHERE "customers"."is_archived" = false and "customers"."email" is not null;--> statement-breakpoint
 ALTER TABLE "rfq_import_ledger" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
-ALTER TABLE "action_items" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "action_items" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+INSERT INTO "users" ("id", "name", "email", "role", "status", "is_archived")
+VALUES ('system', 'System', 'system@subtractmanufacturing.invalid', 'User', 'disabled', true)
+ON CONFLICT ("id") DO NOTHING;
