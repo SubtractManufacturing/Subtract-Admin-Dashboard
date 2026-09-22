@@ -115,6 +115,7 @@ import {
 } from "~/lib/toolpath-upload";
 
 import Button from "~/components/shared/Button";
+import { NdaRequiredBanner } from "~/components/shared/NdaRequiredBanner";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import FileViewerModal from "~/components/shared/FileViewerModal";
@@ -1844,6 +1845,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ success: true });
       }
 
+      case "updateNdaRequired": {
+        await updateQuote(
+          quote.id,
+          { ndaRequired: formData.get("ndaRequired") === "true" },
+          eventContext,
+        );
+        return json({ success: true });
+      }
+
       case "updateCustomer": {
         // Auto-convert RFQ to Draft when editing starts
         await autoConvertRFQToDraft();
@@ -2208,19 +2218,26 @@ export async function action({ request, params }: ActionFunctionArgs) {
           return json({ error: "Missing attachment ID" }, { status: 400 });
         }
 
-        // Unlink from quote
-        await db
-          .delete(quoteAttachments)
-          .where(eq(quoteAttachments.attachmentId, attachmentId));
-
         // Get attachment to delete S3 file
         const attachment = await getAttachment(attachmentId);
         if (attachment) {
+          const canDeleteProtected =
+            userDetails.role === "Admin" || userDetails.role === "Dev";
+          if (attachment.isProtected && !canDeleteProtected) {
+            return json(
+              { error: "Admin or Dev role required to delete this protected attachment" },
+              { status: 403 },
+            );
+          }
+          await db
+            .delete(quoteAttachments)
+            .where(eq(quoteAttachments.attachmentId, attachmentId));
           await deleteFile(attachment.s3Key);
 
           const eventContext: AttachmentEventContext = {
             userId: user?.id,
             userEmail: user?.email || userDetails?.name || undefined,
+            canDeleteProtected,
           };
 
           await deleteAttachment(attachmentId, eventContext);
@@ -3710,6 +3727,16 @@ export default function QuoteDetail() {
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
+          <div className="flex flex-col gap-3">
+            <NdaRequiredBanner required={quote.ndaRequired} />
+            <fetcher.Form method="post">
+              <input type="hidden" name="intent" value="updateNdaRequired" />
+              <input type="hidden" name="ndaRequired" value={String(!quote.ndaRequired)} />
+              <button type="submit" className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400">
+                {quote.ndaRequired ? "Remove NDA requirement" : "Mark NDA required"}
+              </button>
+            </fetcher.Form>
+          </div>
           {/* Error Banner */}
           {fetcher.data &&
             typeof fetcher.data === "object" &&
@@ -4585,6 +4612,7 @@ export default function QuoteDetail() {
             entityType="quote"
             entityId={quote.id}
             readOnly={areAttachmentsLocked}
+            canDeleteProtected={userDetails.role === "Admin" || userDetails.role === "Dev"}
           />
 
           {/* Notes and Event Log Section - Side by Side */}

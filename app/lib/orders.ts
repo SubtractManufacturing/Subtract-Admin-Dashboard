@@ -29,6 +29,7 @@ export type OrderWithRelations = {
   deliveryDate: Date | null
   deliveryDateStart: Date | null
   leadTimeBusinessDaysMin: number | null
+  ndaRequired: boolean
   notes: string | null
   leadTime: number | null
   createdAt: Date
@@ -51,6 +52,7 @@ export type OrderInput = {
   leadTime?: number | null
   deliveryDateStart?: Date | null
   leadTimeBusinessDaysMin?: number | null
+  ndaRequired?: boolean
 }
 
 export type OrderEventContext = {
@@ -75,6 +77,7 @@ export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
+        ndaRequired: orders.ndaRequired,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -127,6 +130,7 @@ export async function getOrder(id: number): Promise<OrderWithRelations | null> {
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
+        ndaRequired: orders.ndaRequired,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -163,6 +167,7 @@ export async function getOrderByNumber(orderNumber: string): Promise<OrderWithRe
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
+        ndaRequired: orders.ndaRequired,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -257,6 +262,7 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
+        ndaRequired: orders.ndaRequired,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,
@@ -357,6 +363,10 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
         changedFields.push('poNumber');
       }
     }
+    if (orderData.ndaRequired !== undefined && orderData.ndaRequired !== currentOrder.ndaRequired) {
+      changes.ndaRequired = { old: currentOrder.ndaRequired, new: orderData.ndaRequired };
+      changedFields.push('ndaRequired');
+    }
 
     // Log specific status change event for better visibility
     if (orderData.status && orderData.status !== currentOrder.status) {
@@ -430,6 +440,7 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
         deliveryDate: orders.deliveryDate,
         deliveryDateStart: orders.deliveryDateStart,
         leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
+        ndaRequired: orders.ndaRequired,
         notes: orders.notes,
         leadTime: orders.leadTime,
         createdAt: orders.createdAt,

@@ -10,6 +10,7 @@ export type AttachmentEventContext = {
   userId?: string
   userEmail?: string
   skipEventLogging?: boolean  // Skip event logging for automated operations like PDF generation
+  canDeleteProtected?: boolean
 }
 
 export async function createAttachment(attachmentData: NewAttachment, eventContext?: AttachmentEventContext): Promise<Attachment> {
@@ -64,6 +65,9 @@ export async function deleteAttachment(id: string, eventContext?: AttachmentEven
   try {
     // Get attachment details before deletion
     const attachment = await getAttachment(id)
+    if (attachment?.isProtected && !eventContext?.canDeleteProtected) {
+      throw new Error("Admin or Dev role required to delete this protected attachment")
+    }
 
     await db
       .delete(attachments)

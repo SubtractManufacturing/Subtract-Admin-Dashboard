@@ -1,14 +1,53 @@
-import { json, LoaderFunctionArgs } from "@remix-run/node";
+import { ActionFunctionArgs, json, LoaderFunctionArgs, redirect } from "@remix-run/node";
+import { Form, Link, useLoaderData } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import {
+  getActionItemsForUser,
+  markActionItemRead,
+  resolveActionItem,
+  retryActionItemNow,
+  softDeleteActionItem,
+} from "~/lib/action-items.server";
 
 import SearchHeader from "~/components/SearchHeader";
+import { DeleteActionItemButton } from "~/components/action-items/DeleteActionItemButton";
+import type { ActionItem, UserRole } from "~/lib/db/schema";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { headers } = await requireAuth(request);
-  return withAuthHeaders(json({}), headers);
+  const { headers, userDetails } = await requireAuth(request);
+  const items = await getActionItemsForUser(userDetails.id);
+  return withAuthHeaders(json({ items, role: userDetails.role }), headers);
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const { headers, userDetails } = await requireAuth(request);
+  const form = await request.formData();
+  const id = String(form.get("actionItemId") ?? "");
+  const intent = String(form.get("intent") ?? "");
+  const actor = { userId: userDetails.id, role: userDetails.role };
+  if (!id) return withAuthHeaders(json({ error: "Action Item is required" }, { status: 400 }), headers);
+
+  try {
+    if (intent === "read") await markActionItemRead(id, actor);
+    else if (intent === "resolve") await resolveActionItem(id, actor);
+    else if (intent === "retry") await retryActionItemNow(id, actor);
+    else if (intent === "delete") await softDeleteActionItem(id, actor);
+    else return withAuthHeaders(json({ error: "Unknown action" }, { status: 400 }), headers);
+    return withAuthHeaders(redirect("/ActionItems"), headers);
+  } catch (error) {
+    return withAuthHeaders(
+      json({ error: error instanceof Error ? error.message : "Action failed" }, { status: 400 }),
+      headers,
+    );
+  }
 }
 
 export default function ActionItems() {
+  const { items, role } = useLoaderData<typeof loader>() as unknown as {
+    items: Array<ActionItem & { isUnread: boolean }>;
+    role: UserRole;
+  };
+  const elevated = role === "Admin" || role === "Dev";
   return (
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader breadcrumbs={[
@@ -17,12 +56,38 @@ export default function ActionItems() {
       ]} />
 
       <div className="px-10 py-8">
-        <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150 mb-5">Items that require Input</h2>
-        <div className="bg-white dark:bg-gray-800 p-10 rounded-lg border border-gray-300 dark:border-gray-600 text-center">
-          <h3 className="text-xl font-semibold text-gray-700 dark:text-gray-300 mt-0 mb-4">Coming Soon</h3>
-          <p className="text-gray-600 dark:text-gray-400 mb-2">This system is under development</p>
-          <p className="text-gray-600 dark:text-gray-400">Please use the Orders section for now to manage orders.</p>
-        </div>
+        <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150 mb-5">Items that require input</h2>
+        {items.length === 0 ? (
+          <div className="rounded-lg border border-gray-300 bg-white p-10 text-center text-gray-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
+            No active Action Items.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {items.map((item) => (
+              <article key={item.id} className="rounded-lg border border-gray-300 bg-white p-5 dark:border-gray-600 dark:bg-gray-800">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      {item.isUnread && <span className="h-2.5 w-2.5 rounded-full bg-blue-600" aria-label="Unread" />}
+                      <h3 className="font-semibold text-gray-900 dark:text-gray-100">{item.title}</h3>
+                    </div>
+                    <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{item.description}</p>
+                    {item.entityType === "quote" && item.entityId && (
+                      <Link className="mt-2 inline-block text-sm text-blue-600" to={`/quotes/${item.entityId}`}>Open Quote</Link>
+                    )}
+                  </div>
+                  <Form method="post" className="flex flex-wrap items-center gap-3">
+                    {item.isUnread && <button name="intent" value="read" className="text-sm text-blue-600">Mark read</button>}
+                    {item.type === "customer_match_review" && <button name="intent" value="resolve" className="text-sm text-green-700">Resolve</button>}
+                    {elevated && item.type === "rfq_import_failure" && <button name="intent" value="retry" className="text-sm text-blue-600">Retry now</button>}
+                    {elevated && <DeleteActionItemButton id={item.id} />}
+                    <input type="hidden" name="actionItemId" value={item.id} />
+                  </Form>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

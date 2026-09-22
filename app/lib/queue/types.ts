@@ -6,6 +6,8 @@ export const QUEUES = {
   TOOLPATH_UPLOAD: "toolpath-upload",
   TOOLPATH_REPORT_POLL: "toolpath-report-poll",
   TOOLPATH_STALE_CLEANUP: "toolpath-stale-cleanup",
+  RFQ_IMPORT: "rfq-import",
+  RFQ_RECEIPT_SCAN: "rfq-receipt-scan",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -45,6 +47,20 @@ export interface ToolpathReportPollPayload {
 export interface ToolpathStaleCleanupPayload {
   triggeredAt: string;
 }
+
+export interface RfqImportPayload {
+  receiptKey: string;
+}
+
+export interface RfqReceiptScanPayload {
+  triggeredAt: string;
+}
+
+export const RFQ_IMPORT_OPTIONS = {
+  // The import ledger owns the bounded retry schedule.
+  retryLimit: 0,
+  expireInSeconds: 4 * 24 * 60 * 60,
+} as const;
 
 export const DEFAULT_RETRY_OPTIONS = {
   retryLimit: 3,

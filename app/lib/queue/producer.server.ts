@@ -12,6 +12,8 @@ import {
   type SendEmailPayload,
   type ToolpathReportPollPayload,
   type ToolpathUploadPayload,
+  RFQ_IMPORT_OPTIONS,
+  type RfqImportPayload,
 } from "./types";
 import { TOOLPATH_PART_CREATION_SINGLETON_KEY } from "../toolpath-upload";
 
@@ -113,5 +115,16 @@ export async function sendToolpathReportPollJob(
   return producer.send(QUEUES.TOOLPATH_REPORT_POLL, payload, {
     ...TOOLPATH_REPORT_POLL_OPTIONS,
     singletonKey: payload.quotePartId,
+  });
+}
+
+export async function sendRfqImportJob(
+  payload: RfqImportPayload,
+  options: { force?: boolean } = {},
+): Promise<string | null> {
+  const producer = await getProducer();
+  return producer.send(QUEUES.RFQ_IMPORT, payload, {
+    ...RFQ_IMPORT_OPTIONS,
+    singletonKey: options.force ? undefined : payload.receiptKey,
   });
 }

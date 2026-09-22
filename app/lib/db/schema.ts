@@ -87,6 +87,7 @@ export const attachmentDocumentKindEnum = pgEnum("attachment_document_kind", [
   "customer_purchase_order",
   "packing_slip",
   "order_confirmation",
+  "rfq_intake_archive",
 ]);
 
 export const communicationMethodEnum = pgEnum("communication_method", [
@@ -94,6 +95,25 @@ export const communicationMethodEnum = pgEnum("communication_method", [
   "text",
   "email",
   "social_media_dm",
+]);
+
+export const rfqImportStatusEnum = pgEnum("rfq_import_status", [
+  "pending",
+  "processing",
+  "retry_scheduled",
+  "permanent_failure",
+  "cleanup_pending",
+  "completed",
+]);
+
+export const actionItemTypeEnum = pgEnum("action_item_type", [
+  "rfq_import_failure",
+  "customer_match_review",
+]);
+
+export const actionItemStatusEnum = pgEnum("action_item_status", [
+  "active",
+  "resolved",
 ]);
 
 export const users = pgTable("users", {
@@ -146,6 +166,9 @@ export const customers = pgTable(
   },
   (table) => ({
     companyNameIdx: index("customers_company_name_idx").on(table.companyName),
+    activeEmailIdx: index("customers_active_email_idx")
+      .on(sql`lower(trim(${table.email}))`)
+      .where(sql`${table.isArchived} = false and ${table.email} is not null`),
   })
 );
 
@@ -224,6 +247,8 @@ export const quotes = pgTable("quotes", {
   estimatedDeliveryDateEnd: timestamp("estimated_delivery_date_end"),
   leadTimeBusinessDaysMin: integer("lead_time_business_days_min"),
   leadTimeBusinessDaysMax: integer("lead_time_business_days_max"),
+  ndaRequired: boolean("nda_required").default(false).notNull(),
+  sourceReceiptNumber: text("source_receipt_number").unique(),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -244,6 +269,7 @@ export const orders = pgTable("orders", {
   deliveryDate: timestamp("delivery_date"),
   deliveryDateStart: timestamp("delivery_date_start"),
   leadTimeBusinessDaysMin: integer("lead_time_business_days_min"),
+  ndaRequired: boolean("nda_required").default(false).notNull(),
   notes: text("notes"),
   leadTime: integer("lead_time"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -310,6 +336,7 @@ export const attachments = pgTable("attachments", {
   thumbnailS3Key: text("thumbnail_s3_key"), // For PDF/document thumbnails
   source: attachmentSourceEnum("source"), // NULL on pre-migration rows
   documentKind: attachmentDocumentKindEnum("document_kind"), // NULL for non-classified files (drawings, CAD, generic uploads)
+  isProtected: boolean("is_protected").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -590,6 +617,74 @@ export const featureFlags = pgTable("feature_flags", {
   updatedBy: text("updated_by"),
 });
 
+export const rfqImportLedger = pgTable(
+  "rfq_import_ledger",
+  {
+    id: serial("id").primaryKey(),
+    receiptNumber: text("receipt_number").notNull().unique(),
+    sessionId: uuid("session_id").notNull(),
+    receiptKey: text("receipt_key").notNull(),
+    quoteId: integer("quote_id").references(() => quotes.id),
+    status: rfqImportStatusEnum("status").default("pending").notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    firstFailureAt: timestamp("first_failure_at"),
+    lastFailureAt: timestamp("last_failure_at"),
+    nextAttemptAt: timestamp("next_attempt_at"),
+    errorClassification: text("error_classification"),
+    errorDetail: text("error_detail"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    receiptKeyIdx: uniqueIndex("rfq_import_ledger_receipt_key_idx").on(
+      table.receiptKey,
+    ),
+    dueIdx: index("rfq_import_ledger_due_idx")
+      .on(table.nextAttemptAt)
+      .where(sql`${table.status} = 'retry_scheduled'`),
+    quoteIdx: index("rfq_import_ledger_quote_idx").on(table.quoteId),
+  }),
+).enableRLS();
+
+export const actionItems = pgTable(
+  "action_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    type: actionItemTypeEnum("type").notNull(),
+    status: actionItemStatusEnum("status").default("active").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    seenBy: text("seen_by").array().notNull().default(sql`ARRAY[]::text[]`),
+    resolvedAt: timestamp("resolved_at"),
+    resolvedBy: text("resolved_by").references(() => users.id),
+    resolution: text("resolution"),
+    deletedAt: timestamp("deleted_at"),
+    deletedBy: text("deleted_by").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    activeIdx: index("action_items_active_idx")
+      .on(table.createdAt)
+      .where(sql`${table.status} = 'active' and ${table.deletedAt} is null`),
+    entityIdx: index("action_items_entity_idx").on(
+      table.entityType,
+      table.entityId,
+    ),
+    activeFailureUniqueIdx: uniqueIndex("action_items_active_failure_unique_idx")
+      .on(table.type, table.entityType, table.entityId)
+      .where(
+        sql`${table.type} = 'rfq_import_failure' and ${table.deletedAt} is null`,
+      ),
+  }),
+).enableRLS();
+
 export const eventCategoryEnum = pgEnum("event_category", [
   "status",
   "document",
@@ -698,6 +793,10 @@ export type Quote = typeof quotes.$inferSelect;
 export type NewQuote = typeof quotes.$inferInsert;
 export type Order = typeof orders.$inferSelect;
 export type NewOrder = typeof orders.$inferInsert;
+export type RfqImportLedger = typeof rfqImportLedger.$inferSelect;
+export type NewRfqImportLedger = typeof rfqImportLedger.$inferInsert;
+export type ActionItem = typeof actionItems.$inferSelect;
+export type NewActionItem = typeof actionItems.$inferInsert;
 export type OrderTrackingNumber = typeof orderTrackingNumbers.$inferSelect;
 export type NewOrderTrackingNumber = typeof orderTrackingNumbers.$inferInsert;
 export type Part = typeof parts.$inferSelect;

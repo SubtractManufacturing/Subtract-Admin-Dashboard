@@ -10,6 +10,8 @@ import {
   type ToolpathReportPollPayload,
   type ToolpathStaleCleanupPayload,
   type ToolpathUploadPayload,
+  type RfqImportPayload,
+  type RfqReceiptScanPayload,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
 import { handlePurgeArchivedLineItems } from "../app/lib/queue/handlers/purge-archived-line-items";
@@ -18,6 +20,10 @@ import { handleToolpathReportPoll } from "../app/lib/queue/handlers/toolpath-rep
 import { handleToolpathStaleCleanup } from "../app/lib/queue/handlers/toolpath-stale-cleanup";
 import { handleToolpathUpload } from "../app/lib/queue/handlers/toolpath-upload";
 import { startWorkerQueue, stopWorkerQueue } from "../app/lib/queue/worker.server";
+import {
+  handleRfqImport,
+  handleRfqReceiptScan,
+} from "../app/lib/queue/handlers/rfq-intake";
 
 let isShuttingDown = false;
 
@@ -89,6 +95,25 @@ async function main() {
   console.log(
     `[Worker] Scheduled hourly purge: ${QUEUES.PURGE_ARCHIVED_LINE_ITEMS}`,
   );
+
+  await boss.work<RfqImportPayload>(
+    QUEUES.RFQ_IMPORT,
+    { batchSize: 1 },
+    handleRfqImport,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.RFQ_IMPORT}`);
+
+  await boss.work<RfqReceiptScanPayload>(
+    QUEUES.RFQ_RECEIPT_SCAN,
+    { batchSize: 1 },
+    handleRfqReceiptScan,
+  );
+  await boss.schedule(
+    QUEUES.RFQ_RECEIPT_SCAN,
+    "*/5 * * * *",
+    { triggeredAt: new Date().toISOString() },
+  );
+  console.log(`[Worker] Scheduled every 5 minutes: ${QUEUES.RFQ_RECEIPT_SCAN}`);
 
   await boss.work<ToolpathUploadPayload>(
     QUEUES.TOOLPATH_UPLOAD,

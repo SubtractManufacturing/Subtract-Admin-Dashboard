@@ -103,6 +103,10 @@ Defined in `app/lib/queue/types.ts`, consumed by `scripts/worker.ts`:
 | `toolpath-stale-cleanup` | `handlers/toolpath-stale-cleanup.ts` | Clean stale Toolpath jobs |
 | `purge-archived-line-items` | `handlers/purge-archived-line-items.ts` | Hard-delete archived line items |
 | `mock-job` | inline in worker.ts | **Stale** — remove when cleaning infra |
+| `rfq-import` | `handlers/rfq-intake.ts` | Import one receipted WordPress RFQ (one active job per Worker) |
+| `rfq-receipt-scan` | `handlers/rfq-intake.ts` | Discover receipted intake prefixes every five minutes |
+
+RFQ intake is implemented as the deep module under `app/lib/rfq-intake/`; see [ADR-0011](adr/0011-wordpress-rfq-intake.md).
 
 **Required env:** `DATABASE_URL` (Remix), `DATABASE_DIRECT_URL` (pg-boss worker — non-pooler connection).
 

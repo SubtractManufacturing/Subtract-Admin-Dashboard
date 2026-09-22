@@ -92,6 +92,8 @@ export type QuoteWithRelations = {
   estimatedDeliveryDateEnd: Date | null;
   leadTimeBusinessDaysMin: number | null;
   leadTimeBusinessDaysMax: number | null;
+  ndaRequired: boolean;
+  sourceReceiptNumber: string | null;
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -124,6 +126,7 @@ export type QuoteInput = {
   stripePaymentLinkId?: string | null;
   stripePaymentLinkActive?: boolean | null;
   createdById?: string | null;
+  ndaRequired?: boolean;
 };
 
 export type QuoteEventContext = {
@@ -367,6 +370,23 @@ export async function updateQuote(
       .set(updateData)
       .where(eq(quotes.id, id))
       .returning();
+
+    if (
+      updates.ndaRequired !== undefined &&
+      updates.ndaRequired !== oldQuote.ndaRequired
+    ) {
+      await createEvent({
+        entityType: "quote",
+        entityId: id.toString(),
+        eventType: "quote_nda_required_changed",
+        eventCategory: "system",
+        title: "Quote NDA requirement updated",
+        description: `NDA required changed from ${oldQuote.ndaRequired ? "Yes" : "No"} to ${updates.ndaRequired ? "Yes" : "No"}`,
+        metadata: { oldValue: oldQuote.ndaRequired, newValue: updates.ndaRequired },
+        userId: context?.userId,
+        userEmail: context?.userEmail,
+      });
+    }
 
     // Log status change events
     if (updates.status && updates.status !== oldQuote.status) {
@@ -750,6 +770,7 @@ export async function convertQuoteToOrder(
           vendorId: quote.vendorId,
           sourceQuoteId: quoteId,
           status: "Pending",
+          ndaRequired: quote.ndaRequired,
           totalPrice: calculatedTotal.toFixed(2),
           vendorPay: defaultVendorPay,
           poNumber: normalizePoNumber(options?.poNumber),

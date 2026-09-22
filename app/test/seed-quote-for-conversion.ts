@@ -33,6 +33,7 @@ export async function seedQuoteForConversion(): Promise<SeededConversionQuoteIds
       subtotal: "100.00",
       leadTimeBusinessDaysMin: 7,
       leadTimeBusinessDaysMax: 12,
+      ndaRequired: true,
     })
     .returning({ id: quotes.id });
 
