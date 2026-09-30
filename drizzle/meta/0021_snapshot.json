@@ -3431,7 +3431,7 @@
           "name": "receipt_number",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "session_id": {
           "name": "session_id",

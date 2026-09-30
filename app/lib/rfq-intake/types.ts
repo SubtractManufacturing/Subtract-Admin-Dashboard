@@ -52,7 +52,7 @@ export interface RfqQueue {
 }
 
 export type ReceiptPointer = {
-  receiptNumber: string;
+  receiptNumber: string | null;
   sessionId: string;
   receiptKey: string;
   manifestKey: string;
@@ -129,6 +129,8 @@ export interface RfqPersistence {
     receipt: ReceiptPointer;
     status: ImportStatus;
     quoteId: number | null;
+    attemptCount: number;
+    nextAttemptAt: Date | null;
   } | null>;
   claimImport(receipt: ReceiptPointer, now: Date): Promise<ImportClaim>;
   commitImport(

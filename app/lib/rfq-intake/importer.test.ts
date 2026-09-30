@@ -115,11 +115,26 @@ class MemoryPersistence implements RfqPersistence {
   committed: PreparedImport | null = null;
   failure: Parameters<RfqPersistence["recordFailure"]>[0] | null = null;
   claimAttemptCount = 1;
+  ledgerAttemptCount = 0;
+  ledgerNextAttemptAt: Date | null = null;
 
   async findImportByReceiptKey(): Promise<
     Awaited<ReturnType<RfqPersistence["findImportByReceiptKey"]>>
   > {
-    return null;
+    if (this.ledgerAttemptCount === 0 && !this.ledgerNextAttemptAt) return null;
+    return {
+      receipt: {
+        receiptNumber: null,
+        sessionId: SESSION_ID,
+        receiptKey: RECEIPT_KEY,
+        manifestKey: MANIFEST_KEY,
+        submittedAt: "",
+      },
+      status: this.ledgerNextAttemptAt ? "retry_scheduled" : "pending",
+      quoteId: null,
+      attemptCount: this.ledgerAttemptCount,
+      nextAttemptAt: this.ledgerNextAttemptAt,
+    };
   }
 
   async claimImport() {
@@ -137,6 +152,8 @@ class MemoryPersistence implements RfqPersistence {
 
   async recordFailure(input: Parameters<RfqPersistence["recordFailure"]>[0]) {
     this.failure = input;
+    this.ledgerAttemptCount = input.attemptCount;
+    this.ledgerNextAttemptAt = input.nextAttemptAt;
   }
 
   async markCleanupPending() {}
@@ -347,8 +364,38 @@ describe("importReceipt", () => {
     });
     expect(persistence.committed).toBeNull();
     expect(persistence.failure?.nextAttemptAt).toBeNull();
-    expect(persistence.failure?.receipt.receiptNumber).toMatch(/^invalid-/);
+    expect(persistence.failure?.receipt.receiptNumber).toBeNull();
     expect(storage.objects.has(CAD_KEY)).toBe(true);
+  });
+
+  it("increments attempt count for infrastructure failures before claim", async () => {
+    const storage = new MemoryStorage();
+    const persistence = new MemoryPersistence();
+    let now = new Date("2026-09-21T00:00:00Z");
+    const importer = createRfqImporter({
+      storage,
+      persistence,
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      now: () => now,
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toMatchObject({
+      status: "retry_scheduled",
+      nextAttemptAt: new Date("2026-09-21T00:01:00Z"),
+    });
+    expect(persistence.failure?.attemptCount).toBe(1);
+
+    now = new Date("2026-09-21T00:00:30Z");
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toMatchObject({
+      status: "already_processing",
+    });
+
+    now = new Date("2026-09-21T00:01:00Z");
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toMatchObject({
+      status: "retry_scheduled",
+      nextAttemptAt: new Date("2026-09-21T00:06:00Z"),
+    });
+    expect(persistence.failure?.attemptCount).toBe(2);
   });
 
   it("schedules bounded infrastructure retries from the controlled clock", async () => {
@@ -454,6 +501,8 @@ describe("importReceipt", () => {
       },
       status: "completed",
       quoteId: 42,
+      attemptCount: 1,
+      nextAttemptAt: null,
     });
     const importer = createRfqImporter({
       storage,
@@ -496,6 +545,8 @@ describe("importReceipt", () => {
             },
             status: "cleanup_pending",
             quoteId: committedQuoteId,
+            attemptCount: 1,
+            nextAttemptAt: null,
           }
         : null;
     persistence.commitImport = async (prepared) => {

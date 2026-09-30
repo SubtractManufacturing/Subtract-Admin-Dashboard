@@ -621,7 +621,7 @@ export const rfqImportLedger = pgTable(
   "rfq_import_ledger",
   {
     id: serial("id").primaryKey(),
-    receiptNumber: text("receipt_number").notNull().unique(),
+    receiptNumber: text("receipt_number").unique(),
     sessionId: uuid("session_id").notNull(),
     receiptKey: text("receipt_key").notNull(),
     quoteId: integer("quote_id").references(() => quotes.id),

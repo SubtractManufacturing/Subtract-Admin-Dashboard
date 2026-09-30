@@ -9,7 +9,7 @@ ALTER TABLE "attachments" ADD COLUMN "is_protected" boolean DEFAULT false NOT NU
 ALTER TABLE "quotes" ADD CONSTRAINT "quotes_source_receipt_number_unique" UNIQUE("source_receipt_number");--> statement-breakpoint
 CREATE TABLE "rfq_import_ledger" (
 	"id" serial PRIMARY KEY NOT NULL,
-	"receipt_number" text NOT NULL,
+	"receipt_number" text,
 	"session_id" uuid NOT NULL,
 	"receipt_key" text NOT NULL,
 	"quote_id" integer,

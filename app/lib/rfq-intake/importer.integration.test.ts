@@ -1,5 +1,5 @@
 /** Requires DATABASE_URL with the committed migrations applied. */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
@@ -8,7 +8,10 @@ import { db } from "../db";
 import { quotes, rfqImportLedger } from "../db/schema";
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
 import { createRfqImporter } from "./importer";
-import { createPostgresRfqPersistence } from "./postgres.server";
+import {
+  createPostgresRfqPersistence,
+  resetRfqImportForRetryByReceiptKey,
+} from "./postgres.server";
 import type { RfqStorage, StoredObject } from "./types";
 
 class IntegrationStorage implements RfqStorage {
@@ -90,8 +93,8 @@ describe("RFQ importer with Postgres persistence", () => {
       await db.delete(quotes).where(eq(quotes.id, quoteId));
       await db.execute(sql`delete from customers where lower(email) = ${email}`);
     }
-    await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${receiptNumber}`);
-    await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${receiptNumber}`);
+    await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${receiptKey}`);
+    await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${receiptKey}`);
     await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${receiptKey}`);
   });
 
@@ -147,10 +150,9 @@ describe("RFQ importer with Postgres persistence", () => {
     storage.put(secondCadKey, "STEP", "application/step");
     storage.put(drawingKey, "%PDF-1.4", "application/pdf");
     storage.put(`intake/${sessionId}/meta/draft.json`, { draft: true });
-    const provisionalReceiptNumber = `invalid-${createHash("sha256").update(receiptKey).digest("hex").slice(0, 24)}`;
     await postgresRfqPersistence.recordFailure({
       receipt: {
-        receiptNumber: provisionalReceiptNumber,
+        receiptNumber: null,
         sessionId,
         receiptKey,
         manifestKey,
@@ -226,12 +228,12 @@ describe("RFQ importer with Postgres persistence", () => {
       join action_items failure
         on failure.type = 'rfq_import_failure'
         and failure.entity_type = 'rfq_import'
-        and failure.entity_id = ledger.receipt_number
+        and failure.entity_id = ledger.receipt_key
       where ledger.receipt_key = ${receiptKey}
     `);
     expect(promoted).toMatchObject({
       receipt_number: receiptNumber,
-      failure_entity_id: receiptNumber,
+      failure_entity_id: receiptKey,
       failure_status: "resolved",
     });
 
@@ -295,9 +297,133 @@ describe("RFQ importer with Postgres persistence", () => {
       });
       expect(ledger.firstFailureAt).toEqual(new Date("2026-09-22T20:00:00Z"));
     } finally {
-      await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${failureReceiptNumber}`);
-      await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${failureReceiptNumber}`);
+      await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${failureReceiptKey}`);
+      await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${failureReceiptKey}`);
       await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${failureReceiptKey}`);
+    }
+  });
+
+  it("advances backoff for transient receipt read failures before claim", async () => {
+    const backoffSessionId = randomUUID();
+    const backoffReceiptKey = `intake/${backoffSessionId}/meta/receipt.json`;
+    const retryDelaysMs = [
+      60_000,
+      5 * 60_000,
+      15 * 60_000,
+      60 * 60_000,
+      6 * 60 * 60_000,
+      24 * 60 * 60_000,
+      72 * 60 * 60_000,
+    ] as const;
+    let now = new Date("2026-09-21T00:00:00Z");
+    const storage = new IntegrationStorage();
+    storage.readJson = async () => {
+      throw new Error("S3 temporarily unavailable");
+    };
+
+    try {
+      for (let attempt = 1; attempt <= retryDelaysMs.length; attempt += 1) {
+        const importer = createRfqImporter({
+          storage,
+          persistence: postgresRfqPersistence,
+          queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+          now: () => now,
+        });
+        const outcome = await importer.importReceipt(backoffReceiptKey);
+        expect(outcome).toMatchObject({
+          status: "retry_scheduled",
+          nextAttemptAt: new Date(now.getTime() + retryDelaysMs[attempt - 1]!),
+        });
+        const [ledger] = await db
+          .select({
+            attemptCount: rfqImportLedger.attemptCount,
+            receiptNumber: rfqImportLedger.receiptNumber,
+            status: rfqImportLedger.status,
+          })
+          .from(rfqImportLedger)
+          .where(eq(rfqImportLedger.receiptKey, backoffReceiptKey));
+        expect(ledger).toMatchObject({
+          attemptCount: attempt,
+          receiptNumber: null,
+          status: "retry_scheduled",
+        });
+        now = outcome.status === "retry_scheduled" ? outcome.nextAttemptAt : now;
+      }
+
+      const importer = createRfqImporter({
+        storage,
+        persistence: postgresRfqPersistence,
+        queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+        now: () => now,
+      });
+      await expect(importer.importReceipt(backoffReceiptKey)).resolves.toMatchObject({
+        status: "permanent_failure",
+        classification: "retry_exhausted",
+      });
+      const [ledger] = await db
+        .select({
+          attemptCount: rfqImportLedger.attemptCount,
+          status: rfqImportLedger.status,
+          nextAttemptAt: rfqImportLedger.nextAttemptAt,
+        })
+        .from(rfqImportLedger)
+        .where(eq(rfqImportLedger.receiptKey, backoffReceiptKey));
+      expect(ledger).toMatchObject({
+        attemptCount: retryDelaysMs.length + 1,
+        status: "permanent_failure",
+        nextAttemptAt: null,
+      });
+    } finally {
+      await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${backoffReceiptKey}`);
+      await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${backoffReceiptKey}`);
+      await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${backoffReceiptKey}`);
+    }
+  });
+
+  it("Retry Now resets backoff and bypasses cooldown for receipt read failures", async () => {
+    const retrySessionId = randomUUID();
+    const retryReceiptKey = `intake/${retrySessionId}/meta/receipt.json`;
+    let now = new Date("2026-09-21T00:00:00Z");
+    const storage = new IntegrationStorage();
+    storage.readJson = async () => {
+      throw new Error("S3 temporarily unavailable");
+    };
+
+    try {
+      const importer = createRfqImporter({
+        storage,
+        persistence: postgresRfqPersistence,
+        queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+        now: () => now,
+      });
+      await expect(importer.importReceipt(retryReceiptKey)).resolves.toMatchObject({
+        status: "retry_scheduled",
+        nextAttemptAt: new Date("2026-09-21T00:01:00Z"),
+      });
+
+      now = new Date("2026-09-21T00:00:30Z");
+      await expect(importer.importReceipt(retryReceiptKey)).resolves.toMatchObject({
+        status: "already_processing",
+      });
+
+      const resetAt = new Date("2026-09-21T00:00:45Z");
+      await expect(resetRfqImportForRetryByReceiptKey(retryReceiptKey, resetAt)).resolves.toBe(
+        retryReceiptKey,
+      );
+      now = resetAt;
+      await expect(importer.importReceipt(retryReceiptKey)).resolves.toMatchObject({
+        status: "retry_scheduled",
+        nextAttemptAt: new Date("2026-09-21T00:01:45Z"),
+      });
+      const [ledger] = await db
+        .select({ attemptCount: rfqImportLedger.attemptCount })
+        .from(rfqImportLedger)
+        .where(eq(rfqImportLedger.receiptKey, retryReceiptKey));
+      expect(ledger?.attemptCount).toBe(1);
+    } finally {
+      await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${retryReceiptKey}`);
+      await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${retryReceiptKey}`);
+      await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${retryReceiptKey}`);
     }
   });
 

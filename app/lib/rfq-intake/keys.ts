@@ -27,11 +27,6 @@ export function intakePrefix(sessionId: string): string {
   return `intake/${sessionId}/`;
 }
 
-export function provisionalReceiptNumber(receiptKey: string): string {
-  return `invalid-${createHash("sha256").update(receiptKey).digest("hex").slice(0, 24)}`;
-}
-
 export function isKeyInsideSession(key: string, sessionId: string): boolean {
   return key.startsWith(intakePrefix(sessionId)) && !key.includes("..") && !key.includes("\\");
 }
-import { createHash } from "node:crypto";

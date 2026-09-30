@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { createRawIntakeArchive } from "./archive";
-import { intakePrefix, parseReceiptKey, provisionalReceiptNumber } from "./keys";
+import { intakePrefix, parseReceiptKey } from "./keys";
 import {
   IntakeValidationError,
   parseManifest,
@@ -71,19 +71,20 @@ export function safeErrorDetail(error: unknown): string {
   return `${code}${detail}`.replace(/[\r\n\t]+/g, " ").slice(0, 500);
 }
 
-function fallbackReceipt(receiptKey: string): ReceiptPointer {
+function receiptPointerFromKey(receiptKey: string): ReceiptPointer {
   const parsedKey = parseReceiptKey(receiptKey);
-  // A receipt that failed validation cannot supply an idempotency key: allowing its
-  // untrusted receipt number to collide with a valid import could corrupt that ledger.
-  const receiptNumber = provisionalReceiptNumber(receiptKey);
   const sessionId = parsedKey?.sessionId ?? "00000000-0000-4000-8000-000000000000";
   return {
-    receiptNumber,
+    receiptNumber: null,
     sessionId,
     receiptKey,
     manifestKey: `${intakePrefix(sessionId)}meta/manifest.json`,
     submittedAt: "",
   };
+}
+
+function outcomeReceiptNumber(receipt: ReceiptPointer): string {
+  return receipt.receiptNumber ?? receipt.receiptKey;
 }
 
 function nextAttempt(now: Date, attemptCount: number): Date | null {
@@ -114,7 +115,11 @@ async function handleCleanupOnly(
   try {
     await dependencies.storage.deletePrefix(intakePrefix(receipt.sessionId));
     await dependencies.persistence.markCompleted(receipt, quoteId, dependencies.now());
-    return { status: "already_completed", quoteId, receiptNumber: receipt.receiptNumber };
+    return {
+      status: "already_completed",
+      quoteId,
+      receiptNumber: outcomeReceiptNumber(receipt),
+    };
   } catch (error) {
     const detail = safeErrorDetail(error);
     await dependencies.persistence.markCleanupPending(
@@ -126,7 +131,7 @@ async function handleCleanupOnly(
     return {
       status: "cleanup_pending",
       quoteId,
-      receiptNumber: receipt.receiptNumber,
+      receiptNumber: outcomeReceiptNumber(receipt),
       safeDetail: detail,
     };
   }
@@ -182,7 +187,7 @@ async function prepareFiles(
     });
   }
 
-  const archiveKey = `rfq-intake-archives/${receipt.receiptNumber}.zip`;
+  const archiveKey = `rfq-intake-archives/${receipt.receiptNumber!}.zip`;
   const archive = await createRawIntakeArchive({
     storage: dependencies.storage,
     prefix: intakePrefix(receipt.sessionId),
@@ -196,7 +201,7 @@ async function prepareFiles(
     quoteNote: quoteIntakeNote(manifest, receipt),
     archive: {
       key: archiveKey,
-      fileName: `${receipt.receiptNumber}-raw-intake.zip`,
+      fileName: `${receipt.receiptNumber!}-raw-intake.zip`,
       contentType: "application/zip",
       size: archive.size,
     },
@@ -211,6 +216,7 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
     async importReceipt(receiptKey) {
       let receipt: ReceiptPointer | undefined;
       let attemptCount = 1;
+      let claimed = false;
 
       try {
         if (!parseReceiptKey(receiptKey)) {
@@ -231,6 +237,22 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
             existing.quoteId,
           );
         }
+        if (
+          existing?.status === "retry_scheduled" &&
+          existing.nextAttemptAt &&
+          existing.nextAttemptAt > dependencies.now()
+        ) {
+          return {
+            status: "already_processing",
+            receiptNumber: outcomeReceiptNumber(existing.receipt),
+          };
+        }
+        if (existing?.status === "permanent_failure") {
+          return {
+            status: "already_processing",
+            receiptNumber: outcomeReceiptNumber(existing.receipt),
+          };
+        }
         const rawReceipt = await readPackageJson(
           dependencies.storage,
           receiptKey,
@@ -246,16 +268,20 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           return {
             status: "already_completed",
             quoteId: claim.quoteId,
-            receiptNumber: receipt.receiptNumber,
+            receiptNumber: outcomeReceiptNumber(receipt),
           };
         }
         if (claim.kind === "already_processing") {
-          return { status: "already_processing", receiptNumber: receipt.receiptNumber };
+          return {
+            status: "already_processing",
+            receiptNumber: outcomeReceiptNumber(receipt),
+          };
         }
         if (claim.kind === "cleanup_only") {
           return handleCleanupOnly(dependencies, receipt, claim.quoteId);
         }
         attemptCount = claim.attemptCount;
+        claimed = true;
 
         const rawManifest = await readPackageJson(
           dependencies.storage,
@@ -284,7 +310,7 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           return {
             status: "completed",
             quoteId: committed.quoteId,
-            receiptNumber: receipt.receiptNumber,
+            receiptNumber: outcomeReceiptNumber(receipt),
           };
         } catch (error) {
           const detail = safeErrorDetail(error);
@@ -297,12 +323,16 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           return {
             status: "cleanup_pending",
             quoteId: committed.quoteId,
-            receiptNumber: receipt.receiptNumber,
+            receiptNumber: outcomeReceiptNumber(receipt),
             safeDetail: detail,
           };
         }
       } catch (error) {
-        const failureReceipt = receipt ?? fallbackReceipt(receiptKey);
+        const failureReceipt = receipt ?? receiptPointerFromKey(receiptKey);
+        if (!claimed) {
+          const ledger = await dependencies.persistence.findImportByReceiptKey(receiptKey);
+          attemptCount = (ledger?.attemptCount ?? 0) + 1;
+        }
         const detail = safeErrorDetail(error);
         if (error instanceof IntakeValidationError) {
           await dependencies.persistence.recordFailure({
@@ -316,7 +346,7 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           return {
             status: "permanent_failure",
             classification: error.classification,
-            receiptNumber: failureReceipt.receiptNumber,
+            receiptNumber: outcomeReceiptNumber(failureReceipt),
             safeDetail: detail,
           };
         }
@@ -334,13 +364,13 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           ? {
               status: "retry_scheduled",
               nextAttemptAt: retryAt,
-              receiptNumber: failureReceipt.receiptNumber,
+              receiptNumber: outcomeReceiptNumber(failureReceipt),
               safeDetail: detail,
             }
           : {
               status: "permanent_failure",
               classification: "retry_exhausted",
-              receiptNumber: failureReceipt.receiptNumber,
+              receiptNumber: outcomeReceiptNumber(failureReceipt),
               safeDetail: detail,
             };
       }
