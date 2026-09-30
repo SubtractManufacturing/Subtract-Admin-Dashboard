@@ -1,5 +1,5 @@
 /**
- * S3 adapter contract. CI points these tests at disposable MinIO.
+ * S3 adapter contract. CI and local runs point these tests at disposable Adobe S3Mock.
  */
 import { CreateBucketCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { Readable } from "node:stream";
@@ -15,7 +15,7 @@ const PREFIX = `intake/${SESSION}/`;
 describe("AWS RFQ storage adapter contract", () => {
   beforeAll(async () => {
     if (!process.env.S3_ENDPOINT) {
-      throw new Error("S3_ENDPOINT must point to disposable MinIO for this integration test");
+      throw new Error("S3_ENDPOINT must point to disposable S3Mock for this integration test");
     }
     try {
       await getS3Client().send(new CreateBucketCommand({ Bucket: BUCKET }));
