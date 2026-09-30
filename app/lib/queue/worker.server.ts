@@ -30,11 +30,7 @@ export async function startWorkerQueue(): Promise<PgBoss> {
   console.log("[PgBoss:Worker] Started");
 
   for (const name of Object.values(QUEUES)) {
-    if (name === QUEUES.TOOLPATH_UPLOAD) {
-      await boss.createQueue(name, { policy: "key_strict_fifo" });
-    } else {
-      await boss.createQueue(name);
-    }
+    await boss.createQueue(name);
     console.log(`[PgBoss:Worker] Queue ensured: ${name}`);
   }
 

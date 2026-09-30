@@ -68,10 +68,6 @@ _Avoid_: Delete (without qualifier), hard delete
 The committed or estimated date range when an Order or Quote will reach the customer. Canonical field name after `shipDate` rename (v1.5.0).
 _Avoid_: shipDate (deprecated merge token and legacy event fields only)
 
-**Toolpath**:
-External machinability service integration for QuoteParts — upload, report polling, cut configs. Gated by `toolpath_integration` feature flag.
-_Avoid_: Tool path (two words)
-
 **Mesh conversion**:
 Async CAD-to-web-mesh pipeline (STEP → STL/OBJ/GLTF) via conversion service and `cad-conversion` pg-boss queue.
 _Avoid_: Thumbnail generation (separate concern)
