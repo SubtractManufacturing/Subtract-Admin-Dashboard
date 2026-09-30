@@ -35,4 +35,8 @@ describe("pg-boss queue options", () => {
       );
     },
   );
+
+  it("detects an abandoned RFQ worker without waiting for the 24-hour expiration", () => {
+    expect(RFQ_IMPORT_OPTIONS.heartbeatSeconds).toBe(60);
+  });
 });

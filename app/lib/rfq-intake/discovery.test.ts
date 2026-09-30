@@ -71,7 +71,7 @@ describe("receipt discovery", () => {
       getDueLedgerReceiptKeys: async () => [],
     });
 
-    expect(outcome).toEqual({ discovered: 4, enqueued: 4, skipped: 0 });
+    expect(outcome).toEqual({ discovered: 4, enqueued: 4, skipped: 0, skipReasons: {} });
     expect(enqueued).toEqual([RECEIPT_A, RECEIPT_B, RECEIPT_C, RECEIPT_D]);
   });
 
@@ -101,7 +101,12 @@ describe("receipt discovery", () => {
       getDueLedgerReceiptKeys: async () => [],
     });
 
-    expect(outcome).toEqual({ discovered: 1, enqueued: 0, skipped: 1 });
+    expect(outcome).toEqual({
+      discovered: 1,
+      enqueued: 0,
+      skipped: 1,
+      skipReasons: { retry_not_due: 1 },
+    });
     expect(enqueued).toEqual([]);
   });
 
@@ -137,8 +142,40 @@ describe("receipt discovery", () => {
       getDueLedgerReceiptKeys: async () => [staleReceipt, cleanupReceipt],
     });
 
-    expect(outcome).toEqual({ discovered: 2, enqueued: 2, skipped: 0 });
+    expect(outcome).toEqual({ discovered: 2, enqueued: 2, skipped: 0, skipReasons: {} });
     expect(enqueued).toEqual([staleReceipt, cleanupReceipt]);
+  });
+
+  it("trusts database due-work selection when timestamp decoding is timezone-shifted", async () => {
+    const enqueued: string[] = [];
+    const outcome = await scanForReceipts({
+      enabled: true,
+      storage: storagePages([[]]),
+      queue: { async enqueue(key) { enqueued.push(key); } },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+      getLedgerSummaries: async () =>
+        new Map([
+          [
+            RECEIPT_A,
+            {
+              status: "processing",
+              nextAttemptAt: null,
+              // timestamp without time zone can decode several hours ahead in
+              // a non-UTC Node process even though SQL determined it is due.
+              processingStartedAt: new Date("2026-09-21T07:00:00Z"),
+            },
+          ],
+        ]),
+      getDueLedgerReceiptKeys: async () => [RECEIPT_A],
+    });
+
+    expect(outcome).toEqual({
+      discovered: 1,
+      enqueued: 1,
+      skipped: 0,
+      skipReasons: {},
+    });
+    expect(enqueued).toEqual([RECEIPT_A]);
   });
 
   it("cleans remnants for a completed ledger without treating incomplete uploads as receipts", async () => {
@@ -164,7 +201,7 @@ describe("receipt discovery", () => {
       getDueLedgerReceiptKeys: async () => [],
     });
 
-    expect(outcome).toEqual({ discovered: 1, enqueued: 1, skipped: 0 });
+    expect(outcome).toEqual({ discovered: 1, enqueued: 1, skipped: 0, skipReasons: {} });
     expect(enqueued).toEqual([completedOrphan]);
   });
 });

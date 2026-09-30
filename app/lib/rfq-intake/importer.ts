@@ -43,9 +43,32 @@ function deterministicUuid(seed: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function safeDetail(error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error);
-  return detail.replace(/[\r\n\t]+/g, " ").slice(0, 500);
+export function safeErrorDetail(error: unknown): string {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (
+      !current ||
+      typeof current !== "object" ||
+      seen.has(current) ||
+      !("cause" in current) ||
+      !current.cause
+    ) {
+      break;
+    }
+    seen.add(current);
+    current = current.cause;
+  }
+  const detail = current instanceof Error ? current.message : String(current);
+  const code =
+    current &&
+    typeof current === "object" &&
+    "code" in current &&
+    typeof current.code === "string" &&
+    /^[A-Z0-9]{2,10}$/i.test(current.code)
+      ? `[${current.code}] `
+      : "";
+  return `${code}${detail}`.replace(/[\r\n\t]+/g, " ").slice(0, 500);
 }
 
 function fallbackReceipt(receiptKey: string): ReceiptPointer {
@@ -59,6 +82,7 @@ function fallbackReceipt(receiptKey: string): ReceiptPointer {
     sessionId,
     receiptKey,
     manifestKey: `${intakePrefix(sessionId)}meta/manifest.json`,
+    submittedAt: "",
   };
 }
 
@@ -90,15 +114,21 @@ async function handleCleanupOnly(
   try {
     await dependencies.storage.deletePrefix(intakePrefix(receipt.sessionId));
     await dependencies.persistence.markCompleted(receipt, quoteId, dependencies.now());
-    return { status: "already_completed", quoteId };
+    return { status: "already_completed", quoteId, receiptNumber: receipt.receiptNumber };
   } catch (error) {
+    const detail = safeErrorDetail(error);
     await dependencies.persistence.markCleanupPending(
       receipt,
       quoteId,
-      safeDetail(error),
+      detail,
       dependencies.now(),
     );
-    return { status: "cleanup_pending", quoteId };
+    return {
+      status: "cleanup_pending",
+      quoteId,
+      receiptNumber: receipt.receiptNumber,
+      safeDetail: detail,
+    };
   }
 }
 
@@ -163,7 +193,7 @@ async function prepareFiles(
     receipt,
     manifest,
     parts,
-    quoteNote: quoteIntakeNote(manifest),
+    quoteNote: quoteIntakeNote(manifest, receipt),
     archive: {
       key: archiveKey,
       fileName: `${receipt.receiptNumber}-raw-intake.zip`,
@@ -213,10 +243,14 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           dependencies.now(),
         );
         if (claim.kind === "already_completed") {
-          return { status: "already_completed", quoteId: claim.quoteId };
+          return {
+            status: "already_completed",
+            quoteId: claim.quoteId,
+            receiptNumber: receipt.receiptNumber,
+          };
         }
         if (claim.kind === "already_processing") {
-          return { status: "already_processing" };
+          return { status: "already_processing", receiptNumber: receipt.receiptNumber };
         }
         if (claim.kind === "cleanup_only") {
           return handleCleanupOnly(dependencies, receipt, claim.quoteId);
@@ -247,23 +281,34 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
             committed.quoteId,
             dependencies.now(),
           );
-          return { status: "completed", quoteId: committed.quoteId };
+          return {
+            status: "completed",
+            quoteId: committed.quoteId,
+            receiptNumber: receipt.receiptNumber,
+          };
         } catch (error) {
+          const detail = safeErrorDetail(error);
           await dependencies.persistence.markCleanupPending(
             receipt,
             committed.quoteId,
-            safeDetail(error),
+            detail,
             dependencies.now(),
           );
-          return { status: "cleanup_pending", quoteId: committed.quoteId };
+          return {
+            status: "cleanup_pending",
+            quoteId: committed.quoteId,
+            receiptNumber: receipt.receiptNumber,
+            safeDetail: detail,
+          };
         }
       } catch (error) {
         const failureReceipt = receipt ?? fallbackReceipt(receiptKey);
+        const detail = safeErrorDetail(error);
         if (error instanceof IntakeValidationError) {
           await dependencies.persistence.recordFailure({
             receipt: failureReceipt,
             classification: error.classification,
-            safeDetail: safeDetail(error),
+            safeDetail: detail,
             attemptCount,
             nextAttemptAt: null,
             now: dependencies.now(),
@@ -271,6 +316,8 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           return {
             status: "permanent_failure",
             classification: error.classification,
+            receiptNumber: failureReceipt.receiptNumber,
+            safeDetail: detail,
           };
         }
 
@@ -278,14 +325,24 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
         await dependencies.persistence.recordFailure({
           receipt: failureReceipt,
           classification: retryAt ? "infrastructure" : "retry_exhausted",
-          safeDetail: safeDetail(error),
+          safeDetail: detail,
           attemptCount,
           nextAttemptAt: retryAt,
           now: dependencies.now(),
         });
         return retryAt
-          ? { status: "retry_scheduled", nextAttemptAt: retryAt }
-          : { status: "permanent_failure", classification: "retry_exhausted" };
+          ? {
+              status: "retry_scheduled",
+              nextAttemptAt: retryAt,
+              receiptNumber: failureReceipt.receiptNumber,
+              safeDetail: detail,
+            }
+          : {
+              status: "permanent_failure",
+              classification: "retry_exhausted",
+              receiptNumber: failureReceipt.receiptNumber,
+              safeDetail: detail,
+            };
       }
     },
   };

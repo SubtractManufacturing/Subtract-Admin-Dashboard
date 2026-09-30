@@ -64,6 +64,8 @@ export interface DrawingThumbnailPayload {
 export const RFQ_IMPORT_OPTIONS = {
   // The import ledger owns the bounded retry schedule.
   retryLimit: 0,
+  // Recover promptly when a dev-worker restart or process crash abandons an active job.
+  heartbeatSeconds: 60,
   // pg-boss rejects job expirations longer than 24 hours.
   expireInSeconds: 24 * 60 * 60,
 } as const;

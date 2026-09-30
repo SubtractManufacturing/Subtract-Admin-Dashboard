@@ -56,6 +56,7 @@ export type ReceiptPointer = {
   sessionId: string;
   receiptKey: string;
   manifestKey: string;
+  submittedAt: string;
 };
 
 export type IntakeContact = {
@@ -64,6 +65,7 @@ export type IntakeContact = {
   company: string | null;
   email: string;
   phone: string | null;
+  jobTitle: string | null;
 };
 
 export type IntakePart = {
@@ -154,9 +156,24 @@ export interface RfqPersistence {
 }
 
 export type ImportOutcome =
-  | { status: "completed"; quoteId: number }
-  | { status: "already_completed"; quoteId: number }
-  | { status: "already_processing" }
-  | { status: "retry_scheduled"; nextAttemptAt: Date }
-  | { status: "permanent_failure"; classification: string }
-  | { status: "cleanup_pending"; quoteId: number };
+  | { status: "completed"; quoteId: number; receiptNumber: string }
+  | { status: "already_completed"; quoteId: number; receiptNumber: string }
+  | { status: "already_processing"; receiptNumber: string }
+  | {
+      status: "retry_scheduled";
+      nextAttemptAt: Date;
+      receiptNumber: string;
+      safeDetail: string;
+    }
+  | {
+      status: "permanent_failure";
+      classification: string;
+      receiptNumber: string;
+      safeDetail: string;
+    }
+  | {
+      status: "cleanup_pending";
+      quoteId: number;
+      receiptNumber: string;
+      safeDetail: string;
+    };

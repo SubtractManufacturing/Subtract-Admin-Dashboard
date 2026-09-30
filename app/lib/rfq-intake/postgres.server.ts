@@ -2,7 +2,7 @@ import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 
 import { db } from "../db";
 import { nextQuoteNumberFromExisting } from "../number-generator";
-import { SYSTEM_ACTOR_ID } from "../system-actor";
+import { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_ID } from "../system-actor";
 import { provisionalReceiptNumber } from "./keys";
 import { IntakeValidationError } from "./package";
 import {
@@ -17,6 +17,7 @@ import {
   quoteParts,
   quotes,
   rfqImportLedger,
+  users,
 } from "../db/schema";
 import type {
   ImportLedgerSummary,
@@ -97,6 +98,7 @@ export function createPostgresRfqPersistence(input: {
             sessionId: ledger.sessionId,
             receiptKey: ledger.receiptKey,
             manifestKey: `${`intake/${ledger.sessionId}/`}meta/manifest.json`,
+            submittedAt: "",
           },
           status: ledger.status,
           quoteId: ledger.quoteId,
@@ -199,10 +201,20 @@ export function createPostgresRfqPersistence(input: {
           sessionId: ledger.sessionId,
         };
       }
+      const leaseExpiredAt = new Date(
+        now.getTime() - RFQ_PROCESSING_LEASE_MS,
+      );
+      const [timing] = await tx
+        .select({
+          processingLeaseActive: sql<boolean>`coalesce(${rfqImportLedger.processingStartedAt} > ${leaseExpiredAt}, false)`,
+          retryNotDue: sql<boolean>`coalesce(${rfqImportLedger.nextAttemptAt} > ${now}, false)`,
+        })
+        .from(rfqImportLedger)
+        .where(eq(rfqImportLedger.id, ledger.id))
+        .limit(1);
       if (
         ledger.status === "processing" &&
-        ledger.processingStartedAt &&
-        ledger.processingStartedAt.getTime() > now.getTime() - RFQ_PROCESSING_LEASE_MS
+        timing?.processingLeaseActive
       ) {
         return { kind: "already_processing" as const };
       }
@@ -211,8 +223,7 @@ export function createPostgresRfqPersistence(input: {
       }
       if (
         ledger.status === "retry_scheduled" &&
-        ledger.nextAttemptAt &&
-        ledger.nextAttemptAt > now
+        timing?.retryNotDue
       ) {
         return { kind: "already_processing" as const };
       }
@@ -295,6 +306,20 @@ export function createPostgresRfqPersistence(input: {
         existing.map((row) => row.quoteNumber),
         prepared.now,
       );
+      // drizzle-kit push applies schema changes but not the data seed in the RFQ
+      // migration. Ensure the non-login system actor exists before using it as
+      // the quote's FK; the primary-key conflict makes this concurrency-safe.
+      await tx
+        .insert(users)
+        .values({
+          id: SYSTEM_ACTOR_ID,
+          name: "System",
+          email: SYSTEM_ACTOR_EMAIL,
+          role: "User",
+          status: "disabled",
+          isArchived: true,
+        })
+        .onConflictDoNothing({ target: users.id });
       const [quote] = await tx
         .insert(quotes)
         .values({
@@ -480,7 +505,7 @@ export function createPostgresRfqPersistence(input: {
           status: input.nextAttemptAt ? "retry_scheduled" : "permanent_failure",
           attemptCount: input.attemptCount,
           processingStartedAt: null,
-          firstFailureAt: sql`coalesce(${rfqImportLedger.firstFailureAt}, ${input.now})`,
+          firstFailureAt: ledger.firstFailureAt ?? input.now,
           lastFailureAt: input.now,
           nextAttemptAt: input.nextAttemptAt,
           errorClassification: input.classification,

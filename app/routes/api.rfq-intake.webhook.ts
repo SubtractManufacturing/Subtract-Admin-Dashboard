@@ -14,6 +14,9 @@ export async function action({ request }: ActionFunctionArgs) {
     secret: enabled ? getRfqWebhookSecret() : "",
     async enqueue(receiptKey) {
       await sendRfqImportJob({ receiptKey });
+      console.log(
+        `[RFQ Intake] ${JSON.stringify({ event: "webhook_accepted", receiptKey })}`,
+      );
     },
   });
 }

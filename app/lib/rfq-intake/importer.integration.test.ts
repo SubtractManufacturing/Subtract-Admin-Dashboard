@@ -6,6 +6,7 @@ import { eq, sql } from "drizzle-orm";
 
 import { db } from "../db";
 import { quotes, rfqImportLedger } from "../db/schema";
+import wordpressManifest from "./fixtures/wordpress-manifest.json";
 import { createRfqImporter } from "./importer";
 import { createPostgresRfqPersistence } from "./postgres.server";
 import type { RfqStorage, StoredObject } from "./types";
@@ -54,9 +55,13 @@ describe("RFQ importer with Postgres persistence", () => {
   const sessionId = randomUUID();
   const partId = randomUUID();
   const uploadId = randomUUID();
+  const secondPartId = randomUUID();
+  const secondUploadId = randomUUID();
   const receiptKey = `intake/${sessionId}/meta/receipt.json`;
   const manifestKey = `intake/${sessionId}/meta/manifest.json`;
-  const cadKey = `intake/${sessionId}/parts/${partId}/${uploadId}-bracket.step`;
+  const cadKey = `intake/${sessionId}/parts/${uploadId}_bracket.step`;
+  const secondCadKey = `intake/${sessionId}/parts/${secondUploadId}_spacer.step`;
+  const drawingKey = `intake/${sessionId}/drawings/${randomUUID()}_bracket.pdf`;
   const email = `${receiptNumber}@example.invalid`.toLowerCase();
   let quoteId: number | undefined;
 
@@ -69,7 +74,14 @@ describe("RFQ importer with Postgres persistence", () => {
       await db.execute(sql`delete from action_items where entity_type = 'quote' and entity_id = ${String(quoteId)}`);
       await db.execute(sql`delete from event_logs where entity_type = 'quote' and entity_id = ${String(quoteId)}`);
       await db.execute(sql`delete from notes where entity_type = 'quote' and entity_id = ${String(quoteId)}`);
-      await db.execute(sql`delete from quote_part_drawings where quote_part_id in (select id from quote_parts where quote_id = ${quoteId})`);
+      await db.execute(sql`
+        with deleted_drawings as (
+          delete from quote_part_drawings
+          where quote_part_id in (select id from quote_parts where quote_id = ${quoteId})
+          returning attachment_id
+        )
+        delete from attachments where id in (select attachment_id from deleted_drawings)
+      `);
       await db.execute(sql`delete from quote_attachments where quote_id = ${quoteId}`);
       await db.execute(sql`delete from quote_line_items where quote_id = ${quoteId}`);
       await db.execute(sql`delete from quote_parts where quote_id = ${quoteId}`);
@@ -85,24 +97,56 @@ describe("RFQ importer with Postgres persistence", () => {
 
   it("atomically creates the normal Quote graph and remains idempotent", async () => {
     const storage = new IntegrationStorage();
-    storage.put(receiptKey, { receipt_number: receiptNumber, session_id: sessionId, manifest_key: manifestKey });
-    storage.put(manifestKey, {
+    storage.put(receiptKey, {
+      receipt_number: receiptNumber,
       session_id: sessionId,
-      contact: { first_name: "Grace", last_name: "Hopper", company: receiptNumber, email },
-      nda_required: true,
-      destination_postal_code: "10001",
-      parts: [{
-        id: partId,
-        quantity: 4,
-        material: "7075",
-        tolerance: "Precision",
-        target_unit_price: "99.50",
-        cad: { key: cadKey, original_filename: `${uploadId}-bracket.step` },
-        drawings: [],
-      }],
+      submitted_at: "2026-09-21T11:00:00+00:00",
+      manifest_key: manifestKey,
+    });
+    storage.put(manifestKey, {
+      ...wordpressManifest,
+      session_id: sessionId,
+      contact: {
+        first_name: "Grace",
+        last_name: "Hopper",
+        company: receiptNumber,
+        email,
+        phone: "5550100",
+        phone_country_code: "1",
+        job_title: null,
+      },
+      parts: [
+        {
+          ...wordpressManifest.parts[0],
+          part_id: partId,
+          quantity: 4,
+          material: "7075",
+          tolerance: "precision",
+          target_unit_price: 99.5,
+          part_file_key: cadKey,
+          drawing_file_keys: [drawingKey],
+          future_part_field: { retained: true },
+        },
+        {
+          ...wordpressManifest.parts[1],
+          part_id: secondPartId,
+          part_file_key: secondCadKey,
+          drawing_file_keys: [],
+        },
+      ],
+      global: {
+        ...wordpressManifest.global,
+        required_delivery_date: "2026-10-15",
+        lead_time_preference: "target_date",
+        shipping_destination: { postal_code: "10001" },
+        nda_required: true,
+        notes: receiptNumber,
+      },
     });
     storage.put(cadKey, "STEP", "application/step");
-    storage.put(`intake/${sessionId}/drafts/autosave.json`, { draft: true });
+    storage.put(secondCadKey, "STEP", "application/step");
+    storage.put(drawingKey, "%PDF-1.4", "application/pdf");
+    storage.put(`intake/${sessionId}/meta/draft.json`, { draft: true });
     const provisionalReceiptNumber = `invalid-${createHash("sha256").update(receiptKey).digest("hex").slice(0, 24)}`;
     await postgresRfqPersistence.recordFailure({
       receipt: {
@@ -110,6 +154,7 @@ describe("RFQ importer with Postgres persistence", () => {
         sessionId,
         receiptKey,
         manifestKey,
+        submittedAt: "",
       },
       classification: "infrastructure",
       safeDetail: "Receipt temporarily unavailable",
@@ -136,26 +181,38 @@ describe("RFQ importer with Postgres persistence", () => {
       quantity: number;
       unit_price: string;
       archive_count: number;
+      drawing_count: number;
+      customer_email: string;
+      part_specifications: { future_part_field?: { retained?: boolean } };
       note_content: string;
     }>(sql`
-      select q.source_receipt_number, q.created_by_id, q.nda_required,
+      select q.source_receipt_number, q.created_by_id, q.nda_required, c.email customer_email,
         (select count(*)::int from quote_parts where quote_id = q.id) part_count,
         (select quantity from quote_line_items where quote_id = q.id limit 1) quantity,
         (select unit_price from quote_line_items where quote_id = q.id limit 1) unit_price,
+        (select specifications from quote_parts where quote_id = q.id limit 1) part_specifications,
+        (select count(*)::int from quote_part_drawings qpd join quote_parts qp on qp.id = qpd.quote_part_id where qp.quote_id = q.id) drawing_count,
         (select count(*)::int from quote_attachments qa join attachments a on a.id = qa.attachment_id where qa.quote_id = q.id and a.is_protected) archive_count,
         (select content from notes where entity_type = 'quote' and entity_id = q.id::text limit 1) note_content
-      from quotes q where q.id = ${quoteId!}
+      from quotes q join customers c on c.id = q.customer_id where q.id = ${quoteId!}
     `);
     expect(graph).toMatchObject({
       source_receipt_number: receiptNumber,
       created_by_id: "system",
       nda_required: true,
-      part_count: 1,
+      customer_email: email,
+      part_count: 2,
       quantity: 4,
       unit_price: "0.00",
+      drawing_count: 1,
       archive_count: 1,
     });
-    expect(graph.note_content).toContain("Destination postal code: 10001");
+    expect(graph.part_specifications.future_part_field).toEqual({ retained: true });
+    expect(graph.note_content).toContain("Requested delivery date: 2026-10-15");
+    expect(graph.note_content).toContain("Quote requested at: 2026-09-21T11:00:00+00:00");
+    expect(graph.note_content).toContain("Lead-time preference: target_date");
+    expect([...storage.objects.keys()].some((key) => key.startsWith(`intake/${sessionId}/`))).toBe(false);
+    expect(storage.objects.has(`rfq-intake-archives/${receiptNumber}.zip`)).toBe(true);
 
     const [promoted] = await db.execute<{
       receipt_number: string;
@@ -178,10 +235,70 @@ describe("RFQ importer with Postgres persistence", () => {
       failure_status: "resolved",
     });
 
-    await expect(importer.importReceipt(receiptKey)).resolves.toEqual({
+    await expect(importer.importReceipt(receiptKey)).resolves.toMatchObject({
       status: "already_completed",
       quoteId,
     });
+  });
+
+  it("persists a validation failure as permanent_failure with safe detail", async () => {
+    const failureReceiptNumber = `TEST-INVALID-${randomUUID()}`;
+    const failureSessionId = randomUUID();
+    const failureReceiptKey = `intake/${failureSessionId}/meta/receipt.json`;
+    const failureManifestKey = `intake/${failureSessionId}/meta/manifest.json`;
+    const storage = new IntegrationStorage();
+    storage.put(failureReceiptKey, {
+      receipt_number: failureReceiptNumber,
+      session_id: failureSessionId,
+      submitted_at: "2026-09-22T19:00:00+00:00",
+      manifest_key: failureManifestKey,
+    });
+    storage.put(failureManifestKey, {
+      ...wordpressManifest,
+      session_id: failureSessionId,
+      contact: {
+        ...wordpressManifest.contact,
+        email: `${failureReceiptNumber}@example.invalid`,
+      },
+      parts: wordpressManifest.parts.map((part) => ({
+        ...part,
+        part_id: randomUUID(),
+        part_file_key: undefined,
+        drawing_file_keys: [],
+      })),
+    });
+    const importer = createRfqImporter({
+      storage,
+      persistence: postgresRfqPersistence,
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      now: () => new Date("2026-09-22T20:00:00Z"),
+    });
+
+    try {
+      await expect(importer.importReceipt(failureReceiptKey)).resolves.toMatchObject({
+        status: "permanent_failure",
+        classification: "validation",
+      });
+      const [ledger] = await db
+        .select({
+          status: rfqImportLedger.status,
+          errorDetail: rfqImportLedger.errorDetail,
+          firstFailureAt: rfqImportLedger.firstFailureAt,
+          processingStartedAt: rfqImportLedger.processingStartedAt,
+        })
+        .from(rfqImportLedger)
+        .where(eq(rfqImportLedger.receiptKey, failureReceiptKey));
+      expect(ledger).toMatchObject({
+        status: "permanent_failure",
+        errorDetail: "part file key is required",
+        processingStartedAt: null,
+      });
+      expect(ledger.firstFailureAt).toEqual(new Date("2026-09-22T20:00:00Z"));
+    } finally {
+      await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${failureReceiptNumber}`);
+      await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${failureReceiptNumber}`);
+      await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${failureReceiptKey}`);
+    }
   });
 
   it("reclaims an abandoned processing lease", async () => {
@@ -206,6 +323,7 @@ describe("RFQ importer with Postgres persistence", () => {
             sessionId: staleSessionId,
             receiptKey: staleReceiptKey,
             manifestKey: `intake/${staleSessionId}/meta/manifest.json`,
+            submittedAt: "",
           },
           now,
         ),

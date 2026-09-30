@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Transform } from "node:stream";
+import { PassThrough, Transform } from "node:stream";
 import { finished } from "node:stream/promises";
 import archiver from "archiver";
 
@@ -40,11 +40,21 @@ export async function createRawIntakeArchive(input: {
 }): Promise<StoredObject> {
   const sourceObjects = await listAll(input.storage, input.prefix);
   const zip = archiver("zip", { forceZip64: true, store: true });
+  // archiver uses the userland `readable-stream` implementation, while the AWS
+  // multipart uploader only accepts a native Node Readable. Bridge the archive
+  // through a native stream so the runtime type check in @aws-sdk/lib-storage
+  // accepts it.
+  const uploadBody = new PassThrough();
+  zip.pipe(uploadBody);
   const upload = input.storage.uploadStream(
     input.destinationKey,
-    zip,
+    uploadBody,
     "application/zip",
   );
+  // The upload runs concurrently with archive construction and can reject
+  // before we reach the final await. Mark it handled immediately; awaiting it
+  // below still propagates the same rejection through this function.
+  void upload.catch(() => undefined);
   const index: ArchiveIndexEntry[] = [];
 
   try {
@@ -104,6 +114,7 @@ export async function createRawIntakeArchive(input: {
     return await upload;
   } catch (error) {
     zip.abort();
+    uploadBody.destroy();
     await upload.catch(() => undefined);
     throw error;
   }

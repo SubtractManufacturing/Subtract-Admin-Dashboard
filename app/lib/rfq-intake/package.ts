@@ -29,22 +29,21 @@ function record(value: unknown, label: string): Record<string, unknown> {
 
 function requiredString(
   source: Record<string, unknown>,
-  names: string[],
+  name: string,
   label: string,
 ): string {
-  for (const name of names) {
-    const value = source[name];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
+  const value = source[name];
+  if (typeof value === "string" && value.trim()) return value.trim();
   throw new IntakeValidationError(`${label} is required`);
 }
 
-function optionalString(source: Record<string, unknown>, names: string[]): string | null {
-  for (const name of names) {
-    const value = source[name];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return null;
+function optionalString(source: Record<string, unknown>, name: string): string | null {
+  if (!(name in source)) return null;
+  const value = source[name];
+  if (value === null) return null;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "string") return null;
+  throw new IntakeValidationError(`${name.replaceAll("_", " ")} must be a string or null`);
 }
 
 function assertSessionKey(key: string, sessionId: string, label: string): string {
@@ -61,22 +60,37 @@ function hasControlCharacter(value: string): boolean {
   });
 }
 
+const UUID_FILE_PREFIX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}_/i;
+
+function safeFileName(fileName: string, label: string): string {
+  if (
+    !fileName ||
+    fileName !== basename(fileName) ||
+    fileName === "." ||
+    fileName === ".." ||
+    /[\\/]/.test(fileName) ||
+    hasControlCharacter(fileName)
+  ) {
+    throw new IntakeValidationError(`${label} filename is unsafe`, "security");
+  }
+  return fileName;
+}
+
 export function parseReceipt(value: unknown, receiptKey: string): ReceiptPointer {
   const input = record(value, "receipt");
-  const sessionId = requiredString(input, ["session_id", "sessionId"], "receipt session ID").toLowerCase();
+  const sessionId = requiredString(input, "session_id", "receipt session ID").toLowerCase();
   if (!UUID.test(sessionId)) throw new IntakeValidationError("receipt session ID must be a UUID");
 
-  const receiptNumber = requiredString(
-    input,
-    ["receipt_number", "receiptNumber"],
-    "receipt number",
-  );
+  const receiptNumber = requiredString(input, "receipt_number", "receipt number");
   if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(receiptNumber)) {
     throw new IntakeValidationError("receipt number contains unsafe characters", "security");
   }
 
+  const submittedAt = requiredString(input, "submitted_at", "receipt submitted at");
+
   const manifestKey = assertSessionKey(
-    requiredString(input, ["manifest_key", "manifestKey"], "manifest key"),
+    requiredString(input, "manifest_key", "manifest key"),
     sessionId,
     "manifest key",
   );
@@ -87,60 +101,50 @@ export function parseReceipt(value: unknown, receiptKey: string): ReceiptPointer
     throw new IntakeValidationError("receipt key and session ID do not match", "security");
   }
 
-  return { receiptNumber, sessionId, receiptKey, manifestKey };
+  return { receiptNumber, sessionId, receiptKey, manifestKey, submittedAt };
 }
 
 function parsePhone(contact: Record<string, unknown>): string | null {
-  const direct = optionalString(contact, ["phone"]);
-  if (direct) return direct;
-  const phone = contact.phone_number ?? contact.phoneNumber;
-  if (!phone || typeof phone !== "object" || Array.isArray(phone)) return null;
-  const value = phone as Record<string, unknown>;
-  const country = optionalString(value, ["country_code", "countryCode"]);
-  const national = optionalString(value, ["national_number", "nationalNumber"]);
-  return country && national
-    ? `+${country.replace(/\D/g, "")}${national.replace(/\D/g, "")}`
-    : null;
+  if (!("phone" in contact) || contact.phone === null) return null;
+  if (typeof contact.phone !== "string" || !contact.phone.trim()) {
+    throw new IntakeValidationError("contact phone must be a string or null");
+  }
+  const phone = contact.phone.trim();
+  if (!/^\d+$/.test(phone)) {
+    throw new IntakeValidationError("contact phone must contain digits only");
+  }
+  const countryCode = contact.phone_country_code;
+  if (typeof countryCode !== "string" || !/^\d{1,4}$/.test(countryCode.trim())) {
+    throw new IntakeValidationError("contact phone country code is required when phone is set");
+  }
+  return `+${countryCode.trim()}${phone}`;
 }
 
 function parseContact(input: Record<string, unknown>): IntakeContact {
   const contact = record(input.contact, "manifest contact");
   return {
-    firstName: requiredString(contact, ["first_name", "firstName"], "contact first name"),
-    lastName: requiredString(contact, ["last_name", "lastName"], "contact last name"),
-    company: optionalString(contact, ["company", "company_name", "companyName"]),
-    email: requiredString(contact, ["email"], "contact email").toLowerCase(),
+    firstName: requiredString(contact, "first_name", "contact first name"),
+    lastName: requiredString(contact, "last_name", "contact last name"),
+    company: optionalString(contact, "company"),
+    email: requiredString(contact, "email", "contact email").toLowerCase(),
     phone: parsePhone(contact),
+    jobTitle: optionalString(contact, "job_title"),
   };
 }
 
-function asset(
+function parseFileKey(
   value: unknown,
   sessionId: string,
   label: string,
 ): { key: string; fileName: string; contentType: string | null } {
-  const input = record(value, label);
-  const key = assertSessionKey(
-    requiredString(input, ["key", "s3_key", "s3Key"], `${label} key`),
-    sessionId,
-    `${label} key`,
-  );
-  const fileName =
-    optionalString(input, ["original_filename", "originalFilename", "file_name", "fileName"]) ??
-    basename(key);
-  if (
-    fileName !== basename(fileName) ||
-    fileName === "." ||
-    fileName === ".." ||
-    /[\\/]/.test(fileName) ||
-    hasControlCharacter(fileName)
-  ) {
-    throw new IntakeValidationError(`${label} filename is unsafe`, "security");
+  if (typeof value !== "string" || !value.trim()) {
+    throw new IntakeValidationError(`${label} is required`);
   }
+  const key = assertSessionKey(value.trim(), sessionId, `${label}`);
   return {
     key,
-    fileName,
-    contentType: optionalString(input, ["content_type", "contentType"]),
+    fileName: safeFileName(basename(key).replace(UUID_FILE_PREFIX, ""), label),
+    contentType: null,
   };
 }
 
@@ -149,28 +153,25 @@ function formatPartNote(part: Record<string, unknown>): string {
     ["Quantity", part.quantity],
     ["Material", part.material],
     ["Primary tolerance", part.tolerance],
-    ["Custom tolerance", part.custom_tolerance ?? part.customTolerance],
-    ["Threads / features", part.threads_features ?? part.threadsFeatures],
+    ["Custom tolerance", part.tolerance_detail],
+    ["Threads / features", part.threads_features],
     ["Customer notes", part.notes],
-    ["Customer target unit price", part.target_unit_price ?? part.targetUnitPrice],
+    ["Target price", part.target_unit_price],
   ];
   const lines = labels
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
     .map(([label, value]) => `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
   const knownKeys = new Set([
-    "id",
     "part_id",
-    "partId",
+    "part_file_key",
+    "drawing_file_keys",
     "quantity",
     "material",
     "tolerance",
-    "custom_tolerance",
-    "customTolerance",
+    "tolerance_detail",
     "threads_features",
-    "threadsFeatures",
     "notes",
     "target_unit_price",
-    "targetUnitPrice",
   ]);
   for (const key of Object.keys(part).filter((key) => !knownKeys.has(key)).sort()) {
     const value = part[key];
@@ -184,36 +185,49 @@ function formatPartNote(part: Record<string, unknown>): string {
 
 function parsePart(value: unknown, sessionId: string): IntakePart {
   const input = record(value, "manifest part");
-  const id = requiredString(input, ["id", "part_id", "partId"], "part ID").toLowerCase();
+  const id = requiredString(input, "part_id", "part ID").toLowerCase();
   if (!UUID.test(id)) throw new IntakeValidationError("part ID must be a UUID");
+
   const rawQuantity = input.quantity;
-  const quantity = typeof rawQuantity === "number" ? rawQuantity : Number(rawQuantity);
-  if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+  if (typeof rawQuantity !== "number" || !Number.isFinite(rawQuantity)) {
+    throw new IntakeValidationError("part quantity must be a positive integer");
+  }
+  const quantity = Math.trunc(rawQuantity);
+  if (quantity !== rawQuantity || quantity <= 0) {
     throw new IntakeValidationError("part quantity must be a positive integer");
   }
 
-  const cadValue = input.cad ?? input.cad_file ?? input.cadFile;
-  const drawingsValue = input.drawings ?? [];
-  if (!Array.isArray(drawingsValue)) {
-    throw new IntakeValidationError("part drawings must be an array");
+  if (!("drawing_file_keys" in input) || !Array.isArray(input.drawing_file_keys)) {
+    throw new IntakeValidationError("part drawing file keys must be an array");
   }
-  const toleranceValue = input.tolerance;
-  const tolerance =
-    typeof toleranceValue === "string"
-      ? toleranceValue
-      : toleranceValue && typeof toleranceValue === "object" && !Array.isArray(toleranceValue)
-        ? optionalString(toleranceValue as Record<string, unknown>, ["category", "primary"])
-        : null;
-  const cad = asset(cadValue, sessionId, "CAD asset");
-  const drawings = drawingsValue.map((drawing) =>
-    asset(drawing, sessionId, "drawing asset"),
+
+  const tolerance = requiredString(input, "tolerance", "part tolerance");
+  const toleranceDetail = optionalString(input, "tolerance_detail");
+  if (tolerance === "custom" && !toleranceDetail) {
+    throw new IntakeValidationError("part tolerance detail is required when tolerance is custom");
+  }
+
+  if ("target_unit_price" in input && input.target_unit_price !== null) {
+    if (typeof input.target_unit_price !== "number" || !Number.isFinite(input.target_unit_price)) {
+      throw new IntakeValidationError("part target unit price must be a number or null");
+    }
+  }
+
+  const cad = parseFileKey(input.part_file_key, sessionId, "part file key");
+  const drawings = input.drawing_file_keys.map((drawing) =>
+    parseFileKey(drawing, sessionId, "drawing file key"),
   );
-  const partFolder = `intake/${sessionId}/parts/${id}/`;
+
+  const partFolder = `intake/${sessionId}/parts/`;
   if (!cad.key.startsWith(partFolder)) {
-    throw new IntakeValidationError("CAD asset is not in its declared part folder", "security");
+    throw new IntakeValidationError("part file key is not in the intake parts folder", "security");
   }
-  if (drawings.some((drawing) => !drawing.key.startsWith(partFolder))) {
-    throw new IntakeValidationError("drawing asset is not in its declared part folder", "security");
+  const drawingFolder = `intake/${sessionId}/drawings/`;
+  if (drawings.some((drawing) => !drawing.key.startsWith(drawingFolder))) {
+    throw new IntakeValidationError(
+      "drawing file key is not in the intake drawings folder",
+      "security",
+    );
   }
 
   return {
@@ -221,7 +235,7 @@ function parsePart(value: unknown, sessionId: string): IntakePart {
     quantity,
     cad,
     drawings,
-    material: optionalString(input, ["material"]),
+    material: requiredString(input, "material", "part material"),
     tolerance,
     note: formatPartNote(input),
     raw: input,
@@ -230,7 +244,7 @@ function parsePart(value: unknown, sessionId: string): IntakePart {
 
 export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeManifest {
   const input = record(value, "manifest");
-  const sessionId = requiredString(input, ["session_id", "sessionId"], "manifest session ID").toLowerCase();
+  const sessionId = requiredString(input, "session_id", "manifest session ID").toLowerCase();
   if (sessionId !== receipt.sessionId) {
     throw new IntakeValidationError("manifest and receipt sessions do not match", "security");
   }
@@ -243,15 +257,36 @@ export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeMa
     throw new IntakeValidationError("manifest contains duplicate part IDs");
   }
 
+  const globalInput = record(input.global, "manifest global");
+  if (!("nda_required" in globalInput)) {
+    throw new IntakeValidationError("nda required is required");
+  }
+  if (typeof globalInput.nda_required !== "boolean") {
+    throw new IntakeValidationError("nda required must be a boolean");
+  }
+
+  const shippingDestination = record(
+    globalInput.shipping_destination,
+    "shipping destination",
+  );
+
   return {
     sessionId,
     contact: parseContact(input),
-    ndaRequired: input.nda_required === true || input.ndaRequired === true,
-    requestedDeliveryDate: optionalString(input, ["requested_delivery_date", "requestedDeliveryDate"]),
-    leadTimePreference: optionalString(input, ["lead_time_preference", "leadTimePreference"]),
-    destinationPostalCode: optionalString(input, ["destination_postal_code", "destinationPostalCode"]),
-    poNumber: optionalString(input, ["po_number", "poNumber"]),
-    globalNotes: optionalString(input, ["notes", "global_notes", "globalNotes"]),
+    ndaRequired: globalInput.nda_required,
+    requestedDeliveryDate: optionalString(globalInput, "required_delivery_date"),
+    leadTimePreference: requiredString(
+      globalInput,
+      "lead_time_preference",
+      "lead time preference",
+    ),
+    destinationPostalCode: requiredString(
+      shippingDestination,
+      "postal_code",
+      "shipping destination postal code",
+    ),
+    poNumber: optionalString(globalInput, "po_number"),
+    globalNotes: optionalString(globalInput, "notes"),
     parts,
     raw: input,
   };
@@ -260,18 +295,20 @@ export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeMa
 export function partDisplayName(fileName: string): string {
   const extension = extname(fileName);
   return basename(fileName, extension).replace(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[-_]/i,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}_/i,
     "",
   );
 }
 
-export function quoteIntakeNote(manifest: IntakeManifest): string {
+export function quoteIntakeNote(manifest: IntakeManifest, receipt: ReceiptPointer): string {
   const contactName = `${manifest.contact.firstName} ${manifest.contact.lastName}`.trim();
   const rows: Array<[string, string | boolean | null]> = [
     ["Contact", contactName],
     ["Company", manifest.contact.company],
     ["Email", manifest.contact.email],
     ["Phone", manifest.contact.phone],
+    ["Job title", manifest.contact.jobTitle],
+    ["Quote requested at", receipt.submittedAt],
     ["Requested delivery date", manifest.requestedDeliveryDate],
     ["Lead-time preference", manifest.leadTimePreference],
     ["Destination postal code", manifest.destinationPostalCode],
@@ -279,5 +316,10 @@ export function quoteIntakeNote(manifest: IntakeManifest): string {
     ["NDA required", manifest.ndaRequired ? "Yes" : "No"],
     ["Global notes", manifest.globalNotes],
   ];
-  return ["WordPress RFQ intake", ...rows.filter(([, value]) => value).map(([label, value]) => `${label}: ${value}`)].join("\n");
+  return [
+    "WordPress RFQ intake",
+    ...rows
+      .filter(([, value]) => value !== null && value !== "")
+      .map(([label, value]) => `${label}: ${value}`),
+  ].join("\n");
 }

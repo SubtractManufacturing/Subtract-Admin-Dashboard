@@ -24,12 +24,13 @@ const runMarker = `rfq-smoke-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const sessionId = randomUUID();
 const partId = randomUUID();
 const uploadId = randomUUID();
+const drawingUploadId = randomUUID();
 const prefix = `intake/${sessionId}/`;
 const receiptKey = `${prefix}meta/receipt.json`;
 const manifestKey = `${prefix}meta/manifest.json`;
-const cadKey = `${prefix}parts/${partId}/${uploadId}-${runMarker}.step`;
-const drawingKey = `${prefix}parts/${partId}/${uploadId}-${runMarker}.pdf`;
-const orphanKey = `${prefix}drafts/${runMarker}.json`;
+const cadKey = `${prefix}parts/${uploadId}_${runMarker}.step`;
+const drawingKey = `${prefix}drawings/${drawingUploadId}_${runMarker}.pdf`;
+const orphanKey = `${prefix}meta/draft.json`;
 const cadBody = "ISO-10303-21;END-ISO-10303-21;";
 function deterministicUuid(seed: string): string {
   const bytes = createHash("sha256").update(seed).digest().subarray(0, 16);
@@ -39,7 +40,7 @@ function deterministicUuid(seed: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 const quotePartId = deterministicUuid(`${runMarker}:${partId}:1`);
-const canonicalCadKey = `quote-parts/${quotePartId}/source/${uploadId}-${runMarker}.step`;
+const canonicalCadKey = `quote-parts/${quotePartId}/source/${runMarker}.step`;
 const canonicalDrawingKey = `quote-parts/${quotePartId}/drawings/01-${runMarker}.pdf`;
 const archiveKey = `rfq-intake-archives/${runMarker}.zip`;
 const sql = postgres(databaseUrl, { ssl: "require", max: 1, prepare: false });
@@ -176,34 +177,51 @@ try {
       last_name: "Smoke",
       company: runMarker,
       email: `${runMarker}@example.invalid`,
+      phone: "5550100",
+      phone_country_code: "1",
+      job_title: null,
     },
-    nda_required: true,
-    destination_postal_code: "94107",
-    global_notes: runMarker,
     parts: [
       {
-        id: partId,
-        quantity: 2,
+        part_id: partId,
+        part_file_key: cadKey,
+        drawing_file_keys: [drawingKey],
         material: "6061-T6",
-        tolerance: "Standard",
-        cad: { key: cadKey, original_filename: `${uploadId}-${runMarker}.step` },
-        drawings: [{ key: drawingKey, original_filename: `${runMarker}.pdf` }],
+        tolerance: "standard",
+        tolerance_detail: null,
+        threads_features: null,
+        quantity: 2,
+        target_unit_price: null,
+        notes: null,
       },
     ],
+    global: {
+      required_delivery_date: "2026-10-15",
+      lead_time_preference: "target_date",
+      shipping_destination: { postal_code: "94107" },
+      po_number: `PO-${runMarker}`,
+      nda_required: true,
+      notes: runMarker,
+    },
   });
   await putJson(receiptKey, {
     receipt_number: runMarker,
     session_id: sessionId,
+    submitted_at: new Date().toISOString(),
     manifest_key: manifestKey,
   });
 
-  const rawBody = JSON.stringify({ receipt_key: receiptKey });
+  const rawBody = JSON.stringify({
+    receipt_number: runMarker,
+    session_id: sessionId,
+    receipt_key: receiptKey,
+  });
   const signature = createHmac("sha256", secret).update(rawBody).digest("hex");
   const response = await fetch(`${appUrl}/api/rfq-intake/webhook`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-rfq-signature": `sha256=${signature}`,
+      "x-rfq-signature": signature,
     },
     body: rawBody,
   });
