@@ -1,9 +1,9 @@
 import { sendRfqImportJob } from "../queue/producer.server";
-import { resetRfqImportForRetry } from "./postgres.server";
+import { resetRfqImportForRetryByReceiptKey } from "./postgres.server";
 
-export async function retryRfqImport(receiptNumber: string): Promise<boolean> {
-  const receiptKey = await resetRfqImportForRetry(receiptNumber);
-  if (!receiptKey) return false;
-  await sendRfqImportJob({ receiptKey });
+export async function retryRfqImport(receiptKey: string): Promise<boolean> {
+  const resetKey = await resetRfqImportForRetryByReceiptKey(receiptKey);
+  if (!resetKey) return false;
+  await sendRfqImportJob({ receiptKey: resetKey });
   return true;
 }

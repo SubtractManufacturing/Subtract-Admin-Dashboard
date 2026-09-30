@@ -137,8 +137,8 @@ async function cleanup(quoteId?: number) {
       for (const row of attachmentRows) await tx.unsafe("delete from attachments where id = $1", [row.id]);
     });
   }
-  await sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${runMarker}`;
-  await sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${runMarker}`;
+  await sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${receiptKey}`;
+  await sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${receiptKey}`;
   await sql`delete from rfq_import_ledger where receipt_number = ${runMarker}`;
   if (uploadedKeys.size) {
     await s3.send(
@@ -255,7 +255,7 @@ try {
       (select a.s3_key from quote_attachments qa join attachments a on a.id = qa.attachment_id where qa.quote_id = q.id and a.document_kind = 'rfq_intake_archive' limit 1) as archive_key,
       (select part_file_url from quote_parts where quote_id = q.id limit 1) as cad_key,
       (select a.s3_key from quote_part_drawings qpd join quote_parts qp on qp.id = qpd.quote_part_id join attachments a on a.id = qpd.attachment_id where qp.quote_id = q.id limit 1) as drawing_key,
-      (select count(*)::int from action_items where entity_type = 'rfq_import' and entity_id = ${runMarker} and status = 'active' and is_archived = false) as failure_count
+      (select count(*)::int from action_items where entity_type = 'rfq_import' and entity_id = ${receiptKey} and status = 'active' and is_archived = false) as failure_count
     from quotes q join customers c on c.id = q.customer_id where q.id = ${importedQuoteId}
   `;
   if (

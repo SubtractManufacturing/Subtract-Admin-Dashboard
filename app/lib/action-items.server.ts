@@ -104,8 +104,11 @@ export async function resolveActionItem(
       resolution,
       updatedAt: now,
     })
-    .where(eq(actionItems.id, id))
+    .where(and(eq(actionItems.id, id), eq(actionItems.status, "active")))
     .returning();
+  if (!updated) {
+    throw new ActionItemCommandError("Action Item is no longer active", 409);
+  }
   return updated;
 }
 

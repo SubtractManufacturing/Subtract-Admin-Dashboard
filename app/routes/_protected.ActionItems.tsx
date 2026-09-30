@@ -1,5 +1,5 @@
 import { ActionFunctionArgs, json, LoaderFunctionArgs, redirect } from "@remix-run/node";
-import { Form, Link, useLoaderData } from "@remix-run/react";
+import { Form, Link, useActionData, useLoaderData } from "@remix-run/react";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import {
   ActionItemCommandError,
@@ -51,6 +51,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function ActionItems() {
   const { items, role } = useLoaderData<ActionItemsLoaderData>();
+  const actionData = useActionData<{ error?: string }>();
   const elevated = role === "Admin" || role === "Dev";
   return (
     <div className="max-w-[1920px] mx-auto">
@@ -61,6 +62,11 @@ export default function ActionItems() {
 
       <div className="px-10 py-8">
         <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150 mb-5">Items that require input</h2>
+        {actionData?.error && (
+          <p className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+            {actionData.error}
+          </p>
+        )}
         {items.length === 0 ? (
           <div className="rounded-lg border border-gray-300 bg-white p-10 text-center text-gray-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
             No active Action Items.

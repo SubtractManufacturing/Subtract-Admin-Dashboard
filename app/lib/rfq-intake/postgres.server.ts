@@ -634,23 +634,6 @@ export function createPostgresRfqPersistence(input: {
   };
 }
 
-export async function resetRfqImportForRetry(receiptNumber: string, now = new Date()) {
-  const [updated] = await db
-    .update(rfqImportLedger)
-    .set({
-      status: "pending",
-      attemptCount: 0,
-      processingStartedAt: null,
-      nextAttemptAt: now,
-      errorClassification: null,
-      errorDetail: null,
-      updatedAt: now,
-    })
-    .where(eq(rfqImportLedger.receiptNumber, receiptNumber))
-    .returning({ receiptKey: rfqImportLedger.receiptKey });
-  return updated?.receiptKey ?? null;
-}
-
 export async function resetRfqImportForRetryByReceiptKey(
   receiptKey: string,
   now = new Date(),

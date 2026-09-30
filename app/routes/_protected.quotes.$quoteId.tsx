@@ -2241,7 +2241,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
           }
           await db
             .delete(quoteAttachments)
-            .where(eq(quoteAttachments.attachmentId, attachmentId));
+            .where(
+              and(
+                eq(quoteAttachments.attachmentId, attachmentId),
+                eq(quoteAttachments.quoteId, quote.id),
+              ),
+            );
           await deleteFile(authorizedAttachment.s3Key);
 
           const eventContext: AttachmentEventContext = {

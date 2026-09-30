@@ -85,9 +85,13 @@ export async function createRawIntakeArchive(input: {
           callback(null, chunk);
         },
       });
-      (await input.storage.read(object.key)).pipe(hasher);
+      const source = await input.storage.read(object.key);
+      source.on("error", (error) => {
+        hasher.destroy(error);
+      });
+      source.pipe(hasher);
       zip.append(hasher, { name: object.key });
-      await finished(hasher);
+      await Promise.race([finished(hasher), upload]);
       const after = await input.storage.head(object.key);
       if (
         !after ||

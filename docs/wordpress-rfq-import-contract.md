@@ -26,7 +26,7 @@ Most recent **manifest-impacting** change: commit `d865840` (2026-09-29), *feat:
 | Change | Detail | Source |
 |--------|--------|--------|
 | **REMOVED** | `no_rush` from allowed `lead_time_preference` | `class-rfq-manifest-validator.php` `LEAD_TIME_PREFERENCES`; `frontend/src/types/manifest.ts` `LeadTimePreference` |
-| **RETYPED / rules** | `global.required_delivery_date` | Required only when `lead_time_preference === "target_date"`; otherwise optional (`null` or omitted). If a non-empty string is sent for other lead times, still validated as `YYYY-MM-DD` and not before today (UTC) | `class-rfq-manifest-validator.php`; `frontend/src/lib/manifest.ts` `buildManifest()` |
+| **RETYPED / rules** | `global.required_delivery_date` — required only when `lead_time_preference === "target_date"`; otherwise optional (`null` or omitted). If a non-empty string is sent for other lead times, still validated as `YYYY-MM-DD` and not before today (UTC) | `class-rfq-manifest-validator.php`; `frontend/src/lib/manifest.ts` `buildManifest()` |
 | **UI** | Global step field order; target date only for “Meet Target Date”; labels in `leadTime.ts` | `frontend/src/steps/StepGlobal.tsx`, `frontend/src/lib/leadTime.ts` |
 | **UI only** (commit `6792805`) | Part meta: quantity/material/tolerance/notes first; threads + target price under collapsible “More details” | `frontend/src/steps/StepPartMeta.tsx` |
 
