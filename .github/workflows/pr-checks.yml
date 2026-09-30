@@ -175,7 +175,7 @@ jobs:
             --publish 9000:9000 \
             --env MINIO_ROOT_USER=minioadmin \
             --env MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:latest server /data
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
           for attempt in {1..30}; do
             if curl --fail --silent http://localhost:9000/minio/health/live >/dev/null; then
               exit 0
