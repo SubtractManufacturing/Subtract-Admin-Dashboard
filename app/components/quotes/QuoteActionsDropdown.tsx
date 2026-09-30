@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { FileCheck } from "lucide-react";
-import { ToolpathIcon } from "~/components/icons/ToolpathIcon";
 
 interface QuoteActionsDropdownProps {
   isOpen: boolean;
@@ -14,11 +13,6 @@ interface QuoteActionsDropdownProps {
   onGeneratePdf?: () => void;
   onGenerateInvoice?: () => void;
   onReceivePo?: () => void;
-  onOpenToolpath?: () => void;
-  isToolpathDisabled?: boolean;
-  toolpathDisabledReason?: string;
-  toolpathHasFailures?: boolean;
-  toolpathIsProcessing?: boolean;
   isDownloading?: boolean;
   hasCustomer?: boolean;
 }
@@ -35,11 +29,6 @@ export default function QuoteActionsDropdown({
   onGeneratePdf,
   onGenerateInvoice,
   onReceivePo,
-  onOpenToolpath,
-  isToolpathDisabled = false,
-  toolpathDisabledReason,
-  toolpathHasFailures = false,
-  toolpathIsProcessing = false,
   isDownloading = false,
   hasCustomer = false,
 }: QuoteActionsDropdownProps) {
@@ -97,30 +86,6 @@ export default function QuoteActionsDropdown({
               onCalculatePricing();
               onClose();
             },
-          },
-        ]
-      : []),
-    ...(canCalculate && onOpenToolpath
-      ? [
-          {
-            icon: (
-              <span className="relative inline-flex">
-                <ToolpathIcon className="w-5 h-5" />
-                {toolpathHasFailures && !toolpathIsProcessing ? (
-                  <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
-                    !
-                  </span>
-                ) : null}
-              </span>
-            ),
-            label: "Toolpath",
-            onClick: () => {
-              if (isToolpathDisabled) return;
-              onOpenToolpath();
-              onClose();
-            },
-            disabled: isToolpathDisabled,
-            title: isToolpathDisabled ? toolpathDisabledReason : undefined,
           },
         ]
       : []),
@@ -295,7 +260,6 @@ export default function QuoteActionsDropdown({
         {actionButtons.map((action, index) => (
           <button
             key={index}
-            title={"title" in action ? action.title : undefined}
             className={`flex flex-col items-center justify-center p-4 rounded-lg border border-gray-200 dark:border-gray-700 transition-colors group w-16 h-16 ${
               "disabled" in action && action.disabled
                 ? "opacity-50 cursor-not-allowed"

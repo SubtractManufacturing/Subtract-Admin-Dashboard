@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  formatToolpathQueueError,
-} from "./toolpath-upload.server";
-import {
   getAppDatabaseMaxConnections,
   getQueueDatabaseUrl,
   isSupabaseSessionPooler,
@@ -63,17 +60,5 @@ describe("connection-string.server", () => {
       "postgresql://user:pass@aws-0-us-east-1.pooler.supabase.com:5432/postgres";
     clearEnvCache();
     expect(getAppDatabaseMaxConnections()).toBe(3);
-  });
-});
-
-describe("formatToolpathQueueError", () => {
-  it("maps session pool exhaustion to a friendly message", () => {
-    expect(
-      formatToolpathQueueError(
-        new Error(
-          "(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15",
-        ),
-      ),
-    ).toBe("Database connection limit reached. Wait a moment and try again.");
   });
 });

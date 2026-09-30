@@ -25,7 +25,7 @@ Browser → Remix route (loader/action) → app/lib module → db / S3 / queue p
                                     queue handler → external service
 ```
 
-`npm run dev` starts Remix and the worker concurrently. Async email, CAD conversion, and Toolpath require the worker.
+`npm run dev` starts Remix and the worker concurrently. Async email and CAD conversion require the worker.
 
 ## Directory roles
 
@@ -60,7 +60,6 @@ docs/
 | **Quoting** | `_protected.quotes.*`, `_protected.quotes.new` | `quotes.ts`, `quoteParts.ts`, `quotePriceCalculations.ts` |
 | **Orders** | `_protected.orders.*` | `orders.ts`, `lineItems.ts`, `order-tracking.ts`, `order-delivery.ts` |
 | **Parts / CAD** | `_protected.parts.*`, `_protected.quote-parts.*`, `_protected.mesh-conversion.*` | `parts.ts`, `cadVersions.ts`, `*-mesh-converter.server.ts`, `conversion-service.server.ts`, `part-asset-admin.server.ts` |
-| **Toolpath** | `_protected.toolpath.*` | `toolpath.ts`, `toolpath.server.ts`, `toolpath-upload.server.ts` |
 | **Email (user)** | `_protected.email._index` | `sent-emails.server.ts` |
 | **Email (admin)** | `_protected.admin.email` | `app/lib/email/*` |
 | **Admin** | `_protected.admin.*` | `users.admin.server.ts`, `audit-log.ts`, data retention |
@@ -74,7 +73,7 @@ docs/
 
 | Route | Lines | Action intents | Notes |
 |-------|-------|----------------|-------|
-| `_protected.quotes.$quoteId.tsx` | ~4,924 | 35 | Line items, attachments, notes, email, PDF, Toolpath, Stripe |
+| `_protected.quotes.$quoteId.tsx` | ~4,924 | 35 | Line items, attachments, notes, email, PDF, Stripe |
 | `_protected.orders.$orderId.tsx` | ~4,337 | 48 | Same cross-cutting patterns + tracking, vendor pay, PO/invoice PDFs |
 | `_protected.settings.tsx` | ~1,600+ | many | Feature flags, dev settings, placeholder tabs |
 
@@ -98,9 +97,6 @@ Defined in `app/lib/queue/types.ts`, consumed by `scripts/worker.ts`:
 |-------|---------|---------|
 | `send-email` | `handlers/send-email.ts` | Postmark outbound delivery |
 | `cad-conversion` | `handlers/cad-conversion.ts` | CAD → mesh conversion |
-| `toolpath-upload` | `handlers/toolpath-upload.ts` | Upload quote part to Toolpath |
-| `toolpath-report-poll` | `handlers/toolpath-report-poll.ts` | Poll machinability report |
-| `toolpath-stale-cleanup` | `handlers/toolpath-stale-cleanup.ts` | Clean stale Toolpath jobs |
 | `purge-archived-line-items` | `handlers/purge-archived-line-items.ts` | Hard-delete archived line items |
 | `mock-job` | inline in worker.ts | **Stale** — remove when cleaning infra |
 
