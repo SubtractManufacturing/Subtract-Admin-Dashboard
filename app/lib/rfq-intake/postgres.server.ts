@@ -186,15 +186,21 @@ export function createPostgresRfqPersistence(input: {
       );
       const [timing] = await tx
         .select({
-          processingLeaseActive: sql<boolean>`coalesce(${rfqImportLedger.processingStartedAt} > ${leaseExpiredAt}, false)`,
-          retryNotDue: sql<boolean>`coalesce(${rfqImportLedger.nextAttemptAt} > ${now}, false)`,
+          processingStartedAt: rfqImportLedger.processingStartedAt,
+          nextAttemptAt: rfqImportLedger.nextAttemptAt,
         })
         .from(rfqImportLedger)
         .where(eq(rfqImportLedger.id, ledger.id))
         .limit(1);
+      const processingLeaseActive =
+        timing?.processingStartedAt != null &&
+        timing.processingStartedAt.getTime() > leaseExpiredAt.getTime();
+      const retryNotDue =
+        timing?.nextAttemptAt != null &&
+        timing.nextAttemptAt.getTime() > now.getTime();
       if (
         ledger.status === "processing" &&
-        timing?.processingLeaseActive
+        processingLeaseActive
       ) {
         return { kind: "already_processing" as const };
       }
@@ -203,7 +209,7 @@ export function createPostgresRfqPersistence(input: {
       }
       if (
         ledger.status === "retry_scheduled" &&
-        timing?.retryNotDue
+        retryNotDue
       ) {
         return { kind: "already_processing" as const };
       }

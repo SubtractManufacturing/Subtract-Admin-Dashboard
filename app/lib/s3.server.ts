@@ -1,4 +1,8 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, CopyObjectCommand } from '@aws-sdk/client-s3'
+import {
+  RequestChecksumCalculation,
+  ResponseChecksumValidation,
+} from '@aws-sdk/middleware-flexible-checksums'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 import https from 'https'
@@ -19,6 +23,7 @@ export function getS3Client() {
       throw new Error('S3 credentials not configured. Please set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY environment variables.')
     }
 
+    const useCustomEndpoint = Boolean(S3_ENDPOINT)
     s3Client = new S3Client({
       region: S3_REGION,
       endpoint: S3_ENDPOINT,
@@ -26,7 +31,14 @@ export function getS3Client() {
         accessKeyId: S3_ACCESS_KEY_ID,
         secretAccessKey: S3_SECRET_ACCESS_KEY,
       },
-      forcePathStyle: !!S3_ENDPOINT,
+      forcePathStyle: useCustomEndpoint,
+      // S3Mock and other local emulators do not implement SDK default CRC32 multipart checksums.
+      ...(useCustomEndpoint
+        ? {
+            requestChecksumCalculation: RequestChecksumCalculation.WHEN_REQUIRED,
+            responseChecksumValidation: ResponseChecksumValidation.WHEN_REQUIRED,
+          }
+        : {}),
       requestHandler: new NodeHttpHandler({
         httpsAgent: new https.Agent({
           maxSockets: 25,
