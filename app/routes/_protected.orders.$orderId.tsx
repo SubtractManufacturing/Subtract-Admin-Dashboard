@@ -27,6 +27,7 @@ import {
 import { getCustomer } from "~/lib/customers";
 import { getVendor, getVendors } from "~/lib/vendors";
 import {
+  authorizeAttachmentDeletion,
   getAttachment,
   createAttachment,
   deleteAttachment,
@@ -91,6 +92,7 @@ import { generateDocumentPdf } from "~/lib/pdf-service.server";
 
 import { generatePdfThumbnail, isPdfFile } from "~/lib/pdf-thumbnail.server";
 import Button from "~/components/shared/Button";
+import { NdaRequiredBanner } from "~/components/shared/NdaRequiredBanner";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import FileViewerModal from "~/components/shared/FileViewerModal";
 import { Notes } from "~/components/shared/Notes";
@@ -781,13 +783,31 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const eventContext: AttachmentEventContext = {
           userId: user?.id,
           userEmail: user?.email || userDetails?.name || undefined,
+          canDeleteProtected:
+            userDetails.role === "Admin" || userDetails.role === "Dev",
         };
+
+        if (attachment.isProtected && !eventContext.canDeleteProtected) {
+          return json(
+            { error: "Admin or Dev role required to delete this protected attachment" },
+            { status: 403 },
+          );
+        }
+        const authorizedAttachment = await authorizeAttachmentDeletion({
+          attachmentId,
+          entityType: "order",
+          entityId: order.id,
+          eventContext,
+        });
+        if (!authorizedAttachment) {
+          return json({ error: "Attachment not found on this Order" }, { status: 404 });
+        }
 
         // Unlink from order first
         await unlinkAttachmentFromOrder(order.id, attachmentId, eventContext);
 
         // Delete from S3
-        await deleteFile(attachment.s3Key);
+        await deleteFile(authorizedAttachment.s3Key);
 
         // Delete database record
         await deleteAttachment(attachmentId, eventContext);
@@ -1438,6 +1458,18 @@ export async function action({ request, params }: ActionFunctionArgs) {
         await updateOrder(order.id, updates, orderEventContext);
 
         return redirect(`/orders/${orderNumber}`);
+      }
+
+      case "updateNdaRequired": {
+        await updateOrder(
+          order.id,
+          { ndaRequired: formData.get("ndaRequired") === "true" },
+          {
+            userId: user.id,
+            userEmail: user.email || userDetails.name || undefined,
+          },
+        );
+        return withAuthHeaders(json({ success: true }), headers);
       }
 
       case "restoreOrder": {
@@ -3218,6 +3250,16 @@ export default function OrderDetails() {
         </div>
 
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
+          <div className="flex flex-col gap-3">
+            <NdaRequiredBanner required={order.ndaRequired} />
+            <orderEditFetcher.Form method="post">
+              <input type="hidden" name="intent" value="updateNdaRequired" />
+              <input type="hidden" name="ndaRequired" value={String(!order.ndaRequired)} />
+              <button type="submit" className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400">
+                {order.ndaRequired ? "Remove NDA requirement" : "Mark NDA required"}
+              </button>
+            </orderEditFetcher.Form>
+          </div>
           {/* Archived Notice Bar */}
           {order.status === "Archived" && (
             <div className="relative bg-gray-900 dark:bg-gray-950 border-2 border-gray-700 dark:border-gray-800 rounded-lg p-4">
@@ -3675,6 +3717,7 @@ export default function OrderDetails() {
             attachments={order.attachments || []}
             entityType="order"
             entityId={order.id}
+            canDeleteProtected={userDetails.role === "Admin" || userDetails.role === "Dev"}
           />
 
           {/* Shipping and Event Log - Side by Side at bottom */}

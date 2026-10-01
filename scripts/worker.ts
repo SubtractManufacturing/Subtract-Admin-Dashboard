@@ -4,20 +4,26 @@ import { createEvent } from "../app/lib/events";
 import {
   QUEUES,
   type CadConversionPayload,
+  type DrawingThumbnailPayload,
   type MockJobPayload,
   type PurgeArchivedLineItemsPayload,
   type SendEmailPayload,
-  type ToolpathReportPollPayload,
   type ToolpathStaleCleanupPayload,
-  type ToolpathUploadPayload,
+  type RfqImportPayload,
+  type RfqReceiptScanPayload,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
+import { handleDrawingThumbnail } from "../app/lib/queue/handlers/drawing-thumbnail";
 import { handlePurgeArchivedLineItems } from "../app/lib/queue/handlers/purge-archived-line-items";
 import { handleSendEmail } from "../app/lib/queue/handlers/send-email";
 import { handleToolpathReportPoll } from "../app/lib/queue/handlers/toolpath-report-poll";
 import { handleToolpathStaleCleanup } from "../app/lib/queue/handlers/toolpath-stale-cleanup";
 import { handleToolpathUpload } from "../app/lib/queue/handlers/toolpath-upload";
 import { startWorkerQueue, stopWorkerQueue } from "../app/lib/queue/worker.server";
+import {
+  handleRfqImport,
+  handleRfqReceiptScan,
+} from "../app/lib/queue/handlers/rfq-intake";
 
 let isShuttingDown = false;
 
@@ -67,6 +73,13 @@ async function main() {
   );
   console.log(`[Worker] Listening on queue: ${QUEUES.CAD_CONVERSION}`);
 
+  await boss.work<DrawingThumbnailPayload>(
+    QUEUES.DRAWING_THUMBNAIL,
+    { batchSize: 1 },
+    handleDrawingThumbnail,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.DRAWING_THUMBNAIL}`);
+
   await boss.work<SendEmailPayload>(
     QUEUES.SEND_EMAIL,
     { batchSize: 1 },
@@ -90,14 +103,34 @@ async function main() {
     `[Worker] Scheduled hourly purge: ${QUEUES.PURGE_ARCHIVED_LINE_ITEMS}`,
   );
 
-  await boss.work<ToolpathUploadPayload>(
+  await boss.work<RfqImportPayload>(
+    QUEUES.RFQ_IMPORT,
+    { batchSize: 1 },
+    handleRfqImport,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.RFQ_IMPORT}`);
+
+  await boss.work<RfqReceiptScanPayload>(
+    QUEUES.RFQ_RECEIPT_SCAN,
+    { batchSize: 1 },
+    handleRfqReceiptScan,
+  );
+  await boss.schedule(
+    QUEUES.RFQ_RECEIPT_SCAN,
+    "*/5 * * * *",
+    { triggeredAt: new Date().toISOString() },
+    { missed: "once" },
+  );
+  console.log(`[Worker] Scheduled every 5 minutes: ${QUEUES.RFQ_RECEIPT_SCAN}`);
+
+  await boss.work(
     QUEUES.TOOLPATH_UPLOAD,
     { batchSize: 1, includeMetadata: true },
     handleToolpathUpload,
   );
   console.log(`[Worker] Listening on queue: ${QUEUES.TOOLPATH_UPLOAD}`);
 
-  await boss.work<ToolpathReportPollPayload>(
+  await boss.work(
     QUEUES.TOOLPATH_REPORT_POLL,
     { batchSize: 1, includeMetadata: true },
     handleToolpathReportPoll,

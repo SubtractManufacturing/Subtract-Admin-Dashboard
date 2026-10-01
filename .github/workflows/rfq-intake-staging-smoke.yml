@@ -1,0 +1,42 @@
+name: RFQ Intake Staging Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_release:
+        description: Optional exact /health version to wait for
+        required: false
+        type: string
+  workflow_run:
+    workflows: ["Staging Deploy"]
+    types: [completed]
+
+jobs:
+  smoke:
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
+      vars.RFQ_INTAKE_SMOKE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+      - run: npm ci
+      - name: Run guarded staging RFQ smoke
+        run: npx tsx scripts/rfq-intake-staging-smoke.ts
+        env:
+          STAGING: "true"
+          STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
+          EXPECTED_RELEASE: ${{ github.event_name == 'workflow_run' && format('sha-{0}', github.event.workflow_run.head_sha) || inputs.expected_release }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          S3_ENDPOINT: ${{ secrets.STAGING_S3_ENDPOINT }}
+          S3_REGION: ${{ vars.STAGING_S3_REGION }}
+          S3_ACCESS_KEY_ID: ${{ secrets.STAGING_S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.STAGING_S3_SECRET_ACCESS_KEY }}
+          S3_BUCKET: ${{ vars.STAGING_S3_BUCKET }}
+          RFQ_WEBHOOK_SECRET: ${{ secrets.STAGING_RFQ_WEBHOOK_SECRET }}

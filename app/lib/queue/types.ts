@@ -6,6 +6,9 @@ export const QUEUES = {
   TOOLPATH_UPLOAD: "toolpath-upload",
   TOOLPATH_REPORT_POLL: "toolpath-report-poll",
   TOOLPATH_STALE_CLEANUP: "toolpath-stale-cleanup",
+  RFQ_IMPORT: "rfq-import",
+  RFQ_RECEIPT_SCAN: "rfq-receipt-scan",
+  DRAWING_THUMBNAIL: "drawing-thumbnail",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -45,6 +48,34 @@ export interface ToolpathReportPollPayload {
 export interface ToolpathStaleCleanupPayload {
   triggeredAt: string;
 }
+
+export interface RfqImportPayload {
+  receiptKey: string;
+}
+
+export interface RfqReceiptScanPayload {
+  triggeredAt: string;
+}
+
+export interface DrawingThumbnailPayload {
+  attachmentId: string;
+}
+
+export const RFQ_IMPORT_OPTIONS = {
+  // The import ledger owns the bounded retry schedule.
+  retryLimit: 0,
+  // Recover promptly when a dev-worker restart or process crash abandons an active job.
+  heartbeatSeconds: 60,
+  // pg-boss rejects job expirations longer than 24 hours.
+  expireInSeconds: 24 * 60 * 60,
+} as const;
+
+export const DRAWING_THUMBNAIL_OPTIONS = {
+  retryLimit: 3,
+  retryDelay: 30,
+  retryBackoff: true,
+  expireInSeconds: 600,
+} as const;
 
 export const DEFAULT_RETRY_OPTIONS = {
   retryLimit: 3,

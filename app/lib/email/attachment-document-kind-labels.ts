@@ -10,4 +10,5 @@ export const ATTACHMENT_DOCUMENT_KIND_LABELS: Record<
   customer_purchase_order: "Customer PO",
   packing_slip: "Packing slip",
   order_confirmation: "Order confirmation",
+  rfq_intake_archive: "RFQ intake archive",
 };
