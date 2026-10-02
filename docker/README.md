@@ -91,8 +91,11 @@ DATABASE_URL_FILE=/run/secrets/database_url
 DATABASE_DIRECT_URL_FILE=/run/secrets/database_direct_url
 SUPABASE_SERVICE_ROLE_KEY_FILE=/run/secrets/supabase_service_role_key
 S3_SECRET_ACCESS_KEY_FILE=/run/secrets/s3_secret_access_key
+INTAKE_S3_SECRET_ACCESS_KEY_FILE=/run/secrets/intake_s3_secret_access_key
 STRIPE_SECRET_KEY_FILE=/run/secrets/stripe_secret_key
 ```
+
+RFQ intake reads WordPress submissions from a dedicated bucket configured with `INTAKE_S3_ENDPOINT`, `INTAKE_S3_REGION`, `INTAKE_S3_ACCESS_KEY_ID`, `INTAKE_S3_SECRET_ACCESS_KEY`, and `INTAKE_S3_BUCKET` (needed by the **worker** when `RFQ_INTAKE_ENABLED=true`; the web container only needs `RFQ_INTAKE_ENABLED` and `RFQ_WEBHOOK_SECRET`). The worker's startup log reports whether it copies into the application bucket server-side or by streaming (`copy_strategy`).
 
 Rules:
 - If `FOO_FILE` is a non-empty path, the file **wins** — there is no fallback to `FOO` if the file is missing, unreadable, or empty.

@@ -9,6 +9,7 @@ import {
 import postgres from "postgres";
 
 import { getEnv, requireEnv } from "../app/lib/env.server";
+import { getIntakeS3Client } from "../app/lib/rfq-intake/intake-s3.server";
 import { getS3Client } from "../app/lib/s3.server";
 
 if (getEnv("STAGING") !== "true") {
@@ -17,7 +18,8 @@ if (getEnv("STAGING") !== "true") {
 
 const appUrl = requireEnv("STAGING_APP_URL").replace(/\/$/, "");
 const databaseUrl = requireEnv("DATABASE_URL");
-const bucket = requireEnv("S3_BUCKET");
+const appBucket = requireEnv("S3_BUCKET");
+const intakeBucket = requireEnv("INTAKE_S3_BUCKET");
 const secret = requireEnv("RFQ_WEBHOOK_SECRET");
 const expectedRelease = getEnv("EXPECTED_RELEASE");
 const runMarker = `rfq-smoke-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -44,13 +46,16 @@ const canonicalCadKey = `quote-parts/${quotePartId}/source/${runMarker}.step`;
 const canonicalDrawingKey = `quote-parts/${quotePartId}/drawings/01-${runMarker}.pdf`;
 const archiveKey = `rfq-intake-archives/${runMarker}.zip`;
 const sql = postgres(databaseUrl, { ssl: "require", max: 1, prepare: false });
-const s3 = getS3Client();
-const uploadedKeys = new Set<string>([
+const appS3 = getS3Client();
+const intakeS3 = getIntakeS3Client();
+const intakeKeys = new Set<string>([
   receiptKey,
   manifestKey,
   cadKey,
   drawingKey,
   orphanKey,
+]);
+const appKeys = new Set<string>([
   canonicalCadKey,
   canonicalDrawingKey,
   archiveKey,
@@ -78,9 +83,9 @@ async function waitForRelease() {
 }
 
 async function putJson(key: string, value: unknown) {
-  await s3.send(
+  await intakeS3.send(
     new PutObjectCommand({
-      Bucket: bucket,
+      Bucket: intakeBucket,
       Key: key,
       Body: JSON.stringify(value),
       ContentType: "application/json",
@@ -116,11 +121,11 @@ async function cleanup(quoteId?: number) {
       join quote_parts qp on qp.id = qpd.quote_part_id
       where qp.quote_id = ${quoteId}
     `;
-    for (const row of attachmentRows) uploadedKeys.add(row.s3_key);
+    for (const row of attachmentRows) appKeys.add(row.s3_key);
     const partRows = await sql<{ part_file_url: string | null }[]>`
       select part_file_url from quote_parts where quote_id = ${quoteId}
     `;
-    for (const row of partRows) if (row.part_file_url) uploadedKeys.add(row.part_file_url);
+    for (const row of partRows) if (row.part_file_url) appKeys.add(row.part_file_url);
 
     await sql.begin(async (tx) => {
       await tx.unsafe("delete from action_items where entity_type = 'quote' and entity_id = $1", [String(quoteId)]);
@@ -140,30 +145,35 @@ async function cleanup(quoteId?: number) {
   await sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${receiptKey}`;
   await sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${receiptKey}`;
   await sql`delete from rfq_import_ledger where receipt_number = ${runMarker}`;
-  if (uploadedKeys.size) {
-    await s3.send(
-      new DeleteObjectsCommand({
-        Bucket: bucket,
-        Delete: { Objects: [...uploadedKeys].map((Key) => ({ Key })) },
-      }),
-    );
+  for (const [client, bucket, keys] of [
+    [intakeS3, intakeBucket, intakeKeys],
+    [appS3, appBucket, appKeys],
+  ] as const) {
+    if (keys.size) {
+      await client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: [...keys].map((Key) => ({ Key })) },
+        }),
+      );
+    }
   }
 }
 
 let quoteId: number | undefined;
 try {
   await waitForRelease();
-  await s3.send(
+  await intakeS3.send(
     new PutObjectCommand({
-      Bucket: bucket,
+      Bucket: intakeBucket,
       Key: cadKey,
       Body: cadBody,
       ContentType: "application/step",
     }),
   );
-  await s3.send(
+  await intakeS3.send(
     new PutObjectCommand({
-      Bucket: bucket,
+      Bucket: intakeBucket,
       Key: drawingKey,
       Body: "%PDF-1.4 smoke",
       ContentType: "application/pdf",
@@ -272,14 +282,14 @@ try {
   ) {
     throw new Error(`Unexpected staging RFQ state: ${JSON.stringify(verified)}`);
   }
-  uploadedKeys.add(verified.archive_key);
-  uploadedKeys.add(verified.cad_key);
-  uploadedKeys.add(verified.drawing_key);
+  appKeys.add(verified.archive_key);
+  appKeys.add(verified.cad_key);
+  appKeys.add(verified.drawing_key);
   for (const key of [verified.archive_key, verified.cad_key, verified.drawing_key]) {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    await appS3.send(new HeadObjectCommand({ Bucket: appBucket, Key: key }));
   }
-  const archiveResponse = await s3.send(
-    new GetObjectCommand({ Bucket: bucket, Key: verified.archive_key }),
+  const archiveResponse = await appS3.send(
+    new GetObjectCommand({ Bucket: appBucket, Key: verified.archive_key }),
   );
   if (!archiveResponse.Body) throw new Error("RFQ archive returned no body");
   const archiveBytes = Buffer.from(await archiveResponse.Body.transformToByteArray());
@@ -296,7 +306,7 @@ try {
     }
   }
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: receiptKey }));
+    await intakeS3.send(new HeadObjectCommand({ Bucket: intakeBucket, Key: receiptKey }));
     throw new Error("Source intake prefix was not deleted");
   } catch (error) {
     if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 404) throw error;

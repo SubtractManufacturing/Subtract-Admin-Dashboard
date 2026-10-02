@@ -22,7 +22,7 @@
     "test": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:watch": "vitest --exclude \"**/*.integration.test.ts\"",
     "test:ci": "vitest run",
-    "s3mock:local": "docker run --rm -p 9090:9090 -e COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS=rfq-contract adobe/s3mock",
+    "s3mock:local": "docker run --rm -p 9090:9090 -e COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS=rfq-contract,rfq-intake-contract adobe/s3mock",
     "test:coverage": "vitest run --coverage --exclude \"**/*.integration.test.ts\"",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

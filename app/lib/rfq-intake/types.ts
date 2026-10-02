@@ -29,18 +29,25 @@ export type StoredObjectPage = {
   nextCursor: string | null;
 };
 
-export interface RfqStorage {
+/** The intake bucket: where WordPress drops submissions and the ERP picks them up. */
+export interface RfqIntakeStorage {
   list(prefix: string, cursor?: string): Promise<StoredObjectPage>;
   head(key: string): Promise<StoredObject | null>;
   read(key: string): Promise<Readable>;
   readJson(key: string): Promise<unknown>;
-  copy(sourceKey: string, destinationKey: string): Promise<void>;
+  deletePrefix(prefix: string): Promise<void>;
+}
+
+/** The application bucket: canonical Quote files and protected audit archives. */
+export interface RfqCanonicalStorage {
+  head(key: string): Promise<StoredObject | null>;
   uploadStream(
     key: string,
     body: Readable,
     contentType: string,
   ): Promise<StoredObject>;
-  deletePrefix(prefix: string): Promise<void>;
+  /** Copies one intake object into the application bucket. */
+  copyFromIntake(intakeKey: string, canonicalKey: string): Promise<void>;
 }
 
 export interface RfqQueue {

@@ -173,7 +173,7 @@ jobs:
         run: |
           docker run --detach --name rfq-s3mock \
             --publish 9090:9090 \
-            --env COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS=rfq-contract \
+            --env COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS=rfq-contract,rfq-intake-contract \
             adobe/s3mock
           for attempt in {1..30}; do
             if curl --fail --silent http://localhost:9090/favicon.ico >/dev/null; then
@@ -198,6 +198,11 @@ jobs:
           S3_ACCESS_KEY_ID: test
           S3_SECRET_ACCESS_KEY: test
           S3_BUCKET: rfq-contract
+          INTAKE_S3_ENDPOINT: http://localhost:9090
+          INTAKE_S3_REGION: us-east-1
+          INTAKE_S3_ACCESS_KEY_ID: test
+          INTAKE_S3_SECRET_ACCESS_KEY: test
+          INTAKE_S3_BUCKET: rfq-intake-contract
           RFQ_S3_LIST_PAGE_SIZE: "2"
 
   security:
