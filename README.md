@@ -145,6 +145,7 @@ Steering docs for navigating the codebase:
 | [CONTEXT.md](CONTEXT.md) | Domain vocabulary, entity lifecycles, naming conventions |
 | [docs/architecture-map.md](docs/architecture-map.md) | Where routes, lib modules, queues, and downloads live |
 | [docs/adr/README.md](docs/adr/README.md) | Architecture decision backlog and accepted conventions |
+| [docs/research/analytics-architecture.md](docs/research/analytics-architecture.md) | Research: time-based quote/order analytics (not implemented) |
 | [CLAUDE.md](CLAUDE.md) | Dev commands, DB rules, download patterns |
 
 The app covers CRM (customers, vendors), quoting, orders, parts/CAD, outbound email, Toolpath integration, and platform admin. `npm run dev` starts Remix and the pg-boss worker (`scripts/worker.ts`) for async email, CAD conversion, and Toolpath jobs.
