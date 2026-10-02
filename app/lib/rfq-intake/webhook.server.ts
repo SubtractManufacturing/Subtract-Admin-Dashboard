@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { json } from "@remix-run/node";
+
 import { isReceiptKey } from "./keys";
 
 export const RFQ_SIGNATURE_HEADER = "x-rfq-signature";
@@ -26,9 +28,9 @@ function signatureMatches(rawBody: string, supplied: string | null, secret: stri
 export async function handleRfqWebhook(
   request: Request,
   dependencies: RfqWebhookDependencies,
-): Promise<Response> {
+) {
   if (!dependencies.enabled) {
-    return Response.json({ error: "RFQ intake is disabled" }, { status: 503 });
+    return json({ error: "RFQ intake is disabled" }, { status: 503 });
   }
 
   const rawBody = await request.text();
@@ -39,14 +41,14 @@ export async function handleRfqWebhook(
       dependencies.secret,
     )
   ) {
-    return Response.json({ error: "Invalid signature" }, { status: 401 });
+    return json({ error: "Invalid signature" }, { status: 401 });
   }
 
   let body: unknown;
   try {
     body = JSON.parse(rawBody);
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const receiptKey =
@@ -55,9 +57,9 @@ export async function handleRfqWebhook(
         (body as Record<string, unknown>).receiptKey)
       : undefined;
   if (typeof receiptKey !== "string" || !isReceiptKey(receiptKey)) {
-    return Response.json({ error: "Invalid receipt pointer" }, { status: 400 });
+    return json({ error: "Invalid receipt pointer" }, { status: 400 });
   }
 
   await dependencies.enqueue(receiptKey);
-  return Response.json({ accepted: true }, { status: 202 });
+  return json({ accepted: true }, { status: 202 });
 }
