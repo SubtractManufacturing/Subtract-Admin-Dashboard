@@ -14,6 +14,7 @@ export type RfqSyncClaim =
 
 export interface RfqSyncCooldownStore {
   claim(now: Date, cooldownMs: number): Promise<RfqSyncClaim>;
+  maintainClaim?(claimId: string): () => void;
   complete(claimId: string, result: RfqSyncScanResult): Promise<void>;
   waitForResult(claimId: string): Promise<RfqSyncScanResult>;
 }
@@ -58,6 +59,8 @@ export async function runRfqIntakeSync(
     return resultFromScan(result, true);
   }
 
+  const stopMaintainingClaim =
+    dependencies.cooldownStore.maintainClaim?.(claim.claimId) ?? (() => {});
   try {
     const outcome = await dependencies.scan();
     const result: RfqSyncScanResult = {
@@ -71,5 +74,7 @@ export async function runRfqIntakeSync(
       status: "failed",
     });
     throw error;
+  } finally {
+    stopMaintainingClaim();
   }
 }

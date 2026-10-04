@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 
 import { db } from "../db";
 import { developerSettings } from "../db/schema";
@@ -14,6 +14,8 @@ import {
 
 type StoredSyncState = RfqSyncScanResult & { claimId: string };
 type RunningSyncState = { claimId: string; status: "running" };
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const STALE_HEARTBEAT_MS = 15_000;
 
 function parseState(value: string | null): StoredSyncState | RunningSyncState | null {
   if (!value) return null;
@@ -54,6 +56,14 @@ function asResult(
   return { status: "failed" };
 }
 
+function runningClaimWhere(claimId: string) {
+  return and(
+    eq(developerSettings.key, RFQ_INTAKE_SETTINGS.SYNC_STATE),
+    sql`${developerSettings.value}::jsonb ->> 'claimId' = ${claimId}`,
+    sql`${developerSettings.value}::jsonb ->> 'status' = 'running'`,
+  );
+}
+
 const postgresCooldownStore: RfqSyncCooldownStore = {
   async claim(now, cooldownMs) {
     const claimId = randomUUID();
@@ -88,24 +98,37 @@ const postgresCooldownStore: RfqSyncCooldownStore = {
     };
   },
 
+  maintainClaim(claimId) {
+    const interval = setInterval(() => {
+      void db
+        .update(developerSettings)
+        .set({ updatedAt: new Date() })
+        .where(runningClaimWhere(claimId))
+        .catch((error) => {
+          console.error("[RFQ Intake] sync heartbeat failed", error);
+        });
+    }, HEARTBEAT_INTERVAL_MS);
+    return () => clearInterval(interval);
+  },
+
   async complete(claimId, result) {
-    const runningValue = JSON.stringify({ claimId, status: "running" });
     await db
       .update(developerSettings)
-      .set({ value: JSON.stringify({ claimId, ...result }) })
-      .where(
-        and(
-          eq(developerSettings.key, RFQ_INTAKE_SETTINGS.SYNC_STATE),
-          eq(developerSettings.value, runningValue),
-        ),
-      );
+      .set({
+        value: JSON.stringify({ claimId, ...result }),
+        updatedAt: new Date(),
+      })
+      .where(runningClaimWhere(claimId));
   },
 
   async waitForResult(claimId) {
     let awaitedClaimId = claimId;
     for (;;) {
       const [current] = await db
-        .select({ value: developerSettings.value })
+        .select({
+          value: developerSettings.value,
+          updatedAt: developerSettings.updatedAt,
+        })
         .from(developerSettings)
         .where(eq(developerSettings.key, RFQ_INTAKE_SETTINGS.SYNC_STATE))
         .limit(1);
@@ -113,6 +136,12 @@ const postgresCooldownStore: RfqSyncCooldownStore = {
       if (state?.claimId === awaitedClaimId) {
         const result = asResult(state);
         if (result) return result;
+        if (
+          current?.updatedAt &&
+          current.updatedAt.getTime() <= Date.now() - STALE_HEARTBEAT_MS
+        ) {
+          return { status: "failed" };
+        }
       } else if (state) {
         const result = asResult(state);
         if (result) return result;

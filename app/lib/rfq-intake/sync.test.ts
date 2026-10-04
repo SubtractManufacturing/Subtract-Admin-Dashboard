@@ -13,6 +13,8 @@ class MemoryCooldownStore implements RfqSyncCooldownStore {
     | undefined;
   private waiters: Array<(result: RfqSyncScanResult) => void> = [];
   private nextId = 1;
+  maintainedClaims = 0;
+  stoppedClaims = 0;
 
   async claim(now: Date, cooldownMs: number): Promise<RfqSyncClaim> {
     if (
@@ -37,6 +39,13 @@ class MemoryCooldownStore implements RfqSyncCooldownStore {
     if (!this.state || this.state.claimId !== claimId) return;
     this.state.result = result;
     for (const resolve of this.waiters.splice(0)) resolve(result);
+  }
+
+  maintainClaim(): () => void {
+    this.maintainedClaims += 1;
+    return () => {
+      this.stoppedClaims += 1;
+    };
   }
 
   async waitForResult(claimId: string): Promise<RfqSyncScanResult> {
@@ -72,6 +81,8 @@ describe("RFQ intake sync", () => {
     await expect(first).resolves.toEqual({ newImports: 2, cooldown: false });
     await expect(second).resolves.toEqual({ newImports: 2, cooldown: true });
     expect(scans).toBe(1);
+    expect(store.maintainedClaims).toBe(1);
+    expect(store.stoppedClaims).toBe(1);
   });
 
   it("refuses to scan when intake is disabled", async () => {
@@ -111,5 +122,6 @@ describe("RFQ intake sync", () => {
       "RFQ sync failed",
     );
     expect(scans).toBe(1);
+    expect(store.stoppedClaims).toBe(1);
   });
 });
