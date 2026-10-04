@@ -71,7 +71,13 @@ describe("receipt discovery", () => {
       getDueLedgerReceiptKeys: async () => [],
     });
 
-    expect(outcome).toEqual({ discovered: 4, enqueued: 4, skipped: 0, skipReasons: {} });
+    expect(outcome).toEqual({
+      discovered: 4,
+      enqueued: 4,
+      newImports: 2,
+      skipped: 0,
+      skipReasons: {},
+    });
     expect(enqueued).toEqual([RECEIPT_A, RECEIPT_B, RECEIPT_C, RECEIPT_D]);
   });
 
@@ -104,6 +110,7 @@ describe("receipt discovery", () => {
     expect(outcome).toEqual({
       discovered: 1,
       enqueued: 0,
+      newImports: 0,
       skipped: 1,
       skipReasons: { retry_not_due: 1 },
     });
@@ -142,7 +149,13 @@ describe("receipt discovery", () => {
       getDueLedgerReceiptKeys: async () => [staleReceipt, cleanupReceipt],
     });
 
-    expect(outcome).toEqual({ discovered: 2, enqueued: 2, skipped: 0, skipReasons: {} });
+    expect(outcome).toEqual({
+      discovered: 2,
+      enqueued: 2,
+      newImports: 1,
+      skipped: 0,
+      skipReasons: {},
+    });
     expect(enqueued).toEqual([staleReceipt, cleanupReceipt]);
   });
 
@@ -172,6 +185,7 @@ describe("receipt discovery", () => {
     expect(outcome).toEqual({
       discovered: 1,
       enqueued: 1,
+      newImports: 1,
       skipped: 0,
       skipReasons: {},
     });
@@ -201,7 +215,52 @@ describe("receipt discovery", () => {
       getDueLedgerReceiptKeys: async () => [],
     });
 
-    expect(outcome).toEqual({ discovered: 1, enqueued: 1, skipped: 0, skipReasons: {} });
+    expect(outcome).toEqual({
+      discovered: 1,
+      enqueued: 1,
+      newImports: 0,
+      skipped: 0,
+      skipReasons: {},
+    });
     expect(enqueued).toEqual([completedOrphan]);
+  });
+
+  it("counts pending and expired processing imports but not permanent failures", async () => {
+    const now = new Date("2026-09-21T00:00:00Z");
+    const summaries = new Map<string, ImportLedgerSummary>([
+      [
+        RECEIPT_A,
+        { status: "pending", nextAttemptAt: null, processingStartedAt: null },
+      ],
+      [
+        RECEIPT_B,
+        {
+          status: "processing",
+          nextAttemptAt: null,
+          processingStartedAt: new Date("2026-09-20T22:00:00Z"),
+        },
+      ],
+      [
+        RECEIPT_C,
+        {
+          status: "permanent_failure",
+          nextAttemptAt: null,
+          processingStartedAt: null,
+        },
+      ],
+    ]);
+
+    const outcome = await scanForReceipts({
+      enabled: true,
+      storage: storagePages([[RECEIPT_A, RECEIPT_B, RECEIPT_C]]),
+      queue: { async enqueue() {} },
+      now: () => now,
+      getLedgerSummaries: async () => summaries,
+      getDueLedgerReceiptKeys: async () => [],
+    });
+
+    expect(outcome.newImports).toBe(2);
+    expect(outcome.enqueued).toBe(2);
+    expect(outcome.skipReasons).toEqual({ permanent_failure: 1 });
   });
 });

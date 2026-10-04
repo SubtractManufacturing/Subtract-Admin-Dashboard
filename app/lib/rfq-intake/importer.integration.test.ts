@@ -416,7 +416,11 @@ describe("RFQ importer with Postgres persistence", () => {
           },
           now,
         ),
-      ).resolves.toEqual({ kind: "claimed", attemptCount: 2 });
+      ).resolves.toEqual({
+        kind: "claimed",
+        attemptCount: 2,
+        receivedEventId: null,
+      });
     } finally {
       await db
         .delete(rfqImportLedger)

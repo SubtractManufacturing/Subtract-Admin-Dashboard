@@ -9,6 +9,7 @@ import {
 export type ScanOutcome = {
   discovered: number;
   enqueued: number;
+  newImports: number;
   skipped: number;
   skipReasons: Record<string, number>;
 };
@@ -48,11 +49,40 @@ function shouldEnqueue(
   return { enqueue: false, skipReason: ledger.status };
 }
 
+function startsImportNow(
+  ledger: ImportLedgerSummary | undefined,
+  now: Date,
+  selectedAsDue: boolean,
+): boolean {
+  if (!ledger || ledger.status === "pending") return true;
+  if (ledger.status === "processing") {
+    return (
+      selectedAsDue ||
+      ledger.processingStartedAt === null ||
+      ledger.processingStartedAt.getTime() <=
+        now.getTime() - RFQ_PROCESSING_LEASE_MS
+    );
+  }
+  if (ledger.status === "retry_scheduled") {
+    return (
+      selectedAsDue ||
+      (ledger.nextAttemptAt !== null && ledger.nextAttemptAt <= now)
+    );
+  }
+  return false;
+}
+
 export async function scanForReceipts(
   dependencies: ReceiptDiscoveryDependencies,
 ): Promise<ScanOutcome> {
   if (!dependencies.enabled) {
-    return { discovered: 0, enqueued: 0, skipped: 0, skipReasons: {} };
+    return {
+      discovered: 0,
+      enqueued: 0,
+      newImports: 0,
+      skipped: 0,
+      skipReasons: {},
+    };
   }
 
   const now = dependencies.now();
@@ -88,16 +118,22 @@ export async function scanForReceipts(
   }
   const keys = [...receiptKeys].sort();
   let enqueued = 0;
+  let newImports = 0;
   let skipped = 0;
   const skipReasons: Record<string, number> = {};
 
   for (const receiptKey of keys) {
-    const decision = dueLedgerReceiptKeys.has(receiptKey)
+    const selectedAsDue = dueLedgerReceiptKeys.has(receiptKey);
+    const ledger = summaries.get(receiptKey);
+    const decision = selectedAsDue
       ? { enqueue: true }
-      : shouldEnqueue(summaries.get(receiptKey), now);
+      : shouldEnqueue(ledger, now);
     if (decision.enqueue) {
       await dependencies.queue.enqueue(receiptKey);
       enqueued += 1;
+      if (startsImportNow(ledger, now, selectedAsDue)) {
+        newImports += 1;
+      }
     } else {
       skipped += 1;
       const reason = decision.skipReason ?? "unknown";
@@ -105,5 +141,11 @@ export async function scanForReceipts(
     }
   }
 
-  return { discovered: keys.length, enqueued, skipped, skipReasons };
+  return {
+    discovered: keys.length,
+    enqueued,
+    newImports,
+    skipped,
+    skipReasons,
+  };
 }

@@ -126,7 +126,11 @@ export type PreparedImport = {
 };
 
 export type ImportClaim =
-  | { kind: "claimed"; attemptCount: number }
+  | {
+      kind: "claimed";
+      attemptCount: number;
+      receivedEventId: string | null;
+    }
   | { kind: "already_completed"; quoteId: number }
   | { kind: "cleanup_only"; quoteId: number; sessionId: string }
   | { kind: "already_processing" };
@@ -144,6 +148,12 @@ export interface RfqPersistence {
     prepared: PreparedImport,
   ): Promise<{
     quoteId: number;
+    quoteNumber: string;
+    customerId: number;
+    customerName: string;
+    partCount: number;
+    ndaRequired: boolean;
+    importedEventId: string;
     quotePartIds: string[];
     drawingAttachmentIds: string[];
   }>;
@@ -154,7 +164,10 @@ export interface RfqPersistence {
     attemptCount: number;
     nextAttemptAt: Date | null;
     now: Date;
-  }): Promise<void>;
+  }): Promise<{
+    receivedEventId: string | null;
+    failedEventId: string | null;
+  }>;
   markCleanupPending(
     receipt: ReceiptPointer,
     quoteId: number,

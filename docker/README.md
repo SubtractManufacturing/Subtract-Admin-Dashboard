@@ -65,7 +65,7 @@ docker logs -f subtract-worker
 ```
 
 Notes:
-- Worker only requires `DATABASE_URL`
+- The Worker requires `DATABASE_URL` plus the storage settings used by its jobs
 - Multiple worker containers can run concurrently (PG Boss uses row locking for safe distribution)
 
 ## Environment Variables
@@ -95,7 +95,9 @@ INTAKE_S3_SECRET_ACCESS_KEY_FILE=/run/secrets/intake_s3_secret_access_key
 STRIPE_SECRET_KEY_FILE=/run/secrets/stripe_secret_key
 ```
 
-RFQ intake reads WordPress submissions from a dedicated bucket configured with `INTAKE_S3_ENDPOINT`, `INTAKE_S3_REGION`, `INTAKE_S3_ACCESS_KEY_ID`, `INTAKE_S3_SECRET_ACCESS_KEY`, and `INTAKE_S3_BUCKET` (needed by the **worker** when `RFQ_INTAKE_ENABLED=true`; the web container only needs `RFQ_INTAKE_ENABLED` and `RFQ_WEBHOOK_SECRET`). The worker's startup log reports whether it copies into the application bucket server-side or by streaming (`copy_strategy`).
+RFQ intake reads WordPress submissions from a dedicated bucket configured with `INTAKE_S3_ENDPOINT`, `INTAKE_S3_REGION`, `INTAKE_S3_ACCESS_KEY_ID`, `INTAKE_S3_SECRET_ACCESS_KEY`, and `INTAKE_S3_BUCKET`. When `RFQ_INTAKE_ENABLED=true`, provide all five settings to both the **web** and **worker** containers. The web container uses read/list access only for the manual Sync RFQs action on the Quotes page. The Worker remains the sole importer, canonical-storage writer, and intake-prefix deleter. The shared 30-second manual-sync cooldown bounds repeated full-prefix scan cost across users and web instances. The Worker's startup log reports whether it copies into the application bucket server-side or by streaming (`copy_strategy`).
+
+Every `INTAKE_S3_*` setting also supports its corresponding `*_FILE` form (for example, `INTAKE_S3_ENDPOINT_FILE` and `INTAKE_S3_SECRET_ACCESS_KEY_FILE`) under the file-based-secret rules above. `scripts/convert-env-to-files.sh` converts all five intake settings for local testing.
 
 Rules:
 - If `FOO_FILE` is a non-empty path, the file **wins** — there is no fallback to `FOO` if the file is missing, unreadable, or empty.

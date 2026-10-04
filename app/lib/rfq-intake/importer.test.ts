@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
 import wordpressReceipt from "./fixtures/wordpress-receipt.json";
 import { createRfqImporter, safeErrorDetail } from "./importer";
+import { MemoryRfqNotifier } from "./outbound-webhook";
 import type {
   PreparedImport,
   RfqPersistence,
@@ -46,11 +47,14 @@ class MemoryPersistence implements RfqPersistence {
   claimAttemptCount = 1;
   ledgerAttemptCount = 0;
   ledgerNextAttemptAt: Date | null = null;
+  ledgerExists = false;
 
   async findImportByReceiptKey(): Promise<
     Awaited<ReturnType<RfqPersistence["findImportByReceiptKey"]>>
   > {
-    if (this.ledgerAttemptCount === 0 && !this.ledgerNextAttemptAt) return null;
+    if (!this.ledgerExists && this.ledgerAttemptCount === 0 && !this.ledgerNextAttemptAt) {
+      return null;
+    }
     return {
       receipt: {
         receiptNumber: null,
@@ -67,22 +71,40 @@ class MemoryPersistence implements RfqPersistence {
   }
 
   async claimImport() {
-    return { kind: "claimed" as const, attemptCount: this.claimAttemptCount };
+    const isNew = !this.ledgerExists;
+    this.ledgerExists = true;
+    return {
+      kind: "claimed" as const,
+      attemptCount: this.claimAttemptCount,
+      receivedEventId: isNew ? "received-event" : null,
+    };
   }
 
   async commitImport(prepared: PreparedImport) {
     this.committed = prepared;
     return {
       quoteId: 42,
+      quoteNumber: "Q269-00001",
+      customerId: 7,
+      customerName: "Analytical Engines - Ada Lovelace",
+      partCount: prepared.parts.length,
+      ndaRequired: prepared.manifest.ndaRequired,
+      importedEventId: "imported-event",
       quotePartIds: prepared.parts.map((part) => part.quotePartId),
       drawingAttachmentIds: [],
     };
   }
 
   async recordFailure(input: Parameters<RfqPersistence["recordFailure"]>[0]) {
+    const isNew = !this.ledgerExists;
+    this.ledgerExists = true;
     this.failure = input;
     this.ledgerAttemptCount = input.attemptCount;
     this.ledgerNextAttemptAt = input.nextAttemptAt;
+    return {
+      receivedEventId: isNew ? "received-event" : null,
+      failedEventId: input.nextAttemptAt ? null : `failed-event-${input.attemptCount}`,
+    };
   }
 
   async markCleanupPending() {}
@@ -141,6 +163,89 @@ function fixture() {
 }
 
 describe("importReceipt", () => {
+  it("emits received and imported events from committed importer outcomes", async () => {
+    const storage = fixture();
+    const notifier = new MemoryRfqNotifier();
+    const importer = createRfqImporter({
+      ...storage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier,
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await importer.importReceipt(RECEIPT_KEY);
+
+    expect(notifier.events).toEqual([
+      {
+        eventId: "received-event",
+        event: "rfq.received",
+        occurredAt: "2026-09-21T00:00:00.000Z",
+        data: {
+          receiptNumber: "RFQ-2026-0001",
+          sessionId: SESSION_ID,
+        },
+      },
+      {
+        eventId: "imported-event",
+        event: "rfq.imported",
+        occurredAt: "2026-09-21T00:00:00.000Z",
+        data: {
+          quoteId: 42,
+          quoteNumber: "Q269-00001",
+          customerId: 7,
+          customerName: "Analytical Engines - Ada Lovelace",
+          partCount: 1,
+          ndaRequired: true,
+        },
+      },
+    ]);
+  });
+
+  it("emits failed only for terminal failures, not transient retries", async () => {
+    const terminalStorage = fixture();
+    terminalStorage.put(MANIFEST_KEY, { session_id: SESSION_ID, parts: [] });
+    const terminalNotifier = new MemoryRfqNotifier();
+    await createRfqImporter({
+      ...terminalStorage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier: terminalNotifier,
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    }).importReceipt(RECEIPT_KEY);
+
+    expect(terminalNotifier.events.map((event) => event.event)).toEqual([
+      "rfq.received",
+      "rfq.failed",
+    ]);
+    expect(terminalNotifier.events[1]).toMatchObject({
+      eventId: "failed-event-1",
+      data: {
+        receiptNumber: "RFQ-2026-0001",
+        sessionId: SESSION_ID,
+        classification: "validation",
+        attemptCount: 1,
+      },
+    });
+
+    const retryStorage = fixture();
+    retryStorage.copyFromIntake = async () => {
+      throw new Error("S3 temporarily unavailable");
+    };
+    const retryNotifier = new MemoryRfqNotifier();
+    await createRfqImporter({
+      ...retryStorage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier: retryNotifier,
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    }).importReceipt(RECEIPT_KEY);
+
+    expect(retryNotifier.events.map((event) => event.event)).toEqual([
+      "rfq.received",
+    ]);
+  });
+
   it("imports the WordPress manifest contract and preserves additive part fields", async () => {
     const storage = new MemoryStorage();
     const manifest = structuredClone(wordpressManifest) as typeof wordpressManifest & {
@@ -424,6 +529,26 @@ describe("importReceipt", () => {
     });
   });
 
+  it("does not let notifier errors change a committed import", async () => {
+    const storage = fixture();
+    const importer = createRfqImporter({
+      ...storage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier: {
+        notify() {
+          throw new Error("receiver unavailable");
+        },
+      },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toMatchObject({
+      status: "completed",
+      quoteId: 42,
+    });
+  });
+
   it("cleans source remnants for an already-completed ledger row", async () => {
     const storage = fixture();
     const persistence = new MemoryPersistence();
@@ -491,6 +616,12 @@ describe("importReceipt", () => {
       committedQuoteId = 42;
       return {
         quoteId: 42,
+        quoteNumber: "Q269-00001",
+        customerId: 7,
+        customerName: "Analytical Engines - Ada Lovelace",
+        partCount: prepared.parts.length,
+        ndaRequired: prepared.manifest.ndaRequired,
+        importedEventId: "imported-event",
         quotePartIds: prepared.parts.map((part) => part.quotePartId),
         drawingAttachmentIds: [],
       };
@@ -501,10 +632,12 @@ describe("importReceipt", () => {
     persistence.markCompleted = async () => {
       cleanupPending = false;
     };
+    const notifier = new MemoryRfqNotifier();
     const importer = createRfqImporter({
       ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier,
       now: () => new Date("2026-09-21T00:00:00Z"),
     });
 
@@ -520,5 +653,9 @@ describe("importReceipt", () => {
     });
     expect(commitCount).toBe(1);
     expect(deleteAttempts).toBe(2);
+    expect(notifier.events.map((event) => event.event)).toEqual([
+      "rfq.received",
+      "rfq.imported",
+    ]);
   });
 });

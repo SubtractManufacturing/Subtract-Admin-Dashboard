@@ -10,6 +10,10 @@ import {
   quoteIntakeNote,
 } from "./package";
 import type {
+  RfqLifecycleWebhookEvent,
+  RfqNotifier,
+} from "./outbound-webhook";
+import type {
   ImportOutcome,
   PreparedImport,
   ReceiptPointer,
@@ -34,8 +38,20 @@ export type RfqImporterDependencies = {
   canonical: RfqCanonicalStorage;
   persistence: RfqPersistence;
   queue: RfqQueue;
+  notifier?: RfqNotifier;
   now(): Date;
 };
+
+function notify(
+  dependencies: RfqImporterDependencies,
+  event: RfqLifecycleWebhookEvent,
+) {
+  try {
+    dependencies.notifier?.notify(event);
+  } catch (error) {
+    console.error("[RFQ Intake] outbound notifier failed", error);
+  }
+}
 
 function deterministicUuid(seed: string): string {
   const bytes = createHash("sha256").update(seed).digest().subarray(0, 16);
@@ -263,10 +279,8 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
         );
         receipt = parseReceipt(rawReceipt, receiptKey);
 
-        const claim = await dependencies.persistence.claimImport(
-          receipt,
-          dependencies.now(),
-        );
+        const claimNow = dependencies.now();
+        const claim = await dependencies.persistence.claimImport(receipt, claimNow);
         if (claim.kind === "already_completed") {
           return {
             status: "already_completed",
@@ -285,6 +299,17 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
         }
         attemptCount = claim.attemptCount;
         claimed = true;
+        if (claim.receivedEventId) {
+          notify(dependencies, {
+            eventId: claim.receivedEventId,
+            event: "rfq.received",
+            occurredAt: claimNow.toISOString(),
+            data: {
+              receiptNumber: receipt.receiptNumber,
+              sessionId: receipt.sessionId,
+            },
+          });
+        }
 
         const rawManifest = await readPackageJson(
           dependencies.intake,
@@ -294,6 +319,19 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
         const manifest = parseManifest(rawManifest, receipt);
         const prepared = await prepareFiles(dependencies, receipt, manifest);
         const committed = await dependencies.persistence.commitImport(prepared);
+        notify(dependencies, {
+          eventId: committed.importedEventId,
+          event: "rfq.imported",
+          occurredAt: prepared.now.toISOString(),
+          data: {
+            quoteId: committed.quoteId,
+            quoteNumber: committed.quoteNumber,
+            customerId: committed.customerId,
+            customerName: committed.customerName,
+            partCount: committed.partCount,
+            ndaRequired: committed.ndaRequired,
+          },
+        });
 
         // Derived assets are best-effort and never make a committed Quote unavailable.
         await dependencies.queue
@@ -337,15 +375,41 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           attemptCount = (ledger?.attemptCount ?? 0) + 1;
         }
         const detail = safeErrorDetail(error);
+        const failureNow = dependencies.now();
         if (error instanceof IntakeValidationError) {
-          await dependencies.persistence.recordFailure({
+          const recorded = await dependencies.persistence.recordFailure({
             receipt: failureReceipt,
             classification: error.classification,
             safeDetail: detail,
             attemptCount,
             nextAttemptAt: null,
-            now: dependencies.now(),
+            now: failureNow,
           });
+          if (recorded.receivedEventId) {
+            notify(dependencies, {
+              eventId: recorded.receivedEventId,
+              event: "rfq.received",
+              occurredAt: failureNow.toISOString(),
+              data: {
+                receiptNumber: failureReceipt.receiptNumber,
+                sessionId: failureReceipt.sessionId,
+              },
+            });
+          }
+          if (recorded.failedEventId) {
+            notify(dependencies, {
+              eventId: recorded.failedEventId,
+              event: "rfq.failed",
+              occurredAt: failureNow.toISOString(),
+              data: {
+                receiptNumber: failureReceipt.receiptNumber,
+                sessionId: failureReceipt.sessionId,
+                classification: error.classification,
+                safeDetail: detail,
+                attemptCount,
+              },
+            });
+          }
           return {
             status: "permanent_failure",
             classification: error.classification,
@@ -354,15 +418,41 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           };
         }
 
-        const retryAt = nextAttempt(dependencies.now(), attemptCount);
-        await dependencies.persistence.recordFailure({
+        const retryAt = nextAttempt(failureNow, attemptCount);
+        const classification = retryAt ? "infrastructure" : "retry_exhausted";
+        const recorded = await dependencies.persistence.recordFailure({
           receipt: failureReceipt,
-          classification: retryAt ? "infrastructure" : "retry_exhausted",
+          classification,
           safeDetail: detail,
           attemptCount,
           nextAttemptAt: retryAt,
-          now: dependencies.now(),
+          now: failureNow,
         });
+        if (recorded.receivedEventId) {
+          notify(dependencies, {
+            eventId: recorded.receivedEventId,
+            event: "rfq.received",
+            occurredAt: failureNow.toISOString(),
+            data: {
+              receiptNumber: failureReceipt.receiptNumber,
+              sessionId: failureReceipt.sessionId,
+            },
+          });
+        }
+        if (recorded.failedEventId) {
+          notify(dependencies, {
+            eventId: recorded.failedEventId,
+            event: "rfq.failed",
+            occurredAt: failureNow.toISOString(),
+            data: {
+              receiptNumber: failureReceipt.receiptNumber,
+              sessionId: failureReceipt.sessionId,
+              classification,
+              safeDetail: detail,
+              attemptCount,
+            },
+          });
+        }
         return retryAt
           ? {
               status: "retry_scheduled",

@@ -124,6 +124,28 @@ export default function AdminDashboard() {
         )}
 
         <Link
+          to="/admin/rfq-intake"
+          className="group rounded-xl border border-gray-200 bg-white p-5 no-underline transition hover:border-gray-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
+        >
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[#840606]/[0.07] text-[#840606] dark:bg-red-400/10 dark:text-red-400">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M8.25 6.75h7.5M8.25 10.5h7.5m-7.5 3.75h3m-6.75 6h15a2.25 2.25 0 002.25-2.25V4.5a2.25 2.25 0 00-2.25-2.25h-15A2.25 2.25 0 002.25 4.5V18a2.25 2.25 0 002.25 2.25z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+            RFQ Intake
+          </h2>
+          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+            Monitor submissions and outbound webhooks
+          </p>
+        </Link>
+
+        <Link
           to="/admin/data-retention"
           className="group rounded-xl border border-gray-200 bg-white p-5 no-underline transition hover:border-gray-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
         >

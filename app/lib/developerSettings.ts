@@ -24,6 +24,11 @@ export const DATA_RETENTION_SETTINGS = {
   LINE_ITEM_ARCHIVE_RETENTION_DAYS: "line_item_archive_retention_days",
 } as const;
 
+export const RFQ_INTAKE_SETTINGS = {
+  SYNC_STATE: "rfq_intake_sync_state",
+  OUTBOUND_WEBHOOK_URL: "rfq_intake_outbound_webhook_url",
+} as const;
+
 export const LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS = 1;
 export const LINE_ITEM_ARCHIVE_RETENTION_MAX_DAYS = 90;
 export const LINE_ITEM_ARCHIVE_RETENTION_DEFAULT_DAYS = 7;
@@ -278,6 +283,7 @@ export async function pruneStaleDeveloperSettings(): Promise<string[]> {
     ...Object.values(DEV_SETTINGS),
     ...Object.values(STRIPE_SETTINGS),
     ...Object.values(DATA_RETENTION_SETTINGS),
+    ...Object.values(RFQ_INTAKE_SETTINGS),
   ] as string[];
   const stale = await db
     .select({ key: developerSettings.key })
