@@ -53,6 +53,47 @@ function notify(
   }
 }
 
+function notifyRecordedFailure(
+  dependencies: RfqImporterDependencies,
+  input: {
+    recorded: {
+      receivedEventId: string | null;
+      failedEventId: string | null;
+    };
+    receipt: ReceiptPointer;
+    classification: string;
+    safeDetail: string;
+    attemptCount: number;
+    occurredAt: Date;
+  },
+) {
+  if (input.recorded.receivedEventId) {
+    notify(dependencies, {
+      eventId: input.recorded.receivedEventId,
+      event: "rfq.received",
+      occurredAt: input.occurredAt.toISOString(),
+      data: {
+        receiptNumber: input.receipt.receiptNumber,
+        sessionId: input.receipt.sessionId,
+      },
+    });
+  }
+  if (input.recorded.failedEventId) {
+    notify(dependencies, {
+      eventId: input.recorded.failedEventId,
+      event: "rfq.failed",
+      occurredAt: input.occurredAt.toISOString(),
+      data: {
+        receiptNumber: input.receipt.receiptNumber,
+        sessionId: input.receipt.sessionId,
+        classification: input.classification,
+        safeDetail: input.safeDetail,
+        attemptCount: input.attemptCount,
+      },
+    });
+  }
+}
+
 function deterministicUuid(seed: string): string {
   const bytes = createHash("sha256").update(seed).digest().subarray(0, 16);
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
@@ -385,31 +426,14 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
             nextAttemptAt: null,
             now: failureNow,
           });
-          if (recorded.receivedEventId) {
-            notify(dependencies, {
-              eventId: recorded.receivedEventId,
-              event: "rfq.received",
-              occurredAt: failureNow.toISOString(),
-              data: {
-                receiptNumber: failureReceipt.receiptNumber,
-                sessionId: failureReceipt.sessionId,
-              },
-            });
-          }
-          if (recorded.failedEventId) {
-            notify(dependencies, {
-              eventId: recorded.failedEventId,
-              event: "rfq.failed",
-              occurredAt: failureNow.toISOString(),
-              data: {
-                receiptNumber: failureReceipt.receiptNumber,
-                sessionId: failureReceipt.sessionId,
-                classification: error.classification,
-                safeDetail: detail,
-                attemptCount,
-              },
-            });
-          }
+          notifyRecordedFailure(dependencies, {
+            recorded,
+            receipt: failureReceipt,
+            classification: error.classification,
+            safeDetail: detail,
+            attemptCount,
+            occurredAt: failureNow,
+          });
           return {
             status: "permanent_failure",
             classification: error.classification,
@@ -428,31 +452,14 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           nextAttemptAt: retryAt,
           now: failureNow,
         });
-        if (recorded.receivedEventId) {
-          notify(dependencies, {
-            eventId: recorded.receivedEventId,
-            event: "rfq.received",
-            occurredAt: failureNow.toISOString(),
-            data: {
-              receiptNumber: failureReceipt.receiptNumber,
-              sessionId: failureReceipt.sessionId,
-            },
-          });
-        }
-        if (recorded.failedEventId) {
-          notify(dependencies, {
-            eventId: recorded.failedEventId,
-            event: "rfq.failed",
-            occurredAt: failureNow.toISOString(),
-            data: {
-              receiptNumber: failureReceipt.receiptNumber,
-              sessionId: failureReceipt.sessionId,
-              classification,
-              safeDetail: detail,
-              attemptCount,
-            },
-          });
-        }
+        notifyRecordedFailure(dependencies, {
+          recorded,
+          receipt: failureReceipt,
+          classification,
+          safeDetail: detail,
+          attemptCount,
+          occurredAt: failureNow,
+        });
         return retryAt
           ? {
               status: "retry_scheduled",

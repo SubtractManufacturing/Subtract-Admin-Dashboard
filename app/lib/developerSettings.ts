@@ -144,28 +144,22 @@ export async function setDeveloperSetting(
   updatedBy?: string
 ): Promise<boolean> {
   try {
-    // Check if setting exists
-    const existing = await getDeveloperSetting(key);
-    
-    if (existing !== null) {
-      // Update existing
-      await db
-        .update(developerSettings)
-        .set({
-          value,
-          updatedAt: new Date(),
-          updatedBy: updatedBy ?? null,
-        })
-        .where(eq(developerSettings.key, key));
-    } else {
-      // Insert new
-      await db.insert(developerSettings).values({
+    await db
+      .insert(developerSettings)
+      .values({
         key,
         value,
         updatedBy: updatedBy ?? null,
+      })
+      .onConflictDoUpdate({
+        target: developerSettings.key,
+        set: {
+          value,
+          updatedAt: new Date(),
+          updatedBy: updatedBy ?? null,
+        },
       });
-    }
-    
+
     return true;
   } catch (error) {
     console.error(`Error setting developer setting ${key}:`, error);

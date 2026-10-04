@@ -123,7 +123,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
     try {
       await retryRfqIntakeSubmission(receiptKey, {
-        userId: userDetails.id,
         role: userDetails.role,
       });
       return withAuthHeaders(

@@ -18,7 +18,6 @@ export type RfqSubmissionStatusGroup =
   | "completed";
 
 export type RfqSubmissionActor = {
-  userId: string;
   role: UserRole;
 };
 

@@ -26,7 +26,6 @@ describe("RFQ intake submissions interface", () => {
   it("refuses retry for ordinary users before reading the submission", async () => {
     await expect(
       retryRfqIntakeSubmission("intake/forged/meta/receipt.json", {
-        userId: "ordinary-user",
         role: "User",
       }),
     ).rejects.toMatchObject({ status: 403 });

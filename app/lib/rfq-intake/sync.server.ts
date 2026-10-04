@@ -102,23 +102,24 @@ const postgresCooldownStore: RfqSyncCooldownStore = {
   },
 
   async waitForResult(claimId) {
-    const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline) {
+    let awaitedClaimId = claimId;
+    for (;;) {
       const [current] = await db
         .select({ value: developerSettings.value })
         .from(developerSettings)
         .where(eq(developerSettings.key, RFQ_INTAKE_SETTINGS.SYNC_STATE))
         .limit(1);
       const state = parseState(current?.value ?? null);
-      if (state?.claimId === claimId) {
+      if (state?.claimId === awaitedClaimId) {
         const result = asResult(state);
         if (result) return result;
       } else if (state) {
-        return asResult(state) ?? { status: "failed" };
+        const result = asResult(state);
+        if (result) return result;
+        awaitedClaimId = state.claimId;
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return { status: "failed" };
   },
 };
 

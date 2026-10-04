@@ -25,51 +25,37 @@ export type ReceiptDiscoveryDependencies = {
   getDueLedgerReceiptKeys(now: Date): Promise<string[]>;
 };
 
-function shouldEnqueue(
-  ledger: ImportLedgerSummary | undefined,
-  now: Date,
-): { enqueue: boolean; skipReason?: string } {
-  if (!ledger) return { enqueue: true };
-  if (ledger.status === "pending") return { enqueue: true };
-  if (ledger.status === "cleanup_pending") return { enqueue: true };
-  if (ledger.status === "completed") return { enqueue: true };
-  if (ledger.status === "processing") {
-    const leaseExpired =
-      ledger.processingStartedAt === null ||
-      ledger.processingStartedAt.getTime() <= now.getTime() - RFQ_PROCESSING_LEASE_MS;
-    return leaseExpired
-      ? { enqueue: true }
-      : { enqueue: false, skipReason: "processing_lease_active" };
-  }
-  if (ledger.status === "retry_scheduled") {
-    return ledger.nextAttemptAt !== null && ledger.nextAttemptAt <= now
-      ? { enqueue: true }
-      : { enqueue: false, skipReason: "retry_not_due" };
-  }
-  return { enqueue: false, skipReason: ledger.status };
-}
-
-function startsImportNow(
+function discoveryDecision(
   ledger: ImportLedgerSummary | undefined,
   now: Date,
   selectedAsDue: boolean,
-): boolean {
-  if (!ledger || ledger.status === "pending") return true;
+): { enqueue: boolean; newImport: boolean; skipReason?: string } {
+  if (!ledger || ledger.status === "pending") {
+    return { enqueue: true, newImport: true };
+  }
+  if (ledger.status === "cleanup_pending" || ledger.status === "completed") {
+    return { enqueue: true, newImport: false };
+  }
   if (ledger.status === "processing") {
-    return (
+    const leaseExpired =
       selectedAsDue ||
       ledger.processingStartedAt === null ||
-      ledger.processingStartedAt.getTime() <=
-        now.getTime() - RFQ_PROCESSING_LEASE_MS
-    );
+      ledger.processingStartedAt.getTime() <= now.getTime() - RFQ_PROCESSING_LEASE_MS;
+    return leaseExpired
+      ? { enqueue: true, newImport: true }
+      : {
+          enqueue: false,
+          newImport: false,
+          skipReason: "processing_lease_active",
+        };
   }
   if (ledger.status === "retry_scheduled") {
-    return (
-      selectedAsDue ||
+    return selectedAsDue ||
       (ledger.nextAttemptAt !== null && ledger.nextAttemptAt <= now)
-    );
+      ? { enqueue: true, newImport: true }
+      : { enqueue: false, newImport: false, skipReason: "retry_not_due" };
   }
-  return false;
+  return { enqueue: false, newImport: false, skipReason: ledger.status };
 }
 
 export async function scanForReceipts(
@@ -125,13 +111,11 @@ export async function scanForReceipts(
   for (const receiptKey of keys) {
     const selectedAsDue = dueLedgerReceiptKeys.has(receiptKey);
     const ledger = summaries.get(receiptKey);
-    const decision = selectedAsDue
-      ? { enqueue: true }
-      : shouldEnqueue(ledger, now);
+    const decision = discoveryDecision(ledger, now, selectedAsDue);
     if (decision.enqueue) {
       await dependencies.queue.enqueue(receiptKey);
       enqueued += 1;
-      if (startsImportNow(ledger, now, selectedAsDue)) {
+      if (decision.newImport) {
         newImports += 1;
       }
     } else {
