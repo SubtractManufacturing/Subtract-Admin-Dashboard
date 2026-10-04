@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { scanForReceipts } from "./discovery";
-import type { ImportLedgerSummary, RfqQueue, RfqStorage } from "./types";
+import type { ImportLedgerSummary, RfqIntakeStorage, RfqQueue } from "./types";
 
 const RECEIPT_A =
   "intake/018f0f7d-9f65-7eb4-bf9c-0fca82a87a10/meta/receipt.json";
@@ -12,7 +12,7 @@ const RECEIPT_C =
 const RECEIPT_D =
   "intake/018f0f7d-9f65-7eb4-bf9c-0fca82a87a13/meta/receipt.json";
 
-function storagePages(pages: string[][]): Pick<RfqStorage, "list"> {
+function storagePages(pages: string[][]): Pick<RfqIntakeStorage, "list"> {
   return {
     async list(_prefix, cursor) {
       const pageIndex = cursor ? Number(cursor) : 0;

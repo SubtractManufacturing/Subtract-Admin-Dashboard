@@ -3,7 +3,7 @@ import {
   RFQ_PROCESSING_LEASE_MS,
   type ImportLedgerSummary,
   type RfqQueue,
-  type RfqStorage,
+  type RfqIntakeStorage,
 } from "./types";
 
 export type ScanOutcome = {
@@ -15,7 +15,7 @@ export type ScanOutcome = {
 
 export type ReceiptDiscoveryDependencies = {
   enabled: boolean;
-  storage: Pick<RfqStorage, "list">;
+  storage: Pick<RfqIntakeStorage, "list">;
   queue: Pick<RfqQueue, "enqueue">;
   now(): Date;
   getLedgerSummaries(

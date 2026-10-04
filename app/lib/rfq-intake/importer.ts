@@ -13,9 +13,10 @@ import type {
   ImportOutcome,
   PreparedImport,
   ReceiptPointer,
+  RfqCanonicalStorage,
+  RfqIntakeStorage,
   RfqPersistence,
   RfqQueue,
-  RfqStorage,
 } from "./types";
 
 const RETRY_DELAYS_MS = [
@@ -29,7 +30,8 @@ const RETRY_DELAYS_MS = [
 ] as const;
 
 export type RfqImporterDependencies = {
-  storage: RfqStorage;
+  intake: RfqIntakeStorage;
+  canonical: RfqCanonicalStorage;
   persistence: RfqPersistence;
   queue: RfqQueue;
   now(): Date;
@@ -93,7 +95,7 @@ function nextAttempt(now: Date, attemptCount: number): Date | null {
 }
 
 async function readPackageJson(
-  storage: RfqStorage,
+  storage: RfqIntakeStorage,
   key: string,
   label: string,
 ): Promise<unknown> {
@@ -113,7 +115,7 @@ async function handleCleanupOnly(
   quoteId: number,
 ): Promise<ImportOutcome> {
   try {
-    await dependencies.storage.deletePrefix(intakePrefix(receipt.sessionId));
+    await dependencies.intake.deletePrefix(intakePrefix(receipt.sessionId));
     await dependencies.persistence.markCompleted(receipt, quoteId, dependencies.now());
     return {
       status: "already_completed",
@@ -147,26 +149,26 @@ async function prepareFiles(
     const quotePartId = deterministicUuid(
       `${receipt.receiptNumber}:${part.id}:${index + 1}`,
     );
-    const cadSource = await dependencies.storage.head(part.cad.key);
+    const cadSource = await dependencies.intake.head(part.cad.key);
     if (!cadSource) {
       throw new IntakeValidationError(`Referenced CAD object is missing: ${part.cad.key}`);
     }
     const canonicalCadKey = `quote-parts/${quotePartId}/source/${part.cad.fileName}`;
-    await dependencies.storage.copy(part.cad.key, canonicalCadKey);
-    const copiedCad = await dependencies.storage.head(canonicalCadKey);
+    await dependencies.canonical.copyFromIntake(part.cad.key, canonicalCadKey);
+    const copiedCad = await dependencies.canonical.head(canonicalCadKey);
     if (!copiedCad || copiedCad.size !== cadSource.size) {
       throw new Error(`Could not verify canonical CAD object: ${canonicalCadKey}`);
     }
 
     const canonicalDrawings = [];
     for (const [drawingIndex, drawing] of part.drawings.entries()) {
-      const drawingSource = await dependencies.storage.head(drawing.key);
+      const drawingSource = await dependencies.intake.head(drawing.key);
       if (!drawingSource) {
         throw new IntakeValidationError(`Referenced drawing object is missing: ${drawing.key}`);
       }
       const key = `quote-parts/${quotePartId}/drawings/${String(drawingIndex + 1).padStart(2, "0")}-${drawing.fileName}`;
-      await dependencies.storage.copy(drawing.key, key);
-      const copiedDrawing = await dependencies.storage.head(key);
+      await dependencies.canonical.copyFromIntake(drawing.key, key);
+      const copiedDrawing = await dependencies.canonical.head(key);
       if (!copiedDrawing || copiedDrawing.size !== drawingSource.size) {
         throw new Error(`Could not verify canonical drawing object: ${key}`);
       }
@@ -189,7 +191,8 @@ async function prepareFiles(
 
   const archiveKey = `rfq-intake-archives/${receipt.receiptNumber!}.zip`;
   const archive = await createRawIntakeArchive({
-    storage: dependencies.storage,
+    intake: dependencies.intake,
+    canonical: dependencies.canonical,
     prefix: intakePrefix(receipt.sessionId),
     destinationKey: archiveKey,
   });
@@ -254,7 +257,7 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           };
         }
         const rawReceipt = await readPackageJson(
-          dependencies.storage,
+          dependencies.intake,
           receiptKey,
           "receipt",
         );
@@ -284,7 +287,7 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
         claimed = true;
 
         const rawManifest = await readPackageJson(
-          dependencies.storage,
+          dependencies.intake,
           receipt.manifestKey,
           "manifest",
         );
@@ -301,7 +304,7 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
           .catch((error) => console.error("[RFQ Intake] Derived asset enqueue failed", error));
 
         try {
-          await dependencies.storage.deletePrefix(intakePrefix(receipt.sessionId));
+          await dependencies.intake.deletePrefix(intakePrefix(receipt.sessionId));
           await dependencies.persistence.markCompleted(
             receipt,
             committed.quoteId,

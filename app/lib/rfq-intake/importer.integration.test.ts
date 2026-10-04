@@ -1,6 +1,5 @@
 /** Requires DATABASE_URL with the committed migrations applied. */
 import { randomUUID } from "node:crypto";
-import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 
@@ -12,43 +11,7 @@ import {
   createPostgresRfqPersistence,
   resetRfqImportForRetryByReceiptKey,
 } from "./postgres.server";
-import type { RfqStorage, StoredObject } from "./types";
-
-class IntegrationStorage implements RfqStorage {
-  objects = new Map<string, { body: Buffer; contentType: string }>();
-
-  put(key: string, value: unknown, contentType = "application/json") {
-    this.objects.set(key, {
-      body: Buffer.from(typeof value === "string" ? value : JSON.stringify(value)),
-      contentType,
-    });
-  }
-  metadata(key: string): StoredObject | null {
-    const value = this.objects.get(key);
-    return value
-      ? { key, size: value.body.length, contentType: value.contentType, etag: "test", lastModified: new Date() }
-      : null;
-  }
-  async list(prefix: string) {
-    return { objects: [...this.objects.keys()].filter((key) => key.startsWith(prefix)).map((key) => this.metadata(key)!), nextCursor: null };
-  }
-  async head(key: string) { return this.metadata(key); }
-  async read(key: string) { return Readable.from(this.objects.get(key)!.body); }
-  async readJson(key: string) { return JSON.parse(this.objects.get(key)!.body.toString("utf8")); }
-  async copy(source: string, destination: string) {
-    const value = this.objects.get(source)!;
-    this.objects.set(destination, { ...value, body: Buffer.from(value.body) });
-  }
-  async uploadStream(key: string, body: Readable, contentType: string) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of body) chunks.push(Buffer.from(chunk));
-    this.objects.set(key, { body: Buffer.concat(chunks), contentType });
-    return this.metadata(key)!;
-  }
-  async deletePrefix(prefix: string) {
-    for (const key of this.objects.keys()) if (key.startsWith(prefix)) this.objects.delete(key);
-  }
-}
+import { MemoryStorage } from "./test-support/memory-storage";
 
 describe("RFQ importer with Postgres persistence", () => {
   const postgresRfqPersistence = createPostgresRfqPersistence({
@@ -99,7 +62,7 @@ describe("RFQ importer with Postgres persistence", () => {
   });
 
   it("atomically creates the normal Quote graph and remains idempotent", async () => {
-    const storage = new IntegrationStorage();
+    const storage = new MemoryStorage();
     storage.put(receiptKey, {
       receipt_number: receiptNumber,
       session_id: sessionId,
@@ -165,7 +128,7 @@ describe("RFQ importer with Postgres persistence", () => {
       now: new Date("2026-09-20T00:00:00Z"),
     });
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence: postgresRfqPersistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -214,7 +177,7 @@ describe("RFQ importer with Postgres persistence", () => {
     expect(graph.note_content).toContain("Quote requested at: 2026-09-21T11:00:00+00:00");
     expect(graph.note_content).toContain("Lead-time preference: target_date");
     expect([...storage.objects.keys()].some((key) => key.startsWith(`intake/${sessionId}/`))).toBe(false);
-    expect(storage.objects.has(`rfq-intake-archives/${receiptNumber}.zip`)).toBe(true);
+    expect(storage.canonicalObjects.has(`rfq-intake-archives/${receiptNumber}.zip`)).toBe(true);
 
     const [promoted] = await db.execute<{
       receipt_number: string;
@@ -248,7 +211,7 @@ describe("RFQ importer with Postgres persistence", () => {
     const failureSessionId = randomUUID();
     const failureReceiptKey = `intake/${failureSessionId}/meta/receipt.json`;
     const failureManifestKey = `intake/${failureSessionId}/meta/manifest.json`;
-    const storage = new IntegrationStorage();
+    const storage = new MemoryStorage();
     storage.put(failureReceiptKey, {
       receipt_number: failureReceiptNumber,
       session_id: failureSessionId,
@@ -270,7 +233,7 @@ describe("RFQ importer with Postgres persistence", () => {
       })),
     });
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence: postgresRfqPersistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-22T20:00:00Z"),
@@ -316,7 +279,7 @@ describe("RFQ importer with Postgres persistence", () => {
       72 * 60 * 60_000,
     ] as const;
     let now = new Date("2026-09-21T00:00:00Z");
-    const storage = new IntegrationStorage();
+    const storage = new MemoryStorage();
     storage.readJson = async () => {
       throw new Error("S3 temporarily unavailable");
     };
@@ -324,7 +287,7 @@ describe("RFQ importer with Postgres persistence", () => {
     try {
       for (let attempt = 1; attempt <= retryDelaysMs.length; attempt += 1) {
         const importer = createRfqImporter({
-          storage,
+          ...storage.buckets,
           persistence: postgresRfqPersistence,
           queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
           now: () => now,
@@ -351,7 +314,7 @@ describe("RFQ importer with Postgres persistence", () => {
       }
 
       const importer = createRfqImporter({
-        storage,
+        ...storage.buckets,
         persistence: postgresRfqPersistence,
         queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
         now: () => now,
@@ -384,14 +347,14 @@ describe("RFQ importer with Postgres persistence", () => {
     const retrySessionId = randomUUID();
     const retryReceiptKey = `intake/${retrySessionId}/meta/receipt.json`;
     let now = new Date("2026-09-21T00:00:00Z");
-    const storage = new IntegrationStorage();
+    const storage = new MemoryStorage();
     storage.readJson = async () => {
       throw new Error("S3 temporarily unavailable");
     };
 
     try {
       const importer = createRfqImporter({
-        storage,
+        ...storage.buckets,
         persistence: postgresRfqPersistence,
         queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
         now: () => now,

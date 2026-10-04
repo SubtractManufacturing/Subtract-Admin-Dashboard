@@ -8,7 +8,8 @@ import {
   getRfqLedgerSummaries,
 } from "../../rfq-intake/postgres.server";
 import {
-  awsRfqStorage,
+  awsRfqCanonicalStorage,
+  awsRfqIntakeStorage,
   getRfqStorageBucket,
   isRfqIntakeEnabled,
 } from "../../rfq-intake/storage.server";
@@ -41,7 +42,8 @@ const queue = {
 };
 
 const importer = createRfqImporter({
-  storage: awsRfqStorage,
+  intake: awsRfqIntakeStorage,
+  canonical: awsRfqCanonicalStorage,
   persistence: createPostgresRfqPersistence({
     attachmentBucket: getRfqStorageBucket(),
   }),
@@ -93,7 +95,7 @@ export async function handleRfqReceiptScan(jobs: Job<RfqReceiptScanPayload>[]) {
   void jobs;
   const outcome = await scanForReceipts({
     enabled: isRfqIntakeEnabled(),
-    storage: awsRfqStorage,
+    storage: awsRfqIntakeStorage,
     queue,
     now: () => new Date(),
     getLedgerSummaries: getRfqLedgerSummaries,

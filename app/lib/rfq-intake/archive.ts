@@ -4,7 +4,7 @@ import { finished } from "node:stream/promises";
 import archiver from "archiver";
 
 import { IntakeValidationError } from "./package";
-import type { RfqStorage, StoredObject } from "./types";
+import type { RfqCanonicalStorage, RfqIntakeStorage, StoredObject } from "./types";
 
 type ArchiveIndexEntry = {
   key: string;
@@ -22,7 +22,7 @@ function hasControlCharacter(value: string): boolean {
   });
 }
 
-async function listAll(storage: Pick<RfqStorage, "list">, prefix: string) {
+async function listAll(storage: Pick<RfqIntakeStorage, "list">, prefix: string) {
   const objects: StoredObject[] = [];
   let cursor: string | undefined;
   do {
@@ -34,11 +34,14 @@ async function listAll(storage: Pick<RfqStorage, "list">, prefix: string) {
 }
 
 export async function createRawIntakeArchive(input: {
-  storage: RfqStorage;
+  /** Bucket the raw submission is read from. */
+  intake: Pick<RfqIntakeStorage, "list" | "head" | "read">;
+  /** Application bucket the archive is written to. */
+  canonical: Pick<RfqCanonicalStorage, "uploadStream">;
   prefix: string;
   destinationKey: string;
 }): Promise<StoredObject> {
-  const sourceObjects = await listAll(input.storage, input.prefix);
+  const sourceObjects = await listAll(input.intake, input.prefix);
   const zip = archiver("zip", { forceZip64: true, store: true });
   // archiver uses the userland `readable-stream` implementation, while the AWS
   // multipart uploader only accepts a native Node Readable. Bridge the archive
@@ -46,7 +49,7 @@ export async function createRawIntakeArchive(input: {
   // accepts it.
   const uploadBody = new PassThrough();
   zip.pipe(uploadBody);
-  const upload = input.storage.uploadStream(
+  const upload = input.canonical.uploadStream(
     input.destinationKey,
     uploadBody,
     "application/zip",
@@ -72,7 +75,7 @@ export async function createRawIntakeArchive(input: {
           "security",
         );
       }
-      const current = await input.storage.head(object.key);
+      const current = await input.intake.head(object.key);
       if (!current) {
         throw new Error(`Object disappeared while archiving: ${object.key}`);
       }
@@ -85,14 +88,14 @@ export async function createRawIntakeArchive(input: {
           callback(null, chunk);
         },
       });
-      const source = await input.storage.read(object.key);
+      const source = await input.intake.read(object.key);
       source.on("error", (error) => {
         hasher.destroy(error);
       });
       source.pipe(hasher);
       zip.append(hasher, { name: object.key });
       await Promise.race([finished(hasher), upload]);
-      const after = await input.storage.head(object.key);
+      const after = await input.intake.head(object.key);
       if (
         !after ||
         streamedSize !== current.size ||
