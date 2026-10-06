@@ -81,7 +81,10 @@ describe("RfqIntakeSync", () => {
     fetcher.state = "submitting";
     rerender(<RfqIntakeSync enabled />);
 
-    expect(screen.getByRole("button", { name: "Syncing RFQs…" })).toBeDisabled();
+    const button = screen.getByRole("button", { name: "Sync RFQs" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "Syncing RFQs…");
+    expect(button.querySelector("svg")).toHaveClass("animate-spin");
   });
 
   it.each([

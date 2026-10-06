@@ -13,15 +13,16 @@ import type { SeededQuoteIds } from "~/test/seed-minimal-quote";
 import { seedMinimalQuote, cleanupMinimalQuote } from "~/test/seed-minimal-quote";
 import { db } from "~/lib/db";
 import { quoteLineItems, quoteParts } from "~/lib/db/schema";
+import { getEnv } from "~/lib/env.server";
 import { resolveQuoteTokens } from "./quote.server";
 
 describe("resolveQuoteTokens", () => {
   let seeded: SeededQuoteIds;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) {
+    if (!getEnv("DATABASE_URL")) {
       throw new Error(
-        "DATABASE_URL is not set. Set it to a migrated local Postgres instance to run integration tests.",
+        "DATABASE_URL or DATABASE_URL_FILE is not set. Configure a migrated Postgres instance to run integration tests.",
       );
     }
     seeded = await seedMinimalQuote();

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
-
-import Button from "~/components/shared/Button";
+import { RefreshCw } from "lucide-react";
 
 const REVALIDATION_INTERVAL_MS = 10_000;
 const REVALIDATION_WINDOW_MS = 120_000;
@@ -94,9 +93,18 @@ export function RfqIntakeSync({ enabled }: { enabled: boolean }) {
     <div className="flex flex-col items-end">
       <fetcher.Form method="post">
         <input type="hidden" name="intent" value="syncRfqIntake" />
-        <Button type="submit" variant="secondary" disabled={isSyncing}>
-          {isSyncing ? "Syncing RFQs…" : "Sync RFQs"}
-        </Button>
+        <button
+          type="submit"
+          disabled={isSyncing}
+          aria-label="Sync RFQs"
+          title={isSyncing ? "Syncing RFQs…" : "Sync RFQs"}
+          className="inline-flex items-center justify-center rounded-full border-0 bg-transparent p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-700/60 dark:hover:text-gray-100"
+        >
+          <RefreshCw
+            aria-hidden="true"
+            className={`h-5 w-5 ${isSyncing ? "animate-spin" : ""}`}
+          />
+        </button>
       </fetcher.Form>
 
       {banner ? (

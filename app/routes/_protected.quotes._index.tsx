@@ -286,6 +286,7 @@ export default function QuotesIndex() {
           </h2>
 
           <div className="flex flex-wrap gap-3 items-center justify-end">
+            <RfqIntakeSync enabled={rfqIntakeEnabled} />
             <ViewToggle view={view} onChange={setView} />
             <select
               id="status-filter"
@@ -318,8 +319,6 @@ export default function QuotesIndex() {
                 Show all
               </label>
             </div>
-
-            <RfqIntakeSync enabled={rfqIntakeEnabled} />
 
             <Button onClick={() => setShowNewQuoteModal(true)}>
               New Quote

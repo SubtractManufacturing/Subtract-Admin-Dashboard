@@ -144,7 +144,7 @@ describe("AWS RFQ storage adapter contract", () => {
       });
       expect(await intake.head(sourceKey)).toMatchObject({ size: body.length });
       expect(await intake.head(destinationKey)).toBeNull();
-    });
+    }, 15_000);
 
     it("fails clearly when the intake object is missing", async () => {
       const { canonical } = storageFor(sameAccount, []);
