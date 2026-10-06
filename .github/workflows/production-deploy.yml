@@ -81,7 +81,7 @@ jobs:
       - name: Checkout infra repo
         uses: actions/checkout@v4
         with:
-          repository: SubtractManufacturing/infra
+          repository: SubtractManufacturing/infra-legacy
           token: ${{ secrets.INFRA_REPO_PAT }}
           path: infra
 
