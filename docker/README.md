@@ -99,7 +99,7 @@ Rules:
 - An empty/`""` `FOO_FILE` is an error; unset `FOO_FILE` to use plain `FOO` instead.
 - Local/dev can keep using plain env vars (or `.env`); `*_FILE` is optional.
 
-**Infra follow-up:** production compose lives in `SubtractManufacturing/infra`. Mount Docker secrets and pass `*_FILE=/run/secrets/...` there when adopting Swarm secrets; no compose change is required in this repo for the app helper to work.
+**Infra follow-up:** production compose lives in `SubtractManufacturing/infra-legacy`. Mount Docker secrets and pass `*_FILE=/run/secrets/...` there when adopting Swarm secrets; no compose change is required in this repo for the app helper to work.
 
 ## Container Management
 
