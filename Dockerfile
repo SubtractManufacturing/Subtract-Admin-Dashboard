@@ -75,8 +75,9 @@ COPY --from=builder --chown=nodejs:nodejs /app/drizzle ./drizzle
 COPY --from=builder --chown=nodejs:nodejs /app/build/worker.js ./build/worker.js
 COPY --from=builder --chown=nodejs:nodejs /app/build/worker.js.map ./build/worker.js.map
 
-# Copy entrypoint script
+# Copy entrypoint and healthcheck scripts
 COPY --chown=nodejs:nodejs start.sh ./
+COPY --chown=nodejs:nodejs scripts/healthcheck.mjs ./scripts/healthcheck.mjs
 RUN chmod +x start.sh
 
 # Switch to non-root user
@@ -85,6 +86,9 @@ USER nodejs
 # Expose port (can be overridden with PORT env variable)
 EXPOSE 3000
 
+# Worker health endpoint (CONTAINER_ROLE=worker, or hybrid containers)
+EXPOSE 3001
+
 # Set environment to production
 ENV NODE_ENV=production
 
@@ -92,9 +96,10 @@ ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Health check endpoint
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 3000) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); })"
+# Health check: role-aware (see scripts/healthcheck.mjs). Web probes PORT,
+# worker probes WORKER_HEALTH_PORT. Longer start period covers pg-boss boot.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["node", "scripts/healthcheck.mjs"]
 
 # Start the application with signal handling
 ENTRYPOINT ["dumb-init", "--"]

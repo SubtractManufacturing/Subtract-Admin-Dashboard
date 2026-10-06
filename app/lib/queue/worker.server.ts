@@ -45,6 +45,14 @@ export async function startWorkerQueue(): Promise<PgBoss> {
   return boss;
 }
 
+/** Cheap connectivity probe used by the worker health endpoint. */
+export async function checkWorkerQueueDatabase(): Promise<void> {
+  if (!boss) {
+    throw new Error("[PgBoss:Worker] Queue not started");
+  }
+  await boss.getDb().executeSql("SELECT 1");
+}
+
 export async function stopWorkerQueue(): Promise<void> {
   if (!boss) {
     return;

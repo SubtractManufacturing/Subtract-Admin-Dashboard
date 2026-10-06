@@ -49,20 +49,39 @@ docker run -d \
 
 ## Running the Worker
 
-Run the same image with a worker command override:
+Run the same image with `CONTAINER_ROLE=worker`:
 ```bash
 docker run -d \
   --name subtract-worker \
   --env-file .env \
+  -e CONTAINER_ROLE=worker \
   --restart unless-stopped \
-  subtract-frontend:latest \
-  node build/worker.js
+  subtract-frontend:latest
 ```
 
 View worker logs:
 ```bash
 docker logs -f subtract-worker
 ```
+
+### Worker health check
+
+The worker exposes `GET /health` on `WORKER_HEALTH_PORT` (default `3001`):
+```bash
+curl http://localhost:3001/health
+```
+
+It returns `200` once the worker has registered all queues and can reach the database. It returns `503` while starting, while shutting down, or when the database is unreachable.
+
+The image `HEALTHCHECK` (`scripts/healthcheck.mjs`) picks the endpoint from `CONTAINER_ROLE`:
+
+| `CONTAINER_ROLE` | Probes |
+| --- | --- |
+| `web` | web server on `PORT` (default `3000`) |
+| `worker` | worker on `WORKER_HEALTH_PORT` (default `3001`) |
+| unset (hybrid) | both |
+
+Always set `CONTAINER_ROLE=worker` for worker containers. Overriding the command with `node build/worker.js` skips that role, and the healthcheck would then probe the web port. If your platform (Coolify, ECS, Kubernetes, ...) defines its own healthcheck, point worker services at `http://<container>:3001/health`.
 
 Notes:
 - Worker only requires `DATABASE_URL`
@@ -158,7 +177,7 @@ docker push myregistry.com/subtract-frontend:latest
 ## Image Details
 
 - Base image: `node:22-slim`
-- Exposed port: `3000`
+- Exposed ports: `3000` (web), `3001` (worker health)
 - Non-root user: `nodejs` (UID 1001)
-- Includes health check at `/health`
+- Includes role-aware health check at `/health` (web and worker)
 - Production optimizations applied
