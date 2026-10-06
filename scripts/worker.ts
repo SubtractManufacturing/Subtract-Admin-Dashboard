@@ -19,7 +19,15 @@ import { handleSendEmail } from "../app/lib/queue/handlers/send-email";
 import { handleToolpathReportPoll } from "../app/lib/queue/handlers/toolpath-report-poll";
 import { handleToolpathStaleCleanup } from "../app/lib/queue/handlers/toolpath-stale-cleanup";
 import { handleToolpathUpload } from "../app/lib/queue/handlers/toolpath-upload";
-import { startWorkerQueue, stopWorkerQueue } from "../app/lib/queue/worker.server";
+import {
+  checkWorkerQueueDatabase,
+  startWorkerQueue,
+  stopWorkerQueue,
+} from "../app/lib/queue/worker.server";
+import {
+  createWorkerHealthServer,
+  getWorkerHealthPort,
+} from "../app/lib/queue/worker-health.server";
 import {
   handleRfqImport,
   handleRfqReceiptScan,
@@ -60,6 +68,15 @@ async function handleMockJob(jobs: Job<MockJobPayload>[]) {
 async function main() {
   console.log("[Worker] Starting pg-boss worker process...");
   console.log(`[Worker] NODE_ENV=${process.env.NODE_ENV ?? "undefined"}`);
+
+  // Start the health endpoint first so container healthchecks can report
+  // "starting" (503) instead of connection refused while pg-boss boots.
+  const health = createWorkerHealthServer({
+    port: getWorkerHealthPort(),
+    checkDatabase: checkWorkerQueueDatabase,
+  });
+  await health.start();
+  console.log(`[Worker] Health endpoint listening on :${health.port()}/health`);
 
   const boss = await startWorkerQueue();
 
@@ -160,7 +177,9 @@ async function main() {
 
     isShuttingDown = true;
     console.log(`[Worker] Received ${signal}, shutting down...`);
+    health.setPhase("shutting_down");
     await stopWorkerQueue();
+    await health.stop();
     process.exit(0);
   };
 
@@ -172,6 +191,7 @@ async function main() {
     void shutdown("SIGINT");
   });
 
+  health.setPhase("ready");
   console.log("[Worker] Ready and waiting for jobs");
 }
 

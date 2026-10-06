@@ -129,3 +129,6 @@ CLAUDE.md
 
 /planning
 /logs
+
+# Local git worktrees
+/.worktrees
