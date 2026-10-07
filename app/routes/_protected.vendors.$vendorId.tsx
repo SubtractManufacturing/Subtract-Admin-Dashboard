@@ -1,7 +1,7 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, useFetcher, Link } from "@remix-run/react";
 import { getVendor, updateVendor, archiveVendor, getVendorOrders, getVendorStats, getVendorWithAttachments } from "~/lib/vendors";
-import { getAttachment, createAttachment, deleteAttachment, linkAttachmentToVendor, unlinkAttachmentFromVendor, type AttachmentEventContext } from "~/lib/attachments";
+import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, linkAttachmentToVendor, unlinkAttachmentFromVendor, type AttachmentEventContext } from "~/lib/attachments";
 import type { Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
@@ -296,13 +296,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const eventContext: AttachmentEventContext = {
           userId: user?.id,
           userEmail: user?.email || userDetails?.name || undefined,
+          canDeleteProtected:
+            userDetails.role === "Admin" || userDetails.role === "Dev",
         };
+        const authorizedAttachment = await authorizeAttachmentDeletion({
+          attachmentId,
+          entityType: "vendor",
+          entityId: vendor.id,
+          eventContext,
+        });
+        if (!authorizedAttachment) {
+          return json({ error: "Attachment not found on this Vendor" }, { status: 404 });
+        }
 
         // Unlink from vendor first
         await unlinkAttachmentFromVendor(vendor.id, attachmentId, eventContext);
 
         // Delete from S3
-        await deleteFile(attachment.s3Key);
+        await deleteFile(authorizedAttachment.s3Key);
 
         // Delete database record
         await deleteAttachment(attachmentId, eventContext);

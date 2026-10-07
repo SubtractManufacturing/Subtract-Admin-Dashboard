@@ -4,14 +4,30 @@ import { createEvent } from "../app/lib/events";
 import {
   QUEUES,
   type CadConversionPayload,
+  type DrawingThumbnailPayload,
   type MockJobPayload,
   type PurgeArchivedLineItemsPayload,
   type SendEmailPayload,
+  type RfqImportPayload,
+  type RfqReceiptScanPayload,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
+import { handleDrawingThumbnail } from "../app/lib/queue/handlers/drawing-thumbnail";
 import { handlePurgeArchivedLineItems } from "../app/lib/queue/handlers/purge-archived-line-items";
 import { handleSendEmail } from "../app/lib/queue/handlers/send-email";
-import { startWorkerQueue, stopWorkerQueue } from "../app/lib/queue/worker.server";
+import {
+  checkWorkerQueueDatabase,
+  startWorkerQueue,
+  stopWorkerQueue,
+} from "../app/lib/queue/worker.server";
+import {
+  createWorkerHealthServer,
+  getWorkerHealthPort,
+} from "../app/lib/queue/worker-health.server";
+import {
+  handleRfqImport,
+  handleRfqReceiptScan,
+} from "../app/lib/queue/handlers/rfq-intake";
 
 let isShuttingDown = false;
 
@@ -49,6 +65,15 @@ async function main() {
   console.log("[Worker] Starting pg-boss worker process...");
   console.log(`[Worker] NODE_ENV=${process.env.NODE_ENV ?? "undefined"}`);
 
+  // Start the health endpoint first so container healthchecks can report
+  // "starting" (503) instead of connection refused while pg-boss boots.
+  const health = createWorkerHealthServer({
+    port: getWorkerHealthPort(),
+    checkDatabase: checkWorkerQueueDatabase,
+  });
+  await health.start();
+  console.log(`[Worker] Health endpoint listening on :${health.port()}/health`);
+
   const boss = await startWorkerQueue();
 
   await boss.work<MockJobPayload>(QUEUES.MOCK_JOB, { batchSize: 1 }, handleMockJob);
@@ -60,6 +85,13 @@ async function main() {
     handleCadConversion,
   );
   console.log(`[Worker] Listening on queue: ${QUEUES.CAD_CONVERSION}`);
+
+  await boss.work<DrawingThumbnailPayload>(
+    QUEUES.DRAWING_THUMBNAIL,
+    { batchSize: 1 },
+    handleDrawingThumbnail,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.DRAWING_THUMBNAIL}`);
 
   await boss.work<SendEmailPayload>(
     QUEUES.SEND_EMAIL,
@@ -84,6 +116,26 @@ async function main() {
     `[Worker] Scheduled hourly purge: ${QUEUES.PURGE_ARCHIVED_LINE_ITEMS}`,
   );
 
+  await boss.work<RfqImportPayload>(
+    QUEUES.RFQ_IMPORT,
+    { batchSize: 1 },
+    handleRfqImport,
+  );
+  console.log(`[Worker] Listening on queue: ${QUEUES.RFQ_IMPORT}`);
+
+  await boss.work<RfqReceiptScanPayload>(
+    QUEUES.RFQ_RECEIPT_SCAN,
+    { batchSize: 1 },
+    handleRfqReceiptScan,
+  );
+  await boss.schedule(
+    QUEUES.RFQ_RECEIPT_SCAN,
+    "*/5 * * * *",
+    { triggeredAt: new Date().toISOString() },
+    { missed: "once" },
+  );
+  console.log(`[Worker] Scheduled every 5 minutes: ${QUEUES.RFQ_RECEIPT_SCAN}`);
+
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {
       return;
@@ -91,7 +143,9 @@ async function main() {
 
     isShuttingDown = true;
     console.log(`[Worker] Received ${signal}, shutting down...`);
+    health.setPhase("shutting_down");
     await stopWorkerQueue();
+    await health.stop();
     process.exit(0);
   };
 
@@ -103,6 +157,7 @@ async function main() {
     void shutdown("SIGINT");
   });
 
+  health.setPhase("ready");
   console.log("[Worker] Ready and waiting for jobs");
 }
 

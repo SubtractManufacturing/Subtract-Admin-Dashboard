@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
 import { orders, quotes } from "./db/schema.js"
-import { desc, like, eq } from 'drizzle-orm'
+import { like, eq } from 'drizzle-orm'
 
 type NumberType = 'order' | 'quote'
 
@@ -123,6 +123,35 @@ export async function generateUniqueOrderNumber(year?: number, maxRetries = 5): 
   throw new Error('Failed to generate unique order number after maximum retries')
 }
 
+export function nextQuoteNumberFromExisting(existing: string[], now = new Date()): string {
+  const year = now.getFullYear().toString().slice(-2)
+  const month = (now.getMonth() + 1).toString()
+  const prefix = `Q${year}${month}-`
+  let letter = 'A'
+  let sequence = 99
+
+  for (const value of existing) {
+    const match = /^Q(\d{2})(\d{1,2})-([A-Z])(\d+)$/.exec(value)
+    if (!match || `Q${match[1]}${match[2]}-` !== prefix) continue
+    const candidateLetter = match[3]
+    const candidateSequence = Number(match[4])
+    if (
+      candidateLetter.charCodeAt(0) > letter.charCodeAt(0) ||
+      (candidateLetter === letter && candidateSequence > sequence)
+    ) {
+      letter = candidateLetter
+      sequence = candidateSequence
+    }
+  }
+
+  if (sequence >= 999) {
+    letter = String.fromCharCode(letter.charCodeAt(0) + 1)
+    if (letter > 'Z') throw new Error(`Maximum number reached for month ${year}/${month}`)
+    sequence = 99
+  }
+  return `${prefix}${letter}${String(sequence + 1).padStart(3, '0')}`
+}
+
 export async function getNextQuoteNumber(): Promise<string> {
   const now = new Date()
   const year = now.getFullYear().toString().slice(-2)
@@ -130,36 +159,10 @@ export async function getNextQuoteNumber(): Promise<string> {
 
   try {
     const latestQuotes = await db
-      .select()
+      .select({ quoteNumber: quotes.quoteNumber })
       .from(quotes)
       .where(like(quotes.quoteNumber, `Q${year}${month}-%`))
-      .orderBy(desc(quotes.createdAt))
-      .limit(1)
-
-    if (latestQuotes.length > 0) {
-      const latestNumber = latestQuotes[0].quoteNumber
-      const match = latestNumber.match(/^Q(\d{2})(\d{1,2})-([A-Z])(\d+)$/)
-
-      if (match) {
-        const [, numberYear, numberMonth, letter, sequence] = match
-
-        if (numberYear === year && numberMonth === month) {
-          const currentSequence = parseInt(sequence, 10)
-
-          if (currentSequence >= 999) {
-            const nextLetter = String.fromCharCode(letter.charCodeAt(0) + 1)
-            if (nextLetter > 'Z') {
-              throw new Error(`Maximum number reached for month ${year}/${month}`)
-            }
-            return `Q${year}${month}-${nextLetter}100`
-          }
-
-          return `Q${year}${month}-${letter}${(currentSequence + 1).toString().padStart(3, '0')}`
-        }
-      }
-    }
-
-    return `Q${year}${month}-A100`
+    return nextQuoteNumberFromExisting(latestQuotes.map((quote) => quote.quoteNumber), now)
   } catch (error) {
     console.error('Error generating quote number:', error)
     return `Q${year}${month}-A100`

@@ -92,6 +92,7 @@ export type QuoteWithRelations = {
   estimatedDeliveryDateEnd: Date | null;
   leadTimeBusinessDaysMin: number | null;
   leadTimeBusinessDaysMax: number | null;
+  ndaRequired: boolean;
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -100,6 +101,12 @@ export type QuoteWithRelations = {
   lineItems?: QuoteLineItem[];
   parts?: QuotePart[];
 };
+
+function quoteWithoutSourceReceiptNumber(quote: Quote) {
+  const { sourceReceiptNumber, ...safeQuote } = quote;
+  void sourceReceiptNumber;
+  return safeQuote;
+}
 
 export type QuoteInput = {
   quoteNumber?: string | null;
@@ -124,6 +131,7 @@ export type QuoteInput = {
   stripePaymentLinkId?: string | null;
   stripePaymentLinkActive?: boolean | null;
   createdById?: string | null;
+  ndaRequired?: boolean;
 };
 
 export type QuoteEventContext = {
@@ -196,7 +204,7 @@ export async function getQuotes(
 
     // Assemble final results
     return quotesWithBasicRelations.map(({ quote, customer, vendor }) => ({
-      ...quote,
+      ...quoteWithoutSourceReceiptNumber(quote),
       customer,
       vendor,
       lineItems: lineItemsByQuote.get(quote.id) || [],
@@ -259,7 +267,7 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
     ]);
 
     return {
-      ...quote,
+      ...quoteWithoutSourceReceiptNumber(quote),
       customer: customer[0],
       vendor: vendor[0],
       lineItems,
@@ -362,11 +370,51 @@ export async function updateQuote(
       updateData.expiredAt = new Date();
     }
 
-    const [updatedQuote] = await db
-      .update(quotes)
-      .set(updateData)
-      .where(eq(quotes.id, id))
-      .returning();
+    const ndaChanged =
+      updates.ndaRequired !== undefined &&
+      updates.ndaRequired !== oldQuote.ndaRequired;
+
+    let updatedQuote: Quote;
+    if (ndaChanged) {
+      updatedQuote = await db.transaction(async (tx) => {
+        const [quote] = await tx
+          .update(quotes)
+          .set(updateData)
+          .where(eq(quotes.id, id))
+          .returning();
+        if (!quote) {
+          throw new Error("Quote not found");
+        }
+        await createEvent(
+          {
+            entityType: "quote",
+            entityId: id.toString(),
+            eventType: "quote_nda_required_changed",
+            eventCategory: "system",
+            title: "Quote NDA requirement updated",
+            description: `NDA required changed from ${oldQuote.ndaRequired ? "Yes" : "No"} to ${updates.ndaRequired ? "Yes" : "No"}`,
+            metadata: {
+              oldValue: oldQuote.ndaRequired,
+              newValue: updates.ndaRequired,
+            },
+            userId: context?.userId,
+            userEmail: context?.userEmail,
+          },
+          tx,
+        );
+        return quote;
+      });
+    } else {
+      const [quote] = await db
+        .update(quotes)
+        .set(updateData)
+        .where(eq(quotes.id, id))
+        .returning();
+      if (!quote) {
+        throw new Error("Quote not found");
+      }
+      updatedQuote = quote;
+    }
 
     // Log status change events
     if (updates.status && updates.status !== oldQuote.status) {
@@ -750,6 +798,7 @@ export async function convertQuoteToOrder(
           vendorId: quote.vendorId,
           sourceQuoteId: quoteId,
           status: "Pending",
+          ndaRequired: quote.ndaRequired,
           totalPrice: calculatedTotal.toFixed(2),
           vendorPay: defaultVendorPay,
           poNumber: normalizePoNumber(options?.poNumber),

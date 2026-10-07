@@ -12,6 +12,8 @@ const searchableItems: SearchItem[] = [
   { label: "Home", description: "Admin dashboard overview", path: "/admin" },
   { label: "Users", description: "Manage user accounts and invitations", path: "/admin/users" },
   { label: "Invite User", description: "Send a new user invitation", path: "/admin/users" },
+  { label: "RFQ Intake", description: "Monitor submissions, retries, and webhooks", path: "/admin/rfq-intake" },
+  { label: "RFQ Webhook", description: "Configure outbound RFQ notifications", path: "/admin/rfq-intake" },
   { label: "App Settings", description: "Application configuration (coming soon)", path: "/admin" },
   { label: "Developer Settings", description: "Developer tools and flags (coming soon)", path: "/admin" },
   { label: "Feature Flags", description: "Toggle application features", path: "/admin" },

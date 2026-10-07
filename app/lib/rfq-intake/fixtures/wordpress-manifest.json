@@ -1,0 +1,50 @@
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "contact": {
+    "first_name": "Jane",
+    "last_name": "Smith",
+    "email": "jane@example.com",
+    "company": null,
+    "phone": "5551234567",
+    "phone_country_code": "1",
+    "job_title": null
+  },
+  "parts": [
+    {
+      "part_id": "550e8400-e29b-41d4-a716-446655440001",
+      "part_file_key": "intake/550e8400-e29b-41d4-a716-446655440000/parts/a1b2c3d4-e5f6-4789-a012-3456789abcde_bracket.step",
+      "drawing_file_keys": [
+        "intake/550e8400-e29b-41d4-a716-446655440000/drawings/b2c3d4e5-f6a7-4890-b123-456789abcdef0_drawing-a.pdf",
+        "intake/550e8400-e29b-41d4-a716-446655440000/drawings/c3d4e5f6-a7b8-4901-c234-567890abcdef1_drawing-b.png"
+      ],
+      "material": "Aluminum 6061",
+      "tolerance": "standard",
+      "tolerance_detail": null,
+      "threads_features": null,
+      "quantity": 10,
+      "target_unit_price": 12.5,
+      "notes": null
+    },
+    {
+      "part_id": "550e8400-e29b-41d4-a716-446655440002",
+      "part_file_key": "intake/550e8400-e29b-41d4-a716-446655440000/parts/d4e5f6a7-b8c9-4012-d345-67890abcdef12_housing.step",
+      "drawing_file_keys": [],
+      "material": "1018 Steel",
+      "tolerance": "precision",
+      "tolerance_detail": null,
+      "quantity": 1,
+      "target_unit_price": null,
+      "notes": "Rush review"
+    }
+  ],
+  "global": {
+    "required_delivery_date": null,
+    "lead_time_preference": "standard",
+    "shipping_destination": {
+      "postal_code": "90210"
+    },
+    "po_number": null,
+    "nda_required": false,
+    "notes": null
+  }
+}

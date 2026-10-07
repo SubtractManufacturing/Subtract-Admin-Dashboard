@@ -7,8 +7,10 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { businessDaysFrom } from "./business-days";
-import { getOrder } from "./orders";
-import { convertQuoteToOrder, getQuote } from "./quotes";
+import { getEnv } from "./env.server";
+import { getOrder, updateOrder } from "./orders";
+import { convertQuoteToOrder, getQuote, updateQuote } from "./quotes";
+import { getEventsByEntity } from "./events";
 import type { SeededConversionQuoteIds } from "~/test/seed-quote-for-conversion";
 import {
   cleanupQuoteForConversion,
@@ -20,9 +22,9 @@ describe("convertQuoteToOrder delivery fields", () => {
   let convertedOrderId: number | undefined;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) {
+    if (!getEnv("DATABASE_URL")) {
       throw new Error(
-        "DATABASE_URL is not set. Set it to a migrated local Postgres instance to run integration tests.",
+        "DATABASE_URL or DATABASE_URL_FILE is not set. Configure a migrated Postgres instance to run integration tests.",
       );
     }
     seeded = await seedQuoteForConversion();
@@ -54,5 +56,25 @@ describe("convertQuoteToOrder delivery fields", () => {
     const quote = await getQuote(seeded.quoteId);
     expect(quote?.quoteNumber).toBe(seeded.quoteNumber);
     expect(quote?.convertedToOrderId).toBe(result.orderId);
+    expect(order!.ndaRequired).toBe(true);
+  });
+
+  it("copies NDA once, then audits independent Quote and Order edits", async () => {
+    expect(convertedOrderId).toBeDefined();
+    const actor = { userEmail: "nda-test@example.com" };
+
+    await updateOrder(convertedOrderId!, { ndaRequired: false }, actor);
+    await updateQuote(seeded.quoteId, { ndaRequired: false }, actor);
+    await updateQuote(seeded.quoteId, { ndaRequired: true }, actor);
+
+    expect((await getOrder(convertedOrderId!))?.ndaRequired).toBe(false);
+    expect((await getQuote(seeded.quoteId))?.ndaRequired).toBe(true);
+
+    const quoteEvents = await getEventsByEntity("quote", String(seeded.quoteId), 20);
+    const ndaEvent = quoteEvents.find(
+      (event) => event.eventType === "quote_nda_required_changed",
+    );
+    expect(ndaEvent?.metadata).toMatchObject({ oldValue: false, newValue: true });
+    expect(ndaEvent?.userEmail).toBe("nda-test@example.com");
   });
 });

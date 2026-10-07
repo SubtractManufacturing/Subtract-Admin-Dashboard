@@ -28,6 +28,7 @@ type AttachmentItem = {
   contentType?: string | null;
   fileSize?: number | null;
   createdAt?: string | Date;
+  isProtected?: boolean;
 };
 
 interface AttachmentsSectionProps {
@@ -37,6 +38,7 @@ interface AttachmentsSectionProps {
   readOnly?: boolean;
   className?: string;
   onDeleteOverride?: (attachmentId: string) => void;
+  canDeleteProtected?: boolean;
 }
 
 export function AttachmentsSection({
@@ -46,6 +48,7 @@ export function AttachmentsSection({
   readOnly = false,
   className,
   onDeleteOverride,
+  canDeleteProtected = false,
 }: AttachmentsSectionProps) {
   const { download } = useDownload();
   const revalidator = useRevalidator();
@@ -307,7 +310,7 @@ export function AttachmentsSection({
                         <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
                       </svg>
                     </button>
-                    {!readOnly && (
+                    {!readOnly && (!attachment.isProtected || canDeleteProtected) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -350,7 +353,8 @@ export function AttachmentsSection({
           contentType={selectedFile.contentType}
           fileSize={selectedFile.fileSize}
           onDelete={
-            !readOnly
+            !readOnly &&
+            (!attachments.find((attachment) => attachment.id === selectedFile.attachmentId)?.isProtected || canDeleteProtected)
               ? () => handleDeleteAttachment(selectedFile.attachmentId)
               : undefined
           }

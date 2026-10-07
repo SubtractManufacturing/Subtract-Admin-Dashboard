@@ -28,6 +28,10 @@ These topics emerged from the [architecture review](../architecture-map.md). Wri
 | ADR-0009 | **CAD/mesh pipeline interface** | Five+ modules + queue handler for one conceptual pipeline | End-to-end behavior hard to trace and test |
 | ADR-0010 | **Route testing strategy** | Zero route tests; 36 tests mostly in email | Refactor safety before god route extraction |
 
+## Accepted ADRs
+
+- [ADR-0011: WordPress RFQ intake module](0011-wordpress-rfq-intake.md) — deep importer interface, adapters, ledger-owned retries, and single-import Worker topology.
+
 ## Accepted (from existing docs and conventions)
 
 These are implicit decisions already reflected in code or CLAUDE.md. Consider promoting to full ADRs if questions recur.

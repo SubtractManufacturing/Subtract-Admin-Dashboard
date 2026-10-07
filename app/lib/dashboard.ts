@@ -1,5 +1,5 @@
 import { db } from "./db/index.js"
-import { orders, quotes, customers, vendors, orderLineItems, quoteLineItems } from "./db/schema.js"
+import { actionItems, orders, quotes, customers, vendors, orderLineItems, quoteLineItems } from "./db/schema.js"
 import { eq, count, sum, gte, inArray, and, ne, sql, desc } from 'drizzle-orm'
 
 export type DashboardStats = {
@@ -39,11 +39,11 @@ export type Quote = {
 
 export async function getDashboardStats(rfqDays: number = 7): Promise<DashboardStats> {
   try {
-    // Get action items (orders pending review)
+    // Team-wide active Action Items (separate from each user's unread badge).
     const actionItemsResult = await db
       .select({ count: count() })
-      .from(orders)
-      .where(eq(orders.status, 'Pending'))
+      .from(actionItems)
+      .where(and(eq(actionItems.status, 'active'), eq(actionItems.isArchived, false)))
 
     // Get open PO revenue and count
     const openOrdersResult = await db

@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { BookUser } from "lucide-react";
 import { useTheme } from "~/contexts/ThemeContext";
 import { useSidebar } from "~/contexts/SidebarContext";
+import { SidebarUnreadBadge } from "./SidebarUnreadBadge";
 
 interface SidebarProps {
   userName?: string;
@@ -16,6 +17,8 @@ interface SidebarProps {
   showEmailNav?: boolean;
   /** SERP Email nav badge: pending approval + failed + bounced (see outboundAttentionCountFromStatusCounts). */
   emailAttentionCount?: number;
+  /** Current user's unread active Action Items. */
+  actionItemUnreadCount?: number;
 }
 
 interface NavItem {
@@ -36,6 +39,7 @@ export default function Sidebar({
   showAdminConsole = false,
   showEmailNav = false,
   emailAttentionCount = 0,
+  actionItemUnreadCount = 0,
 }: SidebarProps) {
   const { isExpanded, toggleSidebar, isMobileOpen, setMobileOpen } = useSidebar();
   const location = useLocation();
@@ -215,17 +219,21 @@ export default function Sidebar({
             const isActive = isActiveRoute(item.to);
             const showEmailBadge =
               item.to === "/email" && emailAttentionCount > 0;
-            const badgeText =
-              emailAttentionCount > 99 ? "99+" : String(emailAttentionCount);
+            const showActionItemBadge =
+              item.to === "/ActionItems" && actionItemUnreadCount > 0;
+            const showBadge = showEmailBadge || showActionItemBadge;
+            const badgeCount = showActionItemBadge
+              ? actionItemUnreadCount
+              : emailAttentionCount;
             return (
               <li key={item.to}>
                 <Link
                   to={item.to}
                   aria-label={
-                    showEmailBadge
-                      ? emailAttentionCount === 1
-                        ? "Email, 1 item needs attention"
-                        : `Email, ${emailAttentionCount} items need attention`
+                    showBadge
+                      ? badgeCount === 1
+                        ? `${item.label}, 1 unread item`
+                        : `${item.label}, ${badgeCount} unread items`
                       : undefined
                   }
                   className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors no-underline ${
@@ -236,31 +244,21 @@ export default function Sidebar({
                 >
                   <span
                     className={
-                      showEmailBadge && !showLabels
+                      showBadge && !showLabels
                         ? "relative flex-shrink-0"
                         : "flex-shrink-0"
                     }
                   >
                     {item.icon}
-                    {showEmailBadge && !showLabels && (
-                      <span
-                        className="absolute -right-1 -top-1 inline-flex min-h-[14px] min-w-[14px] items-center justify-center rounded-full bg-red-500 px-[3px] text-[9px] font-semibold leading-none text-white tabular-nums"
-                        aria-hidden
-                      >
-                        {badgeText}
-                      </span>
+                    {showBadge && !showLabels && (
+                      <SidebarUnreadBadge count={badgeCount} compact />
                     )}
                   </span>
                   {showLabels ? (
                     <span className="flex min-w-0 flex-1 items-center gap-2 font-medium">
                       <span className="truncate">{item.label}</span>
-                      {showEmailBadge && (
-                        <span
-                          className="inline-flex min-h-[1.125rem] min-w-[1.125rem] shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-semibold tabular-nums text-white"
-                          aria-hidden
-                        >
-                          {badgeText}
-                        </span>
+                      {showBadge && (
+                        <SidebarUnreadBadge count={badgeCount} compact={false} />
                       )}
                     </span>
                   ) : (

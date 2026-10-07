@@ -30,11 +30,23 @@ export async function startWorkerQueue(): Promise<PgBoss> {
   console.log("[PgBoss:Worker] Started");
 
   for (const name of Object.values(QUEUES)) {
-    await boss.createQueue(name);
+    if (name === QUEUES.RFQ_IMPORT || name === QUEUES.DRAWING_THUMBNAIL) {
+      await boss.createQueue(name, { policy: "key_strict_fifo" });
+    } else {
+      await boss.createQueue(name);
+    }
     console.log(`[PgBoss:Worker] Queue ensured: ${name}`);
   }
 
   return boss;
+}
+
+/** Cheap connectivity probe used by the worker health endpoint. */
+export async function checkWorkerQueueDatabase(): Promise<void> {
+  if (!boss) {
+    throw new Error("[PgBoss:Worker] Queue not started");
+  }
+  await boss.getDb().executeSql("SELECT 1");
 }
 
 export async function stopWorkerQueue(): Promise<void> {

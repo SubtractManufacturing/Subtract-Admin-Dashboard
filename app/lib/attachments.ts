@@ -1,5 +1,5 @@
 import { db } from "./db/index.js"
-import { attachments, orderAttachments, customerAttachments, vendorAttachments, partModels } from "./db/schema.js"
+import { attachments, orderAttachments, quoteAttachments, customerAttachments, vendorAttachments, partModels } from "./db/schema.js"
 import { eq, and } from 'drizzle-orm'
 import type { Attachment, NewAttachment } from "./db/schema.js"
 import { createEvent } from "./events.js"
@@ -10,6 +10,7 @@ export type AttachmentEventContext = {
   userId?: string
   userEmail?: string
   skipEventLogging?: boolean  // Skip event logging for automated operations like PDF generation
+  canDeleteProtected?: boolean
 }
 
 export async function createAttachment(attachmentData: NewAttachment, eventContext?: AttachmentEventContext): Promise<Attachment> {
@@ -64,6 +65,9 @@ export async function deleteAttachment(id: string, eventContext?: AttachmentEven
   try {
     // Get attachment details before deletion
     const attachment = await getAttachment(id)
+    if (attachment?.isProtected && !eventContext?.canDeleteProtected) {
+      throw new Error("Admin or Dev role required to delete this protected attachment")
+    }
 
     await db
       .delete(attachments)
@@ -110,6 +114,9 @@ export async function deleteAttachmentByS3Key(s3Key: string, eventContext?: Atta
   try {
     // Get attachment details before deletion
     const attachment = await getAttachmentByS3Key(s3Key)
+    if (attachment?.isProtected && !eventContext?.canDeleteProtected) {
+      throw new Error("Admin or Dev role required to delete this protected attachment")
+    }
 
     await db
       .delete(attachments)
@@ -378,4 +385,44 @@ export async function getVendorAttachments(vendorId: number): Promise<Attachment
     console.error('Error fetching vendor attachments:', error)
     return []
   }
+}
+
+export async function authorizeAttachmentDeletion(input: {
+  attachmentId: string
+  entityType: "order" | "quote" | "customer" | "vendor"
+  entityId: number
+  eventContext?: AttachmentEventContext
+}): Promise<Attachment | null> {
+  const relation =
+    input.entityType === "order"
+      ? orderAttachments
+      : input.entityType === "quote"
+        ? quoteAttachments
+        : input.entityType === "customer"
+          ? customerAttachments
+          : vendorAttachments
+  const parentColumn =
+    input.entityType === "order"
+      ? orderAttachments.orderId
+      : input.entityType === "quote"
+        ? quoteAttachments.quoteId
+        : input.entityType === "customer"
+          ? customerAttachments.customerId
+          : vendorAttachments.vendorId
+  const [row] = await db
+    .select({ attachment: attachments })
+    .from(relation)
+    .innerJoin(attachments, eq(relation.attachmentId, attachments.id))
+    .where(
+      and(
+        eq(parentColumn, input.entityId),
+        eq(relation.attachmentId, input.attachmentId),
+      ),
+    )
+    .limit(1)
+  if (!row) return null
+  if (row.attachment.isProtected && !input.eventContext?.canDeleteProtected) {
+    throw new Error("Admin or Dev role required to delete this protected attachment")
+  }
+  return row.attachment
 }

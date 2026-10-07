@@ -49,14 +49,14 @@ docker run -d \
 
 ## Running the Worker
 
-Run the same image with a worker command override:
+Run the same image with `CONTAINER_ROLE=worker`:
 ```bash
 docker run -d \
   --name subtract-worker \
   --env-file .env \
+  -e CONTAINER_ROLE=worker \
   --restart unless-stopped \
-  subtract-frontend:latest \
-  node build/worker.js
+  subtract-frontend:latest
 ```
 
 View worker logs:
@@ -64,8 +64,27 @@ View worker logs:
 docker logs -f subtract-worker
 ```
 
+### Worker health check
+
+The worker exposes `GET /health` on `WORKER_HEALTH_PORT` (default `3001`):
+```bash
+curl http://localhost:3001/health
+```
+
+It returns `200` once the worker has registered all queues and can reach the database. It returns `503` while starting, while shutting down, or when the database is unreachable.
+
+The image `HEALTHCHECK` (`scripts/healthcheck.mjs`) picks the endpoint from `CONTAINER_ROLE`:
+
+| `CONTAINER_ROLE` | Probes |
+| --- | --- |
+| `web` | web server on `PORT` (default `3000`) |
+| `worker` | worker on `WORKER_HEALTH_PORT` (default `3001`) |
+| unset (hybrid) | both |
+
+Always set `CONTAINER_ROLE=worker` for worker containers. Overriding the command with `node build/worker.js` skips that role, and the healthcheck would then probe the web port. If your platform (Coolify, ECS, Kubernetes, ...) defines its own healthcheck, point worker services at `http://<container>:3001/health`.
+
 Notes:
-- Worker only requires `DATABASE_URL`
+- The Worker requires `DATABASE_URL` plus the storage settings used by its jobs
 - Multiple worker containers can run concurrently (PG Boss uses row locking for safe distribution)
 
 ## Environment Variables
@@ -91,15 +110,20 @@ DATABASE_URL_FILE=/run/secrets/database_url
 DATABASE_DIRECT_URL_FILE=/run/secrets/database_direct_url
 SUPABASE_SERVICE_ROLE_KEY_FILE=/run/secrets/supabase_service_role_key
 S3_SECRET_ACCESS_KEY_FILE=/run/secrets/s3_secret_access_key
+INTAKE_S3_SECRET_ACCESS_KEY_FILE=/run/secrets/intake_s3_secret_access_key
 STRIPE_SECRET_KEY_FILE=/run/secrets/stripe_secret_key
 ```
+
+RFQ intake reads WordPress submissions from a dedicated bucket configured with `INTAKE_S3_ENDPOINT`, `INTAKE_S3_REGION`, `INTAKE_S3_ACCESS_KEY_ID`, `INTAKE_S3_SECRET_ACCESS_KEY`, and `INTAKE_S3_BUCKET`. When `RFQ_INTAKE_ENABLED=true`, provide all five settings to both the **web** and **worker** containers. The web container uses read/list access only for the manual Sync RFQs action on the Quotes page. The Worker remains the sole importer, canonical-storage writer, and intake-prefix deleter. The shared 30-second manual-sync cooldown bounds repeated full-prefix scan cost across users and web instances. The Worker's startup log reports whether it copies into the application bucket server-side or by streaming (`copy_strategy`).
+
+Every `INTAKE_S3_*` setting also supports its corresponding `*_FILE` form (for example, `INTAKE_S3_ENDPOINT_FILE` and `INTAKE_S3_SECRET_ACCESS_KEY_FILE`) under the file-based-secret rules above. `scripts/convert-env-to-files.sh` converts all five intake settings for local testing.
 
 Rules:
 - If `FOO_FILE` is a non-empty path, the file **wins** — there is no fallback to `FOO` if the file is missing, unreadable, or empty.
 - An empty/`""` `FOO_FILE` is an error; unset `FOO_FILE` to use plain `FOO` instead.
 - Local/dev can keep using plain env vars (or `.env`); `*_FILE` is optional.
 
-**Infra follow-up:** production compose lives in `SubtractManufacturing/infra`. Mount Docker secrets and pass `*_FILE=/run/secrets/...` there when adopting Swarm secrets; no compose change is required in this repo for the app helper to work.
+**Infra follow-up:** production compose lives in `SubtractManufacturing/infra-legacy`. Mount Docker secrets and pass `*_FILE=/run/secrets/...` there when adopting Swarm secrets; no compose change is required in this repo for the app helper to work.
 
 ## Container Management
 
@@ -158,7 +182,7 @@ docker push myregistry.com/subtract-frontend:latest
 ## Image Details
 
 - Base image: `node:22-slim`
-- Exposed port: `3000`
+- Exposed ports: `3000` (web), `3001` (worker health)
 - Non-root user: `nodejs` (UID 1001)
-- Includes health check at `/health`
+- Includes role-aware health check at `/health` (web and worker)
 - Production optimizations applied

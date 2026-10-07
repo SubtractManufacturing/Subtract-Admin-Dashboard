@@ -44,11 +44,12 @@ export async function getNotes(entityType: string, entityId: string): Promise<No
 
   return result.map((note) => {
     const author = authorMap.get(note.createdBy);
+    const isSystem = note.createdBy.toLowerCase() === "system";
 
     return {
       ...note,
-      authorName: author?.name ?? null,
-      authorEmail: author?.email ?? null,
+      authorName: isSystem ? "System" : author?.name ?? null,
+      authorEmail: isSystem ? null : author?.email ?? null,
     };
   });
 }

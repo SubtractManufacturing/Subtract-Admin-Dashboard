@@ -12,17 +12,19 @@ import {
 import Sidebar from "~/components/Sidebar";
 import MobileHeader from "~/components/MobileHeader";
 import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
+import { getActionItemCounts } from "~/lib/action-items.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
   const appConfig = getAppConfig();
   
-  const [showEventsLink, showVersionInHeader, showAdminConsole, showEmailNav] =
+  const [showEventsLink, showVersionInHeader, showAdminConsole, showEmailNav, actionItemCounts] =
     await Promise.all([
       shouldShowEventsInNav(),
       shouldShowVersionInHeader(),
       canUserAccessAdminConsole(userDetails.role),
       isOutboundEmailEnabled(),
+      getActionItemCounts(userDetails.id),
     ]);
 
   let emailAttentionCount = 0;
@@ -47,6 +49,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       showAdminConsole,
       showEmailNav,
       emailAttentionCount,
+      actionItemUnreadCount: actionItemCounts.unreadActive,
       canUsePartAssetAdmin: canUsePartAssetAdmin(userDetails.role),
     }),
     headers,
@@ -72,6 +75,7 @@ function ProtectedLayoutContent() {
     showAdminConsole,
     showEmailNav,
     emailAttentionCount,
+    actionItemUnreadCount,
   } = useLoaderData<typeof loader>();
   const { isExpanded } = useSidebar();
   const location = useLocation();
@@ -93,6 +97,7 @@ function ProtectedLayoutContent() {
         showAdminConsole={showAdminConsole}
         showEmailNav={showEmailNav}
         emailAttentionCount={emailAttentionCount}
+        actionItemUnreadCount={actionItemUnreadCount}
       />
       <main className={`flex-1 transition-all duration-300 ml-0 ${isExpanded ? "md:ml-64" : "md:ml-20"}`}>
         <MobileHeader />

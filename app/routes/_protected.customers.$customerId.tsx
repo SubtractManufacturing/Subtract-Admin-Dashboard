@@ -3,7 +3,7 @@ import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/reac
 import { useState, useEffect, type ReactElement } from "react";
 import { Eye } from "lucide-react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerQuotes, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext, type CustomerQuote } from "~/lib/customers";
-import { getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
+import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
 import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
@@ -672,13 +672,24 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const eventContext: AttachmentEventContext = {
           userId: user?.id,
           userEmail: user?.email || userDetails?.name || undefined,
+          canDeleteProtected:
+            userDetails.role === "Admin" || userDetails.role === "Dev",
         };
+        const authorizedAttachment = await authorizeAttachmentDeletion({
+          attachmentId,
+          entityType: "customer",
+          entityId: customer.id,
+          eventContext,
+        });
+        if (!authorizedAttachment) {
+          return json({ error: "Attachment not found on this Customer" }, { status: 404 });
+        }
 
         // Unlink from customer first
         await unlinkAttachmentFromCustomer(customer.id, attachmentId, eventContext);
 
         // Delete from S3
-        await deleteFile(attachment.s3Key);
+        await deleteFile(authorizedAttachment.s3Key);
 
         // Delete database record
         await deleteAttachment(attachmentId, eventContext);
