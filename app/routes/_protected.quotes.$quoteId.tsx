@@ -1,4 +1,4 @@
-﻿import {
+import {
   json,
   LoaderFunctionArgs,
   ActionFunctionArgs,
@@ -328,7 +328,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         attachment !== null,
     );
 
-  // Attachments are served via the unified download route â€” no presigned URLs needed
+  // Attachments are served via the unified download route — no presigned URLs needed
   const attachmentsWithUrls = attachmentList;
 
   // Get feature flags and events
@@ -1067,7 +1067,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
     }
 
-    // Handle Receive PO â€” upload customer PO + convert quote to order
+    // Handle Receive PO — upload customer PO + convert quote to order
     if (intent === "receivePo") {
       if (quote.status !== "Sent") {
         return json(
@@ -3181,7 +3181,7 @@ export default function QuoteDetail() {
                           !customer?.email
                             ? "Customer has no email address"
                             : !quoteSendEmailReady
-                              ? "Configure quote email: Admin â†’ Email â†’ assign a template to â€œSend quote emailâ€"
+                              ? "Configure quote email: Admin → Email → assign a template to “Send quote email”"
                               : undefined
                         }
                       >
