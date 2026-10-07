@@ -35,11 +35,11 @@ describe("Action Items command and query seam", () => {
     const [item] = await db
       .insert(actionItems)
       .values({
-        type: "customer_match_review",
-        title: "Review Customer",
-        description: "Ambiguous email",
-        entityType: "quote",
-        entityId: "123",
+        type: "rfq_import_failure",
+        title: "RFQ failed",
+        description: "Storage unavailable",
+        entityType: "rfq_import",
+        entityId: `TEST-${randomUUID()}`,
       })
       .returning();
     itemIds.push(item.id);
@@ -50,8 +50,30 @@ describe("Action Items command and query seam", () => {
     expect((await getActionItemsForUser(userA)).find((row) => row.id === item.id)?.isUnread).toBe(false);
     expect((await getActionItemsForUser(userB)).find((row) => row.id === item.id)?.isUnread).toBe(true);
 
-    await resolveActionItem(item.id, { userId: userA, role: "User" }, "Customer checked");
+    await softDeleteActionItem(item.id, { userId: userB, role: "Admin" });
     expect((await getActionItemsForUser(userA)).some((row) => row.id === item.id)).toBe(false);
+  });
+
+  it("does not let a Customer match review be dismissed without merging or confirming", async () => {
+    const [item] = await db
+      .insert(actionItems)
+      .values({
+        type: "customer_match_review",
+        title: "Review Customer",
+        description: "Ambiguous email",
+        entityType: "quote",
+        entityId: "124",
+      })
+      .returning();
+    itemIds.push(item.id);
+
+    await expect(
+      resolveActionItem(item.id, { userId: userA, role: "User" }, "Looks fine"),
+    ).rejects.toThrow(/merged or confirmed/i);
+    await expect(
+      softDeleteActionItem(item.id, { userId: userB, role: "Admin" }),
+    ).rejects.toThrow(/cannot be deleted/i);
+    expect((await getActionItemsForUser(userA)).some((row) => row.id === item.id)).toBe(true);
   });
 
   it("prevents manual failure resolution and restricts team-wide soft deletion", async () => {

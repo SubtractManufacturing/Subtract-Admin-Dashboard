@@ -8,6 +8,7 @@ import type { Vendor, Part, Customer } from "~/lib/db/schema";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { resolveFinalCustomerId } from "~/lib/customer-match-review.server";
 import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import { canUserUploadMesh, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
@@ -58,6 +59,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (!customer) {
     throw new Response("Customer not found", { status: 404 });
   }
+
+  // Old links and bookmarks to a merged-away Customer lead to its survivor.
+  if (customer.isArchived && customer.mergedIntoCustomerId) {
+    const survivorId = await resolveFinalCustomerId(customer.id);
+    if (survivorId) {
+      throw redirect(
+        `/customers/${survivorId}?mergedFrom=${encodeURIComponent(customer.displayName)}`,
+        { headers },
+      );
+    }
+  }
+  const mergedFrom = new URL(request.url).searchParams.get("mergedFrom");
 
   // Get customer data in parallel
   const [orders, quotes, stats, notes, rawParts, canUploadMesh, events, canRevise, bananaEnabled, communicationsResult] = await Promise.all([
@@ -154,6 +167,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   return withAuthHeaders(
     json({
       customer,
+      mergedFrom,
       orders,
       quotes,
       stats,
@@ -747,7 +761,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl, communications, communicationsTotalCount } = useLoaderData<typeof loader>();
+  const { customer, mergedFrom, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl, communications, communicationsTotalCount } = useLoaderData<typeof loader>();
+  const canMerge = userDetails?.role === "Admin" || userDetails?.role === "Dev";
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/customers/${customer.id}`
     : undefined;
@@ -1126,7 +1141,24 @@ export default function CustomerDetails() {
             { label: "Customers", href: "/customers" },
             { label: customer.displayName }
           ]} />
+          {canMerge && (
+            <Link
+              to={`/customers/merge?survivor=${customer.id}`}
+              className="text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Merge with another customer
+            </Link>
+          )}
         </div>
+
+        {mergedFrom && (
+          <p
+            role="status"
+            className="mx-4 sm:mx-6 lg:mx-10 mt-2 rounded border border-blue-300 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+          >
+            {mergedFrom} was merged into this Customer.
+          </p>
+        )}
         
         <div className="px-4 sm:px-6 lg:px-10 py-6 space-y-6">
           {/* Status Cards */}

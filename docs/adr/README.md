@@ -31,6 +31,7 @@ These topics emerged from the [architecture review](../architecture-map.md). Wri
 ## Accepted ADRs
 
 - [ADR-0011: WordPress RFQ intake module](0011-wordpress-rfq-intake.md) — deep importer interface, adapters, ledger-owned retries, and single-import Worker topology.
+- [ADR-0012: Customer matching at intake and merge-by-archive](0012-customer-matching-and-merge.md) — email-only normalized alias matching, no Customer created when a match exists, merge by archiving with a pointer.
 
 ## Accepted (from existing docs and conventions)
 

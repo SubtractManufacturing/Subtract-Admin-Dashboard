@@ -8,6 +8,22 @@ Internal admin application for Subtract Manufacturing operations: CRM, quoting, 
 A person or organization that receives quotes and places orders. Stored with structured billing and shipping addresses.
 _Avoid_: Client, buyer, account
 
+**Email alias**:
+A normalized email a Customer is known by, stored in `customer_email_aliases` (the primary email is kept there too). RFQ intake matches an incoming email against primary emails and aliases of active Customers. Normalization is `normalizeEmail`; plus-tags and gmail dots are never stripped.
+_Avoid_: Secondary email, alternate email
+
+**Customer merge**:
+Combining two Customers: the survivor receives every record of the merged Customer and its emails as aliases, and the merged Customer is soft-archived with `mergedIntoCustomerId` pointing at the survivor. Chains resolve to the final active survivor. Available to Admin and Dev at `/customers/merge`.
+_Avoid_: Delete duplicate, dedupe (as a verb for hard deletion)
+
+**Duplicate group**:
+A set of active Customers suggested for review in the merge tool: "Same email" (high confidence) or "Possible duplicates" (same company name, phone digits, or contact name). A pair staff mark "not duplicates" is dismissed and no longer suggested.
+_Avoid_: Customer match (that is the Action Item below)
+
+**Customer match review**:
+An Action Item raised when an RFQ matched several active Customers. It links into the merge tool and resolves itself once the candidates are merged or confirmed not duplicates.
+_Avoid_: Resolving it by hand
+
 **Vendor**:
 A shop or supplier that fulfills production work. May be assigned to quotes and orders.
 _Avoid_: Supplier (unless referring to external procurement), shop (use only for production context)
@@ -97,6 +113,9 @@ _Avoid_: Background job (generic), cron
 | Concept | Primary location |
 |---------|------------------|
 | Quote CRUD + conversion | `app/lib/quotes.ts`, `app/routes/_protected.quotes.$quoteId.tsx` |
+| Customer merge and duplicate detection | `app/lib/customer-merge.server.ts`, `app/routes/_protected.customers.merge.tsx` |
+| Email normalization | `app/lib/email-normalize.ts` |
+| Intake Customer resolution | `app/lib/rfq-intake/customer-resolution.server.ts` |
 | Order CRUD | `app/lib/orders.ts`, `app/routes/_protected.orders.$orderId.tsx` |
 | Order line items | `app/lib/lineItems.ts` |
 | Quote line items | `app/lib/quotes.ts` (also `app/lib/line-items.ts` for email resolver — consolidation planned) |

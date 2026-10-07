@@ -11,6 +11,7 @@ import {
 } from "~/lib/action-items.server";
 
 import SearchHeader from "~/components/SearchHeader";
+import { CustomerMatchReviewLink } from "~/components/action-items/CustomerMatchReviewLink";
 import { DeleteActionItemButton } from "~/components/action-items/DeleteActionItemButton";
 import type { ActionItem, UserRole } from "~/lib/db/schema";
 
@@ -88,9 +89,9 @@ export default function ActionItems() {
                   </div>
                   <Form method="post" className="flex flex-wrap items-center gap-3">
                     {item.isUnread && <button name="intent" value="read" className="text-sm text-blue-600">Mark read</button>}
-                    {item.type === "customer_match_review" && <button name="intent" value="resolve" className="text-sm text-green-700">Resolve</button>}
+                    {item.type === "customer_match_review" && <CustomerMatchReviewLink metadata={item.metadata} canMerge={elevated} />}
                     {elevated && item.type === "rfq_import_failure" && <button name="intent" value="retry" className="text-sm text-blue-600">Retry now</button>}
-                    {elevated && <DeleteActionItemButton id={item.id} />}
+                    {elevated && item.type !== "customer_match_review" && <DeleteActionItemButton id={item.id} />}
                     <input type="hidden" name="actionItemId" value={item.id} />
                   </Form>
                 </div>
