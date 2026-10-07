@@ -54,8 +54,28 @@ describe("RFQ outbound webhook settings", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(event),
+        redirect: "manual",
       }),
     );
+  });
+
+  it("treats a redirect response as a failed delivery", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(null, {
+        status: 307,
+        headers: { Location: "https://evil.example/hook" },
+      }),
+    );
+    const event = {
+      eventId: "event-1",
+      event: "rfq.test" as const,
+      occurredAt: "2026-09-21T00:00:00.000Z",
+      data: { test: true as const },
+    };
+
+    await expect(
+      deliverRfqWebhook("http://localhost:5678/hook", event, fetcher),
+    ).resolves.toEqual({ status: 307, ok: false });
   });
 
   it("surfaces test-event HTTP and network failures", async () => {

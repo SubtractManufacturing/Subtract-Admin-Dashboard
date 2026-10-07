@@ -27,9 +27,13 @@ export async function deliverRfqWebhook(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(event),
+    redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
-  return { status: response.status, ok: response.ok };
+  const redirected =
+    response.type === "opaqueredirect" ||
+    (response.status >= 300 && response.status < 400);
+  return { status: response.status, ok: response.ok && !redirected };
 }
 
 export async function getRfqWebhookSetting() {
