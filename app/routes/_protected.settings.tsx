@@ -2252,8 +2252,7 @@ export default function Settings() {
                           flag.key === "outbound_email_enabled" ||
                           flag.key === "price_calculator_all" ||
                           flag.key === "price_calculator_dev" ||
-                          flag.key === "stripe_payment_links" ||
-                          flag.key === "toolpath_integration",
+                          flag.key === "stripe_payment_links",
                       )
                       .sort((a: FeatureFlag, b: FeatureFlag) =>
                         a.key.localeCompare(b.key),

@@ -30,11 +30,7 @@ export async function startWorkerQueue(): Promise<PgBoss> {
   console.log("[PgBoss:Worker] Started");
 
   for (const name of Object.values(QUEUES)) {
-    if (
-      name === QUEUES.TOOLPATH_UPLOAD ||
-      name === QUEUES.RFQ_IMPORT ||
-      name === QUEUES.DRAWING_THUMBNAIL
-    ) {
+    if (name === QUEUES.RFQ_IMPORT || name === QUEUES.DRAWING_THUMBNAIL) {
       await boss.createQueue(name, { policy: "key_strict_fifo" });
     } else {
       await boss.createQueue(name);
