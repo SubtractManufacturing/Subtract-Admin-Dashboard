@@ -5,6 +5,7 @@
  */
 
 import { db } from "~/lib/db";
+import { deleteCustomerMergeRows } from "~/lib/customers";
 import { customers, quoteLineItems, quotes } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -74,5 +75,6 @@ export async function cleanupQuoteForConversion(
     .delete(quoteLineItems)
     .where(eq(quoteLineItems.id, ids.quoteLineItemId));
   await db.delete(quotes).where(eq(quotes.id, ids.quoteId));
+  await deleteCustomerMergeRows([ids.customerId]);
   await db.delete(customers).where(eq(customers.id, ids.customerId));
 }

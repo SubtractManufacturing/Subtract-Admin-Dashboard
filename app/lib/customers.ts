@@ -1,6 +1,13 @@
 import { db } from "./db/index.js"
-import { customers, orders, quotes, vendors } from "./db/schema.js"
-import { and, asc, desc, eq, inArray, max } from 'drizzle-orm'
+import {
+  customerEmailAliases,
+  customerMergeDismissals,
+  customers,
+  orders,
+  quotes,
+  vendors,
+} from "./db/schema.js"
+import { and, asc, desc, eq, inArray, max, or } from 'drizzle-orm'
 import type { Customer, Vendor } from "./db/schema.js"
 import { getCustomerAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
@@ -254,11 +261,38 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
   }
 }
 
+/**
+ * Alias rows, dismissal pairs, and merge pointers reference Customers with
+ * ON DELETE NO ACTION, so they have to go before the Customer row itself.
+ */
+export async function deleteCustomerMergeRows(
+  customerIds: number[],
+  executor: Pick<typeof db, "delete" | "update"> = db,
+): Promise<void> {
+  if (customerIds.length === 0) return;
+  await executor
+    .delete(customerEmailAliases)
+    .where(inArray(customerEmailAliases.customerId, customerIds));
+  await executor
+    .delete(customerMergeDismissals)
+    .where(
+      or(
+        inArray(customerMergeDismissals.lowCustomerId, customerIds),
+        inArray(customerMergeDismissals.highCustomerId, customerIds),
+      ),
+    );
+  await executor
+    .update(customers)
+    .set({ mergedIntoCustomerId: null })
+    .where(inArray(customers.mergedIntoCustomerId, customerIds));
+}
+
 export async function deleteCustomer(id: number): Promise<void> {
   try {
-    await db
-      .delete(customers)
-      .where(eq(customers.id, id))
+    await db.transaction(async (tx) => {
+      await deleteCustomerMergeRows([id], tx);
+      await tx.delete(customers).where(eq(customers.id, id));
+    });
   } catch (error) {
     throw new Error(`Failed to delete customer: ${error}`)
   }

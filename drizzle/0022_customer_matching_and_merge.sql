@@ -40,23 +40,26 @@ FROM (
   CROSS JOIN LATERAL (
     SELECT
       regexp_replace(
-        btrim(
+        regexp_replace(
           regexp_replace(
             CASE
-              WHEN folded ~ '<[^<>]*>' THEN btrim((regexp_match(folded, '<([^<>]*)>'))[1])
+              WHEN folded ~ '<[^<>]*>' THEN regexp_replace((regexp_match(folded, '<([^<>]*)>'))[1], '^[[:space:]]+|[[:space:]]+$', '', 'g')
               ELSE folded
             END,
             '^mailto:',
             '',
             'i'
-          )
+          ),
+          '^[[:space:]]+|[[:space:]]+$',
+          '',
+          'g'
         ),
         '[.,;:!?]+$',
         ''
       ) AS prepared
     FROM (
       SELECT
-        btrim(
+        regexp_replace(
           normalize(
             regexp_replace(
               "customers"."email",
@@ -73,7 +76,10 @@ FROM (
               'g'
             ),
             NFKC
-          )
+          ),
+          '^[[:space:]]+|[[:space:]]+$',
+          '',
+          'g'
         ) AS folded
     ) folded_email
   ) prepared_email
