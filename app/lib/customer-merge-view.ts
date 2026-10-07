@@ -91,9 +91,16 @@ export function candidateIdsFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): number[] {
   const raw = metadata?.candidateCustomerIds;
-  return Array.isArray(raw)
+  const ids = Array.isArray(raw)
     ? raw.filter((value): value is number => Number.isInteger(value))
     : [];
+  // Items created before this PR stored the Customer intake created separately
+  // from the pre-existing matches. Review has to include that Customer too.
+  const createdCustomerId = metadata?.createdCustomerId;
+  if (Number.isInteger(createdCustomerId) && !ids.includes(createdCustomerId as number)) {
+    ids.push(createdCustomerId as number);
+  }
+  return ids;
 }
 
 function timeOf(value: DateLike | null): number {

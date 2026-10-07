@@ -63,6 +63,27 @@ describe("DuplicateGroupCard", () => {
     expect(onReview).toHaveBeenCalledWith(1, 2);
   });
 
+  it("keeps survivor radios independent across cards that share Customers", () => {
+    const shared = group();
+    render(
+      <>
+        <DuplicateGroupCard group={shared} onReview={vi.fn()} onDismiss={vi.fn()} />
+        <DuplicateGroupCard group={shared} onReview={vi.fn()} onDismiss={vi.fn()} />
+      </>,
+    );
+
+    const busy = screen.getAllByRole("radio", { name: /Busy/ });
+    const quiet = screen.getAllByRole("radio", { name: /Quiet/ });
+    expect(busy[0]).toBeChecked();
+    expect(busy[1]).toBeChecked();
+
+    fireEvent.click(quiet[1]);
+
+    expect(busy[0]).toBeChecked();
+    expect(quiet[1]).toBeChecked();
+    expect(busy[1]).not.toBeChecked();
+  });
+
   it("dismisses the whole group as not duplicates", () => {
     const onDismiss = vi.fn();
     render(<DuplicateGroupCard group={group()} onReview={vi.fn()} onDismiss={onDismiss} />);

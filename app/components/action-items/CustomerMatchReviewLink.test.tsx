@@ -33,6 +33,21 @@ describe("CustomerMatchReviewLink", () => {
     expect(screen.getByText("Needs an Admin or Dev to review")).toBeInTheDocument();
   });
 
+  it("includes the Customer intake created on older review items", () => {
+    render(
+      <MemoryRouter>
+        <CustomerMatchReviewLink
+          metadata={{ candidateCustomerIds: [2, 4], createdCustomerId: 9 }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: "Review & merge" })).toHaveAttribute(
+      "href",
+      "/customers/merge?ids=2,4,9",
+    );
+  });
+
   it("still opens the merge tool for an older item without candidates", () => {
     render(
       <MemoryRouter>

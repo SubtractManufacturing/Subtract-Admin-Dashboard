@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import Button from "~/components/shared/Button";
 import {
@@ -24,6 +24,7 @@ function formatDate(value: string | Date | null) {
 /** One suggested duplicate group: pick a survivor, review a merge, or dismiss. */
 export function DuplicateGroupCard({ group, onReview, onDismiss, onUndismiss }: Props) {
   const [survivorId, setSurvivorId] = useState(() => defaultSurvivorId(group.customers));
+  const radioName = useId();
   const nameOf = (id: number) =>
     group.customers.find((customer) => customer.id === id)?.displayName ?? `#${id}`;
   const survivor = group.customers.find((customer) => customer.id === survivorId);
@@ -57,7 +58,7 @@ export function DuplicateGroupCard({ group, onReview, onDismiss, onUndismiss }: 
             <label className="flex flex-1 cursor-pointer items-start gap-3">
               <input
                 type="radio"
-                name={`survivor-${group.customers[0].id}`}
+                name={radioName}
                 checked={survivorId === customer.id}
                 onChange={() => setSurvivorId(customer.id)}
                 className="mt-1"
