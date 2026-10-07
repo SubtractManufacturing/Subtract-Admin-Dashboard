@@ -84,7 +84,7 @@ The image `HEALTHCHECK` (`scripts/healthcheck.mjs`) picks the endpoint from `CON
 Always set `CONTAINER_ROLE=worker` for worker containers. Overriding the command with `node build/worker.js` skips that role, and the healthcheck would then probe the web port. If your platform (Coolify, ECS, Kubernetes, ...) defines its own healthcheck, point worker services at `http://<container>:3001/health`.
 
 Notes:
-- Worker only requires `DATABASE_URL`
+- The Worker requires `DATABASE_URL` plus the storage settings used by its jobs
 - Multiple worker containers can run concurrently (PG Boss uses row locking for safe distribution)
 
 ## Environment Variables
@@ -110,8 +110,13 @@ DATABASE_URL_FILE=/run/secrets/database_url
 DATABASE_DIRECT_URL_FILE=/run/secrets/database_direct_url
 SUPABASE_SERVICE_ROLE_KEY_FILE=/run/secrets/supabase_service_role_key
 S3_SECRET_ACCESS_KEY_FILE=/run/secrets/s3_secret_access_key
+INTAKE_S3_SECRET_ACCESS_KEY_FILE=/run/secrets/intake_s3_secret_access_key
 STRIPE_SECRET_KEY_FILE=/run/secrets/stripe_secret_key
 ```
+
+RFQ intake reads WordPress submissions from a dedicated bucket configured with `INTAKE_S3_ENDPOINT`, `INTAKE_S3_REGION`, `INTAKE_S3_ACCESS_KEY_ID`, `INTAKE_S3_SECRET_ACCESS_KEY`, and `INTAKE_S3_BUCKET`. When `RFQ_INTAKE_ENABLED=true`, provide all five settings to both the **web** and **worker** containers. The web container uses read/list access only for the manual Sync RFQs action on the Quotes page. The Worker remains the sole importer, canonical-storage writer, and intake-prefix deleter. The shared 30-second manual-sync cooldown bounds repeated full-prefix scan cost across users and web instances. The Worker's startup log reports whether it copies into the application bucket server-side or by streaming (`copy_strategy`).
+
+Every `INTAKE_S3_*` setting also supports its corresponding `*_FILE` form (for example, `INTAKE_S3_ENDPOINT_FILE` and `INTAKE_S3_SECRET_ACCESS_KEY_FILE`) under the file-based-secret rules above. `scripts/convert-env-to-files.sh` converts all five intake settings for local testing.
 
 Rules:
 - If `FOO_FILE` is a non-empty path, the file **wins** — there is no fallback to `FOO` if the file is missing, unreadable, or empty.

@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import { createRawIntakeArchive } from "./archive";
-import type { RfqStorage, StoredObject } from "./types";
+import type { RfqCanonicalStorage, RfqIntakeStorage, StoredObject } from "./types";
 
 describe("RFQ raw intake archive", () => {
   it("finalizes an archive made from asynchronously delivered object streams", async () => {
@@ -18,7 +18,7 @@ describe("RFQ raw intake archive", () => {
       etag: `etag-${key}`,
       lastModified: new Date("2026-09-22T00:00:00Z"),
     });
-    const storage: RfqStorage = {
+    const intake: Pick<RfqIntakeStorage, "list" | "head" | "read"> = {
       async list(prefix) {
         return {
           objects: [...source]
@@ -28,7 +28,7 @@ describe("RFQ raw intake archive", () => {
         };
       },
       async head(key) {
-        const body = source.get(key) ?? uploaded.get(key);
+        const body = source.get(key);
         return body ? metadata(key, body) : null;
       },
       async read(key) {
@@ -41,12 +41,8 @@ describe("RFQ raw intake archive", () => {
           })(),
         );
       },
-      async readJson() {
-        throw new Error("Not used");
-      },
-      async copy() {
-        throw new Error("Not used");
-      },
+    };
+    const canonical: Pick<RfqCanonicalStorage, "uploadStream"> = {
       async uploadStream(key, body) {
         expect(body).toBeInstanceOf(Readable);
         const chunks: Buffer[] = [];
@@ -55,14 +51,12 @@ describe("RFQ raw intake archive", () => {
         uploaded.set(key, value);
         return metadata(key, value);
       },
-      async deletePrefix() {
-        throw new Error("Not used");
-      },
     };
 
     const result = await Promise.race([
       createRawIntakeArchive({
-        storage,
+        intake,
+        canonical,
         prefix: "intake/session/",
         destinationKey: "archives/test.zip",
       }),
@@ -75,5 +69,7 @@ describe("RFQ raw intake archive", () => {
     expect(uploaded.get("archives/test.zip")?.toString("latin1")).toContain(
       "archive-index.json",
     );
+    // The archive is written to the application bucket, not back into the intake bucket.
+    expect(source.has("archives/test.zip")).toBe(false);
   });
 });

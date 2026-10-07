@@ -48,6 +48,25 @@ const adminNavItems: AdminNavItem[] = [
     ),
   },
   {
+    to: "/admin/rfq-intake",
+    label: "RFQ Intake",
+    icon: (
+      <svg
+        className="w-5 h-5"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.5}
+          d="M8.25 6.75h7.5M8.25 10.5h7.5m-7.5 3.75h3m-6.75 6h15a2.25 2.25 0 002.25-2.25V4.5a2.25 2.25 0 00-2.25-2.25h-15A2.25 2.25 0 002.25 4.5V18a2.25 2.25 0 002.25 2.25z"
+        />
+      </svg>
+    ),
+  },
+  {
     to: "/admin/data-retention",
     label: "Data Retention",
     icon: (

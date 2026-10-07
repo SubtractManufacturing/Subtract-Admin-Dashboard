@@ -1,14 +1,12 @@
 import type { Job } from "pg-boss";
 
-import { scanForReceipts } from "../../rfq-intake/discovery";
 import { createRfqImporter } from "../../rfq-intake/importer";
+import { httpRfqNotifier } from "../../rfq-intake/outbound-webhook.server";
+import { createPostgresRfqPersistence } from "../../rfq-intake/postgres.server";
+import { scanRfqReceipts } from "../../rfq-intake/scan.server";
 import {
-  createPostgresRfqPersistence,
-  getDueRfqLedgerReceiptKeys,
-  getRfqLedgerSummaries,
-} from "../../rfq-intake/postgres.server";
-import {
-  awsRfqStorage,
+  awsRfqCanonicalStorage,
+  awsRfqIntakeStorage,
   getRfqStorageBucket,
   isRfqIntakeEnabled,
 } from "../../rfq-intake/storage.server";
@@ -41,11 +39,13 @@ const queue = {
 };
 
 const importer = createRfqImporter({
-  storage: awsRfqStorage,
+  intake: awsRfqIntakeStorage,
+  canonical: awsRfqCanonicalStorage,
   persistence: createPostgresRfqPersistence({
     attachmentBucket: getRfqStorageBucket(),
   }),
   queue,
+  notifier: httpRfqNotifier,
   now: () => new Date(),
 });
 
@@ -91,14 +91,7 @@ export async function handleRfqImport(jobs: Job<RfqImportPayload>[]) {
 
 export async function handleRfqReceiptScan(jobs: Job<RfqReceiptScanPayload>[]) {
   void jobs;
-  const outcome = await scanForReceipts({
-    enabled: isRfqIntakeEnabled(),
-    storage: awsRfqStorage,
-    queue,
-    now: () => new Date(),
-    getLedgerSummaries: getRfqLedgerSummaries,
-    getDueLedgerReceiptKeys: getDueRfqLedgerReceiptKeys,
-  });
+  const outcome = await scanRfqReceipts();
   console.log(
     `[RFQ Intake] scan discovered=${outcome.discovered} enqueued=${outcome.enqueued} skipped=${outcome.skipped} skipReasons=${JSON.stringify(outcome.skipReasons)}`,
   );

@@ -19,7 +19,7 @@ import { mergeCustomers } from "../customer-merge.server";
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
 import { createRfqImporter } from "./importer";
 import { createPostgresRfqPersistence } from "./postgres.server";
-import { MemoryRfqStorage } from "./test-support/memory-storage";
+import { MemoryStorage } from "./test-support/memory-storage";
 
 const tag = randomUUID().slice(0, 8);
 const emailFor = (name: string) => `${name}-${tag}@example.invalid`;
@@ -109,7 +109,7 @@ async function submitRfq(contact: Contact) {
   const manifestKey = `intake/${sessionId}/meta/manifest.json`;
   const cadKey = `intake/${sessionId}/parts/${randomUUID()}_bracket.step`;
 
-  const storage = new MemoryRfqStorage();
+  const storage = new MemoryStorage();
   storage.put(receiptKey, {
     receipt_number: receiptNumber,
     session_id: sessionId,
@@ -140,7 +140,7 @@ async function submitRfq(contact: Contact) {
   storage.put(cadKey, "STEP", "application/step");
 
   const importer = createRfqImporter({
-    storage,
+    ...storage.buckets,
     persistence,
     queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
     now: () => new Date("2026-09-21T00:00:00Z"),

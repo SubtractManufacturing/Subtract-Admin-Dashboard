@@ -9,6 +9,7 @@ import { IntakeValidationError } from "./package";
 import {
   actionItems,
   attachments,
+  customers,
   eventLogs,
   notes,
   quoteAttachments,
@@ -111,6 +112,7 @@ export function createPostgresRfqPersistence(input: {
 
   async claimImport(receipt, now) {
     return db.transaction(async (tx) => {
+      let createdLedger = false;
       let [ledger] = await tx
         .select()
         .from(rfqImportLedger)
@@ -118,7 +120,7 @@ export function createPostgresRfqPersistence(input: {
         .for("update")
         .limit(1);
       if (!ledger) {
-        await tx
+        const inserted = await tx
           .insert(rfqImportLedger)
           .values({
             receiptNumber: receipt.receiptNumber,
@@ -126,7 +128,9 @@ export function createPostgresRfqPersistence(input: {
             receiptKey: receipt.receiptKey,
             status: "pending",
           })
-          .onConflictDoNothing({ target: rfqImportLedger.receiptKey });
+          .onConflictDoNothing({ target: rfqImportLedger.receiptKey })
+          .returning({ id: rfqImportLedger.id });
+        createdLedger = inserted.length > 0;
         [ledger] = await tx
           .select()
           .from(rfqImportLedger)
@@ -161,6 +165,27 @@ export function createPostgresRfqPersistence(input: {
           "Receipt number was reused by a different intake package",
           "security",
         );
+      }
+      let receivedEventId: string | null = null;
+      if (createdLedger) {
+        const [receivedEvent] = await tx
+          .insert(eventLogs)
+          .values({
+            entityType: "rfq_import",
+            entityId: rfqImportEntityId(receipt.receiptKey),
+            eventType: "rfq_intake_received",
+            eventCategory: "system",
+            title: "RFQ intake received",
+            description: "WordPress RFQ intake submission received",
+            metadata: {
+              receiptNumber: receipt.receiptNumber,
+              sessionId: receipt.sessionId,
+            },
+            userEmail: "System",
+            createdAt: now,
+          })
+          .returning({ id: eventLogs.id });
+        receivedEventId = receivedEvent.id;
       }
       if (ledger.status === "completed" && ledger.quoteId) {
         return { kind: "already_completed" as const, quoteId: ledger.quoteId };
@@ -216,7 +241,11 @@ export function createPostgresRfqPersistence(input: {
           updatedAt: now,
         })
         .where(eq(rfqImportLedger.id, ledger.id));
-      return { kind: "claimed" as const, attemptCount };
+      return {
+        kind: "claimed" as const,
+        attemptCount,
+        receivedEventId,
+      };
     });
   },
 
@@ -239,6 +268,15 @@ export function createPostgresRfqPersistence(input: {
         prepared.manifest.contact,
         prepared.now,
       );
+      const [resolvedCustomer] = await tx
+        .select({ displayName: customers.displayName })
+        .from(customers)
+        .where(eq(customers.id, customerId))
+        .limit(1);
+      if (!resolvedCustomer) {
+        throw new Error("RFQ import customer resolution did not return a Customer");
+      }
+      const customerName = resolvedCustomer.displayName;
 
       const year = prepared.now.getFullYear().toString().slice(-2);
       const month = String(prepared.now.getMonth() + 1);
@@ -355,17 +393,23 @@ export function createPostgresRfqPersistence(input: {
         createdAt: prepared.now,
         updatedAt: prepared.now,
       });
-      await tx.insert(eventLogs).values({
-        entityType: "quote",
-        entityId: String(quote.id),
-        eventType: "rfq_intake_imported",
-        eventCategory: "system",
-        title: "RFQ intake imported",
-        description: `Created ${quoteNumber} from WordPress RFQ intake`,
-        metadata: { source: "wordpress_rfq", receiptNumber: prepared.receipt.receiptNumber },
-        userEmail: "System",
-        createdAt: prepared.now,
-      });
+      const [importedEvent] = await tx
+        .insert(eventLogs)
+        .values({
+          entityType: "quote",
+          entityId: String(quote.id),
+          eventType: "rfq_intake_imported",
+          eventCategory: "system",
+          title: "RFQ intake imported",
+          description: `Created ${quoteNumber} from WordPress RFQ intake`,
+          metadata: {
+            source: "wordpress_rfq",
+            receiptNumber: prepared.receipt.receiptNumber,
+          },
+          userEmail: "System",
+          createdAt: prepared.now,
+        })
+        .returning({ id: eventLogs.id });
 
       if (matchedCustomerIds.length > 1) {
         await tx.insert(actionItems).values({
@@ -403,6 +447,12 @@ export function createPostgresRfqPersistence(input: {
 
       return {
         quoteId: quote.id,
+        quoteNumber,
+        customerId,
+        customerName,
+        partCount: prepared.parts.length,
+        ndaRequired: prepared.manifest.ndaRequired,
+        importedEventId: importedEvent.id,
         quotePartIds: prepared.parts.map((part) => part.quotePartId),
         drawingAttachmentIds,
       };
@@ -410,7 +460,8 @@ export function createPostgresRfqPersistence(input: {
   },
 
   async recordFailure(input) {
-    await db.transaction(async (tx) => {
+    return db.transaction(async (tx) => {
+      let createdLedger = false;
       let [ledger] = await tx
         .select()
         .from(rfqImportLedger)
@@ -434,7 +485,7 @@ export function createPostgresRfqPersistence(input: {
             );
           }
         }
-        await tx
+        const inserted = await tx
           .insert(rfqImportLedger)
           .values({
             receiptNumber: input.receipt.receiptNumber,
@@ -442,7 +493,9 @@ export function createPostgresRfqPersistence(input: {
             receiptKey: input.receipt.receiptKey,
             status: "pending",
           })
-          .onConflictDoNothing({ target: rfqImportLedger.receiptKey });
+          .onConflictDoNothing({ target: rfqImportLedger.receiptKey })
+          .returning({ id: rfqImportLedger.id });
+        createdLedger = inserted.length > 0;
         [ledger] = await tx
           .select()
           .from(rfqImportLedger)
@@ -463,6 +516,30 @@ export function createPostgresRfqPersistence(input: {
           "security",
         );
       }
+      if (ledger.status === "permanent_failure") {
+        return { receivedEventId: null, failedEventId: null };
+      }
+      let receivedEventId: string | null = null;
+      if (createdLedger) {
+        const [receivedEvent] = await tx
+          .insert(eventLogs)
+          .values({
+            entityType: "rfq_import",
+            entityId: importEntityId,
+            eventType: "rfq_intake_received",
+            eventCategory: "system",
+            title: "RFQ intake received",
+            description: "WordPress RFQ intake submission received",
+            metadata: {
+              receiptNumber: knownReceiptNumber,
+              sessionId: input.receipt.sessionId,
+            },
+            userEmail: "System",
+            createdAt: input.now,
+          })
+          .returning({ id: eventLogs.id });
+        receivedEventId = receivedEvent.id;
+      }
       await tx
         .update(rfqImportLedger)
         .set({
@@ -478,23 +555,30 @@ export function createPostgresRfqPersistence(input: {
           updatedAt: input.now,
         })
         .where(eq(rfqImportLedger.id, ledger.id));
-      await tx.insert(eventLogs).values({
-        entityType: "rfq_import",
-        entityId: importEntityId,
-        eventType: input.nextAttemptAt ? "rfq_import_retry_scheduled" : "rfq_import_failed",
-        eventCategory: "system",
-        title: input.nextAttemptAt ? "RFQ import retry scheduled" : "RFQ import failed",
-        description: input.safeDetail,
-        metadata: {
-          receiptKey: input.receipt.receiptKey,
-          receiptNumber: knownReceiptNumber,
-          classification: input.classification,
-          attemptCount: input.attemptCount,
-          nextAttemptAt: input.nextAttemptAt?.toISOString() ?? null,
-        },
-        userEmail: "System",
-        createdAt: input.now,
-      });
+      const [failureEvent] = await tx
+        .insert(eventLogs)
+        .values({
+          entityType: "rfq_import",
+          entityId: importEntityId,
+          eventType: input.nextAttemptAt
+            ? "rfq_import_retry_scheduled"
+            : "rfq_import_failed",
+          eventCategory: "system",
+          title: input.nextAttemptAt
+            ? "RFQ import retry scheduled"
+            : "RFQ import failed",
+          description: input.safeDetail,
+          metadata: {
+            receiptKey: input.receipt.receiptKey,
+            receiptNumber: knownReceiptNumber,
+            classification: input.classification,
+            attemptCount: input.attemptCount,
+            nextAttemptAt: input.nextAttemptAt?.toISOString() ?? null,
+          },
+          userEmail: "System",
+          createdAt: input.now,
+        })
+        .returning({ id: eventLogs.id });
       const actionValues = {
         status: "active" as const,
         title: rfqImportFailureTitle(knownReceiptNumber, input.receipt.receiptKey),
@@ -523,6 +607,10 @@ export function createPostgresRfqPersistence(input: {
           targetWhere: sql`type = 'rfq_import_failure' and is_archived = false`,
           set: actionValues,
         });
+      return {
+        receivedEventId,
+        failedEventId: input.nextAttemptAt ? null : failureEvent.id,
+      };
     });
   },
 

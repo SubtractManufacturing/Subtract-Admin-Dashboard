@@ -8,7 +8,6 @@ import {
   type MockJobPayload,
   type PurgeArchivedLineItemsPayload,
   type SendEmailPayload,
-  type ToolpathStaleCleanupPayload,
   type RfqImportPayload,
   type RfqReceiptScanPayload,
 } from "../app/lib/queue/types";
@@ -16,9 +15,6 @@ import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
 import { handleDrawingThumbnail } from "../app/lib/queue/handlers/drawing-thumbnail";
 import { handlePurgeArchivedLineItems } from "../app/lib/queue/handlers/purge-archived-line-items";
 import { handleSendEmail } from "../app/lib/queue/handlers/send-email";
-import { handleToolpathReportPoll } from "../app/lib/queue/handlers/toolpath-report-poll";
-import { handleToolpathStaleCleanup } from "../app/lib/queue/handlers/toolpath-stale-cleanup";
-import { handleToolpathUpload } from "../app/lib/queue/handlers/toolpath-upload";
 import {
   checkWorkerQueueDatabase,
   startWorkerQueue,
@@ -139,36 +135,6 @@ async function main() {
     { missed: "once" },
   );
   console.log(`[Worker] Scheduled every 5 minutes: ${QUEUES.RFQ_RECEIPT_SCAN}`);
-
-  await boss.work(
-    QUEUES.TOOLPATH_UPLOAD,
-    { batchSize: 1, includeMetadata: true },
-    handleToolpathUpload,
-  );
-  console.log(`[Worker] Listening on queue: ${QUEUES.TOOLPATH_UPLOAD}`);
-
-  await boss.work(
-    QUEUES.TOOLPATH_REPORT_POLL,
-    { batchSize: 1, includeMetadata: true },
-    handleToolpathReportPoll,
-  );
-  console.log(`[Worker] Listening on queue: ${QUEUES.TOOLPATH_REPORT_POLL}`);
-
-  await boss.work<ToolpathStaleCleanupPayload>(
-    QUEUES.TOOLPATH_STALE_CLEANUP,
-    { batchSize: 1 },
-    handleToolpathStaleCleanup,
-  );
-  console.log(`[Worker] Listening on queue: ${QUEUES.TOOLPATH_STALE_CLEANUP}`);
-
-  await boss.schedule(
-    QUEUES.TOOLPATH_STALE_CLEANUP,
-    "*/5 * * * *",
-    { triggeredAt: new Date().toISOString() },
-  );
-  console.log(
-    `[Worker] Scheduled every 5 minutes: ${QUEUES.TOOLPATH_STALE_CLEANUP}`,
-  );
 
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {

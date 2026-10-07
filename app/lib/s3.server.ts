@@ -17,46 +17,73 @@ const S3_BUCKET = getEnv('S3_BUCKET') || 'subtract-attachments'
 // Create S3 client lazily to avoid initialization errors
 let s3Client: S3Client | null = null
 
+export interface S3ClientConfig {
+  endpoint?: string
+  region: string
+  accessKeyId: string
+  secretAccessKey: string
+}
+
+/** Builds an S3 client with the transport settings shared by every bucket the app talks to. */
+export function createS3Client(config: S3ClientConfig): S3Client {
+  const { endpoint } = config
+  const useCustomEndpoint = Boolean(endpoint)
+  return new S3Client({
+    region: config.region,
+    endpoint,
+    credentials: {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+    },
+    forcePathStyle: useCustomEndpoint,
+    // S3Mock and other local emulators do not implement SDK default CRC32 multipart checksums.
+    ...(useCustomEndpoint
+      ? {
+          requestChecksumCalculation: RequestChecksumCalculation.WHEN_REQUIRED,
+          responseChecksumValidation: ResponseChecksumValidation.WHEN_REQUIRED,
+        }
+      : {}),
+    requestHandler: new NodeHttpHandler({
+      httpsAgent: new https.Agent({
+        maxSockets: 25,
+        keepAlive: false, // Disable keep-alive to avoid stale connections
+        rejectUnauthorized: !endpoint || !endpoint.includes('localhost'),
+        secureProtocol: 'TLSv1_2_method',
+        // Additional SSL options to handle edge cases
+        ciphers: 'HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA',
+        honorCipherOrder: true,
+      }),
+      connectionTimeout: 15000,
+      socketTimeout: 120000,
+    }),
+    maxAttempts: 3,
+    retryMode: 'adaptive',
+  })
+}
+
 export function getS3Client() {
   if (!s3Client) {
     if (!S3_ACCESS_KEY_ID || !S3_SECRET_ACCESS_KEY) {
       throw new Error('S3 credentials not configured. Please set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY environment variables.')
     }
 
-    const useCustomEndpoint = Boolean(S3_ENDPOINT)
-    s3Client = new S3Client({
-      region: S3_REGION,
+    s3Client = createS3Client({
       endpoint: S3_ENDPOINT,
-      credentials: {
-        accessKeyId: S3_ACCESS_KEY_ID,
-        secretAccessKey: S3_SECRET_ACCESS_KEY,
-      },
-      forcePathStyle: useCustomEndpoint,
-      // S3Mock and other local emulators do not implement SDK default CRC32 multipart checksums.
-      ...(useCustomEndpoint
-        ? {
-            requestChecksumCalculation: RequestChecksumCalculation.WHEN_REQUIRED,
-            responseChecksumValidation: ResponseChecksumValidation.WHEN_REQUIRED,
-          }
-        : {}),
-      requestHandler: new NodeHttpHandler({
-        httpsAgent: new https.Agent({
-          maxSockets: 25,
-          keepAlive: false, // Disable keep-alive to avoid stale connections
-          rejectUnauthorized: !S3_ENDPOINT || !S3_ENDPOINT.includes('localhost'),
-          secureProtocol: 'TLSv1_2_method',
-          // Additional SSL options to handle edge cases
-          ciphers: 'HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA',
-          honorCipherOrder: true,
-        }),
-        connectionTimeout: 15000,
-        socketTimeout: 120000,
-      }),
-      maxAttempts: 3,
-      retryMode: 'adaptive',
+      region: S3_REGION,
+      accessKeyId: S3_ACCESS_KEY_ID,
+      secretAccessKey: S3_SECRET_ACCESS_KEY,
     })
   }
   return s3Client
+}
+
+/** Connection identity of the app bucket client, used to decide whether server-side copies are possible. */
+export function getAppS3Identity() {
+  return {
+    endpoint: S3_ENDPOINT,
+    region: S3_REGION,
+    accessKeyId: S3_ACCESS_KEY_ID ?? '',
+  }
 }
 
 export interface UploadParams {

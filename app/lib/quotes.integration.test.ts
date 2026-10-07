@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { businessDaysFrom } from "./business-days";
+import { getEnv } from "./env.server";
 import { getOrder, updateOrder } from "./orders";
 import { convertQuoteToOrder, getQuote, updateQuote } from "./quotes";
 import { getEventsByEntity } from "./events";
@@ -21,9 +22,9 @@ describe("convertQuoteToOrder delivery fields", () => {
   let convertedOrderId: number | undefined;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) {
+    if (!getEnv("DATABASE_URL")) {
       throw new Error(
-        "DATABASE_URL is not set. Set it to a migrated local Postgres instance to run integration tests.",
+        "DATABASE_URL or DATABASE_URL_FILE is not set. Configure a migrated Postgres instance to run integration tests.",
       );
     }
     seeded = await seedQuoteForConversion();

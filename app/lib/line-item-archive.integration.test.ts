@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
+import { getEnv } from "./env.server";
 import {
   orderLineItems,
   parts,
@@ -43,9 +44,9 @@ describe("line item archive lifecycle", () => {
   let seeded: SeededLineItemArchiveIds;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) {
+    if (!getEnv("DATABASE_URL")) {
       throw new Error(
-        "DATABASE_URL is not set. Set it to a migrated local Postgres instance to run integration tests.",
+        "DATABASE_URL or DATABASE_URL_FILE is not set. Configure a migrated Postgres instance to run integration tests.",
       );
     }
     seeded = await seedLineItemArchiveFixture();
