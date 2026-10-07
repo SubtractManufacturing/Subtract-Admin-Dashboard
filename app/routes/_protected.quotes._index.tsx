@@ -27,6 +27,8 @@ import type {
 } from "~/lib/quotes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getNextQuoteNumber } from "~/lib/number-generator";
+import { isRfqIntakeEnabled } from "~/lib/rfq-intake/storage.server";
+import { syncRfqIntake } from "~/lib/rfq-intake/sync.server";
 
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
@@ -34,6 +36,7 @@ import ViewToggle, { useViewToggle } from "~/components/shared/ViewToggle";
 import { DataTable } from "~/components/shared/DataTable";
 import { listCardStyles, statusStyles } from "~/utils/tw-styles";
 import NewQuoteModal from "~/components/quotes/NewQuoteModal";
+import { RfqIntakeSync } from "~/components/quotes/RfqIntakeSync";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
@@ -71,6 +74,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       vendors,
       user,
       userDetails,
+      rfqIntakeEnabled: isRfqIntakeEnabled(),
     }),
     headers
   );
@@ -125,11 +129,30 @@ export async function action({ request }: ActionFunctionArgs) {
           return json({ error: result.error }, { status: 400 });
         }
       }
+      case "syncRfqIntake": {
+        const result = await syncRfqIntake();
+        return json({
+          intent: "syncRfqIntake" as const,
+          success: true as const,
+          ...result,
+        });
+      }
       default:
         return json({ error: "Invalid intent" }, { status: 400 });
     }
   } catch (error) {
     console.error("Quote action error:", error);
+    if (intent === "syncRfqIntake") {
+      return json(
+        {
+          intent: "syncRfqIntake" as const,
+          success: false as const,
+          error:
+            "Unable to sync RFQs. Please try again later or report this issue.",
+        },
+        { status: 500 },
+      );
+    }
     return json({ error: "Failed to process quote action" }, { status: 500 });
   }
 }
@@ -138,6 +161,7 @@ export default function QuotesIndex() {
   const {
     quotes,
     customers,
+    rfqIntakeEnabled,
   } = useLoaderData<typeof loader>();
   const archiveFetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -262,6 +286,7 @@ export default function QuotesIndex() {
           </h2>
 
           <div className="flex flex-wrap gap-3 items-center justify-end">
+            <RfqIntakeSync enabled={rfqIntakeEnabled} />
             <ViewToggle view={view} onChange={setView} />
             <select
               id="status-filter"

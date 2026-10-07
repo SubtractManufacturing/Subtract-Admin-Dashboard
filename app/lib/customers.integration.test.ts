@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getCustomerQuotes, getCustomers } from "./customers";
+import { getEnv } from "./env.server";
 import {
   cleanupCustomersSortFixture,
   seedCustomersSortFixture,
@@ -18,9 +19,9 @@ describe("customer quote history", () => {
   let seeded: SeededCustomersSortIds;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) {
+    if (!getEnv("DATABASE_URL")) {
       throw new Error(
-        "DATABASE_URL is not set. Set it to a migrated local Postgres instance to run integration tests.",
+        "DATABASE_URL or DATABASE_URL_FILE is not set. Configure a migrated Postgres instance to run integration tests.",
       );
     }
 
@@ -59,9 +60,9 @@ describe("customer list sorting", () => {
   let seeded: SeededCustomersSortIds;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) {
+    if (!getEnv("DATABASE_URL")) {
       throw new Error(
-        "DATABASE_URL is not set. Set it to a migrated local Postgres instance to run integration tests.",
+        "DATABASE_URL or DATABASE_URL_FILE is not set. Configure a migrated Postgres instance to run integration tests.",
       );
     }
 

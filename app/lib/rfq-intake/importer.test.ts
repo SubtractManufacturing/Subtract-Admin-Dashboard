@@ -1,16 +1,15 @@
-import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
 import wordpressReceipt from "./fixtures/wordpress-receipt.json";
 import { createRfqImporter, safeErrorDetail } from "./importer";
+import { MemoryRfqNotifier } from "./outbound-webhook";
 import type {
   PreparedImport,
   RfqPersistence,
   RfqQueue,
-  RfqStorage,
-  StoredObject,
 } from "./types";
+import { MemoryStorage } from "./test-support/memory-storage";
 
 const SESSION_ID = "018f0f7d-9f65-7eb4-bf9c-0fca82a87a10";
 const PART_ID = "018f0f7d-9f65-7eb4-bf9c-0fca82a87a20";
@@ -42,86 +41,20 @@ describe("safeErrorDetail", () => {
   });
 });
 
-class MemoryStorage implements RfqStorage {
-  readonly objects = new Map<string, { body: Buffer; contentType: string }>();
-
-  put(key: string, value: unknown, contentType = "application/json") {
-    const body = Buffer.isBuffer(value)
-      ? value
-      : Buffer.from(typeof value === "string" ? value : JSON.stringify(value));
-    this.objects.set(key, { body, contentType });
-  }
-
-  private metadata(key: string): StoredObject | null {
-    const object = this.objects.get(key);
-    return object
-      ? {
-          key,
-          size: object.body.length,
-          contentType: object.contentType,
-          etag: `etag-${key}`,
-          lastModified: new Date("2026-09-20T12:00:00Z"),
-        }
-      : null;
-  }
-
-  async list(prefix: string) {
-    return {
-      objects: [...this.objects.keys()]
-        .filter((key) => key.startsWith(prefix))
-        .sort()
-        .map((key) => this.metadata(key)!),
-      nextCursor: null,
-    };
-  }
-
-  async head(key: string) {
-    return this.metadata(key);
-  }
-
-  async read(key: string) {
-    const object = this.objects.get(key);
-    if (!object) throw new Error(`Missing ${key}`);
-    return Readable.from(object.body);
-  }
-
-  async readJson(key: string) {
-    const object = this.objects.get(key);
-    if (!object) throw new Error(`Missing ${key}`);
-    return JSON.parse(object.body.toString("utf8"));
-  }
-
-  async copy(sourceKey: string, destinationKey: string) {
-    const source = this.objects.get(sourceKey);
-    if (!source) throw new Error(`Missing ${sourceKey}`);
-    this.objects.set(destinationKey, { ...source, body: Buffer.from(source.body) });
-  }
-
-  async uploadStream(key: string, body: Readable, contentType: string) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of body) chunks.push(Buffer.from(chunk));
-    this.objects.set(key, { body: Buffer.concat(chunks), contentType });
-    return this.metadata(key)!;
-  }
-
-  async deletePrefix(prefix: string) {
-    for (const key of this.objects.keys()) {
-      if (key.startsWith(prefix)) this.objects.delete(key);
-    }
-  }
-}
-
 class MemoryPersistence implements RfqPersistence {
   committed: PreparedImport | null = null;
   failure: Parameters<RfqPersistence["recordFailure"]>[0] | null = null;
   claimAttemptCount = 1;
   ledgerAttemptCount = 0;
   ledgerNextAttemptAt: Date | null = null;
+  ledgerExists = false;
 
   async findImportByReceiptKey(): Promise<
     Awaited<ReturnType<RfqPersistence["findImportByReceiptKey"]>>
   > {
-    if (this.ledgerAttemptCount === 0 && !this.ledgerNextAttemptAt) return null;
+    if (!this.ledgerExists && this.ledgerAttemptCount === 0 && !this.ledgerNextAttemptAt) {
+      return null;
+    }
     return {
       receipt: {
         receiptNumber: null,
@@ -138,22 +71,40 @@ class MemoryPersistence implements RfqPersistence {
   }
 
   async claimImport() {
-    return { kind: "claimed" as const, attemptCount: this.claimAttemptCount };
+    const isNew = !this.ledgerExists;
+    this.ledgerExists = true;
+    return {
+      kind: "claimed" as const,
+      attemptCount: this.claimAttemptCount,
+      receivedEventId: isNew ? "received-event" : null,
+    };
   }
 
   async commitImport(prepared: PreparedImport) {
     this.committed = prepared;
     return {
       quoteId: 42,
+      quoteNumber: "Q269-00001",
+      customerId: 7,
+      customerName: "Analytical Engines - Ada Lovelace",
+      partCount: prepared.parts.length,
+      ndaRequired: prepared.manifest.ndaRequired,
+      importedEventId: "imported-event",
       quotePartIds: prepared.parts.map((part) => part.quotePartId),
       drawingAttachmentIds: [],
     };
   }
 
   async recordFailure(input: Parameters<RfqPersistence["recordFailure"]>[0]) {
+    const isNew = !this.ledgerExists;
+    this.ledgerExists = true;
     this.failure = input;
     this.ledgerAttemptCount = input.attemptCount;
     this.ledgerNextAttemptAt = input.nextAttemptAt;
+    return {
+      receivedEventId: isNew ? "received-event" : null,
+      failedEventId: input.nextAttemptAt ? null : `failed-event-${input.attemptCount}`,
+    };
   }
 
   async markCleanupPending() {}
@@ -212,6 +163,89 @@ function fixture() {
 }
 
 describe("importReceipt", () => {
+  it("emits received and imported events from committed importer outcomes", async () => {
+    const storage = fixture();
+    const notifier = new MemoryRfqNotifier();
+    const importer = createRfqImporter({
+      ...storage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier,
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await importer.importReceipt(RECEIPT_KEY);
+
+    expect(notifier.events).toEqual([
+      {
+        eventId: "received-event",
+        event: "rfq.received",
+        occurredAt: "2026-09-21T00:00:00.000Z",
+        data: {
+          receiptNumber: "RFQ-2026-0001",
+          sessionId: SESSION_ID,
+        },
+      },
+      {
+        eventId: "imported-event",
+        event: "rfq.imported",
+        occurredAt: "2026-09-21T00:00:00.000Z",
+        data: {
+          quoteId: 42,
+          quoteNumber: "Q269-00001",
+          customerId: 7,
+          customerName: "Analytical Engines - Ada Lovelace",
+          partCount: 1,
+          ndaRequired: true,
+        },
+      },
+    ]);
+  });
+
+  it("emits failed only for terminal failures, not transient retries", async () => {
+    const terminalStorage = fixture();
+    terminalStorage.put(MANIFEST_KEY, { session_id: SESSION_ID, parts: [] });
+    const terminalNotifier = new MemoryRfqNotifier();
+    await createRfqImporter({
+      ...terminalStorage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier: terminalNotifier,
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    }).importReceipt(RECEIPT_KEY);
+
+    expect(terminalNotifier.events.map((event) => event.event)).toEqual([
+      "rfq.received",
+      "rfq.failed",
+    ]);
+    expect(terminalNotifier.events[1]).toMatchObject({
+      eventId: "failed-event-1",
+      data: {
+        receiptNumber: "RFQ-2026-0001",
+        sessionId: SESSION_ID,
+        classification: "validation",
+        attemptCount: 1,
+      },
+    });
+
+    const retryStorage = fixture();
+    retryStorage.copyFromIntake = async () => {
+      throw new Error("S3 temporarily unavailable");
+    };
+    const retryNotifier = new MemoryRfqNotifier();
+    await createRfqImporter({
+      ...retryStorage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier: retryNotifier,
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    }).importReceipt(RECEIPT_KEY);
+
+    expect(retryNotifier.events.map((event) => event.event)).toEqual([
+      "rfq.received",
+    ]);
+  });
+
   it("imports the WordPress manifest contract and preserves additive part fields", async () => {
     const storage = new MemoryStorage();
     const manifest = structuredClone(wordpressManifest) as typeof wordpressManifest & {
@@ -251,7 +285,7 @@ describe("importReceipt", () => {
     }
     const persistence = new MemoryPersistence();
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-22T19:00:00Z"),
@@ -300,7 +334,7 @@ describe("importReceipt", () => {
       },
     };
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue,
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -338,8 +372,15 @@ describe("importReceipt", () => {
     expect(prepared.quoteNote).toContain("Destination postal code: 94107");
     expect(prepared.quoteNote).toContain(`Quote requested at: ${SUBMITTED_AT}`);
     expect(prepared.quoteNote).toContain("Lead-time preference: target_date");
-    expect(storage.objects.has(prepared.archive.key)).toBe(true);
-    const archive = storage.objects.get(prepared.archive.key)!.body.toString("latin1");
+    // Canonical files and the archive land in the application bucket, never the intake bucket.
+    expect(storage.canonicalObjects.has(prepared.parts[0].canonicalCadKey)).toBe(true);
+    for (const drawing of prepared.parts[0].canonicalDrawings) {
+      expect(storage.canonicalObjects.has(drawing.key)).toBe(true);
+    }
+    expect(storage.objects.has(prepared.archive.key)).toBe(false);
+    expect(storage.objects.has(prepared.parts[0].canonicalCadKey)).toBe(false);
+    expect(storage.canonicalObjects.has(prepared.archive.key)).toBe(true);
+    const archive = storage.canonicalObjects.get(prepared.archive.key)!.body.toString("latin1");
     expect(archive).toContain(ORPHAN_KEY);
     expect(archive).toContain("archive-index.json");
     expect([...storage.objects.keys()].some((key) => key.startsWith(`intake/${SESSION_ID}/`))).toBe(false);
@@ -352,7 +393,7 @@ describe("importReceipt", () => {
     storage.put(RECEIPT_KEY, { ...receipt, manifest_key: "intake/another-session/manifest.json" });
     const persistence = new MemoryPersistence();
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -373,7 +414,7 @@ describe("importReceipt", () => {
     const persistence = new MemoryPersistence();
     let now = new Date("2026-09-21T00:00:00Z");
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => now,
@@ -400,12 +441,12 @@ describe("importReceipt", () => {
 
   it("schedules bounded infrastructure retries from the controlled clock", async () => {
     const storage = fixture();
-    storage.copy = async () => {
+    storage.copyFromIntake = async () => {
       throw new Error("S3 temporarily unavailable");
     };
     const persistence = new MemoryPersistence();
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -426,7 +467,7 @@ describe("importReceipt", () => {
     storage.put(RECEIPT_KEY, "{not-json");
     const persistence = new MemoryPersistence();
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -444,13 +485,13 @@ describe("importReceipt", () => {
 
   it("stops retrying after the bounded retry schedule is exhausted", async () => {
     const storage = fixture();
-    storage.copy = async () => {
+    storage.copyFromIntake = async () => {
       throw new Error("S3 remains unavailable");
     };
     const persistence = new MemoryPersistence();
     persistence.claimAttemptCount = 8;
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -471,12 +512,32 @@ describe("importReceipt", () => {
     const storage = fixture();
     const persistence = new MemoryPersistence();
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: {
         async enqueue() {},
         async enqueueDerivedAssets() {
           throw new Error("queue unavailable");
+        },
+      },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toMatchObject({
+      status: "completed",
+      quoteId: 42,
+    });
+  });
+
+  it("does not let notifier errors change a committed import", async () => {
+    const storage = fixture();
+    const importer = createRfqImporter({
+      ...storage.buckets,
+      persistence: new MemoryPersistence(),
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier: {
+        notify() {
+          throw new Error("receiver unavailable");
         },
       },
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -505,7 +566,7 @@ describe("importReceipt", () => {
       nextAttemptAt: null,
     });
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
       now: () => new Date("2026-09-21T00:00:00Z"),
@@ -555,6 +616,12 @@ describe("importReceipt", () => {
       committedQuoteId = 42;
       return {
         quoteId: 42,
+        quoteNumber: "Q269-00001",
+        customerId: 7,
+        customerName: "Analytical Engines - Ada Lovelace",
+        partCount: prepared.parts.length,
+        ndaRequired: prepared.manifest.ndaRequired,
+        importedEventId: "imported-event",
         quotePartIds: prepared.parts.map((part) => part.quotePartId),
         drawingAttachmentIds: [],
       };
@@ -565,10 +632,12 @@ describe("importReceipt", () => {
     persistence.markCompleted = async () => {
       cleanupPending = false;
     };
+    const notifier = new MemoryRfqNotifier();
     const importer = createRfqImporter({
-      storage,
+      ...storage.buckets,
       persistence,
       queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      notifier,
       now: () => new Date("2026-09-21T00:00:00Z"),
     });
 
@@ -584,5 +653,9 @@ describe("importReceipt", () => {
     });
     expect(commitCount).toBe(1);
     expect(deleteAttempts).toBe(2);
+    expect(notifier.events.map((event) => event.event)).toEqual([
+      "rfq.received",
+      "rfq.imported",
+    ]);
   });
 });

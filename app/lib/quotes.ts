@@ -93,7 +93,6 @@ export type QuoteWithRelations = {
   leadTimeBusinessDaysMin: number | null;
   leadTimeBusinessDaysMax: number | null;
   ndaRequired: boolean;
-  sourceReceiptNumber: string | null;
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -102,6 +101,12 @@ export type QuoteWithRelations = {
   lineItems?: QuoteLineItem[];
   parts?: QuotePart[];
 };
+
+function quoteWithoutSourceReceiptNumber(quote: Quote) {
+  const { sourceReceiptNumber, ...safeQuote } = quote;
+  void sourceReceiptNumber;
+  return safeQuote;
+}
 
 export type QuoteInput = {
   quoteNumber?: string | null;
@@ -199,7 +204,7 @@ export async function getQuotes(
 
     // Assemble final results
     return quotesWithBasicRelations.map(({ quote, customer, vendor }) => ({
-      ...quote,
+      ...quoteWithoutSourceReceiptNumber(quote),
       customer,
       vendor,
       lineItems: lineItemsByQuote.get(quote.id) || [],
@@ -262,7 +267,7 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
     ]);
 
     return {
-      ...quote,
+      ...quoteWithoutSourceReceiptNumber(quote),
       customer: customer[0],
       vendor: vendor[0],
       lineItems,

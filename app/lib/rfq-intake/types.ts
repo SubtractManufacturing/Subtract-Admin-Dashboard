@@ -29,18 +29,25 @@ export type StoredObjectPage = {
   nextCursor: string | null;
 };
 
-export interface RfqStorage {
+/** The intake bucket: where WordPress drops submissions and the ERP picks them up. */
+export interface RfqIntakeStorage {
   list(prefix: string, cursor?: string): Promise<StoredObjectPage>;
   head(key: string): Promise<StoredObject | null>;
   read(key: string): Promise<Readable>;
   readJson(key: string): Promise<unknown>;
-  copy(sourceKey: string, destinationKey: string): Promise<void>;
+  deletePrefix(prefix: string): Promise<void>;
+}
+
+/** The application bucket: canonical Quote files and protected audit archives. */
+export interface RfqCanonicalStorage {
+  head(key: string): Promise<StoredObject | null>;
   uploadStream(
     key: string,
     body: Readable,
     contentType: string,
   ): Promise<StoredObject>;
-  deletePrefix(prefix: string): Promise<void>;
+  /** Copies one intake object into the application bucket. */
+  copyFromIntake(intakeKey: string, canonicalKey: string): Promise<void>;
 }
 
 export interface RfqQueue {
@@ -119,7 +126,11 @@ export type PreparedImport = {
 };
 
 export type ImportClaim =
-  | { kind: "claimed"; attemptCount: number }
+  | {
+      kind: "claimed";
+      attemptCount: number;
+      receivedEventId: string | null;
+    }
   | { kind: "already_completed"; quoteId: number }
   | { kind: "cleanup_only"; quoteId: number; sessionId: string }
   | { kind: "already_processing" };
@@ -137,6 +148,12 @@ export interface RfqPersistence {
     prepared: PreparedImport,
   ): Promise<{
     quoteId: number;
+    quoteNumber: string;
+    customerId: number;
+    customerName: string;
+    partCount: number;
+    ndaRequired: boolean;
+    importedEventId: string;
     quotePartIds: string[];
     drawingAttachmentIds: string[];
   }>;
@@ -147,7 +164,10 @@ export interface RfqPersistence {
     attemptCount: number;
     nextAttemptAt: Date | null;
     now: Date;
-  }): Promise<void>;
+  }): Promise<{
+    receivedEventId: string | null;
+    failedEventId: string | null;
+  }>;
   markCleanupPending(
     receipt: ReceiptPointer,
     quoteId: number,

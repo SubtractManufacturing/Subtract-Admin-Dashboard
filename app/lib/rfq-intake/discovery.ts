@@ -3,19 +3,20 @@ import {
   RFQ_PROCESSING_LEASE_MS,
   type ImportLedgerSummary,
   type RfqQueue,
-  type RfqStorage,
+  type RfqIntakeStorage,
 } from "./types";
 
 export type ScanOutcome = {
   discovered: number;
   enqueued: number;
+  newImports: number;
   skipped: number;
   skipReasons: Record<string, number>;
 };
 
 export type ReceiptDiscoveryDependencies = {
   enabled: boolean;
-  storage: Pick<RfqStorage, "list">;
+  storage: Pick<RfqIntakeStorage, "list">;
   queue: Pick<RfqQueue, "enqueue">;
   now(): Date;
   getLedgerSummaries(
@@ -24,35 +25,50 @@ export type ReceiptDiscoveryDependencies = {
   getDueLedgerReceiptKeys(now: Date): Promise<string[]>;
 };
 
-function shouldEnqueue(
+function discoveryDecision(
   ledger: ImportLedgerSummary | undefined,
   now: Date,
-): { enqueue: boolean; skipReason?: string } {
-  if (!ledger) return { enqueue: true };
-  if (ledger.status === "pending") return { enqueue: true };
-  if (ledger.status === "cleanup_pending") return { enqueue: true };
-  if (ledger.status === "completed") return { enqueue: true };
+  selectedAsDue: boolean,
+): { enqueue: boolean; newImport: boolean; skipReason?: string } {
+  if (!ledger || ledger.status === "pending") {
+    return { enqueue: true, newImport: true };
+  }
+  if (ledger.status === "cleanup_pending" || ledger.status === "completed") {
+    return { enqueue: true, newImport: false };
+  }
   if (ledger.status === "processing") {
     const leaseExpired =
+      selectedAsDue ||
       ledger.processingStartedAt === null ||
       ledger.processingStartedAt.getTime() <= now.getTime() - RFQ_PROCESSING_LEASE_MS;
     return leaseExpired
-      ? { enqueue: true }
-      : { enqueue: false, skipReason: "processing_lease_active" };
+      ? { enqueue: true, newImport: true }
+      : {
+          enqueue: false,
+          newImport: false,
+          skipReason: "processing_lease_active",
+        };
   }
   if (ledger.status === "retry_scheduled") {
-    return ledger.nextAttemptAt !== null && ledger.nextAttemptAt <= now
-      ? { enqueue: true }
-      : { enqueue: false, skipReason: "retry_not_due" };
+    return selectedAsDue ||
+      (ledger.nextAttemptAt !== null && ledger.nextAttemptAt <= now)
+      ? { enqueue: true, newImport: true }
+      : { enqueue: false, newImport: false, skipReason: "retry_not_due" };
   }
-  return { enqueue: false, skipReason: ledger.status };
+  return { enqueue: false, newImport: false, skipReason: ledger.status };
 }
 
 export async function scanForReceipts(
   dependencies: ReceiptDiscoveryDependencies,
 ): Promise<ScanOutcome> {
   if (!dependencies.enabled) {
-    return { discovered: 0, enqueued: 0, skipped: 0, skipReasons: {} };
+    return {
+      discovered: 0,
+      enqueued: 0,
+      newImports: 0,
+      skipped: 0,
+      skipReasons: {},
+    };
   }
 
   const now = dependencies.now();
@@ -88,16 +104,20 @@ export async function scanForReceipts(
   }
   const keys = [...receiptKeys].sort();
   let enqueued = 0;
+  let newImports = 0;
   let skipped = 0;
   const skipReasons: Record<string, number> = {};
 
   for (const receiptKey of keys) {
-    const decision = dueLedgerReceiptKeys.has(receiptKey)
-      ? { enqueue: true }
-      : shouldEnqueue(summaries.get(receiptKey), now);
+    const selectedAsDue = dueLedgerReceiptKeys.has(receiptKey);
+    const ledger = summaries.get(receiptKey);
+    const decision = discoveryDecision(ledger, now, selectedAsDue);
     if (decision.enqueue) {
       await dependencies.queue.enqueue(receiptKey);
       enqueued += 1;
+      if (decision.newImport) {
+        newImports += 1;
+      }
     } else {
       skipped += 1;
       const reason = decision.skipReason ?? "unknown";
@@ -105,5 +125,11 @@ export async function scanForReceipts(
     }
   }
 
-  return { discovered: keys.length, enqueued, skipped, skipReasons };
+  return {
+    discovered: keys.length,
+    enqueued,
+    newImports,
+    skipped,
+    skipReasons,
+  };
 }

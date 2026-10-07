@@ -11,6 +11,7 @@ import {
 } from "./action-items.server";
 import { db } from "./db";
 import { actionItems, users } from "./db/schema";
+import { getEnv } from "./env.server";
 import { inArray } from "drizzle-orm";
 
 describe("Action Items command and query seam", () => {
@@ -19,7 +20,9 @@ describe("Action Items command and query seam", () => {
   const itemIds: string[] = [];
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+    if (!getEnv("DATABASE_URL")) {
+      throw new Error("DATABASE_URL or DATABASE_URL_FILE is required");
+    }
     await db.insert(users).values([
       { id: userA, email: `${userA}@example.invalid`, role: "User" },
       { id: userB, email: `${userB}@example.invalid`, role: "Admin" },
