@@ -3,6 +3,7 @@
  */
 
 import { db } from "~/lib/db";
+import { deleteCustomerMergeRows } from "~/lib/customers";
 import {
   customers,
   orders,
@@ -117,5 +118,6 @@ export async function cleanupLineItemArchiveFixture(
     .where(eq(quoteLineItems.quoteId, ids.quoteId));
   await db.delete(quoteParts).where(eq(quoteParts.quoteId, ids.quoteId));
   await db.delete(quotes).where(eq(quotes.id, ids.quoteId));
+  await deleteCustomerMergeRows([ids.customerId]);
   await db.delete(customers).where(eq(customers.id, ids.customerId));
 }

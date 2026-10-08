@@ -1,6 +1,7 @@
 import { inArray } from "drizzle-orm";
 
 import { db } from "~/lib/db";
+import { deleteCustomerMergeRows } from "~/lib/customers";
 import { customers, orders, quotes } from "~/lib/db/schema";
 
 export type SeededCustomersSortIds = {
@@ -108,5 +109,6 @@ export async function cleanupCustomersSortFixture(
 ): Promise<void> {
   await db.delete(orders).where(inArray(orders.id, ids.orderIds));
   await db.delete(quotes).where(inArray(quotes.id, ids.quoteIds));
+  await deleteCustomerMergeRows(ids.customerIds);
   await db.delete(customers).where(inArray(customers.id, ids.customerIds));
 }

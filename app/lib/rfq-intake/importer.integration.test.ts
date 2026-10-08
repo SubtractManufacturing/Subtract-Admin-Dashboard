@@ -57,6 +57,7 @@ describe("RFQ importer with Postgres persistence", () => {
       await db.execute(sql`delete from attachments where s3_key like ${`rfq-intake-archives/${receiptNumber}%`}`);
       await db.execute(sql`delete from rfq_import_ledger where receipt_number = ${receiptNumber}`);
       await db.delete(quotes).where(eq(quotes.id, quoteId));
+      await db.execute(sql`delete from customer_email_aliases where customer_id in (select id from customers where lower(email) = ${email})`);
       await db.execute(sql`delete from customers where lower(email) = ${email}`);
     }
     await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${receiptKey}`);

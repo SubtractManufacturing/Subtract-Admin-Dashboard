@@ -1,5 +1,6 @@
 import { and, count, desc, eq, sql } from "drizzle-orm";
 
+import { resolveSatisfiedCustomerMatchReviews } from "./customer-match-review.server";
 import { db } from "./db";
 import { actionItems, type UserRole } from "./db/schema";
 import { retryRfqImport } from "./rfq-intake/retry.server";
@@ -30,6 +31,7 @@ function requireElevated(role: UserRole) {
 }
 
 export async function getActionItemsForUser(userId: string) {
+  await resolveSatisfiedCustomerMatchReviews();
   const items = await db
     .select()
     .from(actionItems)
@@ -47,6 +49,7 @@ export async function getActionItemsForUser(userId: string) {
 }
 
 export async function getActionItemCounts(userId: string) {
+  await resolveSatisfiedCustomerMatchReviews();
   const [row] = await db
     .select({
       totalActive: count(),
@@ -80,7 +83,7 @@ export async function markActionItemRead(id: string, actor: ActionItemActor) {
 export async function resolveActionItem(
   id: string,
   actor: ActionItemActor,
-  resolution = "Reviewed",
+  resolution?: string,
 ) {
   const [item] = await db
     .select()
@@ -94,6 +97,10 @@ export async function resolveActionItem(
       409,
     );
   }
+  if (item.type === "customer_match_review") {
+    // Same audience as the merge tool the item links to.
+    requireElevated(actor.role);
+  }
   const now = new Date();
   const [updated] = await db
     .update(actionItems)
@@ -101,7 +108,9 @@ export async function resolveActionItem(
       status: "resolved",
       resolvedAt: now,
       resolvedBy: actor.userId,
-      resolution,
+      resolution:
+        resolution ??
+        (item.type === "customer_match_review" ? "Not duplicates" : "Reviewed"),
       updatedAt: now,
     })
     .where(and(eq(actionItems.id, id), eq(actionItems.status, "active")))
@@ -136,6 +145,17 @@ export async function retryActionItemNow(id: string, actor: ActionItemActor) {
 
 export async function softDeleteActionItem(id: string, actor: ActionItemActor) {
   requireElevated(actor.role);
+  const [existing] = await db
+    .select({ type: actionItems.type, status: actionItems.status })
+    .from(actionItems)
+    .where(and(eq(actionItems.id, id), eq(actionItems.isArchived, false)))
+    .limit(1);
+  if (existing?.type === "customer_match_review" && existing.status === "active") {
+    throw new ActionItemCommandError(
+      "Customer match reviews cannot be deleted; merge the Customers or resolve the item",
+      409,
+    );
+  }
   const now = new Date();
   const [updated] = await db
     .update(actionItems)

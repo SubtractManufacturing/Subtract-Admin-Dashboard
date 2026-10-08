@@ -3,6 +3,7 @@ import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { nextQuoteNumberFromExisting } from "../number-generator";
 import { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_ID } from "../system-actor";
+import { resolveIntakeCustomer } from "./customer-resolution.server";
 import { intakePrefix } from "./keys";
 import { IntakeValidationError } from "./package";
 import {
@@ -19,17 +20,8 @@ import {
   rfqImportLedger,
   users,
 } from "../db/schema";
-import type {
-  ImportLedgerSummary,
-  PreparedImport,
-  RfqPersistence,
-} from "./types";
+import type { ImportLedgerSummary, RfqPersistence } from "./types";
 import { RFQ_PROCESSING_LEASE_MS } from "./types";
-
-function displayName(contact: PreparedImport["manifest"]["contact"]): string {
-  const name = `${contact.firstName} ${contact.lastName}`.trim();
-  return contact.company ? `${contact.company} - ${name}` : name;
-}
 
 function rfqImportEntityId(receiptKey: string): string {
   return receiptKey;
@@ -271,47 +263,20 @@ export function createPostgresRfqPersistence(input: {
         throw new Error("RFQ import no longer owns its database claim");
       }
 
-      const matchingCustomers = await tx
-        .select()
+      const { customerId, matchedCustomerIds } = await resolveIntakeCustomer(
+        tx,
+        prepared.manifest.contact,
+        prepared.now,
+      );
+      const [resolvedCustomer] = await tx
+        .select({ displayName: customers.displayName })
         .from(customers)
-        .where(
-          and(
-            eq(customers.isArchived, false),
-            sql`lower(trim(${customers.email})) = ${prepared.manifest.contact.email}`,
-          ),
-        );
-      let customerId: number;
-      let customerName: string;
-      if (matchingCustomers.length === 1) {
-        const customer = matchingCustomers[0];
-        const [updated] = await tx
-          .update(customers)
-          .set({
-            companyName: customer.companyName || prepared.manifest.contact.company,
-            contactName:
-              customer.contactName ||
-              `${prepared.manifest.contact.firstName} ${prepared.manifest.contact.lastName}`.trim(),
-            phone: customer.phone || prepared.manifest.contact.phone,
-            updatedAt: prepared.now,
-          })
-          .where(eq(customers.id, customer.id))
-          .returning({ id: customers.id, displayName: customers.displayName });
-        customerId = updated.id;
-        customerName = updated.displayName;
-      } else {
-        const [created] = await tx
-          .insert(customers)
-          .values({
-            displayName: displayName(prepared.manifest.contact),
-            companyName: prepared.manifest.contact.company,
-            contactName: `${prepared.manifest.contact.firstName} ${prepared.manifest.contact.lastName}`.trim(),
-            email: prepared.manifest.contact.email,
-            phone: prepared.manifest.contact.phone,
-          })
-          .returning({ id: customers.id, displayName: customers.displayName });
-        customerId = created.id;
-        customerName = created.displayName;
+        .where(eq(customers.id, customerId))
+        .limit(1);
+      if (!resolvedCustomer) {
+        throw new Error("RFQ import customer resolution did not return a Customer");
       }
+      const customerName = resolvedCustomer.displayName;
 
       const year = prepared.now.getFullYear().toString().slice(-2);
       const month = String(prepared.now.getMonth() + 1);
@@ -446,17 +411,19 @@ export function createPostgresRfqPersistence(input: {
         })
         .returning({ id: eventLogs.id });
 
-      if (matchingCustomers.length > 1) {
+      if (matchedCustomerIds.length > 1) {
         await tx.insert(actionItems).values({
           type: "customer_match_review",
           title: `Review Customer match for ${quoteNumber}`,
-          description: `${matchingCustomers.length} active Customers share ${prepared.manifest.contact.email}; a new Customer was created.`,
+          description: `${matchedCustomerIds.length} active Customers match ${prepared.manifest.contact.email}; ${quoteNumber} was attached to the most recently active one. Review and merge the duplicates.`,
           entityType: "quote",
           entityId: String(quote.id),
           metadata: {
             email: prepared.manifest.contact.email,
-            candidateCustomerIds: matchingCustomers.map((customer) => customer.id),
-            createdCustomerId: customerId,
+            quoteId: quote.id,
+            quoteNumber,
+            candidateCustomerIds: matchedCustomerIds,
+            attachedCustomerId: customerId,
           },
           createdAt: prepared.now,
           updatedAt: prepared.now,

@@ -89,7 +89,8 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers, sortBy } = useLoaderData<typeof loader>()
+  const { customers, sortBy, userDetails } = useLoaderData<typeof loader>()
+  const canMerge = userDetails?.role === "Admin" || userDetails?.role === "Dev"
   const fetcher = useFetcher()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -174,6 +175,14 @@ export default function Customers() {
               </select>
             </div>
             <ViewToggle view={view} onChange={setView} />
+            {canMerge && (
+              <Link
+                to="/customers/merge"
+                className="whitespace-nowrap text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+              >
+                Find duplicates
+              </Link>
+            )}
             <Button onClick={handleAdd}>Add Customer</Button>
           </div>
         </div>

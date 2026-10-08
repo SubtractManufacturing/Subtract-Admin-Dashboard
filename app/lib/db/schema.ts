@@ -14,6 +14,7 @@ import {
   index,
   uniqueIndex,
   foreignKey,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 export const quoteStatusEnum = pgEnum("quote_status", [
@@ -160,6 +161,12 @@ export const customers = pgTable(
     // Business terms
     paymentTerms: text("payment_terms"),
 
+    // Set when this Customer was merged into another one (it is also archived).
+    // Pointers can chain (A -> B -> C); follow them to the final active survivor.
+    mergedIntoCustomerId: integer("merged_into_customer_id").references(
+      (): AnyPgColumn => customers.id,
+    ),
+
     isArchived: boolean("is_archived").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -169,6 +176,27 @@ export const customers = pgTable(
     activeEmailIdx: index("customers_active_email_idx")
       .on(sql`lower(trim(${table.email}))`)
       .where(sql`${table.isArchived} = false and ${table.email} is not null`),
+  })
+);
+
+/**
+ * Every normalized email a Customer is known by (see `normalizeEmail`). The
+ * primary email is kept here too so intake matching reads a single source.
+ * Deliberately NOT unique on `email`: existing data may already hold several
+ * active Customers sharing an email; the merge tool is what cleans that up.
+ */
+export const customerEmailAliases = pgTable(
+  "customer_email_aliases",
+  {
+    customerId: integer("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    email: text("email").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.customerId, table.email] }),
+    emailIdx: index("customer_email_aliases_email_idx").on(table.email),
   })
 );
 
@@ -792,6 +820,7 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Customer = typeof customers.$inferSelect;
 export type NewCustomer = typeof customers.$inferInsert;
+export type CustomerEmailAlias = typeof customerEmailAliases.$inferSelect;
 export type Vendor = typeof vendors.$inferSelect;
 export type NewVendor = typeof vendors.$inferInsert;
 export type Quote = typeof quotes.$inferSelect;

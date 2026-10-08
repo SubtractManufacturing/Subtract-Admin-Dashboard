@@ -1,0 +1,131 @@
+/**
+ * Client-safe shapes and helpers for the Customer merge tool. Loader data is
+ * JSON, so dates arrive as strings; everything here accepts either form.
+ */
+
+export type DateLike = string | Date;
+
+export type CustomerSummaryView = {
+  id: number;
+  displayName: string;
+  companyName: string | null;
+  contactName: string | null;
+  email: string | null;
+  phone: string | null;
+  emails: string[];
+  quoteCount: number;
+  orderCount: number;
+  lastActivityAt: DateLike | null;
+};
+
+export type DuplicateReasonKind = "email" | "company" | "phone" | "name";
+
+export type DuplicateReasonView = {
+  kind: DuplicateReasonKind;
+  value: string;
+};
+
+export type DuplicatePairView = {
+  a: CustomerSummaryView;
+  b: CustomerSummaryView;
+  reasons: DuplicateReasonView[];
+  score: number;
+};
+
+/** The match filters, in display order. */
+export const MATCH_KINDS: readonly DuplicateReasonKind[] = [
+  "email",
+  "phone",
+  "company",
+  "name",
+];
+
+/** Read the `match` filter from a URL, ignoring anything unrecognised. */
+export function parseMatchKinds(
+  value: string | null | undefined,
+): DuplicateReasonKind[] {
+  const wanted = new Set((value ?? "").split(",").map((part) => part.trim()));
+  return MATCH_KINDS.filter((kind) => wanted.has(kind));
+}
+
+export type MergeFieldChoice = "survivor" | "merged";
+
+export type FieldConflictView = {
+  field: string;
+  label: string;
+  survivorValue: string;
+  mergedValue: string;
+  requiresExplicitChoice: boolean;
+};
+
+export type MergePreviewView = {
+  survivor: CustomerSummaryView;
+  merged: CustomerSummaryView;
+  counts: {
+    quotes: number;
+    orders: number;
+    parts: number;
+    attachments: number;
+    communications: number;
+    notes: number;
+  };
+  attachmentsAlreadyLinked: number;
+  retainedEmails: string[];
+  conflicts: FieldConflictView[];
+  autoFills: Array<{ field: string; label: string; value: string }>;
+  survivorUpdatedAt: DateLike;
+  mergedUpdatedAt: DateLike;
+};
+
+export const REASON_LABELS: Record<DuplicateReasonKind, string> = {
+  email: "Same email",
+  company: "Same company",
+  phone: "Same phone",
+  name: "Same contact name",
+};
+
+/** Short names for the filter chips. */
+export const MATCH_FILTER_LABELS: Record<DuplicateReasonKind, string> = {
+  email: "Email",
+  phone: "Phone",
+  company: "Company",
+  name: "Contact name",
+};
+
+/** Link into the merge tool with candidate Customers pre-loaded. */
+export function customerMergeHref(candidateCustomerIds: number[]): string {
+  const ids = [...new Set(candidateCustomerIds)].filter(Number.isInteger);
+  return ids.length > 0
+    ? `/customers/merge?ids=${ids.join(",")}`
+    : "/customers/merge";
+}
+
+export function candidateIdsFromMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+): number[] {
+  const raw = metadata?.candidateCustomerIds;
+  const ids = Array.isArray(raw)
+    ? raw.filter((value): value is number => Number.isInteger(value))
+    : [];
+  // Items created before this PR stored the Customer intake created separately
+  // from the pre-existing matches. Review has to include that Customer too.
+  const createdCustomerId = metadata?.createdCustomerId;
+  if (Number.isInteger(createdCustomerId) && !ids.includes(createdCustomerId as number)) {
+    ids.push(createdCustomerId as number);
+  }
+  return ids;
+}
+
+function timeOf(value: DateLike | null): number {
+  return value === null ? 0 : new Date(value).getTime();
+}
+
+/** The Customer with the most history (Quotes + Orders), then most recent activity, then oldest. */
+export function defaultSurvivorId(customers: CustomerSummaryView[]): number {
+  return [...customers].sort(
+    (a, b) =>
+      b.quoteCount + b.orderCount - (a.quoteCount + a.orderCount) ||
+      timeOf(b.lastActivityAt) - timeOf(a.lastActivityAt) ||
+      a.id - b.id,
+  )[0].id;
+}

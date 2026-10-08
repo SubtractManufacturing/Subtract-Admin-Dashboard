@@ -12,9 +12,11 @@ interface SearchHeaderProps {
   onSearch?: (query: string) => void
   /** Dashboard timeline chips etc. — sits immediately left of the search box, right-aligned with search. */
   beforeSearch?: ReactNode
+  /** Pages with nothing to search hide the box and show only the breadcrumbs. */
+  hideSearch?: boolean
 }
 
-export default function SearchHeader({ breadcrumbs, onSearch, beforeSearch }: SearchHeaderProps) {
+export default function SearchHeader({ breadcrumbs, onSearch, beforeSearch, hideSearch = false }: SearchHeaderProps) {
   // Handle both string and array formats for backward compatibility
   const breadcrumbItems: BreadcrumbItem[] = typeof breadcrumbs === 'string' 
     ? breadcrumbs.split(' / ').map(label => ({ label }))
@@ -23,9 +25,13 @@ export default function SearchHeader({ breadcrumbs, onSearch, beforeSearch }: Se
   return (
     <div className="flex flex-col gap-2 px-4 sm:px-6 lg:px-10 py-2.5">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
-        <Breadcrumbs items={breadcrumbItems} />
-        <div className="w-full flex flex-wrap items-center justify-start sm:justify-end gap-2 sm:ml-auto">
+        {/* Never let the search box squeeze the breadcrumbs onto a second line. */}
+        <div className="sm:shrink-0">
+          <Breadcrumbs items={breadcrumbItems} />
+        </div>
+        <div className="w-full sm:w-auto sm:min-w-0 flex flex-wrap items-center justify-start sm:justify-end gap-2 sm:ml-auto">
           {beforeSearch}
+          {!hideSearch && (
           <div className="w-full max-w-none sm:w-auto sm:max-w-md flex-shrink-0 flex-1 sm:flex-none min-w-[12rem]">
             <Form className="bg-white dark:bg-gray-800 border border-gray-400 dark:border-gray-600 rounded flex items-center px-4 py-2 shadow-sm transition-colors duration-150" method="get">
               <svg
@@ -47,6 +53,7 @@ export default function SearchHeader({ breadcrumbs, onSearch, beforeSearch }: Se
               />
             </Form>
           </div>
+          )}
         </div>
       </div>
     </div>

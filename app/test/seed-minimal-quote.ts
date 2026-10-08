@@ -8,6 +8,7 @@
  */
 
 import { db } from "~/lib/db";
+import { deleteCustomerMergeRows } from "~/lib/customers";
 import { customers, quoteLineItems, quoteParts, quotes } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -59,5 +60,6 @@ export async function cleanupMinimalQuote(ids: SeededQuoteIds): Promise<void> {
   await db.delete(quoteLineItems).where(eq(quoteLineItems.quoteId, ids.quoteId));
   await db.delete(quoteParts).where(eq(quoteParts.quoteId, ids.quoteId));
   await db.delete(quotes).where(eq(quotes.id, ids.quoteId));
+  await deleteCustomerMergeRows([ids.customerId]);
   await db.delete(customers).where(eq(customers.id, ids.customerId));
 }
