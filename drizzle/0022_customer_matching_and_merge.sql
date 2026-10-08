@@ -5,20 +5,8 @@ CREATE TABLE "customer_email_aliases" (
 	CONSTRAINT "customer_email_aliases_customer_id_email_pk" PRIMARY KEY("customer_id","email")
 );
 --> statement-breakpoint
-CREATE TABLE "customer_merge_dismissals" (
-	"low_customer_id" integer NOT NULL,
-	"high_customer_id" integer NOT NULL,
-	"dismissed_by" text,
-	"dismissed_at" timestamp DEFAULT now() NOT NULL,
-	CONSTRAINT "customer_merge_dismissals_low_customer_id_high_customer_id_pk" PRIMARY KEY("low_customer_id","high_customer_id"),
-	CONSTRAINT "customer_merge_dismissals_ordered_pair" CHECK ("customer_merge_dismissals"."low_customer_id" < "customer_merge_dismissals"."high_customer_id")
-);
---> statement-breakpoint
 ALTER TABLE "customers" ADD COLUMN "merged_into_customer_id" integer;--> statement-breakpoint
 ALTER TABLE "customer_email_aliases" ADD CONSTRAINT "customer_email_aliases_customer_id_customers_id_fk" FOREIGN KEY ("customer_id") REFERENCES "public"."customers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "customer_merge_dismissals" ADD CONSTRAINT "customer_merge_dismissals_low_customer_id_customers_id_fk" FOREIGN KEY ("low_customer_id") REFERENCES "public"."customers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "customer_merge_dismissals" ADD CONSTRAINT "customer_merge_dismissals_high_customer_id_customers_id_fk" FOREIGN KEY ("high_customer_id") REFERENCES "public"."customers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "customer_merge_dismissals" ADD CONSTRAINT "customer_merge_dismissals_dismissed_by_users_id_fk" FOREIGN KEY ("dismissed_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "customer_email_aliases_email_idx" ON "customer_email_aliases" USING btree ("email");--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_merged_into_customer_id_customers_id_fk" FOREIGN KEY ("merged_into_customer_id") REFERENCES "public"."customers"("id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint

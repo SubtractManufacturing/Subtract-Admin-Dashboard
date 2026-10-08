@@ -57,7 +57,7 @@ describe("Action Items command and query seam", () => {
     expect((await getActionItemsForUser(userA)).some((row) => row.id === item.id)).toBe(false);
   });
 
-  it("does not let a Customer match review be dismissed without merging or confirming", async () => {
+  it("only lets Admin or Dev resolve a Customer match review, and never deletes an active one", async () => {
     const [item] = await db
       .insert(actionItems)
       .values({
@@ -72,11 +72,14 @@ describe("Action Items command and query seam", () => {
 
     await expect(
       resolveActionItem(item.id, { userId: userA, role: "User" }, "Looks fine"),
-    ).rejects.toThrow(/merged or confirmed/i);
+    ).rejects.toThrow(/Admin or Dev/i);
     await expect(
       softDeleteActionItem(item.id, { userId: userB, role: "Admin" }),
     ).rejects.toThrow(/cannot be deleted/i);
     expect((await getActionItemsForUser(userA)).some((row) => row.id === item.id)).toBe(true);
+
+    await resolveActionItem(item.id, { userId: userB, role: "Admin" });
+    expect((await getActionItemsForUser(userA)).some((row) => row.id === item.id)).toBe(false);
   });
 
   it("prevents manual failure resolution and restricts team-wide soft deletion", async () => {

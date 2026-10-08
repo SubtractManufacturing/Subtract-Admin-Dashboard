@@ -1,12 +1,8 @@
 import { and, eq } from "drizzle-orm";
 
-import { candidateIdsFromMetadata, customerPairKey } from "./customer-merge-view";
+import { candidateIdsFromMetadata } from "./customer-merge-view";
 import { db } from "./db";
-import {
-  actionItems,
-  customerMergeDismissals,
-  customers,
-} from "./db/schema";
+import { actionItems, customers } from "./db/schema";
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type DbExecutor = typeof db | DbTransaction;
@@ -41,9 +37,9 @@ export async function resolveFinalCustomerId(
 
 /**
  * Resolve open "Customer match review" items whose candidates are no longer in
- * question: they were merged into one Customer, no candidate is active any
- * more, or every remaining pair was dismissed as "not duplicates". Safe to
- * call repeatedly.
+ * question: they were merged into one Customer, or no candidate is active any
+ * more. Items whose Customers are genuinely distinct are resolved by hand.
+ * Safe to call repeatedly.
  */
 export async function resolveSatisfiedCustomerMatchReviews(
   executor: DbExecutor = db,
@@ -61,11 +57,6 @@ export async function resolveSatisfiedCustomerMatchReviews(
     );
   if (open.length === 0) return 0;
 
-  const dismissed = new Set(
-    (await executor.select().from(customerMergeDismissals)).map((row) =>
-      customerPairKey(row.lowCustomerId, row.highCustomerId),
-    ),
-  );
   const now = options.now ?? new Date();
   let resolvedCount = 0;
 
@@ -84,12 +75,6 @@ export async function resolveSatisfiedCustomerMatchReviews(
       resolution = "Customers no longer active";
     } else if (ids.length === 1) {
       resolution = "Customers merged";
-    } else if (
-      ids.every((a, i) =>
-        ids.slice(i + 1).every((b) => dismissed.has(customerPairKey(a, b))),
-      )
-    ) {
-      resolution = "Confirmed not duplicates";
     }
     if (!resolution) continue;
 

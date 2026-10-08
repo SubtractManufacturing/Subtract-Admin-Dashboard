@@ -25,23 +25,28 @@ export type DuplicateReasonView = {
   value: string;
 };
 
-/** Order-independent key for a pair of Customer ids. */
-export const customerPairKey = (a: number, b: number) =>
-  a < b ? `${a}:${b}` : `${b}:${a}`;
-
-export type DismissedPairView = {
-  lowCustomerId: number;
-  highCustomerId: number;
-  dismissedBy: string | null;
-  dismissedByLabel: string | null;
-  dismissedAt: DateLike;
-};
-
-export type DuplicateGroupView = {
-  customers: CustomerSummaryView[];
+export type DuplicatePairView = {
+  a: CustomerSummaryView;
+  b: CustomerSummaryView;
   reasons: DuplicateReasonView[];
-  dismissedPairs: DismissedPairView[];
+  score: number;
 };
+
+/** The match filters, in display order. */
+export const MATCH_KINDS: readonly DuplicateReasonKind[] = [
+  "email",
+  "phone",
+  "company",
+  "name",
+];
+
+/** Read the `match` filter from a URL, ignoring anything unrecognised. */
+export function parseMatchKinds(
+  value: string | null | undefined,
+): DuplicateReasonKind[] {
+  const wanted = new Set((value ?? "").split(",").map((part) => part.trim()));
+  return MATCH_KINDS.filter((kind) => wanted.has(kind));
+}
 
 export type MergeFieldChoice = "survivor" | "merged";
 
@@ -72,11 +77,19 @@ export type MergePreviewView = {
   mergedUpdatedAt: DateLike;
 };
 
-export const REASON_LABELS: Record<DuplicateReasonView["kind"], string> = {
+export const REASON_LABELS: Record<DuplicateReasonKind, string> = {
   email: "Same email",
   company: "Same company",
   phone: "Same phone",
   name: "Same contact name",
+};
+
+/** Short names for the filter chips. */
+export const MATCH_FILTER_LABELS: Record<DuplicateReasonKind, string> = {
+  email: "Email",
+  phone: "Phone",
+  company: "Company",
+  name: "Contact name",
 };
 
 /** Link into the merge tool with candidate Customers pre-loaded. */

@@ -762,7 +762,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
 export default function CustomerDetails() {
   const { customer, mergedFrom, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl, communications, communicationsTotalCount } = useLoaderData<typeof loader>();
-  const canMerge = userDetails?.role === "Admin" || userDetails?.role === "Dev";
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/customers/${customer.id}`
     : undefined;
@@ -1141,14 +1140,6 @@ export default function CustomerDetails() {
             { label: "Customers", href: "/customers" },
             { label: customer.displayName }
           ]} />
-          {canMerge && (
-            <Link
-              to={`/customers/merge?survivor=${customer.id}`}
-              className="text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
-            >
-              Merge with another customer
-            </Link>
-          )}
         </div>
 
         {mergedFrom && (

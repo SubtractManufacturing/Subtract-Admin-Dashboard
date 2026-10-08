@@ -1,32 +1,38 @@
 import { json, redirect } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { Link, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+import { Merge } from "lucide-react";
 import { useState } from "react";
 
 import { CustomerMergeReview } from "~/components/customers/CustomerMergeReview";
-import { DuplicateGroupCard } from "~/components/customers/DuplicateGroupCard";
+import { CustomMergeModal } from "~/components/customers/CustomMergeModal";
+import { DuplicatePairCard } from "~/components/customers/DuplicatePairCard";
+import { MatchFilterChips } from "~/components/customers/MatchFilterChips";
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
-import SearchableSelect from "~/components/shared/SearchableSelect";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import {
-  dismissCustomerGroup,
-  findDuplicateGroups,
+  findDuplicatePairs,
   getActiveCustomerSummaries,
   mergeCustomers,
+  pairsAmong,
   previewMerge,
-  undismissPair,
   type MergeActor,
 } from "~/lib/customer-merge.server";
 import { CustomerMergeError } from "~/lib/customer-merge-error";
 import type { MergeChoices } from "~/lib/customer-merge-fields";
 import { getCustomers } from "~/lib/customers";
-import type {
-  DuplicateGroupView,
-  MergeFieldChoice,
-  MergePreviewView,
+import {
+  parseMatchKinds,
+  type DuplicatePairView,
+  type DuplicateReasonKind,
+  type MergeFieldChoice,
+  type MergePreviewView,
 } from "~/lib/customer-merge-view";
+
+const PAGE_SIZE = 10;
+const MAX_LIMIT = 200;
 
 function parseIds(value: string | null): number[] {
   return [
@@ -42,6 +48,13 @@ function parseIds(value: string | null): number[] {
 function parseId(value: FormDataEntryValue | string | null): number | null {
   const id = Number.parseInt(String(value ?? ""), 10);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function parseLimit(value: string | null): number {
+  const limit = Number.parseInt(value ?? "", 10);
+  return Number.isInteger(limit) && limit > 0
+    ? Math.min(Math.max(limit, PAGE_SIZE), MAX_LIMIT)
+    : PAGE_SIZE;
 }
 
 function actorFrom(userDetails: {
@@ -78,24 +91,31 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   }
 
-  const includeDismissed = url.searchParams.get("showDismissed") === "1";
+  const kinds = parseMatchKinds(url.searchParams.get("match"));
+  const limit = parseLimit(url.searchParams.get("limit"));
   const candidateIds = parseIds(url.searchParams.get("ids"));
-  const [groups, candidates, allCustomers] = await Promise.all([
-    findDuplicateGroups({ includeDismissed }),
+  const [suggestions, candidates, allCustomers] = await Promise.all([
+    findDuplicatePairs({ kinds, limit }),
     getActiveCustomerSummaries(candidateIds),
     getCustomers({ sortBy: "name" }),
   ]);
 
   return withAuthHeaders(
     json({
-      groups,
-      candidates,
-      includeDismissed,
-      initialSurvivorId: parseId(url.searchParams.get("survivor")),
-      customerOptions: allCustomers.map((customer) => ({
-        value: String(customer.id),
-        label: customer.displayName,
-        secondaryLabel: customer.email ?? customer.companyName ?? undefined,
+      suggestions,
+      candidatePairs: pairsAmong(candidates),
+      candidateIds,
+      candidateCount: candidates.length,
+      candidateName: candidates[0]?.displayName ?? null,
+      kinds,
+      limit,
+      customerRecords: allCustomers.map((customer) => ({
+        id: customer.id,
+        displayName: customer.displayName,
+        companyName: customer.companyName,
+        contactName: customer.contactName,
+        email: customer.email,
+        phone: customer.phone,
       })),
     }),
     headers,
@@ -109,47 +129,37 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = String(form.get("intent") ?? "");
 
   try {
-    if (intent === "merge") {
-      const survivorId = parseId(form.get("survivorId"));
-      const mergedId = parseId(form.get("mergedId"));
-      if (!survivorId || !mergedId) {
-        return withAuthHeaders(json({ error: "Choose two Customers to merge" }, { status: 400 }), headers);
-      }
-      const choices: MergeChoices = {};
-      for (const [key, value] of form.entries()) {
-        if (key.startsWith("choice:") && (value === "survivor" || value === "merged")) {
-          choices[key.slice("choice:".length) as keyof MergeChoices] = value;
-        }
-      }
-      const survivorUpdatedAt = new Date(String(form.get("survivorUpdatedAt")));
-      const mergedUpdatedAt = new Date(String(form.get("mergedUpdatedAt")));
-      // Fail closed: a merge without the previewed timestamps could silently
-      // overwrite edits made since the preview was shown.
-      if (Number.isNaN(survivorUpdatedAt.getTime()) || Number.isNaN(mergedUpdatedAt.getTime())) {
-        throw new CustomerMergeError("Preview is missing or invalid; review the merge again", 400);
-      }
-      await mergeCustomers(
-        {
-          survivorId,
-          mergedId,
-          choices,
-          expected: { survivorUpdatedAt, mergedUpdatedAt },
-        },
-        actor,
-      );
-      return withAuthHeaders(redirect(`/customers/${survivorId}`), headers);
-    }
-
-    if (intent === "dismiss") {
-      await dismissCustomerGroup(parseIds(String(form.get("ids") ?? "")), actor);
-    } else if (intent === "undismiss") {
-      const a = parseId(form.get("a"));
-      const b = parseId(form.get("b"));
-      if (a && b) await undismissPair(a, b, actor);
-    } else {
+    if (intent !== "merge") {
       return withAuthHeaders(json({ error: "Unknown action" }, { status: 400 }), headers);
     }
-    return withAuthHeaders(json({ ok: true }), headers);
+    const survivorId = parseId(form.get("survivorId"));
+    const mergedId = parseId(form.get("mergedId"));
+    if (!survivorId || !mergedId) {
+      return withAuthHeaders(json({ error: "Choose two Customers to merge" }, { status: 400 }), headers);
+    }
+    const choices: MergeChoices = {};
+    for (const [key, value] of form.entries()) {
+      if (key.startsWith("choice:") && (value === "survivor" || value === "merged")) {
+        choices[key.slice("choice:".length) as keyof MergeChoices] = value;
+      }
+    }
+    const survivorUpdatedAt = new Date(String(form.get("survivorUpdatedAt")));
+    const mergedUpdatedAt = new Date(String(form.get("mergedUpdatedAt")));
+    // Fail closed: a merge without the previewed timestamps could silently
+    // overwrite edits made since the preview was shown.
+    if (Number.isNaN(survivorUpdatedAt.getTime()) || Number.isNaN(mergedUpdatedAt.getTime())) {
+      throw new CustomerMergeError("Preview is missing or invalid; review the merge again", 400);
+    }
+    await mergeCustomers(
+      {
+        survivorId,
+        mergedId,
+        choices,
+        expected: { survivorUpdatedAt, mergedUpdatedAt },
+      },
+      actor,
+    );
+    return withAuthHeaders(redirect(`/customers/${survivorId}`), headers);
   } catch (error) {
     if (!(error instanceof CustomerMergeError)) throw error;
     return withAuthHeaders(json({ error: error.message }, { status: error.status }), headers);
@@ -159,16 +169,22 @@ export async function action({ request }: ActionFunctionArgs) {
 type PreviewResponse = { preview?: MergePreviewView; error?: string };
 
 export default function CustomerMerge() {
-  const { groups, candidates, includeDismissed, initialSurvivorId, customerOptions } =
-    useLoaderData<typeof loader>();
+  const {
+    suggestions,
+    candidatePairs,
+    candidateIds,
+    candidateCount,
+    candidateName,
+    kinds,
+    limit,
+    customerRecords,
+  } = useLoaderData<typeof loader>();
   const previewFetcher = useFetcher<PreviewResponse>();
   const mergeFetcher = useFetcher<{ error?: string }>();
-  const decisionFetcher = useFetcher<{ error?: string }>();
   const navigation = useNavigation();
 
   const [reviewing, setReviewing] = useState<{ survivorId: number; mergedId: number } | null>(null);
-  const [survivorPick, setSurvivorPick] = useState(initialSurvivorId ? String(initialSurvivorId) : "");
-  const [mergedPick, setMergedPick] = useState("");
+  const [customMergeOpen, setCustomMergeOpen] = useState(false);
 
   const openReview = (survivorId: number, mergedId: number) => {
     setReviewing({ survivorId, mergedId });
@@ -177,13 +193,22 @@ export default function CustomerMerge() {
     );
   };
   const closeReview = () => setReviewing(null);
+  const swapReview = () => {
+    if (reviewing) openReview(reviewing.mergedId, reviewing.survivorId);
+  };
 
   // A merge redirects to the survivor on success; only errors come back here.
-  const preview = previewFetcher.data?.preview;
-  const dismiss = (ids: number[]) =>
-    decisionFetcher.submit({ intent: "dismiss", ids: ids.join(",") }, { method: "post" });
-  const undismiss = (a: number, b: number) =>
-    decisionFetcher.submit({ intent: "undismiss", a: String(a), b: String(b) }, { method: "post" });
+  // The fetcher keeps its last response while a new preview loads, so only
+  // trust it once it describes the pair on screen.
+  const loaded = previewFetcher.data?.preview;
+  const preview =
+    loaded &&
+    reviewing &&
+    loaded.survivor.id === reviewing.survivorId &&
+    loaded.merged.id === reviewing.mergedId
+      ? loaded
+      : undefined;
+  const previewError = previewFetcher.state === "idle" ? previewFetcher.data?.error : undefined;
 
   const confirm = (choices: Record<string, MergeFieldChoice>) => {
     if (!reviewing || !preview) return;
@@ -200,34 +225,33 @@ export default function CustomerMerge() {
     mergeFetcher.submit(payload, { method: "post" });
   };
 
-  const canPickPair = survivorPick && mergedPick && survivorPick !== mergedPick;
-  const groupsView = groups as { sameEmail: DuplicateGroupView[]; possible: DuplicateGroupView[] };
-  const candidateGroup: DuplicateGroupView | null =
-    candidates.length > 1
-      ? { customers: candidates, reasons: [], dismissedPairs: [] }
-      : null;
-  const decisionError = decisionFetcher.data?.error;
+  // Filter and paging links keep the Action Item's candidates on screen.
+  const hrefWith = (nextKinds: DuplicateReasonKind[], nextLimit?: number) => {
+    const params = new URLSearchParams();
+    if (candidateIds.length > 0) params.set("ids", candidateIds.join(","));
+    if (nextKinds.length > 0) params.set("match", nextKinds.join(","));
+    if (nextLimit) params.set("limit", String(nextLimit));
+    const query = params.toString();
+    return query ? `/customers/merge?${query}` : "/customers/merge";
+  };
+  const hrefFor = (nextKinds: DuplicateReasonKind[]) => hrefWith(nextKinds);
+  const showMoreHref = hrefWith(kinds, limit + PAGE_SIZE);
 
-  const renderGroups = (list: DuplicateGroupView[], empty: string) =>
-    list.length === 0 ? (
-      <p className="text-sm text-gray-600 dark:text-gray-400">{empty}</p>
-    ) : (
-      <div className="space-y-4">
-        {list.map((group) => (
-          <DuplicateGroupCard
-            key={group.customers.map((customer) => customer.id).join("-")}
-            group={group}
-            onReview={openReview}
-            onDismiss={dismiss}
-            onUndismiss={undismiss}
-          />
-        ))}
-      </div>
-    );
+  const pairs = suggestions.pairs as DuplicatePairView[];
+  const candidates = candidatePairs as DuplicatePairView[];
+  const shown = pairs.length;
 
   return (
     <div className="max-w-[1920px] mx-auto">
       <SearchHeader
+        hideSearch
+        beforeSearch={
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {suggestions.total === 0
+              ? "No matches"
+              : `Showing ${shown} of ${suggestions.total}, best matches first`}
+          </p>
+        }
         breadcrumbs={[
           { label: "Dashboard", href: "/" },
           { label: "Customers", href: "/customers" },
@@ -235,94 +259,110 @@ export default function CustomerMerge() {
         ]}
       />
 
-      <div className="space-y-8 px-4 py-6 sm:px-6 lg:px-10">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-            Merge duplicate Customers
-          </h2>
-          <Link
-            className="text-sm text-blue-600 underline dark:text-blue-400"
-            to={includeDismissed ? "/customers/merge" : "/customers/merge?showDismissed=1"}
-          >
-            {includeDismissed ? "Hide dismissed" : "Show dismissed"}
-          </Link>
-        </div>
+      <div className="px-4 pb-6 pt-1 sm:px-6 lg:px-10">
+        <div>
+          <div className="min-w-0 space-y-8">
+            {candidateCount > 0 && (
+              <section aria-labelledby="candidates-heading" className="space-y-3">
+                <h3 id="candidates-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  From the Action Item
+                </h3>
+                {candidateCount === 1 && (
+                  <p className="rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
+                    Those Customers have already been merged into {candidateName}.
+                  </p>
+                )}
+                {candidates.map((pair) => (
+                  <DuplicatePairCard
+                    key={`candidate-${pair.a.id}-${pair.b.id}`}
+                    pair={pair}
+                    onReview={openReview}
+                  />
+                ))}
+              </section>
+            )}
 
-        {decisionError && (
-          <p role="alert" className="rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-            {decisionError}
-          </p>
-        )}
+            <section aria-label="Suggested duplicates" className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <MatchFilterChips
+                  selected={kinds}
+                  counts={suggestions.kindCounts}
+                  hrefFor={hrefFor}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="inline-flex items-center gap-2"
+                  onClick={() => setCustomMergeOpen(true)}
+                >
+                  <Merge className="h-4 w-4" aria-hidden="true" />
+                  Custom merge
+                </Button>
+              </div>
+              {kinds.length > 1 && (
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Only pairs that match on every selected type are shown.
+                </p>
+              )}
 
-        {candidateGroup && (
-          <section aria-labelledby="candidates-heading" className="space-y-3">
-            <h3 id="candidates-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              From the Action Item
-            </h3>
-            <DuplicateGroupCard group={candidateGroup} onReview={openReview} onDismiss={dismiss} />
-          </section>
-        )}
-        {candidates.length === 1 && (
-          <p className="rounded border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
-            Those Customers have already been merged into {candidates[0].displayName}.
-          </p>
-        )}
+              {pairs.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-600 dark:border-gray-600 dark:text-gray-400">
+                  {kinds.length > 0
+                    ? "No Customers match on every selected type."
+                    : "No likely duplicates found."}
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {pairs.map((pair) => (
+                    <DuplicatePairCard
+                      key={`${pair.a.id}-${pair.b.id}`}
+                      pair={pair}
+                      onReview={openReview}
+                    />
+                  ))}
+                </div>
+              )}
 
-        <section aria-labelledby="same-email-heading" className="space-y-3">
-          <h3 id="same-email-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            Same email
-          </h3>
-          {renderGroups(groupsView.sameEmail, "No Customers share an email address.")}
-        </section>
-
-        <section aria-labelledby="possible-heading" className="space-y-3">
-          <h3 id="possible-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            Possible duplicates
-          </h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Lower confidence: same company name, phone number or contact name.
-          </p>
-          {renderGroups(groupsView.possible, "No possible duplicates found.")}
-        </section>
-
-        <section aria-labelledby="pair-heading" className="space-y-3">
-          <h3 id="pair-heading" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            Merge any two Customers
-          </h3>
-          <div className="grid max-w-3xl gap-4 sm:grid-cols-2">
-            <SearchableSelect
-              label="Keep this Customer"
-              value={survivorPick}
-              onChange={setSurvivorPick}
-              options={customerOptions}
-              placeholder="Search Customers"
-            />
-            <SearchableSelect
-              label="Merge this Customer into it"
-              value={mergedPick}
-              onChange={setMergedPick}
-              options={customerOptions}
-              placeholder="Search Customers"
-            />
+              {shown < suggestions.total && (
+                <div className="text-center">
+                  <Link
+                    to={showMoreHref}
+                    preventScrollReset
+                    replace
+                    className="inline-block rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    {`Show ${Math.min(PAGE_SIZE, suggestions.total - shown)} more`}
+                  </Link>
+                </div>
+              )}
+            </section>
           </div>
-          <Button
-            type="button"
-            disabled={!canPickPair}
-            onClick={() => openReview(Number(survivorPick), Number(mergedPick))}
-          >
-            Review merge
-          </Button>
-        </section>
+
+        </div>
       </div>
 
-      <Modal isOpen={reviewing !== null} onClose={closeReview} title="Review merge" size="xl">
-        {previewFetcher.state === "loading" && !preview && (
+      <CustomMergeModal
+        isOpen={customMergeOpen}
+        onClose={() => setCustomMergeOpen(false)}
+        customers={customerRecords}
+        onReview={openReview}
+      />
+
+      <Modal
+        isOpen={reviewing !== null}
+        onClose={closeReview}
+        title="Review merge"
+        size="xl"
+        zIndex={60}
+      >
+        {!preview && !previewError && (
           <p className="text-sm text-gray-600 dark:text-gray-400">Loading…</p>
         )}
-        {previewFetcher.data?.error && (
+        {previewError && !preview && (
           <div className="space-y-3">
             <p role="alert" className="text-sm text-red-800 dark:text-red-200">
-              {previewFetcher.data.error}
+              {previewError}
             </p>
             <Button type="button" variant="secondary" onClick={closeReview}>
               Close
@@ -336,6 +376,7 @@ export default function CustomerMerge() {
             preview={preview}
             onConfirm={confirm}
             onCancel={closeReview}
+            onSwap={swapReview}
             isSubmitting={mergeFetcher.state !== "idle" || navigation.state !== "idle"}
             error={mergeFetcher.data?.error}
           />

@@ -16,13 +16,12 @@ _Avoid_: Secondary email, alternate email
 Combining two Customers: the survivor receives every record of the merged Customer and its emails as aliases, and the merged Customer is soft-archived with `mergedIntoCustomerId` pointing at the survivor. Chains resolve to the final active survivor. Available to Admin and Dev at `/customers/merge`.
 _Avoid_: Delete duplicate, dedupe (as a verb for hard deletion)
 
-**Duplicate group**:
-A set of active Customers suggested for review in the merge tool: "Same email" (high confidence) or "Possible duplicates" (same company name, phone digits, or contact name). A pair staff mark "not duplicates" is dismissed and no longer suggested.
-_Avoid_: Customer match (that is the Action Item below)
+**Duplicate suggestion**:
+A pair of active Customers the merge tool suggests reviewing, with the signals they share (same email or alias, phone digits, company name, or contact name) and a score that adds those signals up (email counts most). Suggestions are ranked best first and can be filtered to pairs that share every selected signal. Nothing is stored: suggestions are recomputed on each visit, and a pair that is not a duplicate is simply left unmerged.
+_Avoid_: Duplicate group (suggestions are pairs, never chained groups), Customer match (that is the Action Item below)
 
 **Customer match review**:
-An Action Item raised when an RFQ matched several active Customers. It links into the merge tool and resolves itself once the candidates are merged or confirmed not duplicates.
-_Avoid_: Resolving it by hand
+An Action Item raised when an RFQ matched several active Customers. It links into the merge tool and resolves itself once the candidates are merged or no longer active; an Admin or Dev resolves it by hand ("Not duplicates") when the Customers are genuinely distinct.
 
 **Vendor**:
 A shop or supplier that fulfills production work. May be assigned to quotes and orders.

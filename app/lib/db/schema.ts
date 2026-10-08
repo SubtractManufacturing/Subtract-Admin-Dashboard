@@ -14,7 +14,6 @@ import {
   index,
   uniqueIndex,
   foreignKey,
-  check,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
@@ -198,28 +197,6 @@ export const customerEmailAliases = pgTable(
   (table) => ({
     pk: primaryKey({ columns: [table.customerId, table.email] }),
     emailIdx: index("customer_email_aliases_email_idx").on(table.email),
-  })
-);
-
-/** A pair of Customers staff confirmed are NOT duplicates (ordered low < high). */
-export const customerMergeDismissals = pgTable(
-  "customer_merge_dismissals",
-  {
-    lowCustomerId: integer("low_customer_id")
-      .notNull()
-      .references(() => customers.id),
-    highCustomerId: integer("high_customer_id")
-      .notNull()
-      .references(() => customers.id),
-    dismissedBy: text("dismissed_by").references(() => users.id),
-    dismissedAt: timestamp("dismissed_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.lowCustomerId, table.highCustomerId] }),
-    orderedPair: check(
-      "customer_merge_dismissals_ordered_pair",
-      sql`${table.lowCustomerId} < ${table.highCustomerId}`,
-    ),
   })
 );
 
@@ -844,7 +821,6 @@ export type NewUser = typeof users.$inferInsert;
 export type Customer = typeof customers.$inferSelect;
 export type NewCustomer = typeof customers.$inferInsert;
 export type CustomerEmailAlias = typeof customerEmailAliases.$inferSelect;
-export type CustomerMergeDismissal = typeof customerMergeDismissals.$inferSelect;
 export type Vendor = typeof vendors.$inferSelect;
 export type NewVendor = typeof vendors.$inferInsert;
 export type Quote = typeof quotes.$inferSelect;

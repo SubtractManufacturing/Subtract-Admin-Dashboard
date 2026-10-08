@@ -47,6 +47,32 @@ describe("CustomerMergeReview", () => {
     expect(within(moving).getByText(/6 Notes/)).toBeVisible();
   });
 
+  it("lets staff swap which Customer is kept", () => {
+    const onSwap = vi.fn();
+    render(
+      <CustomerMergeReview
+        preview={preview()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        onSwap={onSwap}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Swap which Customer is kept" }));
+
+    expect(onSwap).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the swap button when swapping is not offered", () => {
+    render(
+      <CustomerMergeReview preview={preview()} onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Swap which Customer is kept" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps the survivor's value by default and lets one click take the other value", () => {
     const onConfirm = vi.fn();
     render(

@@ -1,5 +1,5 @@
 {
-  "id": "862b23a0-222d-452b-a805-3581108354ed",
+  "id": "400a3a94-12bc-4af9-bbf0-89f9fece8b2b",
   "prevId": "e9fb54ea-26ec-4ea7-906d-163000000021",
   "version": "7",
   "dialect": "postgresql",
@@ -741,97 +741,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.customer_merge_dismissals": {
-      "name": "customer_merge_dismissals",
-      "schema": "",
-      "columns": {
-        "low_customer_id": {
-          "name": "low_customer_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "high_customer_id": {
-          "name": "high_customer_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "dismissed_by": {
-          "name": "dismissed_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "dismissed_at": {
-          "name": "dismissed_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "customer_merge_dismissals_low_customer_id_customers_id_fk": {
-          "name": "customer_merge_dismissals_low_customer_id_customers_id_fk",
-          "tableFrom": "customer_merge_dismissals",
-          "tableTo": "customers",
-          "columnsFrom": [
-            "low_customer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "customer_merge_dismissals_high_customer_id_customers_id_fk": {
-          "name": "customer_merge_dismissals_high_customer_id_customers_id_fk",
-          "tableFrom": "customer_merge_dismissals",
-          "tableTo": "customers",
-          "columnsFrom": [
-            "high_customer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "customer_merge_dismissals_dismissed_by_users_id_fk": {
-          "name": "customer_merge_dismissals_dismissed_by_users_id_fk",
-          "tableFrom": "customer_merge_dismissals",
-          "tableTo": "users",
-          "columnsFrom": [
-            "dismissed_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "customer_merge_dismissals_low_customer_id_high_customer_id_pk": {
-          "name": "customer_merge_dismissals_low_customer_id_high_customer_id_pk",
-          "columns": [
-            "low_customer_id",
-            "high_customer_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "customer_merge_dismissals_ordered_pair": {
-          "name": "customer_merge_dismissals_ordered_pair",
-          "value": "\"customer_merge_dismissals\".\"low_customer_id\" < \"customer_merge_dismissals\".\"high_customer_id\""
-        }
-      },
       "isRLSEnabled": false
     },
     "public.customers": {

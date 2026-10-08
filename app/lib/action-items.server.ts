@@ -83,7 +83,7 @@ export async function markActionItemRead(id: string, actor: ActionItemActor) {
 export async function resolveActionItem(
   id: string,
   actor: ActionItemActor,
-  resolution = "Reviewed",
+  resolution?: string,
 ) {
   const [item] = await db
     .select()
@@ -98,10 +98,8 @@ export async function resolveActionItem(
     );
   }
   if (item.type === "customer_match_review") {
-    throw new ActionItemCommandError(
-      "Customer match reviews resolve once the Customers are merged or confirmed not duplicates",
-      409,
-    );
+    // Same audience as the merge tool the item links to.
+    requireElevated(actor.role);
   }
   const now = new Date();
   const [updated] = await db
@@ -110,7 +108,9 @@ export async function resolveActionItem(
       status: "resolved",
       resolvedAt: now,
       resolvedBy: actor.userId,
-      resolution,
+      resolution:
+        resolution ??
+        (item.type === "customer_match_review" ? "Not duplicates" : "Reviewed"),
       updatedAt: now,
     })
     .where(and(eq(actionItems.id, id), eq(actionItems.status, "active")))
@@ -152,7 +152,7 @@ export async function softDeleteActionItem(id: string, actor: ActionItemActor) {
     .limit(1);
   if (existing?.type === "customer_match_review" && existing.status === "active") {
     throw new ActionItemCommandError(
-      "Customer match reviews cannot be deleted; merge the Customers or confirm they are not duplicates",
+      "Customer match reviews cannot be deleted; merge the Customers or resolve the item",
       409,
     );
   }

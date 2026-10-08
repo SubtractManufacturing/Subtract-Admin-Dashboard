@@ -1,22 +1,23 @@
 /**
- * Customer merge module (duplicate detection, dismissals, preview, merge).
+ * Customer merge module (duplicate suggestions, preview, merge).
  * Requires DATABASE_URL pointing at a migrated Postgres instance.
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq, inArray, or, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 import { getActionItemsForUser, resolveActionItem } from "./action-items.server";
 import {
-  dismissCustomerGroup,
-  findDuplicateGroups,
+  findDuplicatePairs,
+  getActiveCustomerSummaries,
   mergeCustomers,
+  pairsAmong,
   previewMerge,
-  undismissPair,
-  type DuplicateGroup,
+  type DuplicatePair,
   type MergeActor,
 } from "./customer-merge.server";
 import { resolveFinalCustomerId } from "./customer-match-review.server";
+import type { DuplicateReasonKind } from "./customer-merge-view";
 import { db } from "./db";
 import {
   actionItems,
@@ -24,7 +25,6 @@ import {
   customerAttachments,
   customerCommunications,
   customerEmailAliases,
-  customerMergeDismissals,
   customers,
   eventLogs,
   notes,
@@ -186,14 +186,21 @@ async function aliasesOf(id: number) {
   return rows.map((row) => row.email).sort();
 }
 
-function groupContaining(groups: DuplicateGroup[], customerId: number) {
-  return groups.find((group) =>
-    group.customers.some((customer) => customer.id === customerId),
+/** Every suggested pair, so tests can find theirs among whatever else the database holds. */
+async function allPairs(kinds?: DuplicateReasonKind[]) {
+  return (await findDuplicatePairs({ kinds })).pairs;
+}
+
+function pairOf(pairs: DuplicatePair[], x: number, y: number) {
+  return pairs.find(
+    (pair) =>
+      (pair.a.id === x && pair.b.id === y) || (pair.a.id === y && pair.b.id === x),
   );
 }
 
-const idsOf = (group: DuplicateGroup | undefined) =>
-  group?.customers.map((customer) => customer.id).sort((a, b) => a - b);
+function pairsInvolving(pairs: DuplicatePair[], customerId: number) {
+  return pairs.filter((pair) => pair.a.id === customerId || pair.b.id === customerId);
+}
 
 describe("customer merge module", () => {
   beforeAll(async () => {
@@ -221,12 +228,6 @@ describe("customer merge module", () => {
       await db.execute(sql`delete from quotes where customer_id in ${ids}`);
       await db.execute(sql`delete from orders where customer_id in ${ids}`);
       await db.execute(sql`delete from parts where customer_id in ${ids}`);
-      await db.delete(customerMergeDismissals).where(
-        or(
-          inArray(customerMergeDismissals.lowCustomerId, ids),
-          inArray(customerMergeDismissals.highCustomerId, ids),
-        ),
-      );
       await db.delete(customerEmailAliases).where(inArray(customerEmailAliases.customerId, ids));
       await db.update(customers).set({ mergedIntoCustomerId: null }).where(inArray(customers.id, ids));
       await db.delete(customers).where(inArray(customers.id, ids));
@@ -235,18 +236,31 @@ describe("customer merge module", () => {
   });
 
   describe("finding duplicates", () => {
-    it("groups Customers whose emails match after normalization in the Same email tier", async () => {
+    it("pairs Customers whose emails match after normalization", async () => {
       const email = emailFor("dup-primary");
       const a = await seedCustomer({ email });
       const b = await seedCustomer({ email: `  ${email.toUpperCase()}.` });
       const unrelated = await seedCustomer({ email: emailFor("dup-unrelated") });
 
-      const { sameEmail } = await findDuplicateGroups();
+      const pairs = await allPairs();
 
-      const group = groupContaining(sameEmail, a.id);
-      expect(idsOf(group)).toEqual([a.id, b.id].sort((x, y) => x - y));
-      expect(group?.reasons).toEqual([{ kind: "email", value: email }]);
-      expect(groupContaining(sameEmail, unrelated.id)).toBeUndefined();
+      const pair = pairOf(pairs, a.id, b.id);
+      expect(pair?.reasons).toEqual([{ kind: "email", value: email }]);
+      expect(pair?.score).toBeGreaterThanOrEqual(100);
+      expect(pairsInvolving(pairs, unrelated.id)).toEqual([]);
+    });
+
+    it("lists each pair once, lowest id first", async () => {
+      const email = emailFor("dup-order");
+      const a = await seedCustomer({ email });
+      const b = await seedCustomer({ email });
+
+      const matching = (await allPairs()).filter(
+        (pair) => pair.a.id === a.id || pair.b.id === a.id,
+      );
+
+      expect(matching).toHaveLength(1);
+      expect([matching[0].a.id, matching[0].b.id]).toEqual([a.id, b.id]);
     });
 
     it("counts an alias that coincides with another Customer's primary email", async () => {
@@ -257,25 +271,23 @@ describe("customer merge module", () => {
       });
       const other = await seedCustomer({ email });
 
-      const { sameEmail } = await findDuplicateGroups();
-
-      expect(idsOf(groupContaining(sameEmail, holder.id))).toEqual(
-        [holder.id, other.id].sort((x, y) => x - y),
-      );
+      expect(pairOf(await allPairs(), holder.id, other.id)?.reasons).toEqual([
+        { kind: "email", value: email },
+      ]);
     });
 
-    it("joins Customers linked through different shared emails into one group", async () => {
+    it("suggests each pair separately instead of chaining Customers into one group", async () => {
       const first = emailFor("chain-1");
       const second = emailFor("chain-2");
       const a = await seedCustomer({ email: first });
       const b = await seedCustomer({ email: first, aliases: [second] });
       const c = await seedCustomer({ email: second });
 
-      const { sameEmail } = await findDuplicateGroups();
+      const pairs = await allPairs();
 
-      expect(idsOf(groupContaining(sameEmail, a.id))).toEqual(
-        [a.id, b.id, c.id].sort((x, y) => x - y),
-      );
+      expect(pairOf(pairs, a.id, b.id)).toBeDefined();
+      expect(pairOf(pairs, b.id, c.id)).toBeDefined();
+      expect(pairOf(pairs, a.id, c.id)).toBeUndefined();
     });
 
     it("excludes archived Customers", async () => {
@@ -283,9 +295,7 @@ describe("customer merge module", () => {
       const active = await seedCustomer({ email });
       await seedCustomer({ email, isArchived: true });
 
-      const { sameEmail } = await findDuplicateGroups();
-
-      expect(groupContaining(sameEmail, active.id)).toBeUndefined();
+      expect(pairsInvolving(await allPairs(), active.id)).toEqual([]);
     });
 
     it("summarises each Customer with name, contact details, record counts and last activity", async () => {
@@ -307,10 +317,9 @@ describe("customer merge module", () => {
         createdAt: new Date("2026-05-01T00:00:00Z"),
       });
 
-      const { sameEmail } = await findDuplicateGroups();
-      const group = groupContaining(sameEmail, a.id);
-      const summaryA = group?.customers.find((c) => c.id === a.id);
-      const summaryB = group?.customers.find((c) => c.id === b.id);
+      const pair = pairOf(await allPairs(), a.id, b.id);
+      const summaryA = pair?.a.id === a.id ? pair.a : pair?.b;
+      const summaryB = pair?.a.id === b.id ? pair.a : pair?.b;
 
       expect(summaryA).toMatchObject({
         displayName: `Summary A ${tag}`,
@@ -328,21 +337,18 @@ describe("customer merge module", () => {
       });
     });
 
-    describe("Possible duplicates tier", () => {
+    describe("other match types", () => {
       it("suggests Customers sharing a normalized company name", async () => {
         const a = await seedCustomer({ companyName: `Acme   Widgets, Inc. ${tag}` });
         const b = await seedCustomer({ companyName: `acme widgets inc ${tag}` });
         const other = await seedCustomer({ companyName: `Other Co ${tag}` });
 
-        const { possible, sameEmail } = await findDuplicateGroups();
+        const pairs = await allPairs();
 
-        const group = groupContaining(possible, a.id);
-        expect(idsOf(group)).toEqual([a.id, b.id].sort((x, y) => x - y));
-        expect(group?.reasons).toEqual([
+        expect(pairOf(pairs, a.id, b.id)?.reasons).toEqual([
           { kind: "company", value: `acme widgets inc ${tag}` },
         ]);
-        expect(groupContaining(possible, other.id)).toBeUndefined();
-        expect(groupContaining(sameEmail, a.id)).toBeUndefined();
+        expect(pairsInvolving(pairs, other.id)).toEqual([]);
       });
 
       it("suggests Customers sharing the same phone digits despite formatting", async () => {
@@ -350,11 +356,9 @@ describe("customer merge module", () => {
         const a = await seedCustomer({ phone: `+${digits}` });
         const b = await seedCustomer({ phone: digits.replace(/(\d)(\d{3})(\d{3})(\d+)/, "$1 ($2) $3-$4") });
 
-        const { possible } = await findDuplicateGroups();
-
-        const group = groupContaining(possible, a.id);
-        expect(idsOf(group)).toEqual([a.id, b.id].sort((x, y) => x - y));
-        expect(group?.reasons).toEqual([{ kind: "phone", value: digits }]);
+        expect(pairOf(await allPairs(), a.id, b.id)?.reasons).toEqual([
+          { kind: "phone", value: digits },
+        ]);
       });
 
       it("suggests Customers sharing an identical contact name", async () => {
@@ -362,11 +366,7 @@ describe("customer merge module", () => {
         const a = await seedCustomer({ contactName: name });
         const b = await seedCustomer({ contactName: `  ${name.toUpperCase()}  ` });
 
-        const { possible } = await findDuplicateGroups();
-
-        const group = groupContaining(possible, a.id);
-        expect(idsOf(group)).toEqual([a.id, b.id].sort((x, y) => x - y));
-        expect(group?.reasons).toEqual([
+        expect(pairOf(await allPairs(), a.id, b.id)?.reasons).toEqual([
           { kind: "name", value: name.toLowerCase() },
         ]);
       });
@@ -376,87 +376,118 @@ describe("customer merge module", () => {
         const active = await seedCustomer({ companyName: company });
         await seedCustomer({ companyName: company, isArchived: true });
 
-        const { possible } = await findDuplicateGroups();
-
-        expect(groupContaining(possible, active.id)).toBeUndefined();
+        expect(pairsInvolving(await allPairs(), active.id)).toEqual([]);
       });
     });
 
-    describe("dismissing non-duplicates", () => {
-      it("hides a dismissed pair until the dismissed view is requested, with who and when", async () => {
-        const email = emailFor("dismiss-pair");
-        const a = await seedCustomer({ email });
-        const b = await seedCustomer({ email });
-
-        await dismissCustomerGroup([b.id, a.id], admin);
-
-        const hidden = await findDuplicateGroups();
-        expect(groupContaining(hidden.sameEmail, a.id)).toBeUndefined();
-
-        const shown = await findDuplicateGroups({ includeDismissed: true });
-        const group = groupContaining(shown.sameEmail, a.id);
-        expect(idsOf(group)).toEqual([a.id, b.id].sort((x, y) => x - y));
-        expect(group?.dismissedPairs).toEqual([
-          {
-            lowCustomerId: Math.min(a.id, b.id),
-            highCustomerId: Math.max(a.id, b.id),
-            dismissedBy: adminId,
-            dismissedByLabel: admin.email,
-            dismissedAt: expect.any(Date),
-          },
-        ]);
-      });
-
-      it("dismisses every pair when a group of three is dismissed, and can un-dismiss one pair", async () => {
-        const email = emailFor("dismiss-trio");
-        const [a, b, c] = [
-          await seedCustomer({ email }),
-          await seedCustomer({ email }),
-          await seedCustomer({ email }),
+    describe("ranking and filters", () => {
+      it("ranks an email match above company, phone and name matches", async () => {
+        const company = `Rank Co ${tag}`;
+        const email = emailFor("rank-email");
+        const emailPair = [await seedCustomer({ email }), await seedCustomer({ email })];
+        const companyPair = [
+          await seedCustomer({ companyName: company }),
+          await seedCustomer({ companyName: company }),
         ];
 
-        await dismissCustomerGroup([a.id, b.id, c.id], admin);
+        const pairs = await allPairs();
+        const emailIndex = pairs.indexOf(pairOf(pairs, emailPair[0].id, emailPair[1].id)!);
+        const companyIndex = pairs.indexOf(pairOf(pairs, companyPair[0].id, companyPair[1].id)!);
 
-        expect(
-          groupContaining((await findDuplicateGroups()).sameEmail, a.id),
-        ).toBeUndefined();
-        const shown = groupContaining(
-          (await findDuplicateGroups({ includeDismissed: true })).sameEmail,
-          a.id,
-        );
-        expect(shown?.dismissedPairs).toHaveLength(3);
-
-        await undismissPair(a.id, b.id, admin);
-
-        const afterUndismiss = groupContaining(
-          (await findDuplicateGroups()).sameEmail,
-          a.id,
-        );
-        expect(idsOf(afterUndismiss)).toEqual([a.id, b.id]);
+        expect(emailIndex).toBeGreaterThanOrEqual(0);
+        expect(emailIndex).toBeLessThan(companyIndex);
       });
 
-      it("remembers dismissals for every user and ignores repeat dismissals", async () => {
-        const email = emailFor("dismiss-repeat");
-        const a = await seedCustomer({ email });
-        const b = await seedCustomer({ email });
+      it("scores a pair higher the more signals it shares", async () => {
+        const company = `Stack Co ${tag}`;
+        const name = `Stack Person ${tag}`;
+        const both = [
+          await seedCustomer({ companyName: company, contactName: name }),
+          await seedCustomer({ companyName: company, contactName: name }),
+        ];
+        const one = [
+          await seedCustomer({ companyName: `${company} solo` }),
+          await seedCustomer({ companyName: `${company} solo` }),
+        ];
 
-        await dismissCustomerGroup([a.id, b.id], admin);
-        await expect(dismissCustomerGroup([a.id, b.id], admin)).resolves.toBeUndefined();
+        const pairs = await allPairs();
 
-        const rows = await db
-          .select()
-          .from(customerMergeDismissals)
-          .where(eq(customerMergeDismissals.lowCustomerId, Math.min(a.id, b.id)));
-        expect(rows).toHaveLength(1);
+        expect(pairOf(pairs, both[0].id, both[1].id)!.score).toBeGreaterThan(
+          pairOf(pairs, one[0].id, one[1].id)!.score,
+        );
       });
 
-      it("only lets Admin or Dev dismiss", async () => {
-        const a = await seedCustomer({ email: emailFor("dismiss-auth") });
-        const b = await seedCustomer({ email: emailFor("dismiss-auth") });
+      it("requires a pair to share every selected signal", async () => {
+        const company = `Filter Co ${tag}`;
+        const email = emailFor("filter-both");
+        const both = [
+          await seedCustomer({ email, companyName: company }),
+          await seedCustomer({ email, companyName: company }),
+        ];
+        const emailOnly = [
+          await seedCustomer({ email: emailFor("filter-email-only") }),
+          await seedCustomer({ email: emailFor("filter-email-only") }),
+        ];
+        const companyOnly = [
+          await seedCustomer({ companyName: `${company} only` }),
+          await seedCustomer({ companyName: `${company} only` }),
+        ];
 
-        await expect(
-          dismissCustomerGroup([a.id, b.id], { ...admin, role: "User" }),
-        ).rejects.toMatchObject({ status: 403 });
+        const emailFilter = await allPairs(["email"]);
+        expect(pairOf(emailFilter, both[0].id, both[1].id)).toBeDefined();
+        expect(pairOf(emailFilter, emailOnly[0].id, emailOnly[1].id)).toBeDefined();
+        expect(pairOf(emailFilter, companyOnly[0].id, companyOnly[1].id)).toBeUndefined();
+
+        const emailAndCompany = await allPairs(["email", "company"]);
+        expect(pairOf(emailAndCompany, both[0].id, both[1].id)).toBeDefined();
+        expect(pairOf(emailAndCompany, emailOnly[0].id, emailOnly[1].id)).toBeUndefined();
+        expect(pairOf(emailAndCompany, companyOnly[0].id, companyOnly[1].id)).toBeUndefined();
+      });
+
+      it("pages the best matches and reports totals and per-signal counts", async () => {
+        for (const name of ["page-one", "page-two"]) {
+          const email = emailFor(name);
+          await seedCustomer({ email });
+          await seedCustomer({ email });
+        }
+
+        const all = await findDuplicatePairs();
+        const firstPage = await findDuplicatePairs({ limit: 1 });
+        const secondPage = await findDuplicatePairs({ limit: 1, offset: 1 });
+
+        expect(firstPage.total).toBe(all.total);
+        expect(firstPage.pairs).toHaveLength(1);
+        expect(firstPage.pairs[0]).toEqual(all.pairs[0]);
+        expect(secondPage.pairs[0]).toEqual(all.pairs[1]);
+        expect(all.kindCounts.email).toBeGreaterThanOrEqual(1);
+        const filtered = await findDuplicatePairs({ kinds: ["email"] });
+        expect(filtered.kindCounts).toEqual(all.kindCounts);
+        expect(filtered.total).toBe(all.kindCounts.email);
+      });
+
+      it("ignores a company shared by too many Customers to be meaningful", async () => {
+        const company = `Generic Co ${tag}`;
+        const crowd = [];
+        for (let i = 0; i < 26; i++) crowd.push(await seedCustomer({ companyName: company }));
+
+        expect(pairsInvolving(await allPairs(), crowd[0].id)).toEqual([]);
+      });
+    });
+
+    describe("candidates from an Action Item", () => {
+      it("pairs every active candidate even when they share nothing", async () => {
+        const a = await seedCustomer({ email: emailFor("cand-a") });
+        const b = await seedCustomer({ email: emailFor("cand-b") });
+        const shared = emailFor("cand-shared");
+        const c = await seedCustomer({ email: shared });
+        const d = await seedCustomer({ email: shared });
+
+        const pairs = pairsAmong(await getActiveCustomerSummaries([a.id, b.id, c.id, d.id]));
+
+        expect(pairs).toHaveLength(6);
+        expect(pairOf(pairs, a.id, b.id)?.reasons).toEqual([]);
+        expect(pairOf(pairs, c.id, d.id)?.reasons).toEqual([{ kind: "email", value: shared }]);
+        expect([pairs[0].a.id, pairs[0].b.id]).toEqual([c.id, d.id]);
       });
     });
   });
@@ -496,7 +527,7 @@ describe("customer merge module", () => {
       expect(await statusOf(itemId)).toMatchObject({ status: "resolved" });
     });
 
-    it("stays open while candidates remain distinct, then resolves when the rest are dismissed", async () => {
+    it("stays open while some candidates remain distinct Customers", async () => {
       const email = emailFor("review-partial");
       const [a, b, c] = [
         await seedCustomer({ email }),
@@ -506,35 +537,6 @@ describe("customer merge module", () => {
       const itemId = await seedReviewItem([a.id, b.id, c.id]);
 
       await mergeCustomers({ survivorId: a.id, mergedId: b.id }, admin);
-      expect(await statusOf(itemId)).toMatchObject({ status: "active" });
-
-      await dismissCustomerGroup([a.id, c.id], admin);
-      expect(await statusOf(itemId)).toMatchObject({
-        status: "resolved",
-        resolution: "Confirmed not duplicates",
-      });
-    });
-
-    it("resolves when every pair of candidates is dismissed as not duplicates", async () => {
-      const a = await seedCustomer({ email: emailFor("review-dismiss") });
-      const b = await seedCustomer({ email: emailFor("review-dismiss") });
-      const itemId = await seedReviewItem([a.id, b.id]);
-
-      await dismissCustomerGroup([a.id, b.id], admin);
-
-      expect(await statusOf(itemId)).toMatchObject({ status: "resolved" });
-    });
-
-    it("leaves an item open when only some pairs are dismissed", async () => {
-      const email = emailFor("review-some");
-      const [a, b, c] = [
-        await seedCustomer({ email }),
-        await seedCustomer({ email }),
-        await seedCustomer({ email }),
-      ];
-      const itemId = await seedReviewItem([a.id, b.id, c.id]);
-
-      await dismissCustomerGroup([a.id, b.id], admin);
 
       expect(await statusOf(itemId)).toMatchObject({ status: "active" });
     });
@@ -552,14 +554,27 @@ describe("customer merge module", () => {
       expect(await statusOf(itemId)).toMatchObject({ status: "resolved" });
     });
 
-    it("cannot be resolved by hand without a real decision", async () => {
+    it("lets Admin or Dev resolve it by hand when the Customers are not duplicates", async () => {
       const a = await seedCustomer({ email: emailFor("review-manual") });
       const b = await seedCustomer({ email: emailFor("review-manual") });
       const itemId = await seedReviewItem([a.id, b.id]);
 
+      await resolveActionItem(itemId, { userId: adminId, role: "Admin" });
+
+      expect(await statusOf(itemId)).toMatchObject({
+        status: "resolved",
+        resolution: "Not duplicates",
+      });
+    });
+
+    it("cannot be resolved by hand by roles that cannot use the merge tool", async () => {
+      const a = await seedCustomer({ email: emailFor("review-user") });
+      const b = await seedCustomer({ email: emailFor("review-user") });
+      const itemId = await seedReviewItem([a.id, b.id]);
+
       await expect(
-        resolveActionItem(itemId, { userId: adminId, role: "Admin" }),
-      ).rejects.toMatchObject({ status: 409 });
+        resolveActionItem(itemId, { userId: adminId, role: "User" }),
+      ).rejects.toMatchObject({ status: 403 });
       expect(await statusOf(itemId)).toMatchObject({ status: "active" });
     });
   });

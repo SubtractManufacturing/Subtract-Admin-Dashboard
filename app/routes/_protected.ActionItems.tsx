@@ -90,6 +90,11 @@ export default function ActionItems() {
                   <Form method="post" className="flex flex-wrap items-center gap-3">
                     {item.isUnread && <button name="intent" value="read" className="text-sm text-blue-600">Mark read</button>}
                     {item.type === "customer_match_review" && <CustomerMatchReviewLink metadata={item.metadata} canMerge={elevated} />}
+                    {elevated && item.type === "customer_match_review" && (
+                      <button name="intent" value="resolve" className="text-sm text-gray-600 hover:underline dark:text-gray-300">
+                        Not duplicates
+                      </button>
+                    )}
                     {elevated && item.type === "rfq_import_failure" && <button name="intent" value="retry" className="text-sm text-blue-600">Retry now</button>}
                     {elevated && item.type !== "customer_match_review" && <DeleteActionItemButton id={item.id} />}
                     <input type="hidden" name="actionItemId" value={item.id} />

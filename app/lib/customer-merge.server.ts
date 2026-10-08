@@ -14,10 +14,7 @@ import {
   type FieldConflict,
   type MergeChoices,
 } from "./customer-merge-fields";
-import {
-  customerPairKey,
-  type DuplicateReasonKind,
-} from "./customer-merge-view";
+import type { DuplicateReasonKind } from "./customer-merge-view";
 import {
   normalizeCompanyName,
   normalizeContactName,
@@ -28,13 +25,11 @@ import {
   customerAttachments,
   customerCommunications,
   customerEmailAliases,
-  customerMergeDismissals,
   customers,
   notes,
   orders,
   parts,
   quotes,
-  users,
   type UserRole,
 } from "./db/schema";
 import { normalizeEmail } from "./email-normalize";
@@ -76,193 +71,179 @@ export type CustomerSummary = {
   createdAt: Date;
 };
 
-export type DismissedPair = {
-  lowCustomerId: number;
-  highCustomerId: number;
-  dismissedBy: string | null;
-  /** The dismisser's name (or email) for display. */
-  dismissedByLabel: string | null;
-  dismissedAt: Date;
-};
-
-export type DuplicateGroup = {
-  customers: CustomerSummary[];
+/** Two active Customers that look alike, and which signals they share. */
+export type DuplicatePair = {
+  a: CustomerSummary;
+  b: CustomerSummary;
   reasons: DuplicateReason[];
-  /** Pairs inside this group that staff marked "not duplicates". */
-  dismissedPairs: DismissedPair[];
+  /** Higher is more likely a real duplicate. See `SIGNAL_WEIGHTS`. */
+  score: number;
 };
 
-export type DuplicateGroups = {
-  /** High confidence: normalized primary email or alias coincides. */
-  sameEmail: DuplicateGroup[];
-  /** Lower confidence: same company name, phone digits, or contact name. */
-  possible: DuplicateGroup[];
+export type DuplicateSuggestions = {
+  /** The requested page of pairs, best match first. */
+  pairs: DuplicatePair[];
+  /** Pairs matching the requested filters (before paging). */
+  total: number;
+  /** Pairs sharing each signal, ignoring the requested filters. */
+  kindCounts: Record<DuplicateReasonKind, number>;
 };
 
 type Signal = DuplicateReason;
 
-const pairKey = customerPairKey;
-const signalKey = (signal: Signal) => `${signal.kind}\u0000${signal.value}`;
+/** How strongly each kind of match suggests a duplicate. Kinds add up. */
+const SIGNAL_WEIGHTS: Record<DuplicateReasonKind, number> = {
+  email: 100,
+  phone: 45,
+  company: 35,
+  name: 30,
+};
 
 /**
- * Connected components over customers that share a signal. Pairs in
- * `excludedPairs` do not count as a link between their two Customers.
+ * A company, phone or name shared by more Customers than this is too generic
+ * ("N/A", a switchboard number) to say anything about any one pair.
  */
-function groupBySharedSignals(
-  signalsByCustomer: Map<number, Signal[]>,
-  excludedPairs: Set<string>,
-): Array<{ customerIds: number[]; reasons: DuplicateReason[] }> {
-  const customersBySignal = new Map<string, { signal: Signal; ids: number[] }>();
-  for (const [customerId, signals] of signalsByCustomer) {
-    for (const signal of signals) {
+const MAX_LOOSE_SIGNAL_GROUP = 25;
+
+const signalKey = (signal: Signal) => `${signal.kind}\u0000${signal.value}`;
+const orderedPairKey = (a: number, b: number) =>
+  a < b ? `${a}:${b}` : `${b}:${a}`;
+
+function signalsOf(customer: CustomerSummary): Signal[] {
+  const signals: Signal[] = customer.emails.map((value) => ({
+    kind: "email" as const,
+    value,
+  }));
+  const company = normalizeCompanyName(customer.companyName);
+  if (company) signals.push({ kind: "company", value: company });
+  const phone = normalizePhoneDigits(customer.phone);
+  if (phone) signals.push({ kind: "phone", value: phone });
+  const name = normalizeContactName(customer.contactName);
+  if (name) signals.push({ kind: "name", value: name });
+  return signals;
+}
+
+const sortReasons = (reasons: DuplicateReason[]) =>
+  [...reasons].sort(
+    (x, y) => x.kind.localeCompare(y.kind) || x.value.localeCompare(y.value),
+  );
+
+function scoreOf(reasons: DuplicateReason[]): number {
+  return [...new Set(reasons.map((reason) => reason.kind))].reduce(
+    (total, kind) => total + SIGNAL_WEIGHTS[kind],
+    0,
+  );
+}
+
+function sharedSignals(a: CustomerSummary, b: CustomerSummary): DuplicateReason[] {
+  const inB = new Set(signalsOf(b).map(signalKey));
+  return sortReasons(signalsOf(a).filter((signal) => inB.has(signalKey(signal))));
+}
+
+function latestActivity(pair: DuplicatePair): number {
+  return Math.max(
+    0,
+    pair.a.lastActivityAt?.getTime() ?? 0,
+    pair.b.lastActivityAt?.getTime() ?? 0,
+  );
+}
+
+const bestMatchFirst = (x: DuplicatePair, y: DuplicatePair) =>
+  y.score - x.score ||
+  latestActivity(y) - latestActivity(x) ||
+  x.a.id - y.a.id ||
+  x.b.id - y.b.id;
+
+/**
+ * Suggest pairs of active Customers that look like duplicates, best match
+ * first. `kinds` narrows the list to pairs that share EVERY listed signal.
+ * Archived Customers never appear.
+ */
+export async function findDuplicatePairs(
+  options: {
+    kinds?: DuplicateReasonKind[];
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<DuplicateSuggestions> {
+  const summaries = await loadSummaries(db, "active");
+
+  const idsBySignal = new Map<string, { signal: Signal; ids: number[] }>();
+  for (const customer of summaries.values()) {
+    for (const signal of signalsOf(customer)) {
       const key = signalKey(signal);
-      const entry = customersBySignal.get(key) ?? { signal, ids: [] };
-      if (!entry.ids.includes(customerId)) entry.ids.push(customerId);
-      customersBySignal.set(key, entry);
+      const entry = idsBySignal.get(key) ?? { signal, ids: [] };
+      entry.ids.push(customer.id);
+      idsBySignal.set(key, entry);
     }
   }
 
-  const parent = new Map<number, number>();
-  const find = (id: number): number => {
-    let root = parent.get(id) ?? id;
-    while ((parent.get(root) ?? root) !== root) root = parent.get(root)!;
-    parent.set(id, root);
-    return root;
-  };
-  const union = (a: number, b: number) => {
-    const rootA = find(a);
-    const rootB = find(b);
-    if (rootA !== rootB) parent.set(Math.max(rootA, rootB), Math.min(rootA, rootB));
-  };
-
-  const linkingSignals: Array<{ signal: Signal; ids: number[] }> = [];
-  for (const entry of customersBySignal.values()) {
-    const linked = new Set<number>();
-    for (let i = 0; i < entry.ids.length; i++) {
-      for (let j = i + 1; j < entry.ids.length; j++) {
-        if (excludedPairs.has(pairKey(entry.ids[i], entry.ids[j]))) continue;
-        union(entry.ids[i], entry.ids[j]);
-        linked.add(entry.ids[i]);
-        linked.add(entry.ids[j]);
+  const reasonsByPair = new Map<
+    string,
+    { lowId: number; highId: number; reasons: DuplicateReason[] }
+  >();
+  for (const { signal, ids } of idsBySignal.values()) {
+    if (ids.length < 2) continue;
+    if (signal.kind !== "email" && ids.length > MAX_LOOSE_SIGNAL_GROUP) continue;
+    const sorted = [...ids].sort((x, y) => x - y);
+    for (let i = 0; i < sorted.length; i++) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        const key = orderedPairKey(sorted[i], sorted[j]);
+        const entry = reasonsByPair.get(key) ?? {
+          lowId: sorted[i],
+          highId: sorted[j],
+          reasons: [],
+        };
+        entry.reasons.push(signal);
+        reasonsByPair.set(key, entry);
       }
     }
-    if (linked.size > 0) {
-      linkingSignals.push({ signal: entry.signal, ids: [...linked] });
-    }
   }
 
-  const components = new Map<number, number[]>();
-  for (const customerId of signalsByCustomer.keys()) {
-    const root = find(customerId);
-    components.set(root, [...(components.get(root) ?? []), customerId]);
+  const kindCounts: Record<DuplicateReasonKind, number> = {
+    email: 0,
+    phone: 0,
+    company: 0,
+    name: 0,
+  };
+  const wanted = [...new Set(options.kinds ?? [])];
+  const matching: DuplicatePair[] = [];
+  for (const { lowId, highId, reasons } of reasonsByPair.values()) {
+    const present = new Set(reasons.map((reason) => reason.kind));
+    for (const kind of present) kindCounts[kind] += 1;
+    if (!wanted.every((kind) => present.has(kind))) continue;
+    matching.push({
+      a: summaries.get(lowId)!,
+      b: summaries.get(highId)!,
+      reasons: sortReasons(reasons),
+      score: scoreOf(reasons),
+    });
   }
+  matching.sort(bestMatchFirst);
 
-  return [...components.entries()]
-    .filter(([, ids]) => ids.length > 1)
-    .map(([root, ids]) => ({
-      customerIds: ids.sort((a, b) => a - b),
-      reasons: linkingSignals
-        .filter(({ ids: linked }) => find(linked[0]) === root)
-        .map(({ signal }) => signal)
-        .sort(
-          (a, b) =>
-            a.kind.localeCompare(b.kind) || a.value.localeCompare(b.value),
-        ),
-    }));
+  const offset = Math.max(0, options.offset ?? 0);
+  const end = options.limit === undefined ? undefined : offset + Math.max(0, options.limit);
+  return { pairs: matching.slice(offset, end), total: matching.length, kindCounts };
 }
 
 /**
- * Suggest duplicate Customer groups. Archived Customers never appear. Dismissed
- * pairs are skipped unless `includeDismissed` is set.
+ * Every pair among `customers`, with whatever each pair shares (possibly
+ * nothing). Used to pre-load the merge tool from an Action Item, where the
+ * candidates were matched at intake and may share nothing obvious.
  */
-export async function findDuplicateGroups(
-  options: { includeDismissed?: boolean } = {},
-): Promise<DuplicateGroups> {
-  const [summaries, dismissals] = await Promise.all([
-    loadSummaries(db, "active"),
-    db
-      .select({
-        lowCustomerId: customerMergeDismissals.lowCustomerId,
-        highCustomerId: customerMergeDismissals.highCustomerId,
-        dismissedBy: customerMergeDismissals.dismissedBy,
-        dismissedAt: customerMergeDismissals.dismissedAt,
-        dismissedByName: users.name,
-        dismissedByEmail: users.email,
-      })
-      .from(customerMergeDismissals)
-      .leftJoin(users, eq(users.id, customerMergeDismissals.dismissedBy)),
-  ]);
-
-  const dismissedByPair = new Map(
-    dismissals.map((row) => [pairKey(row.lowCustomerId, row.highCustomerId), row]),
-  );
-  const excludedPairs = options.includeDismissed
-    ? new Set<string>()
-    : new Set(dismissedByPair.keys());
-
-  const emailSignals = new Map<number, Signal[]>();
-  const looseSignals = new Map<number, Signal[]>();
-  for (const customer of summaries.values()) {
-    emailSignals.set(
-      customer.id,
-      customer.emails.map((value) => ({ kind: "email" as const, value })),
-    );
-    const loose: Signal[] = [];
-    const company = normalizeCompanyName(customer.companyName);
-    if (company) loose.push({ kind: "company", value: company });
-    const phone = normalizePhoneDigits(customer.phone);
-    if (phone) loose.push({ kind: "phone", value: phone });
-    const name = normalizeContactName(customer.contactName);
-    if (name) loose.push({ kind: "name", value: name });
-    looseSignals.set(customer.id, loose);
+export function pairsAmong(customers: CustomerSummary[]): DuplicatePair[] {
+  const pairs: DuplicatePair[] = [];
+  for (let i = 0; i < customers.length; i++) {
+    for (let j = i + 1; j < customers.length; j++) {
+      const [a, b] =
+        customers[i].id < customers[j].id
+          ? [customers[i], customers[j]]
+          : [customers[j], customers[i]];
+      const reasons = sharedSignals(a, b);
+      pairs.push({ a, b, reasons, score: scoreOf(reasons) });
+    }
   }
-
-  const toGroup = (found: {
-    customerIds: number[];
-    reasons: DuplicateReason[];
-  }): DuplicateGroup => {
-    const members = new Set(found.customerIds);
-    return {
-      customers: found.customerIds.map((id) => summaries.get(id)!),
-      reasons: found.reasons,
-      dismissedPairs: (options.includeDismissed ? dismissals : [])
-        .filter(
-          (row) => members.has(row.lowCustomerId) && members.has(row.highCustomerId),
-        )
-        .map((row) => ({
-          lowCustomerId: row.lowCustomerId,
-          highCustomerId: row.highCustomerId,
-          dismissedBy: row.dismissedBy,
-          dismissedByLabel: row.dismissedByName || row.dismissedByEmail,
-          dismissedAt: row.dismissedAt,
-        })),
-    };
-  };
-
-  const sameEmailFound = groupBySharedSignals(emailSignals, excludedPairs);
-  const possibleFound = groupBySharedSignals(looseSignals, excludedPairs).filter(
-    (candidate) =>
-      // Already shown with higher confidence in the "Same email" tier.
-      !sameEmailFound.some((sameEmail) =>
-        candidate.customerIds.every((id) => sameEmail.customerIds.includes(id)),
-      ),
-  );
-
-  const mostRecentFirst = (a: DuplicateGroup, b: DuplicateGroup) => {
-    const latest = (group: DuplicateGroup) =>
-      Math.max(
-        0,
-        ...group.customers.map((customer) => customer.lastActivityAt?.getTime() ?? 0),
-      );
-    return (
-      latest(b) - latest(a) || a.customers[0].id - b.customers[0].id
-    );
-  };
-
-  return {
-    sameEmail: sameEmailFound.map(toGroup).sort(mostRecentFirst),
-    possible: possibleFound.map(toGroup).sort(mostRecentFirst),
-  };
+  return pairs.sort(bestMatchFirst);
 }
 
 // ---------------------------------------------------------------------------
@@ -692,46 +673,4 @@ export async function getActiveCustomerSummaries(
   if (finalIds.length === 0) return [];
   const summaries = await loadSummaries(db, { ids: finalIds });
   return finalIds.flatMap((id) => summaries.get(id) ?? []);
-}
-
-// ---------------------------------------------------------------------------
-// Dismissals
-// ---------------------------------------------------------------------------
-
-/** Mark every pair among `customerIds` as "not duplicates". Idempotent. */
-export async function dismissCustomerGroup(
-  customerIds: number[],
-  actor: MergeActor,
-): Promise<void> {
-  requireElevated(actor);
-  const ids = [...new Set(customerIds)].sort((a, b) => a - b);
-  const pairs: Array<{ lowCustomerId: number; highCustomerId: number }> = [];
-  for (let i = 0; i < ids.length; i++) {
-    for (let j = i + 1; j < ids.length; j++) {
-      pairs.push({ lowCustomerId: ids[i], highCustomerId: ids[j] });
-    }
-  }
-  if (pairs.length === 0) return;
-  await db
-    .insert(customerMergeDismissals)
-    .values(pairs.map((pair) => ({ ...pair, dismissedBy: actor.userId })))
-    .onConflictDoNothing();
-  await resolveSatisfiedCustomerMatchReviews(db, { resolvedBy: actor.userId });
-}
-
-/** Forget a "not duplicates" decision so the pair can be suggested again. */
-export async function undismissPair(
-  customerIdA: number,
-  customerIdB: number,
-  actor: MergeActor,
-): Promise<void> {
-  requireElevated(actor);
-  await db
-    .delete(customerMergeDismissals)
-    .where(
-      and(
-        eq(customerMergeDismissals.lowCustomerId, Math.min(customerIdA, customerIdB)),
-        eq(customerMergeDismissals.highCustomerId, Math.max(customerIdA, customerIdB)),
-      ),
-    );
 }

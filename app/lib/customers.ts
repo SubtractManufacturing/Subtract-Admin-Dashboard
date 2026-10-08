@@ -1,13 +1,12 @@
 import { db } from "./db/index.js"
 import {
   customerEmailAliases,
-  customerMergeDismissals,
   customers,
   orders,
   quotes,
   vendors,
 } from "./db/schema.js"
-import { and, asc, desc, eq, inArray, max, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, max } from 'drizzle-orm'
 import type { Customer, Vendor } from "./db/schema.js"
 import { getCustomerAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
@@ -262,8 +261,8 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
 }
 
 /**
- * Alias rows, dismissal pairs, and merge pointers reference Customers with
- * ON DELETE NO ACTION, so they have to go before the Customer row itself.
+ * Alias rows and merge pointers reference Customers with ON DELETE NO
+ * ACTION, so they have to go before the Customer row itself.
  */
 export async function deleteCustomerMergeRows(
   customerIds: number[],
@@ -273,14 +272,6 @@ export async function deleteCustomerMergeRows(
   await executor
     .delete(customerEmailAliases)
     .where(inArray(customerEmailAliases.customerId, customerIds));
-  await executor
-    .delete(customerMergeDismissals)
-    .where(
-      or(
-        inArray(customerMergeDismissals.lowCustomerId, customerIds),
-        inArray(customerMergeDismissals.highCustomerId, customerIds),
-      ),
-    );
   await executor
     .update(customers)
     .set({ mergedIntoCustomerId: null })
