@@ -6,6 +6,21 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.8.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.7.2...v1.8.0) (2026-10-08)
+
+
+### Features
+
+* customer matching at RFQ intake and Customer merge tool ([#177](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/177)) ([#178](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/178)) ([97dd0e9](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/97dd0e9215ee81b7e795de19d1af42c777313d07))
+
+
+### Bug Fixes
+
+* add WordPress RFQ intake pipeline ([#163](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/163)) ([#171](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/171)) ([9053a2b](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/9053a2b8d12115f65ce3745c1af957d6c8b4be51))
+* **docker:** worker health endpoint and role-aware healthcheck ([#176](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/176)) ([071b465](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/071b465034c285dc904d9671a9f62b7410b264e2))
+* Remove Toolpath v0 API integration ([#172](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/172)) ([d9699aa](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/d9699aae1be5eaff10e8e8fbb3f392cd8a6f0791))
+* **rfq-intake:** webhook responses, dedicated intake bucket, drop staging smoke ([#174](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/174)) ([a9b56d0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/a9b56d0ed56b8373f8a12b4fd6ed44157c378610))
+
 ## [1.7.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.7.1...v1.7.2) (2026-08-22)
 
 
