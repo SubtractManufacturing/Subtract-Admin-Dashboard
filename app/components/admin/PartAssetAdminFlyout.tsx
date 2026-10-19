@@ -51,12 +51,21 @@ type CadVersionRow = {
   fileSize: number | null;
 };
 
+function protectedLayoutMatchData(
+  matches: ReturnType<typeof useMatches>
+): { canUsePartAssetAdmin?: boolean } | undefined {
+  for (const m of matches) {
+    const data = m.data as { canUsePartAssetAdmin?: boolean } | undefined;
+    if (data && typeof data.canUsePartAssetAdmin === "boolean") {
+      return data;
+    }
+  }
+  return undefined;
+}
+
 export function usePartAssetAdminAccess(): boolean {
   const matches = useMatches();
-  const data = matches.find((m) => m.id === "routes/_protected")?.data as
-    | { canUsePartAssetAdmin?: boolean }
-    | undefined;
-  return data?.canUsePartAssetAdmin === true;
+  return protectedLayoutMatchData(matches)?.canUsePartAssetAdmin === true;
 }
 
 function PartAssetAdminPanel({
