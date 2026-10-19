@@ -27,6 +27,26 @@ An Action Item raised when an RFQ matched several active Customers. It links int
 A shop or supplier that fulfills production work. May be assigned to quotes and orders.
 _Avoid_: Supplier (unless referring to external procurement), shop (use only for production context)
 
+**Job Board**:
+The Discord channel where Vendors see Orders that still need a shop. "Job" is only used in this name; the work itself remains an Order.
+_Avoid_: Jobs channel, shop board
+
+**Job board post**:
+A Discord message announcing one Order on the Job Board. The files shops need are attached to that message.
+_Avoid_: Job (the Order itself), shop notification
+
+**Claimed**:
+A Job board post whose Order has been assigned to a Vendor. The post is edited to name that Vendor.
+_Avoid_: Taken, awarded
+
+**Mark as sent**:
+The choice to move an Order to Waiting for Shop Selection without posting it to the Job Board.
+_Avoid_: Skip Discord, manual send
+
+**NDA required**:
+Work that must not be posted on social media. Shops on the Job Board are already cleared for it.
+_Avoid_: Confidential, secret
+
 **Quote**:
 A priced offer sent to a Customer before work becomes an Order. Identified by quote number; may include QuoteParts, QuoteLineItems, attachments, and delivery estimates.
 _Avoid_: Estimate, proposal, RFQ (RFQ is a status, not the entity)
@@ -54,6 +74,10 @@ _Avoid_: Quote part (two words in prose), Part (until converted)
 **Part**:
 A customer-owned CAD asset (STEP, mesh, drawings) linked to Orders via line items. Distinct from QuotePart until quote conversion copies assets.
 _Avoid_: Component, SKU
+
+**Current CAD revision**:
+The CAD file a Part is on now. Older revisions remain on the Part.
+_Avoid_: Latest model, part file
 
 **Attachment**:
 An S3-backed file linked polymorphically to customers, vendors, quotes, or orders. May be user upload, generated PDF, or system artifact.
