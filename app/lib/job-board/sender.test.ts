@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MemoryDiscordWebhookClient } from "./discord-webhook.client";
+import { MemoryDiscordWebhookClient } from "./discord-webhook";
 import { sendJobBoardPost } from "./sender.server";
 import type { JobBoardOrderInput } from "./types";
 
@@ -22,16 +22,26 @@ vi.mock("../s3.server.js", () => ({
   downloadFile: mocks.downloadFile,
 }));
 
+vi.mock("./thumbnail-post-process.server.js", () => ({
+  flattenJobBoardThumbnailOnWhite: (buffer: Buffer) => buffer,
+}));
+
 const orderInput: JobBoardOrderInput = {
   orderNumber: "25Z00001",
   ndaRequired: false,
   deliveryDate: null,
   leadTime: null,
+  shopPay: "100.00",
+  generalNotes: null,
   parts: [
     {
       partId: "part-1",
       partName: "Bracket",
       quantity: 1,
+      material: null,
+      tolerance: null,
+      finishing: null,
+      approxSize: null,
       thumbnailS3Key: "thumb.png",
       currentCad: { s3Key: "cad.step", fileName: "cad.step" },
       drawings: [],

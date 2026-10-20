@@ -3,7 +3,8 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { eventLogs } from "../db/schema";
 import { getVendor } from "../vendors";
-import type { DiscordWebhookClient } from "./discord-webhook.client";
+import type { DiscordWebhookClient } from "./discord-webhook";
+import { transformOpenPostToClaimed } from "./post-builder";
 import {
   JOB_BOARD_EVENT_TYPES,
   type PostedToJobBoardMetadata,
@@ -58,10 +59,7 @@ export function buildClaimedPostText(
   originalPostText: string,
   vendor: { name: string; discordId: string | null },
 ): string {
-  const mention = vendor.discordId?.trim()
-    ? `<@${vendor.discordId.trim()}>`
-    : vendor.name;
-  return `${originalPostText}\n\n**Claimed** by ${mention}`;
+  return transformOpenPostToClaimed(originalPostText, vendor);
 }
 
 export async function updateJobBoardClaim(params: {

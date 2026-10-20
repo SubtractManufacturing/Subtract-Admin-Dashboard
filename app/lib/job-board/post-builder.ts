@@ -1,3 +1,5 @@
+import { jobBoardDiscordFileName } from "./file-names";
+import { formatJobBoardNotifyRoleMention } from "./webhook";
 import {
   DISCORD_MAX_FILES_PER_MESSAGE,
   DISCORD_MAX_POST_CHARS,
@@ -8,13 +10,83 @@ import {
   type JobBoardPostFile,
 } from "./types";
 
+export const JOB_BOARD_POST_HEADER = "# New Job Availability:";
+export const JOB_BOARD_POST_DIVIDER = "----------";
+
+export type JobBoardPostTextOptions = {
+  notifyRoleId?: string | null;
+};
+
+export type JobBoardClaimVendor = {
+  name: string;
+  discordId: string | null;
+};
+
 export function isPostTextOverLimit(text: string): boolean {
   return text.length > DISCORD_MAX_POST_CHARS;
 }
 
-export function buildDefaultJobBoardPostText(order: JobBoardOrderInput): string {
+function formatJobBoardDeliveryDate(
+  value: JobBoardOrderInput["deliveryDate"],
+): string | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatShopPay(amount: string | null | undefined): string | null {
+  if (amount == null || amount.trim() === "") return null;
+  const parsed = Number.parseFloat(amount);
+  if (Number.isNaN(parsed)) return null;
+  return parsed.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+}
+
+function normalizeText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function partFinishLabel(part: JobBoardPartInput): string {
+  return normalizeText(part.finishing) ?? "As Machined";
+}
+
+function jobNumberLine(order: JobBoardOrderInput): string {
+  const suffix = order.ndaRequired ? " - NDA" : "";
+  return `**Job Number:** ${order.orderNumber}${suffix}`;
+}
+
+function buildPartSection(part: JobBoardPartInput): string[] {
   const lines: string[] = [];
-  lines.push(`**Order ${order.orderNumber}**`);
+  const name = normalizeText(part.partName) ?? "Unnamed part";
+  lines.push(`**Part Name:** ${name}`);
+  lines.push(`**Quantity:** ${part.quantity}`);
+
+  const material = normalizeText(part.material);
+  if (material) lines.push(`**Material:** ${material}`);
+
+  if (part.approxSize) {
+    lines.push(`**Approx Size:** ${part.approxSize}`);
+  }
+
+  lines.push(`**Finish:** ${partFinishLabel(part)}`);
+
+  const tolerance = normalizeText(part.tolerance);
+  if (tolerance) lines.push(`**Tolerance:** ${tolerance}`);
+
+  return lines;
+}
+
+export function buildJobBoardPostBody(order: JobBoardOrderInput): string {
+  const lines: string[] = [];
+  lines.push(jobNumberLine(order));
 
   if (order.ndaRequired) {
     lines.push("");
@@ -23,28 +95,115 @@ export function buildDefaultJobBoardPostText(order: JobBoardOrderInput): string 
     );
   }
 
-  lines.push("");
-  lines.push("**Parts**");
   for (const part of order.parts) {
-    const name = part.partName?.trim() || "Unnamed part";
-    lines.push(`• ${name} × ${part.quantity}`);
+    lines.push("");
+    lines.push(...buildPartSection(part));
   }
 
-  if (order.deliveryDate) {
+  lines.push("");
+  const shopPay = formatShopPay(order.shopPay);
+  if (shopPay) {
+    lines.push(`**Shop Pay:** ${shopPay}`);
+  }
+
+  const deliveryLabel = formatJobBoardDeliveryDate(order.deliveryDate);
+  if (deliveryLabel) {
     lines.push("");
-    lines.push(
-      `**Delivery:** ${order.deliveryDate.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })}`,
-    );
+    lines.push(`**Lead Time:** Delivered ${deliveryLabel}`);
   } else if (order.leadTime != null) {
     lines.push("");
-    lines.push(`**Lead time:** ${order.leadTime} business days`);
+    lines.push(
+      `**Lead Time:** ${order.leadTime} business days from acceptance`,
+    );
+  }
+
+  const generalNotes = normalizeText(order.generalNotes);
+  if (generalNotes) {
+    lines.push("");
+    lines.push(`**General Notes:** ${generalNotes}`);
   }
 
   return lines.join("\n");
+}
+
+function isDiscordPingLine(line: string): boolean {
+  const trimmed = line.trim();
+  return /^<@&?\d+>$/.test(trimmed);
+}
+
+function buildHeaderBlock(pingOrClaimLine: string | null): string[] {
+  const block = [JOB_BOARD_POST_HEADER, JOB_BOARD_POST_DIVIDER, ""];
+  if (pingOrClaimLine) {
+    block.push(pingOrClaimLine, "", JOB_BOARD_POST_DIVIDER, "");
+  }
+  return block;
+}
+
+export function buildDefaultJobBoardPostText(
+  order: JobBoardOrderInput,
+  options?: JobBoardPostTextOptions,
+): string {
+  const roleMention = formatJobBoardNotifyRoleMention(options?.notifyRoleId);
+  return [
+    ...buildHeaderBlock(roleMention || null),
+    buildJobBoardPostBody(order),
+  ].join("\n");
+}
+
+export function transformOpenPostToClaimed(
+  openPostText: string,
+  vendor: JobBoardClaimVendor,
+): string {
+  const claimLine = vendor.discordId?.trim()
+    ? `Claimed by <@${vendor.discordId.trim()}>`
+    : `Claimed by ${vendor.name}`;
+
+  const lines = openPostText.replace(/\r\n/g, "\n").split("\n");
+  let bodyStartIndex = 0;
+
+  if (lines[0]?.trim() === JOB_BOARD_POST_HEADER) {
+    bodyStartIndex = 1;
+    if (lines[bodyStartIndex]?.trim() === JOB_BOARD_POST_DIVIDER) {
+      bodyStartIndex++;
+    }
+    while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+      bodyStartIndex++;
+    }
+    if (
+      bodyStartIndex < lines.length &&
+      isDiscordPingLine(lines[bodyStartIndex] ?? "")
+    ) {
+      bodyStartIndex++;
+    }
+    while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+      bodyStartIndex++;
+    }
+    if (
+      bodyStartIndex < lines.length &&
+      lines[bodyStartIndex]?.trim() === JOB_BOARD_POST_DIVIDER
+    ) {
+      bodyStartIndex++;
+    }
+    while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+      bodyStartIndex++;
+    }
+  } else {
+    while (bodyStartIndex < lines.length && isDiscordPingLine(lines[bodyStartIndex] ?? "")) {
+      bodyStartIndex++;
+    }
+    while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+      bodyStartIndex++;
+    }
+  }
+
+  const body = lines.slice(bodyStartIndex).join("\n").trimEnd();
+  const legacyClaimPattern = /\n\n\*\*Claimed\*\* by .+$/s;
+  const cleanedBody = body.replace(legacyClaimPattern, "");
+
+  return [
+    ...buildHeaderBlock(claimLine),
+    cleanedBody,
+  ].join("\n");
 }
 
 function thumbnailFileName(part: JobBoardPartInput): string {
@@ -91,7 +250,10 @@ export function planJobBoardMessages(input: {
   const cadFiles: JobBoardPostFile[] = input.parts
     .filter((part) => part.currentCad)
     .map((part) => ({
-      fileName: part.currentCad!.fileName,
+      fileName: jobBoardDiscordFileName(
+        part.currentCad!.s3Key,
+        part.currentCad!.fileName,
+      ),
       s3Key: part.currentCad!.s3Key,
       partId: part.partId,
     }));
@@ -99,7 +261,7 @@ export function planJobBoardMessages(input: {
 
   const drawingFiles: JobBoardPostFile[] = input.parts.flatMap((part) =>
     part.drawings.map((drawing) => ({
-      fileName: drawing.fileName,
+      fileName: jobBoardDiscordFileName(drawing.s3Key, drawing.fileName),
       s3Key: drawing.s3Key,
       partId: part.partId,
       attachmentId: drawing.attachmentId,
@@ -111,7 +273,10 @@ export function planJobBoardMessages(input: {
   const attachmentFiles: JobBoardPostFile[] = input.attachments
     .filter((attachment) => selected.has(attachment.attachmentId))
     .map((attachment) => ({
-      fileName: attachment.fileName,
+      fileName: jobBoardDiscordFileName(
+        attachment.s3Key,
+        attachment.fileName,
+      ),
       s3Key: attachment.s3Key,
       attachmentId: attachment.attachmentId,
     }));
@@ -124,8 +289,13 @@ export function buildJobBoardPostPreview(input: {
   order: JobBoardOrderInput;
   postText?: string;
   selectedAttachmentIds?: string[];
+  notifyRoleId?: string | null;
 }) {
-  const postText = input.postText ?? buildDefaultJobBoardPostText(input.order);
+  const postText =
+    input.postText ??
+    buildDefaultJobBoardPostText(input.order, {
+      notifyRoleId: input.notifyRoleId,
+    });
   const selectedAttachmentIds = input.selectedAttachmentIds ?? [];
   const messages = planJobBoardMessages({
     postText,
@@ -135,7 +305,9 @@ export function buildJobBoardPostPreview(input: {
   });
 
   return {
-    defaultText: buildDefaultJobBoardPostText(input.order),
+    defaultText: buildDefaultJobBoardPostText(input.order, {
+      notifyRoleId: input.notifyRoleId,
+    }),
     postText,
     textOverLimit: isPostTextOverLimit(postText),
     messages,

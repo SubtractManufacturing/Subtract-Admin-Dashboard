@@ -9,7 +9,11 @@ import { getLineItemsByOrderId } from "../lineItems";
 import { getOrder } from "../orders";
 import { getOrderAttachments } from "../attachments";
 import { extractS3Key } from "../s3.server";
-import type { JobBoardOrderInput } from "./types";
+import { loadPartMeshApproxSizeInches } from "./mesh-bounding-box.server";
+import {
+  JOB_BOARD_POST_REQUIRES_DELIVERY_DATE,
+  type JobBoardOrderInput,
+} from "./types";
 
 function thumbnailStorageKey(thumbnailUrl: string | null): string | null {
   if (!thumbnailUrl || thumbnailUrl.startsWith("http")) return null;
@@ -60,10 +64,16 @@ export async function loadJobBoardOrderInput(
       .innerJoin(attachments, eq(partDrawings.attachmentId, attachments.id))
       .where(eq(partDrawings.partId, item.part.id));
 
+    const approxSize = await loadPartMeshApproxSizeInches(item.part.partMeshUrl);
+
     partInputs.push({
       partId: item.part.id,
       partName: item.part.partName,
       quantity: item.lineItem.quantity ?? 1,
+      material: item.part.material,
+      tolerance: item.part.tolerance,
+      finishing: item.part.finishing,
+      approxSize,
       thumbnailS3Key: thumbnailStorageKey(item.part.thumbnailUrl),
       currentCad,
       drawings: drawingRecords.map((record) => ({
@@ -79,6 +89,8 @@ export async function loadJobBoardOrderInput(
     ndaRequired: order.ndaRequired,
     deliveryDate: order.deliveryDate,
     leadTime: order.leadTime,
+    shopPay: order.vendorPay ?? null,
+    generalNotes: order.notes ?? null,
     parts: partInputs,
     attachments: orderAttachments.map((attachment) => ({
       attachmentId: attachment.id,
@@ -87,6 +99,8 @@ export async function loadJobBoardOrderInput(
     })),
   };
 }
+
+export { JOB_BOARD_POST_REQUIRES_DELIVERY_DATE };
 
 export async function assertOrderEligibleForJobBoard(orderId: number) {
   const order = await getOrder(orderId);
@@ -100,4 +114,16 @@ export async function assertOrderEligibleForJobBoard(orderId: number) {
     return { ok: false as const, error: "Order already has a vendor assigned" };
   }
   return { ok: true as const, order };
+}
+
+export async function assertOrderEligibleForJobBoardPost(orderId: number) {
+  const eligibility = await assertOrderEligibleForJobBoard(orderId);
+  if (!eligibility.ok) return eligibility;
+  if (!eligibility.order.deliveryDate) {
+    return {
+      ok: false as const,
+      error: JOB_BOARD_POST_REQUIRES_DELIVERY_DATE,
+    };
+  }
+  return eligibility;
 }

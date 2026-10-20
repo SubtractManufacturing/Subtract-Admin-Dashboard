@@ -1,6 +1,9 @@
 export const DISCORD_MAX_POST_CHARS = 2000;
 export const DISCORD_MAX_FILES_PER_MESSAGE = 10;
 
+export const JOB_BOARD_POST_REQUIRES_DELIVERY_DATE =
+  "Set a delivery date on the order before posting to the Job Board.";
+
 export type JobBoardMessageGroup =
   | "text"
   | "thumbnails"
@@ -25,6 +28,10 @@ export type JobBoardPartInput = {
   partId: string;
   partName: string | null;
   quantity: number;
+  material: string | null;
+  tolerance: string | null;
+  finishing: string | null;
+  approxSize: string | null;
   thumbnailS3Key: string | null;
   currentCad: { s3Key: string; fileName: string } | null;
   drawings: { attachmentId: string; s3Key: string; fileName: string }[];
@@ -39,8 +46,11 @@ export type JobBoardAttachmentInput = {
 export type JobBoardOrderInput = {
   orderNumber: string;
   ndaRequired: boolean;
-  deliveryDate: Date | null;
+  /** ISO string after Remix loader serialization, Date on the server. */
+  deliveryDate: Date | string | null;
   leadTime: number | null;
+  shopPay: string | null;
+  generalNotes: string | null;
   parts: JobBoardPartInput[];
   attachments: JobBoardAttachmentInput[];
 };

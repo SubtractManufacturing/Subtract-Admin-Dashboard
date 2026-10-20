@@ -1,8 +1,9 @@
 import { createEvent } from "../events";
 import { updateOrder, type OrderEventContext } from "../orders";
 import { downloadFile } from "../s3.server";
-import type { DiscordWebhookClient } from "./discord-webhook.client";
+import type { DiscordWebhookClient } from "./discord-webhook";
 import { isPostTextOverLimit, planJobBoardMessages } from "./post-builder";
+import { flattenJobBoardThumbnailOnWhite } from "./thumbnail-post-process.server";
 import type {
   JobBoardOrderInput,
   JobBoardPlannedMessage,
@@ -69,10 +70,16 @@ export async function sendJobBoardPost(params: {
     const message = planned[index];
     try {
       const files = await Promise.all(
-        message.files.map(async (file) => ({
-          name: file.fileName,
-          data: await downloadFile(file.s3Key),
-        })),
+        message.files.map(async (file) => {
+          let data = await downloadFile(file.s3Key);
+          if (message.group === "thumbnails") {
+            data = await flattenJobBoardThumbnailOnWhite(data);
+          }
+          return {
+            name: file.fileName,
+            data,
+          };
+        }),
       );
 
       const result = await discord.executeWebhook(webhookUrl, {

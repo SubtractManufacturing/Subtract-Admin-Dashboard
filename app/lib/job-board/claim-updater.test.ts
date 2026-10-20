@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { MemoryDiscordWebhookClient } from "./discord-webhook.client";
+import { MemoryDiscordWebhookClient } from "./discord-webhook";
 import * as claimUpdater from "./claim-updater.server";
 
 describe("buildClaimedPostText", () => {
@@ -19,7 +19,7 @@ describe("buildClaimedPostText", () => {
         name: "Acme Shop",
         discordId: null,
       }),
-    ).toContain("**Claimed** by Acme Shop");
+    ).toContain("Claimed by Acme Shop");
   });
 });
 
