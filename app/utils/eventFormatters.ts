@@ -98,6 +98,22 @@ export function formatEventForTimeline(event: EventLog): {
     };
   }
 
+  if (event.eventType === "posted_to_job_board") {
+    const actor = event.userEmail ? ` by ${event.userEmail}` : "";
+    return {
+      title: "Posted to Job Board",
+      description: `Discord Job Board post sent${actor}`,
+    };
+  }
+
+  if (event.eventType === "job_board_marked_as_sent") {
+    const actor = event.userEmail ? ` by ${event.userEmail}` : "";
+    return {
+      title: "Marked as sent to Job Board",
+      description: `Advanced without a Discord post${actor}`,
+    };
+  }
+
   // Handle vendor assignments
   if (event.eventType === "vendor_assigned") {
     const vendorName = typeof metadata?.vendorName === 'string' ? metadata.vendorName : null;

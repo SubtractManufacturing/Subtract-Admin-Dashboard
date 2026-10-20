@@ -21,6 +21,7 @@ export default defineConfig({
     alias: {
       "~": path.resolve(__dirname, "./app"),
     },
+    dedupe: ["react", "react-dom", "@remix-run/react"],
     extensions: [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"],
   },
   // Exclude server-only packages from client bundling
@@ -40,5 +41,8 @@ export default defineConfig({
   },
   build: {
     target: "es2022",
+  },
+  ssr: {
+    external: ["sharp", "three"],
   },
 });

@@ -29,6 +29,11 @@ export const RFQ_INTAKE_SETTINGS = {
   OUTBOUND_WEBHOOK_URL: "rfq_intake_outbound_webhook_url",
 } as const;
 
+export const JOB_BOARD_SETTINGS = {
+  WEBHOOK_URL: "job_board_webhook_url",
+  NOTIFY_ROLE_ID: "job_board_notify_role_id",
+} as const;
+
 export const LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS = 1;
 export const LINE_ITEM_ARCHIVE_RETENTION_MAX_DAYS = 90;
 export const LINE_ITEM_ARCHIVE_RETENTION_DEFAULT_DAYS = 7;
@@ -278,6 +283,7 @@ export async function pruneStaleDeveloperSettings(): Promise<string[]> {
     ...Object.values(STRIPE_SETTINGS),
     ...Object.values(DATA_RETENTION_SETTINGS),
     ...Object.values(RFQ_INTAKE_SETTINGS),
+    ...Object.values(JOB_BOARD_SETTINGS),
   ] as string[];
   const stale = await db
     .select({ key: developerSettings.key })

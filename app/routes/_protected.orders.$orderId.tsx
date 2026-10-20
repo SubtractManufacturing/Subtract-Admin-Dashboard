@@ -11,6 +11,7 @@ import {
   useLoaderData,
   useFetcher,
   useRevalidator,
+  useSearchParams,
 } from "@remix-run/react";
 import {
   getOrderByNumberWithAttachments,
@@ -103,6 +104,20 @@ import CheckoutAddressConflictModal, {
 } from "~/components/orders/CheckoutAddressConflictModal";
 import type { CheckoutAddressConflictPreview } from "~/lib/stripe/checkout-address-conflict.types";
 import SendOrderConfirmationModal from "~/components/orders/SendOrderConfirmationModal";
+import JobBoardModal from "~/components/orders/JobBoardModal";
+import { createFetchDiscordWebhookClient } from "~/lib/job-board/discord-webhook.server";
+import { jobBoardDiscordFileName } from "~/lib/job-board/file-names";
+import { JOB_BOARD_POST_REQUIRES_DELIVERY_DATE } from "~/lib/job-board/types";
+import {
+  markJobBoardAsSent,
+  sendJobBoardPost,
+} from "~/lib/job-board/sender.server";
+import { updateJobBoardClaim } from "~/lib/job-board/claim-updater.server";
+import type {
+  JobBoardPartInput,
+  JobBoardSentMessageRecord,
+} from "~/lib/job-board/types";
+import { getJobBoardSettings } from "~/lib/job-board/webhook-setting.server";
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import GeneratePackingSlipPdfModal from "~/components/orders/GeneratePackingSlipPdfModal";
@@ -388,9 +403,20 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const stripePaymentLinksEnabled = await isStripePaymentLinksEnabled();
   const stripeConfigured = isStripeConfigured();
 
-  const [archivedLineItems, archiveRetentionDays] = await Promise.all([
+  const { loadJobBoardOrderInput } = await import(
+    "~/lib/job-board/order-data.server"
+  );
+
+  const jobBoardEligible =
+    order.status === "Pending" && order.vendorId == null;
+  const [archivedLineItems, archiveRetentionDays, jobBoardOrderInput, jobBoardSettings] =
+    await Promise.all([
     listArchivedOrderLineItems(order.id),
     getLineItemArchiveRetentionDays(),
+    jobBoardEligible
+      ? loadJobBoardOrderInput(order.id)
+      : Promise.resolve(null),
+    getJobBoardSettings(),
   ]);
 
   let quoteStripePaymentLinkId: string | null = null;
@@ -450,6 +476,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         partId: item.partId,
       })),
       archiveRetentionDays,
+      jobBoardOrderInput,
+      jobBoardWebhookConfigured: jobBoardSettings.webhook.configured,
+      jobBoardNotifyRoleId: jobBoardSettings.notifyRoleId,
     }),
     headers
   );
@@ -567,34 +596,37 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
     formData = await unstable_parseMultipartFormData(request, uploadHandler);
 
-    const intent = formData.get("intent") as string;
-    const file = formData.get("file") as File;
+    const intent = String(formData.get("intent") ?? "");
+    const file = formData.get("file") as File | null;
+
+    const multipartIntentsHandledInSwitch = [
+      "createLineItemWithUpload",
+      "generatePurchaseOrder",
+      "generateInvoice",
+      "generatePackingSlip",
+      "emailPreview",
+      "emailQueue",
+      "addDrawingToPart",
+      "importCheckoutAddressesQuick",
+      "applyCheckoutAddressImportChoices",
+      "manageTrackingNumbers",
+      "shipOrder",
+    ];
+
+    const isOrderAttachmentUpload =
+      Boolean(file) && !multipartIntentsHandledInSwitch.includes(intent);
 
     // If there's no file, check if this is an intent that handles files differently
     if (!file) {
       if (intent === "uploadAttachment") {
         return json({ error: "No file provided" }, { status: 400 });
       }
-      const specialIntents = [
-        "generatePurchaseOrder",
-        "generateInvoice",
-        "generatePackingSlip",
-        "emailPreview",
-        "emailQueue",
-        "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
-        "importCheckoutAddressesQuick",
-        "applyCheckoutAddressImportChoices",
-        "manageTrackingNumbers",
-        "shipOrder",
-      ];
-      if (specialIntents.includes(intent)) {
-        // These intents handle form data differently, let them fall through
+      if (multipartIntentsHandledInSwitch.includes(intent)) {
+        // Fall through to the action switch
       } else {
-        // This is a file upload request but no file was provided
         return json({ error: "No file provided" }, { status: 400 });
       }
-    } else {
-      // We have a file, process the upload
+    } else if (isOrderAttachmentUpload) {
       if (file.size > MAX_FILE_SIZE) {
         return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
       }
@@ -650,6 +682,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         console.error("Upload error:", error);
         return json({ error: "Failed to upload file" }, { status: 500 });
       }
+    } else if (file.size > MAX_FILE_SIZE) {
+      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
     }
   } else {
     // Not multipart, parse as regular FormData
@@ -1400,11 +1434,169 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return redirect(`/orders/${orderNumber}`);
       }
 
+      case "postJobBoard": {
+        const {
+          assertOrderEligibleForJobBoardPost,
+          loadJobBoardOrderInput,
+        } = await import("~/lib/job-board/order-data.server");
+        const eligibility = await assertOrderEligibleForJobBoardPost(order.id);
+        if (!eligibility.ok) {
+          return withAuthHeaders(
+            json(
+              {
+                intent: "postJobBoard",
+                ok: false as const,
+                error: eligibility.error,
+                failedGroup: "text",
+                failedMessageIndex: 0,
+                sentMessages: [],
+              },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+
+        const webhook = await getJobBoardSettings();
+        if (!webhook.webhook.url) {
+          return withAuthHeaders(
+            json(
+              {
+                intent: "postJobBoard",
+                ok: false as const,
+                error: "Job Board webhook is not configured",
+                failedGroup: "text",
+                failedMessageIndex: 0,
+                sentMessages: [],
+              },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+
+        const postText = String(formData.get("postText") ?? "");
+        let selectedAttachmentIds: string[];
+        let priorSentMessages: JobBoardSentMessageRecord[];
+        try {
+          selectedAttachmentIds = JSON.parse(
+            String(formData.get("selectedAttachmentIds") ?? "[]"),
+          ) as string[];
+          priorSentMessages = JSON.parse(
+            String(formData.get("priorSentMessages") ?? "[]"),
+          ) as JobBoardSentMessageRecord[];
+        } catch {
+          return withAuthHeaders(
+            json({ error: "Invalid Job Board form payload" }, { status: 400 }),
+            headers,
+          );
+        }
+        const startAtMessageIndex = Number(
+          formData.get("startAtMessageIndex") ?? 0,
+        );
+
+        const orderInput = await loadJobBoardOrderInput(order.id);
+        if (!orderInput) {
+          return withAuthHeaders(
+            json({ error: "Could not load order for Job Board" }, { status: 400 }),
+            headers,
+          );
+        }
+
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        const result = await sendJobBoardPost({
+          orderId: order.id,
+          orderInput,
+          webhookUrl: webhook.webhook.url,
+          postText,
+          selectedAttachmentIds,
+          startAtMessageIndex: Number.isFinite(startAtMessageIndex)
+            ? startAtMessageIndex
+            : 0,
+          priorSentMessages,
+          discord: createFetchDiscordWebhookClient(),
+          eventContext: orderEventContext,
+        });
+
+        if (result.ok) {
+          return withAuthHeaders(
+            json({
+              intent: "postJobBoard",
+              ok: true as const,
+              sentMessages: result.sentMessages,
+            }),
+            headers,
+          );
+        }
+
+        return withAuthHeaders(
+          json({
+            intent: "postJobBoard",
+            ok: false as const,
+            error: result.error,
+            failedGroup: result.failedGroup,
+            failedMessageIndex: result.failedMessageIndex,
+            sentMessages: result.sentMessages,
+          }),
+          headers,
+        );
+      }
+
+      case "markJobBoardAsSent": {
+        const { assertOrderEligibleForJobBoard } = await import(
+          "~/lib/job-board/order-data.server"
+        );
+        const eligibility = await assertOrderEligibleForJobBoard(order.id);
+        if (!eligibility.ok) {
+          return withAuthHeaders(
+            json(
+              {
+                intent: "markJobBoardAsSent",
+                ok: false as const,
+                error: eligibility.error,
+              },
+              { status: 400 },
+            ),
+            headers,
+          );
+        }
+
+        const orderEventContext: OrderEventContext = {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        };
+
+        await markJobBoardAsSent({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          eventContext: orderEventContext,
+        });
+
+        return withAuthHeaders(
+          json({ intent: "markJobBoardAsSent", ok: true as const }),
+          headers,
+        );
+      }
+
       case "assignShop": {
         const vendorId = formData.get("vendorId");
 
         if (!vendorId) {
           return json({ error: "Please select a vendor" }, { status: 400 });
+        }
+
+        if (order.status !== "Waiting_For_Shop_Selection") {
+          return json(
+            {
+              error:
+                "Assign Shop is only available while the order is Waiting for Shop Selection",
+            },
+            { status: 400 },
+          );
         }
 
         const orderEventContext: OrderEventContext = {
@@ -1421,6 +1613,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
           },
           orderEventContext
         );
+
+        const webhook = await getJobBoardSettings();
+        const claimResult = await updateJobBoardClaim({
+          orderId: order.id,
+          vendorId: parseInt(vendorId as string),
+          webhookUrl: webhook.webhook.url,
+          discord: createFetchDiscordWebhookClient(),
+        });
+
+        if (!claimResult.ok) {
+          return redirect(
+            `/orders/${orderNumber}?jobBoardClaimWarning=${encodeURIComponent(claimResult.warning)}`,
+          );
+        }
 
         return redirect(`/orders/${orderNumber}`);
       }
@@ -2113,7 +2319,12 @@ export default function OrderDetails() {
     trackingNumbers,
     archivedLineItems,
     archiveRetentionDays,
+    jobBoardOrderInput,
+    jobBoardWebhookConfigured,
+    jobBoardNotifyRoleId,
   } = useLoaderData<typeof loader>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const jobBoardClaimWarning = searchParams.get("jobBoardClaimWarning");
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/orders/${order.orderNumber}`
     : undefined;
@@ -2141,6 +2352,9 @@ export default function OrderDetails() {
     meshConversionStatus?: string | null;
     meshConversionError?: string | null;
   } | null>(null);
+  const [jobBoardModalOpen, setJobBoardModalOpen] = useState(false);
+  const [jobBoardDeliveryDateNotice, setJobBoardDeliveryDateNotice] =
+    useState(false);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
   const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
@@ -2281,8 +2495,12 @@ export default function OrderDetails() {
 
   useEffect(() => {
     if (lineItemFetcher.state === "idle" && lineItemFetcher.data) {
-      const data = lineItemFetcher.data as { success?: boolean; error?: string };
-      if (data.success) {
+      const data = lineItemFetcher.data as {
+        success?: boolean;
+        error?: string;
+        lineItem?: unknown;
+      };
+      if (data.success || data.lineItem) {
         revalidator.revalidate();
       } else if (data.error) {
         alert(`Failed to update line item: ${data.error}`);
@@ -2585,19 +2803,57 @@ export default function OrderDetails() {
     }
   };
 
-  // Status transition handlers
-  const handleSendToShops = () => {
-    if (
-      confirm(
-        "Are you sure you want to send this order to shops? The order will move to 'Waiting for Shop Selection' status."
-      )
-    ) {
-      const formData = new FormData();
-      formData.append("intent", "updateStatus");
-      formData.append("status", "Waiting_For_Shop_Selection");
-      lineItemFetcher.submit(formData, { method: "post" });
+  const openJobBoardPartViewer = (partId: string) => {
+    const item = lineItems.find(
+      (lineItem: LineItemWithPart) => lineItem.part?.id === partId,
+    );
+    if (item?.part) {
+      handleView3DModel(item.part);
     }
   };
+
+  // Status transition handlers
+  const handleSendToShops = () => {
+    if (!order.deliveryDate) {
+      setJobBoardDeliveryDateNotice(true);
+      return;
+    }
+    setJobBoardDeliveryDateNotice(false);
+    setJobBoardModalOpen(true);
+  };
+
+  useEffect(() => {
+    if (order.deliveryDate) {
+      setJobBoardDeliveryDateNotice(false);
+    }
+  }, [order.deliveryDate]);
+
+  const jobBoardPartPreviews = useMemo(() => {
+    if (!jobBoardOrderInput) return [];
+    return jobBoardOrderInput.parts.map((part: JobBoardPartInput) => {
+      const lineItem = lineItems.find(
+        (item: LineItemWithPart) => item.part?.id === part.partId,
+      );
+      return {
+        partId: part.partId,
+        partName: part.partName,
+        quantity: part.quantity,
+        thumbnailUrl: lineItem?.part?.thumbnailUrl ?? null,
+        hasThumbnail: Boolean(part.thumbnailS3Key),
+        hasCad: Boolean(part.currentCad),
+        cadFileName: part.currentCad
+          ? jobBoardDiscordFileName(
+              part.currentCad.s3Key,
+              part.currentCad.fileName,
+            )
+          : null,
+        drawings: part.drawings.map((drawing: { attachmentId: string; s3Key: string; fileName: string }) => ({
+          id: drawing.attachmentId,
+          fileName: jobBoardDiscordFileName(drawing.s3Key, drawing.fileName),
+        })),
+      };
+    });
+  }, [jobBoardOrderInput, lineItems]);
 
   const handleStartProduction = () => {
     if (
@@ -3114,6 +3370,38 @@ export default function OrderDetails() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-[1920px] mx-auto">
+        {jobBoardDeliveryDateNotice && (
+          <div className="mx-10 mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-100">
+            <div className="flex items-start justify-between gap-4">
+              <p>{JOB_BOARD_POST_REQUIRES_DELIVERY_DATE}</p>
+              <button
+                type="button"
+                className="shrink-0 text-red-800 underline dark:text-red-200"
+                onClick={() => setJobBoardDeliveryDateNotice(false)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+        {jobBoardClaimWarning && (
+          <div className="mx-10 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="flex items-start justify-between gap-4">
+              <p>{jobBoardClaimWarning}</p>
+              <button
+                type="button"
+                className="shrink-0 text-amber-800 underline dark:text-amber-200"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete("jobBoardClaimWarning");
+                  setSearchParams(next, { replace: true });
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         {/* Custom breadcrumb bar with buttons */}
         <div className="flex justify-between items-center px-10 py-2.5">
           <Breadcrumbs
@@ -3858,6 +4146,7 @@ export default function OrderDetails() {
       {selectedPart3D && (
         <Part3DViewerModal
           isOpen={part3DModalOpen}
+          zIndex={jobBoardModalOpen ? 60 : 50}
           onClose={() => {
             setPart3DModalOpen(false);
             setSelectedPart3D(null);
@@ -3992,6 +4281,23 @@ export default function OrderDetails() {
           orderConfirmationGenerateDisabled={!order.customerId}
           purchaseOrderGenerateDisabled={!order.vendorId}
           packingSlipGenerateDisabled={!order.customerId}
+        />
+      )}
+
+      {jobBoardModalOpen && jobBoardOrderInput && (
+        <JobBoardModal
+          isOpen={jobBoardModalOpen}
+          onClose={() => setJobBoardModalOpen(false)}
+          orderNumber={order.orderNumber}
+          orderInput={jobBoardOrderInput}
+          partPreviews={jobBoardPartPreviews}
+          attachments={(order.attachments ?? []).map((attachment: Attachment) => ({
+            id: attachment.id,
+            fileName: attachment.fileName,
+          }))}
+          webhookConfigured={jobBoardWebhookConfigured}
+          notifyRoleId={jobBoardNotifyRoleId}
+          onOpenPartViewer={openJobBoardPartViewer}
         />
       )}
 
