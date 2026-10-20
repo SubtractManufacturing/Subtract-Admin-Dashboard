@@ -11,6 +11,8 @@ import {
 } from "./types";
 
 export const JOB_BOARD_POST_HEADER = "# New Job Availability:";
+/** Plain-title posts from an earlier template revision. */
+export const LEGACY_JOB_BOARD_POST_HEADER = "New Job Availability:";
 export const JOB_BOARD_POST_DIVIDER = "----------";
 
 export type JobBoardPostTextOptions = {
@@ -131,12 +133,82 @@ function isDiscordPingLine(line: string): boolean {
   return /^<@&?\d+>$/.test(trimmed);
 }
 
+function isRoleOrClaimLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (isDiscordPingLine(trimmed)) return true;
+  return /^Claimed by .+$/i.test(trimmed);
+}
+
 function buildHeaderBlock(pingOrClaimLine: string | null): string[] {
-  const block = [JOB_BOARD_POST_HEADER, JOB_BOARD_POST_DIVIDER, ""];
+  const block = [JOB_BOARD_POST_HEADER];
   if (pingOrClaimLine) {
-    block.push(pingOrClaimLine, "", JOB_BOARD_POST_DIVIDER, "");
+    block.push(pingOrClaimLine);
   }
+  block.push(JOB_BOARD_POST_DIVIDER, "");
   return block;
+}
+
+function isJobBoardPostHeaderLine(line: string | undefined): boolean {
+  const trimmed = line?.trim();
+  return (
+    trimmed === JOB_BOARD_POST_HEADER ||
+    trimmed === LEGACY_JOB_BOARD_POST_HEADER
+  );
+}
+
+function skipLegacyHeaderBlock(lines: string[], startIndex: number): number {
+  let bodyStartIndex = startIndex;
+  if (lines[bodyStartIndex]?.trim() === JOB_BOARD_POST_DIVIDER) {
+    bodyStartIndex++;
+  }
+  while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+    bodyStartIndex++;
+  }
+  if (
+    bodyStartIndex < lines.length &&
+    isRoleOrClaimLine(lines[bodyStartIndex] ?? "")
+  ) {
+    bodyStartIndex++;
+  }
+  while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+    bodyStartIndex++;
+  }
+  if (
+    bodyStartIndex < lines.length &&
+    lines[bodyStartIndex]?.trim() === JOB_BOARD_POST_DIVIDER
+  ) {
+    bodyStartIndex++;
+  }
+  while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+    bodyStartIndex++;
+  }
+  return bodyStartIndex;
+}
+
+function skipCurrentHeaderBlock(lines: string[], startIndex: number): number {
+  let bodyStartIndex = startIndex;
+  while (
+    bodyStartIndex < lines.length &&
+    (lines[bodyStartIndex]?.trim() === "" ||
+      isRoleOrClaimLine(lines[bodyStartIndex] ?? ""))
+  ) {
+    if (isRoleOrClaimLine(lines[bodyStartIndex] ?? "")) {
+      bodyStartIndex++;
+      continue;
+    }
+    bodyStartIndex++;
+  }
+  if (
+    bodyStartIndex < lines.length &&
+    lines[bodyStartIndex]?.trim() === JOB_BOARD_POST_DIVIDER
+  ) {
+    bodyStartIndex++;
+  }
+  while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
+    bodyStartIndex++;
+  }
+  return bodyStartIndex;
 }
 
 export function buildDefaultJobBoardPostText(
@@ -161,31 +233,12 @@ export function transformOpenPostToClaimed(
   const lines = openPostText.replace(/\r\n/g, "\n").split("\n");
   let bodyStartIndex = 0;
 
-  if (lines[0]?.trim() === JOB_BOARD_POST_HEADER) {
+  if (isJobBoardPostHeaderLine(lines[0])) {
     bodyStartIndex = 1;
     if (lines[bodyStartIndex]?.trim() === JOB_BOARD_POST_DIVIDER) {
-      bodyStartIndex++;
-    }
-    while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
-      bodyStartIndex++;
-    }
-    if (
-      bodyStartIndex < lines.length &&
-      isDiscordPingLine(lines[bodyStartIndex] ?? "")
-    ) {
-      bodyStartIndex++;
-    }
-    while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
-      bodyStartIndex++;
-    }
-    if (
-      bodyStartIndex < lines.length &&
-      lines[bodyStartIndex]?.trim() === JOB_BOARD_POST_DIVIDER
-    ) {
-      bodyStartIndex++;
-    }
-    while (bodyStartIndex < lines.length && lines[bodyStartIndex]?.trim() === "") {
-      bodyStartIndex++;
+      bodyStartIndex = skipLegacyHeaderBlock(lines, bodyStartIndex);
+    } else {
+      bodyStartIndex = skipCurrentHeaderBlock(lines, bodyStartIndex);
     }
   } else {
     while (bodyStartIndex < lines.length && isDiscordPingLine(lines[bodyStartIndex] ?? "")) {

@@ -4,6 +4,8 @@ import {
   buildDefaultJobBoardPostText,
   buildJobBoardPostPreview,
   isPostTextOverLimit,
+  JOB_BOARD_POST_DIVIDER,
+  JOB_BOARD_POST_HEADER,
   planJobBoardMessages,
   transformOpenPostToClaimed,
 } from "./post-builder";
@@ -74,8 +76,10 @@ describe("job board post builder", () => {
       notifyRoleId: "1367576185206476901",
     });
 
-    expect(text.indexOf("# New Job Availability:")).toBe(0);
-    expect(text.indexOf("<@&1367576185206476901>")).toBeGreaterThan(0);
+    expect(text.indexOf(JOB_BOARD_POST_HEADER)).toBe(0);
+    expect(text).toContain(
+      `# New Job Availability:\n<@&1367576185206476901>\n${JOB_BOARD_POST_DIVIDER}\n\n**Job Number:**`,
+    );
     expect(text.indexOf("<@&1367576185206476901>")).toBeLessThan(
       text.indexOf("**Job Number:**"),
     );
@@ -113,7 +117,10 @@ describe("job board post builder", () => {
       discordId: "1371957126142099526",
     });
 
-    expect(claimed.indexOf("# New Job Availability:")).toBe(0);
+    expect(claimed.indexOf(JOB_BOARD_POST_HEADER)).toBe(0);
+    expect(claimed).toContain(
+      `# New Job Availability:\nClaimed by <@1371957126142099526>\n${JOB_BOARD_POST_DIVIDER}`,
+    );
     expect(claimed).toContain("Claimed by <@1371957126142099526>");
     expect(claimed).not.toContain("<@&1367576185206476901>");
     expect(claimed).toContain("**Job Number:** 26Z00074");
