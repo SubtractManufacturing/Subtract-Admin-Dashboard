@@ -5,6 +5,7 @@ import { eventLogs } from "../db/schema";
 import { getVendor } from "../vendors";
 import type { DiscordWebhookClient } from "./discord-webhook";
 import { transformOpenPostToClaimed } from "./post-builder";
+import { parseDiscordWebhookId } from "./webhook";
 import {
   JOB_BOARD_EVENT_TYPES,
   type PostedToJobBoardMetadata,
@@ -79,16 +80,22 @@ export async function updateJobBoardClaim(params: {
     return { ok: true };
   }
 
-  const editWebhookUrl =
-    typeof postedEvent.metadata.webhookUrl === "string" &&
-    postedEvent.metadata.webhookUrl.trim()
-      ? postedEvent.metadata.webhookUrl
-      : webhookUrl;
-
-  if (!editWebhookUrl) {
+  if (!webhookUrl) {
     return {
       ok: false,
       warning: "Job Board webhook is not configured; Discord post was not updated.",
+    };
+  }
+
+  const currentWebhookId = parseDiscordWebhookId(webhookUrl);
+  if (
+    currentWebhookId &&
+    postedEvent.metadata.webhookId !== currentWebhookId
+  ) {
+    return {
+      ok: false,
+      warning:
+        "Job Board webhook changed since this order was posted; Discord post was not updated.",
     };
   }
 
@@ -121,11 +128,9 @@ export async function updateJobBoardClaim(params: {
   );
 
   try {
-    await discord.editWebhookMessage(
-      editWebhookUrl,
-      textMessage.messageId,
-      { content: claimedText },
-    );
+    await discord.editWebhookMessage(webhookUrl, textMessage.messageId, {
+      content: claimedText,
+    });
     return { ok: true };
   } catch (error) {
     return {

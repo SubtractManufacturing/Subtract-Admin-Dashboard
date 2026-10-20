@@ -63,7 +63,6 @@ export type JobBoardSentMessageRecord = {
 
 export type PostedToJobBoardMetadata = {
   webhookId: string;
-  webhookUrl: string;
   postText: string;
   messages: JobBoardSentMessageRecord[];
 };

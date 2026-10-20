@@ -9,13 +9,22 @@ export function validateJobBoardWebhookUrl(
   } catch {
     return { ok: false, error: "Enter a valid webhook URL" };
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
+  const discordHosts = new Set([
+    "discord.com",
+    "discordapp.com",
+    "canary.discord.com",
+    "ptb.discord.com",
+  ]);
+  if (url.protocol !== "https:") {
     return {
       ok: false,
-      error: "Webhook URL must use http:// or https://",
+      error: "Webhook URL must use https://",
     };
   }
-  if (!url.pathname.includes("/webhooks/")) {
+  if (
+    !discordHosts.has(url.hostname) ||
+    !url.pathname.startsWith("/api/webhooks/")
+  ) {
     return {
       ok: false,
       error: "URL must be a Discord incoming webhook",

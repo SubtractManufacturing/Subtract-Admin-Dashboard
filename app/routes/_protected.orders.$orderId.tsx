@@ -407,11 +407,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     "~/lib/job-board/order-data.server"
   );
 
+  const jobBoardEligible =
+    order.status === "Pending" && order.vendorId == null;
   const [archivedLineItems, archiveRetentionDays, jobBoardOrderInput, jobBoardSettings] =
     await Promise.all([
     listArchivedOrderLineItems(order.id),
     getLineItemArchiveRetentionDays(),
-    loadJobBoardOrderInput(order.id),
+    jobBoardEligible
+      ? loadJobBoardOrderInput(order.id)
+      : Promise.resolve(null),
     getJobBoardSettings(),
   ]);
 

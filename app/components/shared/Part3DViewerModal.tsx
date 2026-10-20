@@ -186,12 +186,13 @@ export function Part3DViewerModal({
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        onClose();
+        if (showVersionPanel) setShowVersionPanel(false);
+        else onClose();
       }
     };
     document.addEventListener("keydown", handleEscape, true);
     return () => document.removeEventListener("keydown", handleEscape, true);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, showVersionPanel]);
 
   // Handle revision upload success
   useEffect(() => {
@@ -262,26 +263,12 @@ export function Part3DViewerModal({
       document.body.style.overflow = "hidden";
     }
 
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        if (showVersionPanel) {
-          setShowVersionPanel(false);
-        } else {
-          onClose();
-        }
-      }
-    };
-
-    document.addEventListener("keydown", handleEscape);
-
     return () => {
-      document.removeEventListener("keydown", handleEscape);
       if (!isNestedModal && originalOverflow !== null) {
         document.body.style.overflow = originalOverflow;
       }
     };
-  }, [isOpen, onClose, showVersionPanel]);
+  }, [isOpen]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

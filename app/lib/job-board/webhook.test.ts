@@ -20,6 +20,18 @@ describe("job board webhook settings", () => {
     expect(validateJobBoardWebhookUrl(" ")).toEqual({ ok: true, url: "" });
   });
 
+  it("rejects non-Discord and non-HTTPS webhook URLs", () => {
+    expect(
+      validateJobBoardWebhookUrl("http://discord.com/api/webhooks/1/token"),
+    ).toEqual({ ok: false, error: "Webhook URL must use https://" });
+    expect(
+      validateJobBoardWebhookUrl("https://example.com/api/webhooks/1/token"),
+    ).toEqual({
+      ok: false,
+      error: "URL must be a Discord incoming webhook",
+    });
+  });
+
   it("validates notification role IDs and formats mentions", () => {
     expect(validateJobBoardNotifyRoleId("987654321098765432")).toEqual({
       ok: true,

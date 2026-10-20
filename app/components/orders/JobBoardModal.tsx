@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
 
 import Modal from "~/components/shared/Modal";
@@ -97,27 +97,32 @@ export default function JobBoardModal({
     error?: string;
   }>({ phase: "idle", sentMessages: [] });
 
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      wasOpen.current = false;
+      return;
+    }
+    if (wasOpen.current) return;
+    wasOpen.current = true;
     setPostText(buildDefaultJobBoardPostText(orderInput, { notifyRoleId }));
     setSelectedAttachmentIds(new Set());
     setSendState({ phase: "idle", sentMessages: [] });
-  }, [
-    isOpen,
-    notifyRoleId,
-    orderInput.orderNumber,
-    orderInput.ndaRequired,
-    orderInput.deliveryDate,
-    orderInput.parts,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on open, not on loader revalidation
+  }, [isOpen]);
 
+  const lastHandledData = useRef<JobBoardActionData | undefined>(undefined);
+  const { revalidate } = revalidator;
   useEffect(() => {
     const data = fetcher.data;
-    if (!data) return;
+    if (!data || fetcher.state !== "idle" || data === lastHandledData.current) {
+      return;
+    }
+    lastHandledData.current = data;
 
     if (data.intent === "postJobBoard" && data.ok) {
       setSendState({ phase: "done", sentMessages: data.sentMessages });
-      revalidator.revalidate();
+      revalidate();
       return;
     }
 
@@ -133,7 +138,7 @@ export default function JobBoardModal({
     }
 
     if (data.intent === "markJobBoardAsSent" && data.ok) {
-      revalidator.revalidate();
+      revalidate();
       onClose();
       return;
     }
@@ -151,7 +156,7 @@ export default function JobBoardModal({
         failedMessageIndex: 0,
       });
     }
-  }, [fetcher.data, onClose, revalidator]);
+  }, [fetcher.data, fetcher.state, onClose, revalidate]);
 
   const textOverLimit = isPostTextOverLimit(postText);
   const isSubmitting = fetcher.state !== "idle";

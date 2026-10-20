@@ -60,10 +60,15 @@ Create a dedicated policy such as `serp-dev-rfq-intake-app`, attached only to th
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "CheckAndListRfqBucket",
+      "Sid": "ListRfqIntakePrefix",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::serp-dev-rfq-intake-jtam"
+      "Resource": "arn:aws:s3:::serp-dev-rfq-intake-jtam",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": ["intake/*", "intake"]
+        }
+      }
     },
     {
       "Sid": "ManageRfqIntakeObjects",
@@ -79,7 +84,7 @@ Create a dedicated policy such as `serp-dev-rfq-intake-app`, attached only to th
 }
 ```
 
-`ListBucket` is bucket-scoped and intentionally has no prefix condition because the plugin health check uses `HeadBucket`; S3 authorizes that check with `s3:ListBucket`. Object permissions remain restricted to `intake/*`. Do not grant `s3:*`, ACL actions, bucket policy/configuration actions, or access to other buckets to this runtime principal.
+`ListBucket` is scoped to the `intake/` prefix so the runtime identity cannot enumerate unrelated keys. Use a prefix-scoped health check such as `ListObjectsV2` with `Prefix=intake/` and `MaxKeys=1` instead of `HeadBucket`, which would require unscoped `ListBucket`. Object permissions remain restricted to `intake/*`. Do not grant `s3:*`, ACL actions, bucket policy/configuration actions, or access to other buckets to this runtime principal.
 
 If the WordPress host supports an AWS role, use that role instead of an IAM user and access key. For local WordPress development where role credentials are unavailable, use a dedicated IAM user with one access key. Do not create the access key through `aws_iam_access_key` in Terraform: its secret would be stored in Terraform state. Create/rotate the key through a controlled secret-provisioning step and put the secret in the host's secret store or untracked local `.env`.
 
@@ -89,7 +94,7 @@ Create or reuse the account's GitHub OIDC provider for `token.actions.githubuser
 
 The workflow should use OIDC (`aws-actions/configure-aws-credentials`) and a role ARN, with no long-lived AWS keys in GitHub secrets. Grant only the actions required to manage this named bucket and the dedicated application policy. Keep IAM administration for the GitHub deployment role in a bootstrap/admin path so a routine deployment cannot change its own trust policy or expand its own permissions.
 
-Store Terraform state in a separate, pre-existing state bucket, not the RFQ intake bucket. Enable state-bucket encryption, versioning, public access block, and S3 native state locking (`use_lockfile = true`). Restrict state access to the deployment role and authorized operators; state can contain sensitive values even when Terraform marks them sensitive.
+Store Terraform state in a separate, pre-existing state bucket, not the RFQ intake bucket. Require Terraform **1.10+** (minimum version for S3 native locking via `use_lockfile = true`). Enable state-bucket encryption, versioning, public access block, and S3 native state locking (`use_lockfile = true`). Grant the deployment role least-privilege `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on both the state object (`…/terraform.tfstate`) and its lock companion (`…/terraform.tfstate.tflock`). Restrict state access to the deployment role and authorized operators; state can contain sensitive values even when Terraform marks them sensitive.
 
 ## Environment and secret handling
 
@@ -115,4 +120,5 @@ Store Terraform state in a separate, pre-existing state bucket, not the RFQ inta
 - A browser preflight from `http://serp-rfq-dev.local` for `PUT` with `content-type` succeeds.
 - Plugin health check succeeds; a test upload and the ERP's normal object retrieval/deletion flow succeed.
 - GitHub Actions obtains credentials by OIDC, and neither the workflow nor Terraform state exposes runtime secret values.
+- `terraform init` succeeds against the configured remote backend with `use_lockfile = true`, and concurrent plan/apply runs serialize on the lockfile without corrupting state.
 - Destruction of a non-empty bucket is prevented by Terraform's `force_destroy = false`.

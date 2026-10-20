@@ -117,7 +117,6 @@ export async function sendJobBoardPost(params: {
   const webhookId = parseDiscordWebhookId(webhookUrl) ?? "unknown";
   const metadata: PostedToJobBoardMetadata = {
     webhookId,
-    webhookUrl,
     postText,
     messages: sentMessages,
   };
