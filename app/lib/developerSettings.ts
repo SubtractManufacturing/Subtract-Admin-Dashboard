@@ -31,6 +31,7 @@ export const RFQ_INTAKE_SETTINGS = {
 
 export const JOB_BOARD_SETTINGS = {
   WEBHOOK_URL: "job_board_webhook_url",
+  NOTIFY_ROLE_ID: "job_board_notify_role_id",
 } as const;
 
 export const LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS = 1;

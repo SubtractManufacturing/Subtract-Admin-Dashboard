@@ -47,3 +47,25 @@ export function discordWebhookMessageEditUrl(
   const base = webhookUrl.replace(/\/$/, "");
   return `${base}/messages/${messageId}`;
 }
+
+export function validateJobBoardNotifyRoleId(
+  raw: string,
+): { ok: true; roleId: string } | { ok: false; error: string } {
+  const value = raw.trim();
+  if (!value) return { ok: true, roleId: "" };
+  if (!/^\d{17,20}$/.test(value)) {
+    return {
+      ok: false,
+      error: "Role ID must be a numeric Discord snowflake (17–20 digits)",
+    };
+  }
+  return { ok: true, roleId: value };
+}
+
+export function formatJobBoardNotifyRoleMention(
+  roleId: string | null | undefined,
+): string {
+  const id = roleId?.trim();
+  if (!id) return "";
+  return `<@&${id}>`;
+}

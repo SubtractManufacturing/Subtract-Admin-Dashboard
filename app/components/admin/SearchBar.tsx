@@ -14,6 +14,11 @@ const searchableItems: SearchItem[] = [
   { label: "Invite User", description: "Send a new user invitation", path: "/admin/users" },
   { label: "RFQ Intake", description: "Monitor submissions, retries, and webhooks", path: "/admin/rfq-intake" },
   { label: "RFQ Webhook", description: "Configure outbound RFQ notifications", path: "/admin/rfq-intake" },
+  {
+    label: "Job Board",
+    description: "Discord webhook for shop job board posts",
+    path: "/admin/job-board",
+  },
   { label: "App Settings", description: "Application configuration (coming soon)", path: "/admin" },
   { label: "Developer Settings", description: "Developer tools and flags (coming soon)", path: "/admin" },
   { label: "Feature Flags", description: "Toggle application features", path: "/admin" },
