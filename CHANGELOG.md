@@ -6,6 +6,14 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.8.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.0...v1.8.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **job-board:** Discord posting, admin settings, and order UX ([#183](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/183)) ([a8d81f7](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/a8d81f75ee1531c5ff7a3b706e92da55c7a7529d))
+* read part asset admin flag from _protected+ layout match ([#179](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/179)) ([7ec65b7](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/7ec65b7944aaaf7c01ceed2f8cf4b8aaed8273a9))
+
 ## [1.8.0](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.7.2...v1.8.0) (2026-10-08)
 
 
