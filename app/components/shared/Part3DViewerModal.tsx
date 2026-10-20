@@ -68,6 +68,8 @@ interface Part3DViewerModalProps {
   meshConversionError?: string | null;
   /** When true, CAD is a placeholder copy — show upload-first UI and hide revision history */
   usesPlaceholderCad?: boolean;
+  /** Stack above other modals (e.g. Job Board at z-55). Default 50. */
+  zIndex?: number;
 }
 
 export function Part3DViewerModal({
@@ -93,6 +95,7 @@ export function Part3DViewerModal({
   meshConversionStatus,
   meshConversionError,
   usesPlaceholderCad = false,
+  zIndex = 50,
 }: Part3DViewerModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -177,6 +180,18 @@ export function Part3DViewerModal({
       lastProcessedRestoreData.current = null;
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handleEscape, true);
+    return () => document.removeEventListener("keydown", handleEscape, true);
+  }, [isOpen, onClose]);
 
   // Handle revision upload success
   useEffect(() => {
@@ -350,7 +365,8 @@ export function Part3DViewerModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      className="modal-overlay fixed inset-0 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      style={{ zIndex }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
