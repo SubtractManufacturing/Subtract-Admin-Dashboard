@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
 
 import Modal from "~/components/shared/Modal";
 import Button from "~/components/shared/Button";
 import {
   buildDefaultJobBoardPostText,
-  buildJobBoardPostPreview,
   isPostTextOverLimit,
 } from "~/lib/job-board/post-builder";
 import { DISCORD_MAX_POST_CHARS } from "~/lib/job-board/types";
@@ -59,6 +58,7 @@ type JobBoardModalProps = {
   partPreviews: JobBoardPartPreview[];
   attachments: JobBoardAttachmentPreview[];
   webhookConfigured: boolean;
+  notifyRoleId: string | null;
   onOpenPartViewer: (partId: string) => void;
 };
 
@@ -78,12 +78,13 @@ export default function JobBoardModal({
   partPreviews,
   attachments,
   webhookConfigured,
+  notifyRoleId,
   onOpenPartViewer,
 }: JobBoardModalProps) {
   const fetcher = useFetcher<JobBoardActionData>();
   const revalidator = useRevalidator();
   const [postText, setPostText] = useState(() =>
-    buildDefaultJobBoardPostText(orderInput),
+    buildDefaultJobBoardPostText(orderInput, { notifyRoleId }),
   );
   const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<
     Set<string>
@@ -98,10 +99,17 @@ export default function JobBoardModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setPostText(buildDefaultJobBoardPostText(orderInput));
+    setPostText(buildDefaultJobBoardPostText(orderInput, { notifyRoleId }));
     setSelectedAttachmentIds(new Set());
     setSendState({ phase: "idle", sentMessages: [] });
-  }, [isOpen, orderInput.orderNumber, orderInput.ndaRequired, orderInput.parts.length]);
+  }, [
+    isOpen,
+    notifyRoleId,
+    orderInput.orderNumber,
+    orderInput.ndaRequired,
+    orderInput.deliveryDate,
+    orderInput.parts,
+  ]);
 
   useEffect(() => {
     const data = fetcher.data;
@@ -127,18 +135,23 @@ export default function JobBoardModal({
     if (data.intent === "markJobBoardAsSent" && data.ok) {
       revalidator.revalidate();
       onClose();
+      return;
+    }
+
+    const genericError = data as { error?: string; intent?: string };
+    if (
+      typeof genericError.error === "string" &&
+      genericError.intent == null
+    ) {
+      setSendState({
+        phase: "failed",
+        error: genericError.error,
+        sentMessages: [],
+        failedGroup: "text",
+        failedMessageIndex: 0,
+      });
     }
   }, [fetcher.data, onClose, revalidator]);
-
-  const preview = useMemo(
-    () =>
-      buildJobBoardPostPreview({
-        order: orderInput,
-        postText,
-        selectedAttachmentIds: [...selectedAttachmentIds],
-      }),
-    [orderInput, postText, selectedAttachmentIds],
-  );
 
   const textOverLimit = isPostTextOverLimit(postText);
   const isSubmitting = fetcher.state !== "idle";
@@ -179,12 +192,58 @@ export default function JobBoardModal({
 
   if (!isOpen) return null;
 
+  if (sendState.phase === "done") {
+    return (
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={`Job Board - Order ${orderNumber}`}
+        size="md"
+        zIndex={55}
+      >
+        <div className="space-y-6 py-4 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40">
+            <svg
+              className="h-6 w-6 text-emerald-600 dark:text-emerald-300"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          </div>
+          <div>
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">
+              Posted to Job Board
+            </p>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              The order was sent to Discord and moved to Waiting for Shop
+              Selection.
+            </p>
+          </div>
+          <div className="flex justify-center pt-2">
+            <Button variant="primary" onClick={onClose} className="min-w-[8rem]">
+              Close
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={`Job Board — Order ${orderNumber}`}
+      title={`Job Board - Order ${orderNumber}`}
       size="xl"
+      zIndex={55}
     >
       <div className="space-y-6">
         <div>
@@ -215,7 +274,7 @@ export default function JobBoardModal({
 
         <div>
           <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">
-            Parts (always included)
+            Parts
           </h3>
           <div className="space-y-3">
             {partPreviews.map((part) => (
@@ -287,22 +346,6 @@ export default function JobBoardModal({
           </div>
         )}
 
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">
-            Discord message plan
-          </h3>
-          <ol className="list-decimal space-y-1 pl-5 text-sm text-gray-600 dark:text-gray-400">
-            {preview.messages.map((message, index) => (
-              <li key={`${message.group}-${index}`}>
-                {GROUP_LABELS[message.group] ?? message.group}
-                {message.files.length > 0
-                  ? ` (${message.files.length} file${message.files.length === 1 ? "" : "s"})`
-                  : ""}
-              </li>
-            ))}
-          </ol>
-        </div>
-
         {sendState.phase === "failed" && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
             <p className="font-medium">Send failed</p>
@@ -312,12 +355,6 @@ export default function JobBoardModal({
                 Failed at: {GROUP_LABELS[sendState.failedGroup] ?? sendState.failedGroup}
               </p>
             )}
-          </div>
-        )}
-
-        {sendState.phase === "done" && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
-            Posted to Job Board. Order moved to Waiting for Shop Selection.
           </div>
         )}
 
@@ -360,12 +397,7 @@ export default function JobBoardModal({
             <Button
               variant="primary"
               onClick={() => submitPost(0)}
-              disabled={
-                isSubmitting ||
-                textOverLimit ||
-                !webhookConfigured ||
-                sendState.phase === "done"
-              }
+              disabled={isSubmitting || textOverLimit || !webhookConfigured}
               title={
                 !webhookConfigured
                   ? "Configure the Job Board webhook in Admin Console first"

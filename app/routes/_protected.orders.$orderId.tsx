@@ -1,4 +1,4 @@
-﻿import {
+import {
   json,
   LoaderFunctionArgs,
   ActionFunctionArgs,
@@ -106,10 +106,8 @@ import type { CheckoutAddressConflictPreview } from "~/lib/stripe/checkout-addre
 import SendOrderConfirmationModal from "~/components/orders/SendOrderConfirmationModal";
 import JobBoardModal from "~/components/orders/JobBoardModal";
 import { createFetchDiscordWebhookClient } from "~/lib/job-board/discord-webhook.server";
-import {
-  assertOrderEligibleForJobBoard,
-  loadJobBoardOrderInput,
-} from "~/lib/job-board/order-data.server";
+import { jobBoardDiscordFileName } from "~/lib/job-board/file-names";
+import { JOB_BOARD_POST_REQUIRES_DELIVERY_DATE } from "~/lib/job-board/types";
 import {
   markJobBoardAsSent,
   sendJobBoardPost,
@@ -119,9 +117,7 @@ import type {
   JobBoardPartInput,
   JobBoardSentMessageRecord,
 } from "~/lib/job-board/types";
-import {
-  getJobBoardWebhookSetting,
-} from "~/lib/job-board/webhook-setting.server";
+import { getJobBoardSettings } from "~/lib/job-board/webhook-setting.server";
 import GeneratePurchaseOrderPdfModal from "~/components/orders/GeneratePurchaseOrderPdfModal";
 import GenerateInvoicePdfModal from "~/components/orders/GenerateInvoicePdfModal";
 import GeneratePackingSlipPdfModal from "~/components/orders/GeneratePackingSlipPdfModal";
@@ -407,12 +403,16 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const stripePaymentLinksEnabled = await isStripePaymentLinksEnabled();
   const stripeConfigured = isStripeConfigured();
 
-  const [archivedLineItems, archiveRetentionDays, jobBoardOrderInput, jobBoardWebhook] =
+  const { loadJobBoardOrderInput } = await import(
+    "~/lib/job-board/order-data.server"
+  );
+
+  const [archivedLineItems, archiveRetentionDays, jobBoardOrderInput, jobBoardSettings] =
     await Promise.all([
     listArchivedOrderLineItems(order.id),
     getLineItemArchiveRetentionDays(),
     loadJobBoardOrderInput(order.id),
-    getJobBoardWebhookSetting(),
+    getJobBoardSettings(),
   ]);
 
   let quoteStripePaymentLinkId: string | null = null;
@@ -473,7 +473,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       })),
       archiveRetentionDays,
       jobBoardOrderInput,
-      jobBoardWebhookConfigured: jobBoardWebhook.configured,
+      jobBoardWebhookConfigured: jobBoardSettings.webhook.configured,
+      jobBoardNotifyRoleId: jobBoardSettings.notifyRoleId,
     }),
     headers
   );
@@ -1430,16 +1431,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "postJobBoard": {
-        const eligibility = await assertOrderEligibleForJobBoard(order.id);
+        const {
+          assertOrderEligibleForJobBoardPost,
+          loadJobBoardOrderInput,
+        } = await import("~/lib/job-board/order-data.server");
+        const eligibility = await assertOrderEligibleForJobBoardPost(order.id);
         if (!eligibility.ok) {
           return withAuthHeaders(
-            json({ error: eligibility.error }, { status: 400 }),
+            json(
+              {
+                intent: "postJobBoard",
+                ok: false as const,
+                error: eligibility.error,
+                failedGroup: "text",
+                failedMessageIndex: 0,
+                sentMessages: [],
+              },
+              { status: 400 },
+            ),
             headers,
           );
         }
 
-        const webhook = await getJobBoardWebhookSetting();
-        if (!webhook.url) {
+        const webhook = await getJobBoardSettings();
+        if (!webhook.webhook.url) {
           return withAuthHeaders(
             json(
               {
@@ -1492,7 +1507,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         const result = await sendJobBoardPost({
           orderId: order.id,
           orderInput,
-          webhookUrl: webhook.url,
+          webhookUrl: webhook.webhook.url,
           postText,
           selectedAttachmentIds,
           startAtMessageIndex: Number.isFinite(startAtMessageIndex)
@@ -1528,6 +1543,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "markJobBoardAsSent": {
+        const { assertOrderEligibleForJobBoard } = await import(
+          "~/lib/job-board/order-data.server"
+        );
         const eligibility = await assertOrderEligibleForJobBoard(order.id);
         if (!eligibility.ok) {
           return withAuthHeaders(
@@ -1592,11 +1610,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
           orderEventContext
         );
 
-        const webhook = await getJobBoardWebhookSetting();
+        const webhook = await getJobBoardSettings();
         const claimResult = await updateJobBoardClaim({
           orderId: order.id,
           vendorId: parseInt(vendorId as string),
-          webhookUrl: webhook.url,
+          webhookUrl: webhook.webhook.url,
           discord: createFetchDiscordWebhookClient(),
         });
 
@@ -2299,6 +2317,7 @@ export default function OrderDetails() {
     archiveRetentionDays,
     jobBoardOrderInput,
     jobBoardWebhookConfigured,
+    jobBoardNotifyRoleId,
   } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const jobBoardClaimWarning = searchParams.get("jobBoardClaimWarning");
@@ -2330,6 +2349,8 @@ export default function OrderDetails() {
     meshConversionError?: string | null;
   } | null>(null);
   const [jobBoardModalOpen, setJobBoardModalOpen] = useState(false);
+  const [jobBoardDeliveryDateNotice, setJobBoardDeliveryDateNotice] =
+    useState(false);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
   const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
@@ -2789,8 +2810,19 @@ export default function OrderDetails() {
 
   // Status transition handlers
   const handleSendToShops = () => {
+    if (!order.deliveryDate) {
+      setJobBoardDeliveryDateNotice(true);
+      return;
+    }
+    setJobBoardDeliveryDateNotice(false);
     setJobBoardModalOpen(true);
   };
+
+  useEffect(() => {
+    if (order.deliveryDate) {
+      setJobBoardDeliveryDateNotice(false);
+    }
+  }, [order.deliveryDate]);
 
   const jobBoardPartPreviews = useMemo(() => {
     if (!jobBoardOrderInput) return [];
@@ -2805,10 +2837,15 @@ export default function OrderDetails() {
         thumbnailUrl: lineItem?.part?.thumbnailUrl ?? null,
         hasThumbnail: Boolean(part.thumbnailS3Key),
         hasCad: Boolean(part.currentCad),
-        cadFileName: part.currentCad?.fileName ?? null,
-        drawings: part.drawings.map((drawing: { attachmentId: string; fileName: string }) => ({
+        cadFileName: part.currentCad
+          ? jobBoardDiscordFileName(
+              part.currentCad.s3Key,
+              part.currentCad.fileName,
+            )
+          : null,
+        drawings: part.drawings.map((drawing: { attachmentId: string; s3Key: string; fileName: string }) => ({
           id: drawing.attachmentId,
-          fileName: drawing.fileName,
+          fileName: jobBoardDiscordFileName(drawing.s3Key, drawing.fileName),
         })),
       };
     });
@@ -3329,6 +3366,20 @@ export default function OrderDetails() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-[1920px] mx-auto">
+        {jobBoardDeliveryDateNotice && (
+          <div className="mx-10 mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-100">
+            <div className="flex items-start justify-between gap-4">
+              <p>{JOB_BOARD_POST_REQUIRES_DELIVERY_DATE}</p>
+              <button
+                type="button"
+                className="shrink-0 text-red-800 underline dark:text-red-200"
+                onClick={() => setJobBoardDeliveryDateNotice(false)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         {jobBoardClaimWarning && (
           <div className="mx-10 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
             <div className="flex items-start justify-between gap-4">
@@ -4091,6 +4142,7 @@ export default function OrderDetails() {
       {selectedPart3D && (
         <Part3DViewerModal
           isOpen={part3DModalOpen}
+          zIndex={jobBoardModalOpen ? 60 : 50}
           onClose={() => {
             setPart3DModalOpen(false);
             setSelectedPart3D(null);
@@ -4240,6 +4292,7 @@ export default function OrderDetails() {
             fileName: attachment.fileName,
           }))}
           webhookConfigured={jobBoardWebhookConfigured}
+          notifyRoleId={jobBoardNotifyRoleId}
           onOpenPartViewer={openJobBoardPartViewer}
         />
       )}
