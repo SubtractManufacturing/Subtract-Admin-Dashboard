@@ -591,34 +591,37 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
     formData = await unstable_parseMultipartFormData(request, uploadHandler);
 
-    const intent = formData.get("intent") as string;
-    const file = formData.get("file") as File;
+    const intent = String(formData.get("intent") ?? "");
+    const file = formData.get("file") as File | null;
+
+    const multipartIntentsHandledInSwitch = [
+      "createLineItemWithUpload",
+      "generatePurchaseOrder",
+      "generateInvoice",
+      "generatePackingSlip",
+      "emailPreview",
+      "emailQueue",
+      "addDrawingToPart",
+      "importCheckoutAddressesQuick",
+      "applyCheckoutAddressImportChoices",
+      "manageTrackingNumbers",
+      "shipOrder",
+    ];
+
+    const isOrderAttachmentUpload =
+      Boolean(file) && !multipartIntentsHandledInSwitch.includes(intent);
 
     // If there's no file, check if this is an intent that handles files differently
     if (!file) {
       if (intent === "uploadAttachment") {
         return json({ error: "No file provided" }, { status: 400 });
       }
-      const specialIntents = [
-        "generatePurchaseOrder",
-        "generateInvoice",
-        "generatePackingSlip",
-        "emailPreview",
-        "emailQueue",
-        "addDrawingToPart", // Drawing uploads use drawing_0, drawing_1, etc. fields
-        "importCheckoutAddressesQuick",
-        "applyCheckoutAddressImportChoices",
-        "manageTrackingNumbers",
-        "shipOrder",
-      ];
-      if (specialIntents.includes(intent)) {
-        // These intents handle form data differently, let them fall through
+      if (multipartIntentsHandledInSwitch.includes(intent)) {
+        // Fall through to the action switch
       } else {
-        // This is a file upload request but no file was provided
         return json({ error: "No file provided" }, { status: 400 });
       }
-    } else {
-      // We have a file, process the upload
+    } else if (isOrderAttachmentUpload) {
       if (file.size > MAX_FILE_SIZE) {
         return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
       }
@@ -674,6 +677,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         console.error("Upload error:", error);
         return json({ error: "Failed to upload file" }, { status: 500 });
       }
+    } else if (file.size > MAX_FILE_SIZE) {
+      return json({ error: "File size exceeds 10MB limit" }, { status: 400 });
     }
   } else {
     // Not multipart, parse as regular FormData
@@ -2465,8 +2470,12 @@ export default function OrderDetails() {
 
   useEffect(() => {
     if (lineItemFetcher.state === "idle" && lineItemFetcher.data) {
-      const data = lineItemFetcher.data as { success?: boolean; error?: string };
-      if (data.success) {
+      const data = lineItemFetcher.data as {
+        success?: boolean;
+        error?: string;
+        lineItem?: unknown;
+      };
+      if (data.success || data.lineItem) {
         revalidator.revalidate();
       } else if (data.error) {
         alert(`Failed to update line item: ${data.error}`);
