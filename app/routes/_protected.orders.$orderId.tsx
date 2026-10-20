@@ -1,4 +1,4 @@
-import {
+﻿import {
   json,
   LoaderFunctionArgs,
   ActionFunctionArgs,
@@ -105,7 +105,7 @@ import CheckoutAddressConflictModal, {
 import type { CheckoutAddressConflictPreview } from "~/lib/stripe/checkout-address-conflict.types";
 import SendOrderConfirmationModal from "~/components/orders/SendOrderConfirmationModal";
 import JobBoardModal from "~/components/orders/JobBoardModal";
-import { createFetchDiscordWebhookClient } from "~/lib/job-board/discord-webhook.client";
+import { createFetchDiscordWebhookClient } from "~/lib/job-board/discord-webhook.server";
 import {
   assertOrderEligibleForJobBoard,
   loadJobBoardOrderInput,
