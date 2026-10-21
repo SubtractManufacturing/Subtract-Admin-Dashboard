@@ -100,7 +100,7 @@ Defined in `app/lib/queue/types.ts`, consumed by `scripts/worker.ts`:
 | `purge-archived-line-items` | `handlers/purge-archived-line-items.ts` | Hard-delete archived line items |
 | `mock-job` | inline in worker.ts | **Stale** — remove when cleaning infra |
 | `rfq-import` | `handlers/rfq-intake.ts` | Import one receipted WordPress RFQ (one active job per Worker) |
-| `rfq-receipt-scan` | `handlers/rfq-intake.ts` | Discover receipted intake prefixes every five minutes |
+| `rfq-receipt-scan` | `handlers/rfq-intake.ts` | Discover receipted intake prefixes (cron: 1 min non-prod, 5 min prod; `RFQ_RECEIPT_SCAN_CRON`) |
 
 RFQ intake is implemented as the deep module under `app/lib/rfq-intake/`; see [ADR-0011](adr/0011-wordpress-rfq-intake.md).
 

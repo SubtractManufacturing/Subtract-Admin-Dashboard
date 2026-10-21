@@ -220,12 +220,13 @@ If receipt put fails after manifest → partial state (logged). If receipt exist
 
 | Path | Type | Required | Null / empty | Allowed / notes |
 |------|------|----------|--------------|-----------------|
+| `manifest_version` | integer | no | omit → **1** (legacy) | **1** = legacy enum tolerance + v1 note shape; **2** = literal tolerance + finish/plastic fields; other values rejected |
 | `session_id` | string | yes | UUID v4 | Must match URL session |
 | `contact` | object | yes | — | |
 | `parts` | array | yes | length 1–`RFQ_MAX_PARTS` (20) | |
 | `global` | object | yes | — | |
 
-**Not** in manifest top level: `schema_version`, `submitted_at`, receipt number. (`RFQ_INTAKE_SCHEMA_VERSION` is WP DB only.)
+**Not** in manifest top level: `submitted_at`, receipt number.
 
 ---
 
@@ -255,8 +256,12 @@ Phone: validate parse of `+{phone_country_code}{phone}` with libphonenumber (`cl
 | `part_file_key` | string | yes | non-empty; under `.../parts/`; HeadObject exists | from upload-urls `file_key` |
 | `drawing_file_keys` | array | yes | may be `[]` | each key non-empty; under `.../drawings/` |
 | `material` | string | yes | non-empty trimmed | **free text** (UI combobox allows off-catalog); **no server enum** |
-| `tolerance` | string | yes | `standard`, `precision`, `custom` | |
-| `tolerance_detail` | string | conditional | required non-empty iff `tolerance === "custom"` | else null/omit |
+| `finish` | string | v2 only | null/omit OK | v2: optional; ERP composes with color/spec into quote `finish` |
+| `finish_color` | string | v2 only | null/omit OK | |
+| `finish_specification` | string | v2 only | null/omit OK | |
+| `plastic_color` | string | v2 only | null/omit OK | v2: ERP appends to quote `material` |
+| `tolerance` | string | yes | **v1:** `standard`, `precision`, `custom`, … **v2:** non-empty literal (e.g. `+/- 0.005"`) | stored verbatim on quote part |
+| `tolerance_detail` | string | conditional | **v1:** required non-empty iff `tolerance === "custom"`; **v2:** always null/omit | |
 | `threads_features` | string | no | null/omit OK | |
 | `quantity` | number | yes | integer ≥ 1 (JSON int or whole float) | |
 | `target_unit_price` | number | no | null/omit; if set: ≥ 0, ≤ 2 decimal places | **no currency field** in manifest |

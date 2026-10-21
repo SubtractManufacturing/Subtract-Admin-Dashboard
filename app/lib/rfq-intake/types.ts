@@ -81,12 +81,14 @@ export type IntakePart = {
   cad: { key: string; fileName: string; contentType: string | null };
   drawings: Array<{ key: string; fileName: string; contentType: string | null }>;
   material: string | null;
+  finish: string | null;
   tolerance: string | null;
   note: string;
   raw: Record<string, unknown>;
 };
 
 export type IntakeManifest = {
+  manifestVersion: number;
   sessionId: string;
   contact: IntakeContact;
   ndaRequired: boolean;

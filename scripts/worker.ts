@@ -10,6 +10,7 @@ import {
   type SendEmailPayload,
   type RfqImportPayload,
   type RfqReceiptScanPayload,
+  getRfqReceiptScanCron,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
 import { handleDrawingThumbnail } from "../app/lib/queue/handlers/drawing-thumbnail";
@@ -128,13 +129,16 @@ async function main() {
     { batchSize: 1 },
     handleRfqReceiptScan,
   );
+  const rfqReceiptScanCron = getRfqReceiptScanCron();
   await boss.schedule(
     QUEUES.RFQ_RECEIPT_SCAN,
-    "*/5 * * * *",
+    rfqReceiptScanCron,
     { triggeredAt: new Date().toISOString() },
     { missed: "once" },
   );
-  console.log(`[Worker] Scheduled every 5 minutes: ${QUEUES.RFQ_RECEIPT_SCAN}`);
+  console.log(
+    `[Worker] Scheduled ${QUEUES.RFQ_RECEIPT_SCAN} cron: ${rfqReceiptScanCron}`,
+  );
 
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {

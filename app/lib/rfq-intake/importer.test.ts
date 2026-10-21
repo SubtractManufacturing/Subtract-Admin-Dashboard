@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
+import wordpressManifestV2 from "./fixtures/wordpress-manifest-v2.json";
 import wordpressReceipt from "./fixtures/wordpress-receipt.json";
 import { createRfqImporter, safeErrorDetail } from "./importer";
 import { MemoryRfqNotifier } from "./outbound-webhook";
@@ -385,6 +386,63 @@ describe("importReceipt", () => {
     expect(archive).toContain("archive-index.json");
     expect([...storage.objects.keys()].some((key) => key.startsWith(`intake/${SESSION_ID}/`))).toBe(false);
     expect(derived).toEqual([[prepared.parts[0].quotePartId]]);
+  });
+
+  it("imports manifest v2 with composed finish and material on prepared parts", async () => {
+    const storage = new MemoryStorage();
+    const v2PartId = "018f0f7d-9f65-7eb4-bf9c-0fca82a87a40";
+    const v2SecondPartId = "018f0f7d-9f65-7eb4-bf9c-0fca82a87a41";
+    storage.put(RECEIPT_KEY, {
+      receipt_number: "RFQ-2026-V2",
+      session_id: SESSION_ID,
+      submitted_at: SUBMITTED_AT,
+      manifest_key: MANIFEST_KEY,
+    });
+    storage.put(MANIFEST_KEY, {
+      ...wordpressManifestV2,
+      session_id: SESSION_ID,
+      parts: [
+        {
+          ...wordpressManifestV2.parts[0],
+          part_id: v2PartId,
+          part_file_key: CAD_KEY,
+          drawing_file_keys: [DRAWING_A_KEY],
+        },
+        {
+          ...wordpressManifestV2.parts[1],
+          part_id: v2SecondPartId,
+          part_file_key: `intake/${SESSION_ID}/parts/${CAD_UPLOAD_ID}_housing.step`,
+          drawing_file_keys: [],
+        },
+      ],
+    });
+    storage.put(CAD_KEY, "step-data", "application/step");
+    storage.put(DRAWING_A_KEY, "drawing", "application/pdf");
+    storage.put(`intake/${SESSION_ID}/parts/${CAD_UPLOAD_ID}_housing.step`, "step-data", "application/step");
+    const persistence = new MemoryPersistence();
+    const importer = createRfqImporter({
+      ...storage.buckets,
+      persistence,
+      queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+      now: () => new Date("2026-09-21T00:00:00Z"),
+    });
+
+    await expect(importer.importReceipt(RECEIPT_KEY)).resolves.toMatchObject({
+      status: "completed",
+    });
+
+    expect(persistence.committed?.manifest.manifestVersion).toBe(2);
+    expect(persistence.committed?.parts[0]).toMatchObject({
+      material: "6061-T6 Aluminum",
+      finish: "Anodize Type II - Black",
+      tolerance: '+/- 0.005"',
+    });
+    expect(persistence.committed?.parts[0].note).not.toContain("Primary tolerance");
+    expect(persistence.committed?.parts[1]).toMatchObject({
+      material: "Acetal - Natural",
+      finish: null,
+      tolerance: '+/- 0.010"',
+    });
   });
 
   it("stops permanently on an unsafe package before copying or committing", async () => {
