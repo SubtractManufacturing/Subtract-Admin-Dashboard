@@ -6,6 +6,13 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.8.2](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.1...v1.8.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* (rfq-intake): manifest v2 import and faster receipt scan in dev ([#184](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/184)) ([b6c7905](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/b6c7905a0c6c2ceb81eca5f2b7aa4e148e923f7f))
+
 ## [1.8.1](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.0...v1.8.1) (2026-10-20)
 
 
