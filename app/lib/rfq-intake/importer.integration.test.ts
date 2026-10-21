@@ -499,13 +499,37 @@ describe("RFQ importer with Postgres persistence", () => {
         tolerance: '+/- 0.010"',
       });
     } finally {
+      await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${v2ReceiptKey}`);
+      await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${v2ReceiptKey}`);
+      await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${v2ReceiptKey}`);
       if (v2QuoteId) {
+        await db.execute(
+          sql`delete from action_items where entity_type = 'quote' and entity_id = ${String(v2QuoteId)}`,
+        );
+        await db.execute(
+          sql`delete from event_logs where entity_type = 'quote' and entity_id = ${String(v2QuoteId)}`,
+        );
+        await db.execute(sql`delete from notes where entity_type = 'quote' and entity_id = ${String(v2QuoteId)}`);
+        await db.execute(sql`
+          with deleted_drawings as (
+            delete from quote_part_drawings
+            where quote_part_id in (select id from quote_parts where quote_id = ${v2QuoteId})
+            returning attachment_id
+          )
+          delete from attachments where id in (select attachment_id from deleted_drawings)
+        `);
+        await db.execute(sql`delete from quote_attachments where quote_id = ${v2QuoteId}`);
         await db.execute(sql`delete from quote_line_items where quote_id = ${v2QuoteId}`);
         await db.execute(sql`delete from quote_parts where quote_id = ${v2QuoteId}`);
+        await db.execute(
+          sql`delete from attachments where s3_key like ${`rfq-intake-archives/${v2ReceiptNumber}%`}`,
+        );
         await db.execute(sql`delete from quotes where id = ${v2QuoteId}`);
+        await db.execute(
+          sql`delete from customer_email_aliases where customer_id in (select id from customers where lower(email) = ${v2Email})`,
+        );
         await db.execute(sql`delete from customers where lower(email) = ${v2Email}`);
       }
-      await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${v2ReceiptKey}`);
     }
   });
 

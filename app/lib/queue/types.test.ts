@@ -45,7 +45,7 @@ describe("getRfqReceiptScanCron", () => {
 
   it("uses a one-minute cron outside production by default", () => {
     delete process.env.RFQ_RECEIPT_SCAN_CRON;
-    delete process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
     expect(getRfqReceiptScanCron()).toBe("*/1 * * * *");
   });
 

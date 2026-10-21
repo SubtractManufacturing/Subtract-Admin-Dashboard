@@ -338,6 +338,10 @@ function parsePartV2(value: unknown, sessionId: string): IntakePart {
 
   const material = requiredString(input, "material", "part material");
   const plasticColor = optionalString(input, "plastic_color");
+  const tolerance = input.tolerance;
+  if (typeof tolerance !== "string" || !tolerance.trim()) {
+    throw new IntakeValidationError("part tolerance is required");
+  }
   const finish = composeIntakeFinish({
     finish: optionalString(input, "finish"),
     finishColor: optionalString(input, "finish_color"),
@@ -351,7 +355,7 @@ function parsePartV2(value: unknown, sessionId: string): IntakePart {
     drawings,
     material: composeIntakeMaterial(material, plasticColor),
     finish,
-    tolerance: requiredString(input, "tolerance", "part tolerance"),
+    tolerance,
     note: formatPartNoteV2(input),
     raw: input,
   };
