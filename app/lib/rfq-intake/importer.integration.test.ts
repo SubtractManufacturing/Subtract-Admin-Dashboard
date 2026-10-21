@@ -7,6 +7,7 @@ import { db } from "../db";
 import { quotes, rfqImportLedger } from "../db/schema";
 import { getEnv } from "../env.server";
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
+import wordpressManifestV2 from "./fixtures/wordpress-manifest-v2.json";
 import { createRfqImporter } from "./importer";
 import {
   createPostgresRfqPersistence,
@@ -400,6 +401,135 @@ describe("RFQ importer with Postgres persistence", () => {
       await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${retryReceiptKey}`);
       await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${retryReceiptKey}`);
       await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${retryReceiptKey}`);
+    }
+  });
+
+  it("persists manifest v2 finish, material, and literal tolerance on quote parts", async () => {
+    const v2ReceiptNumber = `TEST-RFQ-V2-${randomUUID()}`;
+    const v2SessionId = randomUUID();
+    const v2PartId = randomUUID();
+    const v2SecondPartId = randomUUID();
+    const v2UploadId = randomUUID();
+    const v2SecondUploadId = randomUUID();
+    const v2ReceiptKey = `intake/${v2SessionId}/meta/receipt.json`;
+    const v2ManifestKey = `intake/${v2SessionId}/meta/manifest.json`;
+    const v2CadKey = `intake/${v2SessionId}/parts/${v2UploadId}_bracket.step`;
+    const v2SecondCadKey = `intake/${v2SessionId}/parts/${v2SecondUploadId}_housing.step`;
+    const v2DrawingKey = `intake/${v2SessionId}/drawings/${randomUUID()}_drawing.pdf`;
+    const v2Email = `${v2ReceiptNumber}@example.invalid`.toLowerCase();
+    let v2QuoteId: number | undefined;
+
+    const storage = new MemoryStorage();
+    storage.put(v2ReceiptKey, {
+      receipt_number: v2ReceiptNumber,
+      session_id: v2SessionId,
+      submitted_at: "2026-09-21T11:00:00+00:00",
+      manifest_key: v2ManifestKey,
+    });
+    storage.put(v2ManifestKey, {
+      ...wordpressManifestV2,
+      session_id: v2SessionId,
+      contact: {
+        ...wordpressManifestV2.contact,
+        email: v2Email,
+      },
+      parts: [
+        {
+          ...wordpressManifestV2.parts[0],
+          part_id: v2PartId,
+          part_file_key: v2CadKey,
+          drawing_file_keys: [v2DrawingKey],
+        },
+        {
+          ...wordpressManifestV2.parts[1],
+          part_id: v2SecondPartId,
+          part_file_key: v2SecondCadKey,
+        },
+      ],
+    });
+    storage.put(v2CadKey, "STEP", "application/step");
+    storage.put(v2SecondCadKey, "STEP", "application/step");
+    storage.put(v2DrawingKey, "%PDF-1.4", "application/pdf");
+
+    try {
+      const importer = createRfqImporter({
+        ...storage.buckets,
+        persistence: postgresRfqPersistence,
+        queue: { async enqueue() {}, async enqueueDerivedAssets() {} },
+        now: () => new Date("2026-09-21T00:00:00Z"),
+      });
+      const outcome = await importer.importReceipt(v2ReceiptKey);
+      expect(outcome.status).toBe("completed");
+      v2QuoteId = outcome.status === "completed" ? outcome.quoteId : undefined;
+
+      const [partRows] = await db.execute<{
+        material: string | null;
+        finish: string | null;
+        tolerance: string | null;
+        description: string | null;
+      }>(sql`
+        select material, finish, tolerance, description
+        from quote_parts
+        where quote_id = ${v2QuoteId!}
+        order by part_number
+      `);
+      expect(partRows).toMatchObject({
+        material: "6061-T6 Aluminum",
+        finish: "Anodize Type II - Black",
+        tolerance: '+/- 0.005"',
+      });
+      expect(partRows.description).toContain("Deburr all edges");
+      expect(partRows.description).not.toContain("Primary tolerance");
+
+      const [secondPart] = await db.execute<{
+        material: string | null;
+        finish: string | null;
+        tolerance: string | null;
+      }>(sql`
+        select material, finish, tolerance
+        from quote_parts
+        where quote_id = ${v2QuoteId!}
+        order by part_number
+        offset 1
+        limit 1
+      `);
+      expect(secondPart).toMatchObject({
+        material: "Acetal - Natural",
+        finish: null,
+        tolerance: '+/- 0.010"',
+      });
+    } finally {
+      await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${v2ReceiptKey}`);
+      await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${v2ReceiptKey}`);
+      await db.execute(sql`delete from rfq_import_ledger where receipt_key = ${v2ReceiptKey}`);
+      if (v2QuoteId) {
+        await db.execute(
+          sql`delete from action_items where entity_type = 'quote' and entity_id = ${String(v2QuoteId)}`,
+        );
+        await db.execute(
+          sql`delete from event_logs where entity_type = 'quote' and entity_id = ${String(v2QuoteId)}`,
+        );
+        await db.execute(sql`delete from notes where entity_type = 'quote' and entity_id = ${String(v2QuoteId)}`);
+        await db.execute(sql`
+          with deleted_drawings as (
+            delete from quote_part_drawings
+            where quote_part_id in (select id from quote_parts where quote_id = ${v2QuoteId})
+            returning attachment_id
+          )
+          delete from attachments where id in (select attachment_id from deleted_drawings)
+        `);
+        await db.execute(sql`delete from quote_attachments where quote_id = ${v2QuoteId}`);
+        await db.execute(sql`delete from quote_line_items where quote_id = ${v2QuoteId}`);
+        await db.execute(sql`delete from quote_parts where quote_id = ${v2QuoteId}`);
+        await db.execute(
+          sql`delete from attachments where s3_key like ${`rfq-intake-archives/${v2ReceiptNumber}%`}`,
+        );
+        await db.execute(sql`delete from quotes where id = ${v2QuoteId}`);
+        await db.execute(
+          sql`delete from customer_email_aliases where customer_id in (select id from customers where lower(email) = ${v2Email})`,
+        );
+        await db.execute(sql`delete from customers where lower(email) = ${v2Email}`);
+      }
     }
   });
 

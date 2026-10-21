@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
+import wordpressManifestV2 from "./fixtures/wordpress-manifest-v2.json";
 import wordpressReceipt from "./fixtures/wordpress-receipt.json";
 import {
+  composeIntakeFinish,
+  composeIntakeMaterial,
   IntakeValidationError,
   parseManifest,
   parseReceipt,
@@ -44,9 +47,28 @@ describe("parseReceipt", () => {
   });
 });
 
+describe("composeIntakeFinish", () => {
+  it("joins finish segments with dashes", () => {
+    expect(
+      composeIntakeFinish({
+        finish: "Cerakote",
+        finishColor: "Burnt Bronze",
+        finishSpecification: null,
+      }),
+    ).toBe("Cerakote - Burnt Bronze");
+  });
+});
+
+describe("composeIntakeMaterial", () => {
+  it("appends plastic color to material", () => {
+    expect(composeIntakeMaterial("Acetal", "Black")).toBe("Acetal - Black");
+  });
+});
+
 describe("parseManifest", () => {
   it("accepts the WordPress manifest contract and formats phone with country code", () => {
     const manifest = parseManifest(wordpressManifest, receiptPointer());
+    expect(manifest.manifestVersion).toBe(1);
     expect(manifest.contact.phone).toBe("+15551234567");
     expect(manifest.parts).toHaveLength(2);
     expect(manifest.parts[0].drawings).toHaveLength(2);
@@ -141,6 +163,55 @@ describe("parseManifest", () => {
       receiptPointer(),
     );
     expect(manifest.parts[0].note).toContain("Custom tolerance: +/- 0.002 in");
+  });
+
+  it("rejects unsupported manifest versions", () => {
+    expect(() =>
+      parseManifest({ ...wordpressManifest, manifest_version: 3 }, receiptPointer()),
+    ).toThrow(/manifest version 3 is not supported/i);
+  });
+
+  it("parses manifest v2 with composed finish, material, and slim notes", () => {
+    const manifest = parseManifest(wordpressManifestV2, receiptPointer());
+    expect(manifest.manifestVersion).toBe(2);
+    expect(manifest.parts[0]).toMatchObject({
+      material: "6061-T6 Aluminum",
+      finish: "Anodize Type II - Black",
+      tolerance: '+/- 0.005"',
+    });
+    expect(manifest.parts[0].note).toBe(
+      [
+        "Deburr all edges",
+        "Threads / features: 4-40 helicoils",
+        "Target price: 12.5",
+      ].join("\n"),
+    );
+    expect(manifest.parts[0].note).not.toContain("Material:");
+    expect(manifest.parts[0].note).not.toContain("Primary tolerance");
+
+    expect(manifest.parts[1]).toMatchObject({
+      material: "Acetal - Natural",
+      finish: null,
+      tolerance: '+/- 0.010"',
+    });
+    expect(manifest.parts[1].note).toBe("");
+  });
+
+  it("does not require tolerance detail for custom in manifest v2", () => {
+    const manifest = parseManifest(
+      {
+        ...wordpressManifestV2,
+        parts: [
+          {
+            ...wordpressManifestV2.parts[0],
+            tolerance: "+/- 0.00394\"",
+            tolerance_detail: null,
+          },
+        ],
+      },
+      receiptPointer(),
+    );
+    expect(manifest.parts[0].tolerance).toBe('+/- 0.00394"');
   });
 });
 

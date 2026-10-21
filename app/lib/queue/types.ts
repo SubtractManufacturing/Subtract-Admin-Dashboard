@@ -40,6 +40,13 @@ export interface DrawingThumbnailPayload {
   attachmentId: string;
 }
 
+/** pg-boss cron for discovering new intake receipts. Override via RFQ_RECEIPT_SCAN_CRON. */
+export function getRfqReceiptScanCron(): string {
+  const override = process.env.RFQ_RECEIPT_SCAN_CRON?.trim();
+  if (override) return override;
+  return process.env.NODE_ENV === "production" ? "*/5 * * * *" : "*/1 * * * *";
+}
+
 export const RFQ_IMPORT_OPTIONS = {
   // The import ledger owns the bounded retry schedule.
   retryLimit: 0,

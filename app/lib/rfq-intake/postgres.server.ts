@@ -327,6 +327,7 @@ export function createPostgresRfqPersistence(input: {
           partName: part.partName,
           description: part.note || null,
           material: part.material,
+          finish: prepared.manifest.manifestVersion >= 2 ? part.finish : null,
           tolerance: part.tolerance,
           partFileUrl: part.canonicalCadKey,
           specifications: part.raw,

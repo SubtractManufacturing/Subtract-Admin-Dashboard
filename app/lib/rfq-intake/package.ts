@@ -148,7 +148,51 @@ function parseFileKey(
   };
 }
 
-function formatPartNote(part: Record<string, unknown>): string {
+const SUPPORTED_MANIFEST_VERSIONS = new Set([1, 2]);
+
+function parseManifestVersion(input: Record<string, unknown>): number {
+  if (!("manifest_version" in input)) return 1;
+  const value = input.manifest_version;
+  if (typeof value === "number" && Number.isInteger(value) && SUPPORTED_MANIFEST_VERSIONS.has(value)) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isInteger(value)) {
+    throw new IntakeValidationError(`manifest version ${value} is not supported`);
+  }
+  throw new IntakeValidationError("manifest version must be an integer");
+}
+
+export function composeIntakeFinish(input: {
+  finish: string | null;
+  finishColor: string | null;
+  finishSpecification: string | null;
+}): string | null {
+  const segments = [input.finish, input.finishColor, input.finishSpecification].filter(
+    (segment): segment is string => segment !== null && segment !== "",
+  );
+  return segments.length === 0 ? null : segments.join(" - ");
+}
+
+export function composeIntakeMaterial(material: string, plasticColor: string | null): string {
+  if (!plasticColor) return material;
+  return `${material} - ${plasticColor}`;
+}
+
+function appendAdditionalPartFields(
+  part: Record<string, unknown>,
+  knownKeys: Set<string>,
+  lines: string[],
+) {
+  for (const key of Object.keys(part).filter((key) => !knownKeys.has(key)).sort()) {
+    const value = part[key];
+    if (value === undefined || value === null || value === "") continue;
+    lines.push(
+      `Additional ${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+    );
+  }
+}
+
+function formatPartNoteV1(part: Record<string, unknown>): string {
   const labels: Array<[string, unknown]> = [
     ["Quantity", part.quantity],
     ["Material", part.material],
@@ -173,17 +217,57 @@ function formatPartNote(part: Record<string, unknown>): string {
     "notes",
     "target_unit_price",
   ]);
-  for (const key of Object.keys(part).filter((key) => !knownKeys.has(key)).sort()) {
-    const value = part[key];
-    if (value === undefined || value === null || value === "") continue;
-    lines.push(
-      `Additional ${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
-    );
-  }
+  appendAdditionalPartFields(part, knownKeys, lines);
   return lines.join("\n");
 }
 
-function parsePart(value: unknown, sessionId: string): IntakePart {
+function formatPartNoteV2(part: Record<string, unknown>): string {
+  const lines: string[] = [];
+  if (typeof part.notes === "string" && part.notes.trim()) {
+    lines.push(part.notes.trim());
+  }
+
+  const labels: Array<[string, unknown]> = [
+    ["Threads / features", part.threads_features],
+    ["Target price", part.target_unit_price],
+    ["Tolerance detail", part.tolerance_detail],
+  ];
+  lines.push(
+    ...labels
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .map(
+        ([label, value]) =>
+          `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+      ),
+  );
+
+  const knownKeys = new Set([
+    "part_id",
+    "part_file_key",
+    "drawing_file_keys",
+    "quantity",
+    "material",
+    "finish",
+    "finish_color",
+    "finish_specification",
+    "plastic_color",
+    "tolerance",
+    "tolerance_detail",
+    "threads_features",
+    "notes",
+    "target_unit_price",
+  ]);
+  appendAdditionalPartFields(part, knownKeys, lines);
+  return lines.join("\n");
+}
+
+function parsePartShared(value: unknown, sessionId: string): {
+  input: Record<string, unknown>;
+  id: string;
+  quantity: number;
+  cad: { key: string; fileName: string; contentType: string | null };
+  drawings: Array<{ key: string; fileName: string; contentType: string | null }>;
+} {
   const input = record(value, "manifest part");
   const id = requiredString(input, "part_id", "part ID").toLowerCase();
   if (!UUID.test(id)) throw new IntakeValidationError("part ID must be a UUID");
@@ -199,12 +283,6 @@ function parsePart(value: unknown, sessionId: string): IntakePart {
 
   if (!("drawing_file_keys" in input) || !Array.isArray(input.drawing_file_keys)) {
     throw new IntakeValidationError("part drawing file keys must be an array");
-  }
-
-  const tolerance = requiredString(input, "tolerance", "part tolerance");
-  const toleranceDetail = optionalString(input, "tolerance_detail");
-  if (tolerance === "custom" && !toleranceDetail) {
-    throw new IntakeValidationError("part tolerance detail is required when tolerance is custom");
   }
 
   if ("target_unit_price" in input && input.target_unit_price !== null) {
@@ -230,20 +308,62 @@ function parsePart(value: unknown, sessionId: string): IntakePart {
     );
   }
 
+  return { input, id, quantity, cad, drawings };
+}
+
+function parsePartV1(value: unknown, sessionId: string): IntakePart {
+  const { input, id, quantity, cad, drawings } = parsePartShared(value, sessionId);
+
+  const tolerance = requiredString(input, "tolerance", "part tolerance");
+  const toleranceDetail = optionalString(input, "tolerance_detail");
+  if (tolerance === "custom" && !toleranceDetail) {
+    throw new IntakeValidationError("part tolerance detail is required when tolerance is custom");
+  }
+
   return {
     id,
     quantity,
     cad,
     drawings,
     material: requiredString(input, "material", "part material"),
+    finish: null,
     tolerance,
-    note: formatPartNote(input),
+    note: formatPartNoteV1(input),
+    raw: input,
+  };
+}
+
+function parsePartV2(value: unknown, sessionId: string): IntakePart {
+  const { input, id, quantity, cad, drawings } = parsePartShared(value, sessionId);
+
+  const material = requiredString(input, "material", "part material");
+  const plasticColor = optionalString(input, "plastic_color");
+  const tolerance = input.tolerance;
+  if (typeof tolerance !== "string" || !tolerance.trim()) {
+    throw new IntakeValidationError("part tolerance is required");
+  }
+  const finish = composeIntakeFinish({
+    finish: optionalString(input, "finish"),
+    finishColor: optionalString(input, "finish_color"),
+    finishSpecification: optionalString(input, "finish_specification"),
+  });
+
+  return {
+    id,
+    quantity,
+    cad,
+    drawings,
+    material: composeIntakeMaterial(material, plasticColor),
+    finish,
+    tolerance,
+    note: formatPartNoteV2(input),
     raw: input,
   };
 }
 
 export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeManifest {
   const input = record(value, "manifest");
+  const manifestVersion = parseManifestVersion(input);
   const sessionId = requiredString(input, "session_id", "manifest session ID").toLowerCase();
   if (sessionId !== receipt.sessionId) {
     throw new IntakeValidationError("manifest and receipt sessions do not match", "security");
@@ -252,6 +372,7 @@ export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeMa
     throw new IntakeValidationError("manifest must contain at least one part");
   }
 
+  const parsePart = manifestVersion === 2 ? parsePartV2 : parsePartV1;
   const parts = input.parts.map((part) => parsePart(part, sessionId));
   if (new Set(parts.map((part) => part.id)).size !== parts.length) {
     throw new IntakeValidationError("manifest contains duplicate part IDs");
@@ -271,6 +392,7 @@ export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeMa
   );
 
   return {
+    manifestVersion,
     sessionId,
     contact: parseContact(input),
     ndaRequired: globalInput.nda_required,
