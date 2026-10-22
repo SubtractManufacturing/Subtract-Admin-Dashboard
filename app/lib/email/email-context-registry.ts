@@ -22,6 +22,18 @@ export const EMAIL_CONTEXTS = [
     description:
       "Customer-facing confirmation for a new order, before board / shop handoff.",
   },
+  {
+    key: "quote_auto_created",
+    label: "Quote received (auto-created)",
+    description:
+      "Customer acknowledgment when a quote is created automatically (e.g. WordPress RFQ intake).",
+  },
+  {
+    key: "quote_manual_created",
+    label: "Quote received (manual create)",
+    description:
+      "Customer acknowledgment when staff create a quote from email or the New Quote flow.",
+  },
 ] as const;
 
 export type EmailContextDefinition = (typeof EMAIL_CONTEXTS)[number];
@@ -30,6 +42,8 @@ export type EmailContextKey = EmailContextDefinition["key"];
 export const EMAIL_CONTEXT = {
   QUOTE_SEND: "quote_send",
   ORDER_CONFIRMATION: "order_confirmation",
+  QUOTE_AUTO_CREATED: "quote_auto_created",
+  QUOTE_MANUAL_CREATED: "quote_manual_created",
 } as const satisfies Record<string, EmailContextKey>;
 
 export function isEmailContextKey(value: string): value is EmailContextKey {

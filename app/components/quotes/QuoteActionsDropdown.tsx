@@ -13,6 +13,8 @@ interface QuoteActionsDropdownProps {
   onGeneratePdf?: () => void;
   onGenerateInvoice?: () => void;
   onReceivePo?: () => void;
+  onQuoteReceived?: () => void;
+  quoteReceivedDisabledReason?: string | null;
   isDownloading?: boolean;
   hasCustomer?: boolean;
 }
@@ -29,6 +31,8 @@ export default function QuoteActionsDropdown({
   onGeneratePdf,
   onGenerateInvoice,
   onReceivePo,
+  onQuoteReceived,
+  quoteReceivedDisabledReason,
   isDownloading = false,
   hasCustomer = false,
 }: QuoteActionsDropdownProps) {
@@ -63,6 +67,56 @@ export default function QuoteActionsDropdown({
   const canReceivePo = quoteStatus === "Sent" && !!onReceivePo;
 
   const actionButtons = [
+    ...(onQuoteReceived
+      ? [
+          {
+            icon: (
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                />
+              </svg>
+            ),
+            label: "Quote received",
+            onClick: () => {
+              onQuoteReceived();
+              onClose();
+            },
+          },
+        ]
+      : quoteReceivedDisabledReason
+        ? [
+            {
+              icon: (
+                <svg
+                  className="w-5 h-5 opacity-50"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+              ),
+              label: "Quote received",
+              onClick: () => {},
+              disabled: true,
+              title: quoteReceivedDisabledReason,
+            },
+          ]
+        : []),
     ...(canCalculate && onCalculatePricing
       ? [
           {

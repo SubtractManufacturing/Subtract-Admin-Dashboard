@@ -15,6 +15,7 @@ import {
   startOfTodayInAppTz,
 } from "~/lib/business-days";
 import { formatDateRangeForDisplay } from "~/lib/date-display";
+import { parseQuoteCreationMetadata } from "~/lib/quotes/creation-metadata";
 
 /**
  * Resolve all applicable merge tokens for a quote entity.
@@ -35,6 +36,40 @@ export async function resolveQuoteTokens(entityId: string): Promise<ResolvedToke
   }
 
   const tokens: ResolvedTokenMap = {};
+
+  const intakeMeta = parseQuoteCreationMetadata(quote.creationMetadata);
+  if (intakeMeta) {
+    const c = intakeMeta.contact;
+    if (c.email.trim()) tokens.submissionEmail = c.email.trim();
+    if (c.firstName.trim()) tokens.submissionFirstName = c.firstName.trim();
+    if (c.lastName.trim()) tokens.submissionLastName = c.lastName.trim();
+    const fullName = [c.firstName, c.lastName]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(" ");
+    if (fullName) tokens.submissionName = fullName;
+    if (c.company.trim()) tokens.submissionCompany = c.company.trim();
+    if (c.phone.trim()) tokens.submissionPhone = c.phone.trim();
+    if (c.jobTitle.trim()) tokens.submissionJobTitle = c.jobTitle.trim();
+    if (intakeMeta.receiptNumber.trim()) {
+      tokens.submissionReceiptNumber = intakeMeta.receiptNumber.trim();
+    }
+    if (intakeMeta.submittedAt.trim()) {
+      tokens.submissionSubmittedAt = intakeMeta.submittedAt.trim();
+    }
+    if (intakeMeta.leadTimePreference.trim()) {
+      tokens.submissionLeadTimePreference = intakeMeta.leadTimePreference.trim();
+    }
+    if (intakeMeta.destinationPostalCode.trim()) {
+      tokens.submissionDestinationPostalCode =
+        intakeMeta.destinationPostalCode.trim();
+    }
+    if (intakeMeta.requestedDeliveryDate.trim()) {
+      tokens.submissionRequestedDeliveryDate =
+        intakeMeta.requestedDeliveryDate.trim();
+    }
+    if (intakeMeta.poNumber.trim()) tokens.submissionPoNumber = intakeMeta.poNumber.trim();
+  }
 
   // ── Document identifiers ────────────────────────────────────────────
   tokens.documentNumber = quote.quoteNumber;

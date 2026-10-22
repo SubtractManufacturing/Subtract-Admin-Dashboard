@@ -98,6 +98,7 @@ async function main() {
         emailIdentityId: identityId,
         requiredAttachmentDocumentKinds: ["quote"],
         subjectTemplate: "Your Quote {{quoteNumber}} from Subtract Manufacturing",
+        toTemplate: "{{customerEmail}}",
         bodyCopy: {
           intro:
             "Hi {{customerName}},\n\nPlease find your quote **{{quoteNumber}}** attached.\n\n**Total:** {{total}}",
@@ -121,6 +122,7 @@ async function main() {
       .update(emailTemplates)
       .set({
         contextKey: EMAIL_CONTEXT.QUOTE_SEND,
+        toTemplate: "{{customerEmail}}",
         updatedAt: new Date(),
         updatedBy: "system",
       })
@@ -129,6 +131,75 @@ async function main() {
   console.log(
     `Assigned context ${EMAIL_CONTEXT.QUOTE_SEND} to template id ${templateId}`
   );
+
+  const receivedTemplates = [
+    {
+      slug: "quote-auto-received",
+      name: "Quote Received (Auto)",
+      contextKey: EMAIL_CONTEXT.QUOTE_AUTO_CREATED,
+      toTemplate: "{{submissionEmail}}",
+      subjectTemplate:
+        "We received your RFQ {{quoteNumber}} — Subtract Manufacturing",
+      bodyCopy: {
+        intro:
+          "Hi {{submissionName}},\n\nThank you for submitting your request for quote **{{quoteNumber}}**. Our team is reviewing your files and will follow up with pricing soon.",
+        wrapUp:
+          "Best regards,\n\nSubtract Manufacturing\n\n{{default_signature}}",
+        footerNotice: "{{default_footer}}",
+      },
+      requiredAttachmentDocumentKinds: [] as const,
+    },
+    {
+      slug: "quote-manual-received",
+      name: "Quote Received (Manual)",
+      contextKey: EMAIL_CONTEXT.QUOTE_MANUAL_CREATED,
+      toTemplate: "{{customerEmail}}",
+      subjectTemplate:
+        "We received your RFQ {{quoteNumber}} — Subtract Manufacturing",
+      bodyCopy: {
+        intro:
+          "Hi {{customerName}},\n\nThank you for your request for quote **{{quoteNumber}}**. We received your RFQ and will follow up with pricing soon.",
+        wrapUp:
+          "Best regards,\n\nSubtract Manufacturing\n\n{{default_signature}}",
+        footerNotice: "{{default_footer}}",
+      },
+      requiredAttachmentDocumentKinds: [] as const,
+    },
+  ] as const;
+
+  for (const tpl of receivedTemplates) {
+    const existing = await db
+      .select()
+      .from(emailTemplates)
+      .where(eq(emailTemplates.slug, tpl.slug))
+      .limit(1);
+    if (existing.length === 0) {
+      await db.insert(emailTemplates).values({
+        slug: tpl.slug,
+        name: tpl.name,
+        layoutSlug: "branded-markdown",
+        contextKey: tpl.contextKey,
+        emailIdentityId: identityId,
+        subjectTemplate: tpl.subjectTemplate,
+        toTemplate: tpl.toTemplate,
+        bodyCopy: tpl.bodyCopy,
+        requiredAttachmentDocumentKinds: [...tpl.requiredAttachmentDocumentKinds],
+        updatedBy: "system",
+      });
+      console.log(`Inserted template: ${tpl.slug}`);
+    } else {
+      await db
+        .update(emailTemplates)
+        .set({
+          contextKey: tpl.contextKey,
+          toTemplate: tpl.toTemplate,
+          updatedAt: new Date(),
+          updatedBy: "system",
+        })
+        .where(eq(emailTemplates.id, existing[0].id));
+      console.log(`Updated template: ${tpl.slug}`);
+    }
+  }
 
   console.log("Seeding complete.");
   process.exit(0);

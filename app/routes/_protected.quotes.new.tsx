@@ -1,8 +1,12 @@
 import { json, unstable_parseMultipartFormData, type ActionFunctionArgs, type LoaderFunctionArgs, type UploadHandler } from "@remix-run/node";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { createQuoteWithParts, type QuoteInput, type QuoteEventContext } from "~/lib/quotes";
-import { createCustomer, getCustomers } from "~/lib/customers";
+import { createCustomer, getCustomers, getCustomer } from "~/lib/customers";
 import { createEvent } from "~/lib/events";
+import { isOutboundEmailEnabled } from "~/lib/featureFlags";
+import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
+import { resolveEmailTemplateForContext } from "~/lib/email/templates.server";
+import { enqueueQuoteReceivedUserEmail } from "~/lib/email/enqueue-quote-received-email.server";
 import { useLoaderData, useNavigate, useRouteError, isRouteErrorResponse } from "@remix-run/react";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import NewQuoteModal from "~/components/quotes/NewQuoteModal";
@@ -12,9 +16,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
 
   const customers = await getCustomers();
+  const [outboundEmailEnabled, manualReceivedTemplate] = await Promise.all([
+    isOutboundEmailEnabled(),
+    resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_MANUAL_CREATED),
+  ]);
 
   return withAuthHeaders(
-    json({ user, userDetails, customers }),
+    json({
+      user,
+      userDetails,
+      customers,
+      outboundEmailEnabled,
+      quoteManualReceivedTemplateConfigured: Boolean(manualReceivedTemplate),
+    }),
     headers
   );
 }
@@ -170,7 +184,37 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    return json({ success: true, quoteId: result.quoteId });
+    const sendQuoteReceivedEmail =
+      formData.get("sendQuoteReceivedEmail") === "true";
+    const quoteReceivedIdempotencyKey = (
+      formData.get("quoteReceivedIdempotencyKey") as string
+    )?.trim();
+    let emailWarning: string | undefined;
+    if (sendQuoteReceivedEmail && result.quoteId) {
+      const customer = await getCustomer(customerId);
+      if (!customer?.email?.trim()) {
+        emailWarning = "Customer has no email address; acknowledgment was not sent.";
+      } else if (!(await isOutboundEmailEnabled())) {
+        emailWarning = "Outbound email is disabled; acknowledgment was not sent.";
+      } else if (!quoteReceivedIdempotencyKey) {
+        emailWarning = "Missing send idempotency key; acknowledgment was not sent.";
+      } else {
+        const enqueueResult = await enqueueQuoteReceivedUserEmail({
+          auth: { user, userDetails },
+          quoteId: result.quoteId,
+          idempotencyKey: quoteReceivedIdempotencyKey,
+        });
+        if (!enqueueResult.ok) {
+          emailWarning = enqueueResult.error;
+        }
+      }
+    }
+
+    return json({
+      success: true,
+      quoteId: result.quoteId,
+      emailWarning,
+    });
   } catch (error) {
     console.error("Error creating quote with parts:", error);
     const message =
@@ -180,7 +224,11 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function NewQuotePage() {
-  const { customers } = useLoaderData<typeof loader>();
+  const {
+    customers,
+    outboundEmailEnabled,
+    quoteManualReceivedTemplateConfigured,
+  } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(true);
 
@@ -203,12 +251,16 @@ export default function NewQuotePage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Breadcrumbs items={breadcrumbItems} />
 
-        <NewQuoteModal
-          isOpen={isModalOpen}
-          onClose={handleClose}
-          customers={customers}
-          onSuccess={handleSuccess}
-        />
+      <NewQuoteModal
+        isOpen={isModalOpen}
+        onClose={handleClose}
+        customers={customers}
+        onSuccess={handleSuccess}
+        outboundEmailEnabled={outboundEmailEnabled}
+        quoteManualReceivedTemplateConfigured={
+          quoteManualReceivedTemplateConfigured
+        }
+      />
       </div>
     </div>
   );

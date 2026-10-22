@@ -166,6 +166,11 @@ describe("RFQ importer with Postgres persistence", () => {
         (select content from notes where entity_type = 'quote' and entity_id = q.id::text limit 1) note_content
       from quotes q join customers c on c.id = q.customer_id where q.id = ${quoteId!}
     `);
+    const [metadataRow] = await db.execute<{ creation_metadata: { contact?: { email?: string } } | null }>(sql`
+      select creation_metadata from quotes where id = ${quoteId!}
+    `);
+    expect(metadataRow?.creation_metadata?.contact?.email).toBe(email);
+
     expect(graph).toMatchObject({
       source_receipt_number: receiptNumber,
       created_by_id: "system",

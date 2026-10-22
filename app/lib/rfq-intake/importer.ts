@@ -22,6 +22,7 @@ import type {
   RfqPersistence,
   RfqQueue,
 } from "./types";
+import { tryEnqueueQuoteReceivedAutoEmail } from "~/lib/email/enqueue-quote-received-email.server";
 
 const RETRY_DELAYS_MS = [
   60_000,
@@ -388,6 +389,13 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
             receipt,
             committed.quoteId,
             dependencies.now(),
+          );
+          await tryEnqueueQuoteReceivedAutoEmail(committed.quoteId).catch(
+            (error) =>
+              console.error(
+                "[RFQ Intake] Quote received auto-email failed",
+                error,
+              ),
           );
           return {
             status: "completed",

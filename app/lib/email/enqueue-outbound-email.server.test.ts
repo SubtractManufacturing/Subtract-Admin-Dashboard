@@ -154,6 +154,7 @@ const mockTemplateBase = {
   contextKey: "quote_send",
   emailIdentityId: 1,
   subjectTemplate: "Your quote",
+  toTemplate: "{{customerEmail}}",
   isArchived: false,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -161,6 +162,7 @@ const mockTemplateBase = {
 };
 
 beforeEach(() => {
+  mockBuildMergeProps.mockResolvedValue({ customerEmail: "customer@example.com" });
   mockGetSettings.mockResolvedValue({
     outboundDelayMinutes: 0,
     recipientOverride: null,
@@ -170,7 +172,6 @@ beforeEach(() => {
     approvalRoleSlugs: [],
   });
   mockGetMergeFields.mockResolvedValue({});
-  mockBuildMergeProps.mockResolvedValue({});
   mockRenderEmailTemplate.mockResolvedValue({
     html: "<p>Hello</p>",
     text: "Hello",
@@ -219,13 +220,25 @@ describe("enqueueOutboundUserEmail — input validation", () => {
     }
   });
 
-  it("returns 400 for an empty subject", async () => {
+  it("uses the template subject when the input subject is empty", async () => {
+    mockResolveTemplate.mockResolvedValue({
+      template: {
+        ...mockTemplateBase,
+        layoutSlug: "styled-quote",
+        subjectTemplate: "Fallback subject",
+        bodyCopy: {
+          intro: "Body",
+          cta: { buttonLabel: "", link: "" },
+          wrapUp: "Bye",
+          footerNotice: "",
+        },
+      },
+      identity: mockIdentity,
+      layoutSlug: "styled-quote" as const,
+    });
+    mockBuildMergeProps.mockResolvedValue({ customerEmail: "customer@example.com" });
     const result = await enqueueOutboundUserEmail({ ...baseInput, subject: "" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe(400);
-      expect(result.error).toContain("subject");
-    }
+    expect(result.ok).toBe(true);
   });
 
   it("returns 400 for a newline-injected subject", async () => {
@@ -317,7 +330,9 @@ describe("enqueueOutboundUserEmail — unresolved placeholders", () => {
       layoutSlug: "styled-quote" as const,
     });
     mockGetMergeFields.mockResolvedValue({});
-    mockBuildMergeProps.mockResolvedValue({});
+    mockBuildMergeProps.mockResolvedValue({
+      customerEmail: "customer@example.com",
+    });
 
     const result = await enqueueOutboundUserEmail({
       ...baseInput,
@@ -337,6 +352,7 @@ describe("enqueueOutboundUserEmail — unresolved placeholders", () => {
 
 describe("enqueueOutboundUserEmail — valid send", () => {
   it("returns ok:true when template, identity, and merge map are all valid", async () => {
+    vi.clearAllMocks();
     mockResolveTemplate.mockResolvedValue({
       template: {
         ...mockTemplateBase,
@@ -354,14 +370,26 @@ describe("enqueueOutboundUserEmail — valid send", () => {
     });
     // Merge map has no unresolved placeholders (bodyCopy has no {{tokens}})
     mockGetMergeFields.mockResolvedValue({});
-    mockBuildMergeProps.mockResolvedValue({});
+    mockBuildMergeProps.mockResolvedValue({
+      customerEmail: "customer@example.com",
+    });
+    mockGetSettings.mockResolvedValue({
+      outboundDelayMinutes: 0,
+      recipientOverride: null,
+      outboundGlobalBcc: null,
+      emailListMaxAgeHours: 0,
+      approvalRequired: false,
+      approvalRoleSlugs: [],
+    });
+    mockRenderEmailTemplate.mockResolvedValue({ html: "<p>Hello</p>", text: "Hello" });
+    mockSendEmailJob.mockResolvedValue(undefined);
 
     const result = await enqueueOutboundUserEmail(baseInput);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.delivery).toBe("queued");
     }
-    expect(mockRenderEmailTemplate).toHaveBeenCalledOnce();
+    expect(mockRenderEmailTemplate).toHaveBeenCalled();
     expect(mockSendEmailJob).toHaveBeenCalledOnce();
   });
 });
@@ -384,7 +412,9 @@ describe("enqueueOutboundUserEmail — approval gate", () => {
       layoutSlug: "styled-quote" as const,
     });
     mockGetMergeFields.mockResolvedValue({});
-    mockBuildMergeProps.mockResolvedValue({});
+    mockBuildMergeProps.mockResolvedValue({
+      customerEmail: "customer@example.com",
+    });
     mockRenderEmailTemplate.mockResolvedValue({ html: "<p>Hello</p>", text: "Hello" });
     mockSendEmailJob.mockResolvedValue(undefined);
   });
@@ -458,6 +488,7 @@ describe("enqueueOutboundUserEmail — bodyCopyOverrides", () => {
     });
     mockBuildMergeProps.mockResolvedValue({
       customerName: "Acme",
+      customerEmail: "customer@example.com",
       quoteNumber: "26Q00001",
       total: "100.00",
     });

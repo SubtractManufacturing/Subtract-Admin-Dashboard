@@ -67,6 +67,7 @@ const mockTemplateBase = {
   contextKey: "quote_send",
   emailIdentityId: 1,
   subjectTemplate: "Your quote",
+  toTemplate: "{{customerEmail}}",
   isArchived: false,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -93,7 +94,7 @@ const mockAuth: EmailEnqueueAuth = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetMergeFields.mockResolvedValue({});
-  mockBuildMergeProps.mockResolvedValue({});
+  mockBuildMergeProps.mockResolvedValue({ customerEmail: "customer@example.com" });
   mockRenderEmailTemplate.mockResolvedValue({
     html: "<p>Hello</p>",
     text: "Hello",

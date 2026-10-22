@@ -141,6 +141,28 @@ Place `{{billingAddress}}` or `{{shippingAddress}}` on its own paragraph in a pl
 
 ---
 
+### RFQ intake (quote `creationMetadata`)
+
+Available on **quotes** created from WordPress / RFQ import (`creationMetadata` set). Use `{{submissionEmail}}` on **To** for auto-created quote received emails so the form submitter is notified even when customer matching attaches a different primary email.
+
+| Token | Label | Presence |
+| ----- | ----- | -------- |
+| `{{submissionEmail}}` | Submission Email | when-available |
+| `{{submissionName}}` | Submission Contact Name | when-available |
+| `{{submissionFirstName}}` | Submission First Name | when-available |
+| `{{submissionLastName}}` | Submission Last Name | when-available |
+| `{{submissionCompany}}` | Submission Company | when-available |
+| `{{submissionPhone}}` | Submission Phone | when-available |
+| `{{submissionJobTitle}}` | Submission Job Title | when-available |
+| `{{submissionReceiptNumber}}` | Submission Receipt Number | when-available |
+| `{{submissionSubmittedAt}}` | Submission Submitted At | when-available |
+| `{{submissionLeadTimePreference}}` | Submission Lead Time Preference | when-available |
+| `{{submissionDestinationPostalCode}}` | Submission Destination Postal Code | when-available |
+| `{{submissionRequestedDeliveryDate}}` | Submission Requested Delivery Date | when-available |
+| `{{submissionPoNumber}}` | Submission PO Number | when-available |
+
+---
+
 ### Vendor
 
 | Token | Label | Entity kinds | Presence |

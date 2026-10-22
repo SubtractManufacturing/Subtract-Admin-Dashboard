@@ -29,6 +29,9 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getNextQuoteNumber } from "~/lib/number-generator";
 import { isRfqIntakeEnabled } from "~/lib/rfq-intake/storage.server";
 import { syncRfqIntake } from "~/lib/rfq-intake/sync.server";
+import { isOutboundEmailEnabled } from "~/lib/featureFlags";
+import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
+import { resolveEmailTemplateForContext } from "~/lib/email/templates.server";
 
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
@@ -67,6 +70,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // Continue with empty quotes array but customers/vendors should still be loaded
   }
 
+  const [outboundEmailEnabled, manualReceivedTemplate] = await Promise.all([
+    isOutboundEmailEnabled(),
+    resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_MANUAL_CREATED),
+  ]);
+
   return withAuthHeaders(
     json({
       quotes,
@@ -75,6 +83,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       user,
       userDetails,
       rfqIntakeEnabled: isRfqIntakeEnabled(),
+      outboundEmailEnabled,
+      quoteManualReceivedTemplateConfigured: Boolean(manualReceivedTemplate),
     }),
     headers
   );
@@ -162,6 +172,8 @@ export default function QuotesIndex() {
     quotes,
     customers,
     rfqIntakeEnabled,
+    outboundEmailEnabled,
+    quoteManualReceivedTemplateConfigured,
   } = useLoaderData<typeof loader>();
   const archiveFetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -449,6 +461,10 @@ export default function QuotesIndex() {
         isOpen={showNewQuoteModal}
         onClose={() => setShowNewQuoteModal(false)}
         customers={customers}
+        outboundEmailEnabled={outboundEmailEnabled}
+        quoteManualReceivedTemplateConfigured={
+          quoteManualReceivedTemplateConfigured
+        }
         onSuccess={() => {
           setShowNewQuoteModal(false);
           revalidator.revalidate();
