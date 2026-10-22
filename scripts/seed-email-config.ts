@@ -122,7 +122,6 @@ async function main() {
       .update(emailTemplates)
       .set({
         contextKey: EMAIL_CONTEXT.QUOTE_SEND,
-        toTemplate: "{{customerEmail}}",
         updatedAt: new Date(),
         updatedBy: "system",
       })
@@ -192,7 +191,6 @@ async function main() {
         .update(emailTemplates)
         .set({
           contextKey: tpl.contextKey,
-          toTemplate: tpl.toTemplate,
           updatedAt: new Date(),
           updatedBy: "system",
         })

@@ -4,9 +4,8 @@ import { createQuoteWithParts, type QuoteInput, type QuoteEventContext } from "~
 import { createCustomer, getCustomers, getCustomer } from "~/lib/customers";
 import { createEvent } from "~/lib/events";
 import { isOutboundEmailEnabled } from "~/lib/featureFlags";
-import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
-import { resolveEmailTemplateForContext } from "~/lib/email/templates.server";
 import { enqueueQuoteReceivedUserEmail } from "~/lib/email/enqueue-quote-received-email.server";
+import { loadManualQuoteReceivedEmailUiState } from "~/lib/email/quote-received-email-readiness.server";
 import { useLoaderData, useNavigate, useRouteError, isRouteErrorResponse } from "@remix-run/react";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import NewQuoteModal from "~/components/quotes/NewQuoteModal";
@@ -16,10 +15,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { user, userDetails, headers } = await requireAuth(request);
 
   const customers = await getCustomers();
-  const [outboundEmailEnabled, manualReceivedTemplate] = await Promise.all([
-    isOutboundEmailEnabled(),
-    resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_MANUAL_CREATED),
-  ]);
+  const {
+    outboundEmailEnabled,
+    quoteManualReceivedTemplateConfigured,
+  } = await loadManualQuoteReceivedEmailUiState();
 
   return withAuthHeaders(
     json({
@@ -27,7 +26,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       userDetails,
       customers,
       outboundEmailEnabled,
-      quoteManualReceivedTemplateConfigured: Boolean(manualReceivedTemplate),
+      quoteManualReceivedTemplateConfigured,
     }),
     headers
   );
@@ -191,22 +190,31 @@ export async function action({ request }: ActionFunctionArgs) {
     )?.trim();
     let emailWarning: string | undefined;
     if (sendQuoteReceivedEmail && result.quoteId) {
-      const customer = await getCustomer(customerId);
-      if (!customer?.email?.trim()) {
-        emailWarning = "Customer has no email address; acknowledgment was not sent.";
-      } else if (!(await isOutboundEmailEnabled())) {
-        emailWarning = "Outbound email is disabled; acknowledgment was not sent.";
-      } else if (!quoteReceivedIdempotencyKey) {
-        emailWarning = "Missing send idempotency key; acknowledgment was not sent.";
-      } else {
-        const enqueueResult = await enqueueQuoteReceivedUserEmail({
-          auth: { user, userDetails },
-          quoteId: result.quoteId,
-          idempotencyKey: quoteReceivedIdempotencyKey,
-        });
-        if (!enqueueResult.ok) {
-          emailWarning = enqueueResult.error;
+      try {
+        const customer = await getCustomer(customerId);
+        if (!customer?.email?.trim()) {
+          emailWarning =
+            "Customer has no email address; acknowledgment was not sent.";
+        } else if (!(await isOutboundEmailEnabled())) {
+          emailWarning =
+            "Outbound email is disabled; acknowledgment was not sent.";
+        } else if (!quoteReceivedIdempotencyKey) {
+          emailWarning =
+            "Missing send idempotency key; acknowledgment was not sent.";
+        } else {
+          const enqueueResult = await enqueueQuoteReceivedUserEmail({
+            auth: { user, userDetails },
+            quoteId: result.quoteId,
+            idempotencyKey: quoteReceivedIdempotencyKey,
+          });
+          if (!enqueueResult.ok) {
+            emailWarning = enqueueResult.error;
+          }
         }
+      } catch (error) {
+        console.error("Quote received acknowledgment failed after create:", error);
+        emailWarning =
+          "Quote was created, but the acknowledgment email could not be sent.";
       }
     }
 

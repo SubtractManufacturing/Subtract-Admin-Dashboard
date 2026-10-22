@@ -175,6 +175,9 @@ async function handleCleanupOnly(
   try {
     await dependencies.intake.deletePrefix(intakePrefix(receipt.sessionId));
     await dependencies.persistence.markCompleted(receipt, quoteId, dependencies.now());
+    await tryEnqueueQuoteReceivedAutoEmail(quoteId).catch((error) =>
+      console.error("[RFQ Intake] Quote received auto-email failed", error),
+    );
     return {
       status: "already_completed",
       quoteId,

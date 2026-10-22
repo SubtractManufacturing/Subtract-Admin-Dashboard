@@ -1,10 +1,36 @@
 import { getCustomer } from "~/lib/customers";
+import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
 import { resolveEmailTemplateForContext } from "~/lib/email/templates.server";
 import { isOutboundEmailEnabled } from "~/lib/featureFlags";
 import { getQuote } from "~/lib/quotes";
 import { inferQuoteReceivedContextKey } from "~/lib/email/handlers/quote-received-email.server";
 import { resolveQuoteTokens } from "~/lib/email/resolve/quote.server";
 import { resolveToAddressFromTemplate } from "~/lib/email/resolve-to-address.server";
+
+export type ManualQuoteReceivedEmailUiState = {
+  outboundEmailEnabled: boolean;
+  quoteManualReceivedTemplateConfigured: boolean;
+};
+
+/** Safe loader defaults when email config lookups fail. */
+export async function loadManualQuoteReceivedEmailUiState(): Promise<ManualQuoteReceivedEmailUiState> {
+  try {
+    const [outboundEmailEnabled, manualReceivedTemplate] = await Promise.all([
+      isOutboundEmailEnabled(),
+      resolveEmailTemplateForContext(EMAIL_CONTEXT.QUOTE_MANUAL_CREATED),
+    ]);
+    return {
+      outboundEmailEnabled,
+      quoteManualReceivedTemplateConfigured: Boolean(manualReceivedTemplate),
+    };
+  } catch (error) {
+    console.error("Failed to load quote received email configuration:", error);
+    return {
+      outboundEmailEnabled: false,
+      quoteManualReceivedTemplateConfigured: false,
+    };
+  }
+}
 
 export type QuoteReceivedEmailReadiness = {
   outboundEnabled: boolean;

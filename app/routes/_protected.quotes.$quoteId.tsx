@@ -2376,6 +2376,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 }
 
+type QuoteReceivedLastSendSummary = {
+  createdAt: string;
+  sentAt: string | null;
+  to: string;
+  status: string;
+};
+
+function describeQuoteReceivedResendPrompt(
+  lastSend: QuoteReceivedLastSendSummary,
+): string {
+  const recipient = lastSend.to;
+  if (lastSend.sentAt) {
+    return `An acknowledgment was already sent on ${new Date(lastSend.sentAt).toLocaleString()} to ${recipient}.`;
+  }
+  const requestedAt = new Date(lastSend.createdAt).toLocaleString();
+  if (lastSend.status === "pending_approval") {
+    return `A send was requested on ${requestedAt} to ${recipient} and is awaiting approval.`;
+  }
+  if (lastSend.status === "queued" || lastSend.status === "sending") {
+    return `A send was requested on ${requestedAt} to ${recipient} and is still in progress.`;
+  }
+  return `A prior acknowledgment request on ${requestedAt} to ${recipient} is recorded.`;
+}
+
 export default function QuoteDetail() {
   const {
     quote,
@@ -2412,6 +2436,10 @@ export default function QuoteDetail() {
     ? `/quotes/${quote.id}`
     : undefined;
   const fetcher = useFetcher();
+  const quoteReceivedFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+  }>();
   const receivePoFetcher = useFetcher<ReceivePoActionData>();
   const revalidator = useRevalidator();
   const [isAddingNote, setIsAddingNote] = useState(false);
@@ -2491,6 +2519,19 @@ export default function QuoteDetail() {
   const [quoteReceivedConfirmOpen, setQuoteReceivedConfirmOpen] =
     useState(false);
   const quoteReceivedIdempotencyRef = useRef(crypto.randomUUID());
+  const isQuoteReceivedEmailSending = quoteReceivedFetcher.state !== "idle";
+
+  useEffect(() => {
+    if (quoteReceivedFetcher.state !== "idle") return;
+    if (!quoteReceivedFetcher.data?.success) return;
+    quoteReceivedIdempotencyRef.current = crypto.randomUUID();
+    revalidator.revalidate();
+  }, [
+    quoteReceivedFetcher.state,
+    quoteReceivedFetcher.data,
+    revalidator,
+  ]);
+
   const [copiedLink, setCopiedLink] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
@@ -2785,18 +2826,18 @@ export default function QuoteDetail() {
   };
 
   const submitQuoteReceivedEmail = () => {
-    fetcher.submit(
+    quoteReceivedFetcher.submit(
       {
         intent: "sendQuoteReceivedEmail",
         idempotencyKey: quoteReceivedIdempotencyRef.current,
       },
       { method: "post" },
     );
-    quoteReceivedIdempotencyRef.current = crypto.randomUUID();
     setQuoteReceivedConfirmOpen(false);
   };
 
   const handleQuoteReceivedEmail = () => {
+    if (isQuoteReceivedEmailSending) return;
     setIsActionsDropdownOpen(false);
     if (quoteReceivedLastSend) {
       setQuoteReceivedConfirmOpen(true);
@@ -3245,6 +3286,7 @@ export default function QuoteDetail() {
                         ? quoteReceivedEmailReadiness.disabledReason
                         : undefined
                     }
+                    isQuoteReceivedSending={isQuoteReceivedEmailSending}
                     isDownloading={isDownloading}
                     hasCustomer={!!quote.customerId}
                   />
@@ -4399,14 +4441,10 @@ export default function QuoteDetail() {
       >
         <div className="space-y-4 p-1">
           <p className="text-sm text-gray-600 dark:text-gray-300">
-            An acknowledgment was already sent
-            {quoteReceivedLastSend?.sentAt
-              ? ` on ${new Date(quoteReceivedLastSend.sentAt).toLocaleString()}`
-              : quoteReceivedLastSend?.createdAt
-                ? ` on ${new Date(quoteReceivedLastSend.createdAt).toLocaleString()}`
-                : ""}{" "}
-            to <strong>{quoteReceivedLastSend?.to}</strong>. Send again using
-            the current template?
+            {quoteReceivedLastSend
+              ? describeQuoteReceivedResendPrompt(quoteReceivedLastSend)
+              : "A prior acknowledgment is on record."}{" "}
+            Send again using the current template?
           </p>
           <div className="flex justify-end gap-2">
             <Button
@@ -4415,7 +4453,11 @@ export default function QuoteDetail() {
             >
               Cancel
             </Button>
-            <Button variant="primary" onClick={submitQuoteReceivedEmail}>
+            <Button
+              variant="primary"
+              onClick={submitQuoteReceivedEmail}
+              disabled={isQuoteReceivedEmailSending}
+            >
               Send anyway
             </Button>
           </div>

@@ -15,6 +15,7 @@ interface QuoteActionsDropdownProps {
   onReceivePo?: () => void;
   onQuoteReceived?: () => void;
   quoteReceivedDisabledReason?: string | null;
+  isQuoteReceivedSending?: boolean;
   isDownloading?: boolean;
   hasCustomer?: boolean;
 }
@@ -33,6 +34,7 @@ export default function QuoteActionsDropdown({
   onReceivePo,
   onQuoteReceived,
   quoteReceivedDisabledReason,
+  isQuoteReceivedSending = false,
   isDownloading = false,
   hasCustomer = false,
 }: QuoteActionsDropdownProps) {
@@ -90,6 +92,10 @@ export default function QuoteActionsDropdown({
               onQuoteReceived();
               onClose();
             },
+            disabled: isQuoteReceivedSending,
+            title: isQuoteReceivedSending
+              ? "Sending acknowledgment…"
+              : undefined,
           },
         ]
       : quoteReceivedDisabledReason
@@ -326,6 +332,7 @@ export default function QuoteActionsDropdown({
               }
             }}
             disabled={"disabled" in action ? action.disabled : false}
+            title={"title" in action ? action.title : undefined}
           >
             <div className="text-gray-600 dark:text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
               {action.icon}
