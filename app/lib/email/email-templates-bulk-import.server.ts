@@ -69,6 +69,8 @@ export async function importEmailTemplatesFromPayload(
     layoutSlug: string;
     contextKey: EmailContextKey | null;
     subjectTemplate: string;
+    toTemplate: string;
+    toTemplateProvided: boolean;
     bodyCopy: Record<string, unknown>;
     emailIdentityId: number;
     requiredAttachmentDocumentKinds: AttachmentDocumentKind[];
@@ -86,6 +88,7 @@ export async function importEmailTemplatesFromPayload(
         slug: emailTemplates.slug,
         layoutSlug: emailTemplates.layoutSlug,
         contextKey: emailTemplates.contextKey,
+        toTemplate: emailTemplates.toTemplate,
         isArchived: emailTemplates.isArchived,
       })
       .from(emailTemplates),
@@ -113,6 +116,7 @@ export async function importEmailTemplatesFromPayload(
     const nameRaw = row.name;
     const layoutSlugRaw = row.layoutSlug;
     const subjectRaw = row.subjectTemplate;
+    const toTemplateRaw = row.toTemplate;
     const fromEmailRaw = row.fromEmail;
     const bodyCopyRaw = row.bodyCopy;
     const contextRaw = row.contextKey;
@@ -143,10 +147,15 @@ export async function importEmailTemplatesFromPayload(
     const name = nameRaw.trim();
     const subjectTemplate =
       typeof subjectRaw === "string" ? subjectRaw.trim() : "";
-    if (!name || !subjectTemplate) {
+    const toTemplateProvided =
+      typeof toTemplateRaw === "string" && toTemplateRaw.trim().length > 0;
+    const toTemplate = toTemplateProvided
+      ? toTemplateRaw.trim()
+      : "{{customerEmail}}";
+    if (!name || !subjectTemplate || !toTemplate) {
       return {
         ok: false,
-        error: `Template "${slug}": name and subjectTemplate are required.`,
+        error: `Template "${slug}": name, subjectTemplate, and toTemplate are required.`,
       };
     }
 
@@ -270,6 +279,8 @@ export async function importEmailTemplatesFromPayload(
       layoutSlug,
       contextKey,
       subjectTemplate,
+      toTemplate,
+      toTemplateProvided,
       bodyCopy: bodyParsed.data as Record<string, unknown>,
       emailIdentityId: identity.id,
       requiredAttachmentDocumentKinds,
@@ -316,6 +327,7 @@ export async function importEmailTemplatesFromPayload(
               contextKey: p.contextKey,
               emailIdentityId: p.emailIdentityId,
               subjectTemplate: p.subjectTemplate,
+              ...(p.toTemplateProvided ? { toTemplate: p.toTemplate } : {}),
               bodyCopy: p.bodyCopy,
               requiredAttachmentDocumentKinds: p.requiredAttachmentDocumentKinds,
               updatedAt: new Date(),
@@ -336,6 +348,11 @@ export async function importEmailTemplatesFromPayload(
               contextKey: p.contextKey,
               emailIdentityId: p.emailIdentityId,
               subjectTemplate: p.subjectTemplate,
+              ...(p.toTemplateProvided
+                ? { toTemplate: p.toTemplate }
+                : row.toTemplate
+                  ? { toTemplate: row.toTemplate }
+                  : { toTemplate: p.toTemplate }),
               bodyCopy: p.bodyCopy,
               requiredAttachmentDocumentKinds: p.requiredAttachmentDocumentKinds,
               isArchived: false,
@@ -351,6 +368,7 @@ export async function importEmailTemplatesFromPayload(
             contextKey: p.contextKey,
             emailIdentityId: p.emailIdentityId,
             subjectTemplate: p.subjectTemplate,
+            toTemplate: p.toTemplate,
             bodyCopy: p.bodyCopy,
             requiredAttachmentDocumentKinds: p.requiredAttachmentDocumentKinds,
             updatedBy: opts.updatedBy,

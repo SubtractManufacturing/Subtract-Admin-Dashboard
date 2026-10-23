@@ -26,6 +26,8 @@ interface NewQuoteModalProps {
   onClose: () => void;
   customers: Customer[];
   onSuccess?: () => void;
+  outboundEmailEnabled?: boolean;
+  quoteManualReceivedTemplateConfigured?: boolean;
 }
 
 type MixedFilePool = {
@@ -134,9 +136,12 @@ export default function NewQuoteModal({
   onClose,
   customers,
   onSuccess,
+  outboundEmailEnabled = false,
+  quoteManualReceivedTemplateConfigured = false,
 }: NewQuoteModalProps) {
   const fetcher = useFetcher();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const quoteReceivedIdempotencyRef = useRef(crypto.randomUUID());
 
   const [currentStep, setCurrentStep] = useState<Step>("upload");
   const [partConfigs, setPartConfigs] = useState<PartConfig[]>([]);
@@ -159,6 +164,7 @@ export default function NewQuoteModal({
   const [dragActive, setDragActive] = useState(false);
   const [hasHandledSuccess, setHasHandledSuccess] = useState(false);
   const [isContentTransitioning, setIsContentTransitioning] = useState(false);
+  const [sendQuoteReceivedEmail, setSendQuoteReceivedEmail] = useState(true);
 
   // Reset flag when modal opens
   useEffect(() => {
@@ -169,7 +175,7 @@ export default function NewQuoteModal({
 
   useEffect(() => {
     const fetcherData = fetcher.data as
-      | { success?: boolean; error?: string }
+      | { success?: boolean; error?: string; emailWarning?: string }
       | undefined;
 
     // Only process when fetcher is idle (not submitting) and we have data
@@ -177,6 +183,12 @@ export default function NewQuoteModal({
       // Handle successful creation
       if (fetcherData.success && !hasHandledSuccess) {
         setHasHandledSuccess(true);
+        if (fetcherData.emailWarning) {
+          alert(
+            `Quote was created, but the acknowledgment email could not be sent: ${fetcherData.emailWarning}`,
+          );
+        }
+        quoteReceivedIdempotencyRef.current = crypto.randomUUID();
         // Reset form state first
         setCurrentStep("upload");
         setPartConfigs([]);
@@ -191,6 +203,7 @@ export default function NewQuoteModal({
           phone: "",
           zipCode: "",
         });
+        setSendQuoteReceivedEmail(true);
         // Call onSuccess which will close modal and revalidate
         onSuccess?.();
       }
@@ -390,6 +403,27 @@ export default function NewQuoteModal({
     });
   };
 
+  const customerEmailForReceived =
+    (createNewCustomer ? newCustomerData.email : selectedCustomer?.email)?.trim() ??
+    "";
+  const canOfferQuoteReceivedCheckbox =
+    outboundEmailEnabled &&
+    quoteManualReceivedTemplateConfigured &&
+    Boolean(customerEmailForReceived);
+  const quoteReceivedCheckboxDisabled =
+    !outboundEmailEnabled ||
+    !quoteManualReceivedTemplateConfigured ||
+    !customerEmailForReceived;
+  let quoteReceivedHelperText: string | null = null;
+  if (!outboundEmailEnabled) {
+    quoteReceivedHelperText = "Outbound email is disabled in this environment.";
+  } else if (!quoteManualReceivedTemplateConfigured) {
+    quoteReceivedHelperText =
+      "Configure a quote received template in Admin → Email to enable this.";
+  } else if (!customerEmailForReceived) {
+    quoteReceivedHelperText = "Customer has no email address.";
+  }
+
   const handleSubmit = async () => {
     const formData = new FormData();
 
@@ -460,6 +494,14 @@ export default function NewQuoteModal({
         }
       });
 
+      if (canOfferQuoteReceivedCheckbox && sendQuoteReceivedEmail) {
+        formData.append("sendQuoteReceivedEmail", "true");
+        formData.append(
+          "quoteReceivedIdempotencyKey",
+          quoteReceivedIdempotencyRef.current,
+        );
+      }
+
       fetcher.submit(formData, {
         method: "post",
         action: "/quotes/new",
@@ -482,14 +524,21 @@ export default function NewQuoteModal({
         formData.append("customerZipCode", newCustomerData.zipCode || "");
 
         formData.append("partsCount", "0");
+        if (canOfferQuoteReceivedCheckbox && sendQuoteReceivedEmail) {
+          formData.append("sendQuoteReceivedEmail", "true");
+          formData.append(
+            "quoteReceivedIdempotencyKey",
+            quoteReceivedIdempotencyRef.current,
+          );
+        }
         fetcher.submit(formData, {
           method: "post",
           action: "/quotes/new",
           encType: "multipart/form-data",
         });
       } else {
-        // Use simpler action on current page for existing customer
-        formData.append("intent", "create");
+        // Empty quote, existing customer — use /quotes/new so send-on-create runs (#186)
+        formData.append("intent", "createWithParts");
 
         if (selectedCustomer) {
           formData.append("customerId", selectedCustomer.id.toString());
@@ -498,13 +547,19 @@ export default function NewQuoteModal({
           return;
         }
 
-        // Use default values for empty quote
-        formData.append("status", "RFQ");
-        formData.append("expirationDays", "14");
+        formData.append("partsCount", "0");
+        if (canOfferQuoteReceivedCheckbox && sendQuoteReceivedEmail) {
+          formData.append("sendQuoteReceivedEmail", "true");
+          formData.append(
+            "quoteReceivedIdempotencyKey",
+            quoteReceivedIdempotencyRef.current,
+          );
+        }
 
-        // Submit to current page action instead of /quotes/new
         fetcher.submit(formData, {
           method: "post",
+          action: "/quotes/new",
+          encType: "multipart/form-data",
         });
       }
     }
@@ -1168,13 +1223,42 @@ export default function NewQuoteModal({
             </Button>
           )}
           {currentStep === "review" && (
-            <Button
-              onClick={handleSubmit}
-              variant="primary"
-              disabled={fetcher.state === "submitting"}
-            >
-              {fetcher.state === "submitting" ? "Creating..." : "Create RFQ"}
-            </Button>
+            <div className="flex flex-wrap items-center justify-end gap-4">
+              {(outboundEmailEnabled ||
+                quoteManualReceivedTemplateConfigured) && (
+                <label
+                  className="flex items-start gap-2 text-sm max-w-xs sm:max-w-md"
+                  title={quoteReceivedHelperText ?? undefined}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 shrink-0"
+                    checked={
+                      sendQuoteReceivedEmail && canOfferQuoteReceivedCheckbox
+                    }
+                    disabled={quoteReceivedCheckboxDisabled}
+                    onChange={(e) =>
+                      setSendQuoteReceivedEmail(e.target.checked)
+                    }
+                  />
+                  <span className="text-left">
+                    Send Confirmation Email
+                    {quoteReceivedHelperText ? (
+                      <span className="block text-gray-500 dark:text-gray-400 text-xs mt-0.5">
+                        {quoteReceivedHelperText}
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              )}
+              <Button
+                onClick={handleSubmit}
+                variant="primary"
+                disabled={fetcher.state === "submitting"}
+              >
+                {fetcher.state === "submitting" ? "Creating..." : "Create RFQ"}
+              </Button>
+            </div>
           )}
         </div>
       </div>

@@ -3,6 +3,7 @@ import { and, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { nextQuoteNumberFromExisting } from "../number-generator";
 import { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_ID } from "../system-actor";
+import { buildRfqIntakeCreationMetadata } from "~/lib/quotes/creation-metadata";
 import { resolveIntakeCustomer } from "./customer-resolution.server";
 import { intakePrefix } from "./keys";
 import { IntakeValidationError } from "./package";
@@ -302,6 +303,10 @@ export function createPostgresRfqPersistence(input: {
           isArchived: true,
         })
         .onConflictDoNothing({ target: users.id });
+      const creationMetadata = buildRfqIntakeCreationMetadata(
+        prepared.manifest,
+        prepared.receipt,
+      );
       const [quote] = await tx
         .insert(quotes)
         .values({
@@ -312,6 +317,7 @@ export function createPostgresRfqPersistence(input: {
           total: "0.00",
           ndaRequired: prepared.manifest.ndaRequired,
           sourceReceiptNumber: prepared.receipt.receiptNumber,
+          creationMetadata,
           createdById: SYSTEM_ACTOR_ID,
           createdAt: prepared.now,
           updatedAt: prepared.now,

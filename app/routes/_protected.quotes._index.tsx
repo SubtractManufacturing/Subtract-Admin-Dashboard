@@ -29,6 +29,7 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { getNextQuoteNumber } from "~/lib/number-generator";
 import { isRfqIntakeEnabled } from "~/lib/rfq-intake/storage.server";
 import { syncRfqIntake } from "~/lib/rfq-intake/sync.server";
+import { loadManualQuoteReceivedEmailUiState } from "~/lib/email/quote-received-email-readiness.server";
 
 import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
@@ -67,6 +68,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // Continue with empty quotes array but customers/vendors should still be loaded
   }
 
+  const {
+    outboundEmailEnabled,
+    quoteManualReceivedTemplateConfigured,
+  } = await loadManualQuoteReceivedEmailUiState();
+
   return withAuthHeaders(
     json({
       quotes,
@@ -75,6 +81,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       user,
       userDetails,
       rfqIntakeEnabled: isRfqIntakeEnabled(),
+      outboundEmailEnabled,
+      quoteManualReceivedTemplateConfigured,
     }),
     headers
   );
@@ -162,6 +170,8 @@ export default function QuotesIndex() {
     quotes,
     customers,
     rfqIntakeEnabled,
+    outboundEmailEnabled,
+    quoteManualReceivedTemplateConfigured,
   } = useLoaderData<typeof loader>();
   const archiveFetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -449,6 +459,10 @@ export default function QuotesIndex() {
         isOpen={showNewQuoteModal}
         onClose={() => setShowNewQuoteModal(false)}
         customers={customers}
+        outboundEmailEnabled={outboundEmailEnabled}
+        quoteManualReceivedTemplateConfigured={
+          quoteManualReceivedTemplateConfigured
+        }
         onSuccess={() => {
           setShowNewQuoteModal(false);
           revalidator.revalidate();

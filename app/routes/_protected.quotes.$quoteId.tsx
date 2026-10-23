@@ -52,6 +52,11 @@ import {
   handleEmailQueueAction,
 } from "~/lib/email/outbound-email-route-actions.server";
 import {
+  enqueueQuoteReceivedUserEmail,
+  getLastQuoteReceivedSend,
+} from "~/lib/email/enqueue-quote-received-email.server";
+import { getQuoteReceivedEmailReadiness } from "~/lib/email/quote-received-email-readiness.server";
+import {
   uploadFile,
   generateFileKey,
   deleteFile,
@@ -437,10 +442,20 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Fetch existing price calculations for the quote
   const priceCalculations = await getLatestCalculationsForQuote(quote.id);
 
-  const [archivedLineItems, archiveRetentionDays] = await Promise.all([
+  const [archivedLineItems, archiveRetentionDays, quoteReceivedEmailReadiness] =
+    await Promise.all([
     listArchivedQuoteLineItems(quote.id),
     getLineItemArchiveRetentionDays(),
+    getQuoteReceivedEmailReadiness(quote.id),
   ]);
+
+  const quoteReceivedLastSend =
+    quoteReceivedEmailReadiness.contextKey != null
+      ? await getLastQuoteReceivedSend(
+          quote.id,
+          quoteReceivedEmailReadiness.contextKey,
+        )
+      : null;
 
   return withAuthHeaders(
     json({
@@ -478,6 +493,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         quotePartId: item.quotePartId,
       })),
       archiveRetentionDays,
+      quoteReceivedEmailReadiness,
+      quoteReceivedLastSend: quoteReceivedLastSend
+        ? {
+            createdAt: quoteReceivedLastSend.createdAt.toISOString(),
+            sentAt: quoteReceivedLastSend.sentAt?.toISOString() ?? null,
+            to: quoteReceivedLastSend.toAddresses[0] ?? "",
+            status: quoteReceivedLastSend.status,
+          }
+        : null,
     }),
     headers,
   );
@@ -1332,6 +1356,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
         );
       }
 
+      case "sendQuoteReceivedEmail": {
+        if (!(await isOutboundEmailEnabled())) {
+          return withAuthHeaders(
+            json({ error: "Outbound email is disabled." }, { status: 403 }),
+            headers,
+          );
+        }
+        const idempotencyKey = (
+          formData.get("idempotencyKey") as string
+        )?.trim();
+        if (!idempotencyKey) {
+          return withAuthHeaders(
+            json({ error: "Missing idempotency key." }, { status: 400 }),
+            headers,
+          );
+        }
+        const result = await enqueueQuoteReceivedUserEmail({
+          auth: { user, userDetails },
+          quoteId: quote.id,
+          idempotencyKey,
+        });
+        if (!result.ok) {
+          return withAuthHeaders(
+            json({ error: result.error }, { status: result.status }),
+            headers,
+          );
+        }
+        return withAuthHeaders(json({ success: true, delivery: result.delivery }), headers);
+      }
 
       case "updateStatus": {
         const status = formData.get("status") as
@@ -2323,6 +2376,30 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 }
 
+type QuoteReceivedLastSendSummary = {
+  createdAt: string;
+  sentAt: string | null;
+  to: string;
+  status: string;
+};
+
+function describeQuoteReceivedResendPrompt(
+  lastSend: QuoteReceivedLastSendSummary,
+): string {
+  const recipient = lastSend.to;
+  if (lastSend.sentAt) {
+    return `An acknowledgment was already sent on ${new Date(lastSend.sentAt).toLocaleString()} to ${recipient}.`;
+  }
+  const requestedAt = new Date(lastSend.createdAt).toLocaleString();
+  if (lastSend.status === "pending_approval") {
+    return `A send was requested on ${requestedAt} to ${recipient} and is awaiting approval.`;
+  }
+  if (lastSend.status === "queued" || lastSend.status === "sending") {
+    return `A send was requested on ${requestedAt} to ${recipient} and is still in progress.`;
+  }
+  return `A prior acknowledgment request on ${requestedAt} to ${recipient} is recorded.`;
+}
+
 export default function QuoteDetail() {
   const {
     quote,
@@ -2352,11 +2429,17 @@ export default function QuoteDetail() {
     quoteSendRequiredAttachmentDocumentKinds,
     archivedLineItems,
     archiveRetentionDays,
+    quoteReceivedEmailReadiness,
+    quoteReceivedLastSend,
   } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/quotes/${quote.id}`
     : undefined;
   const fetcher = useFetcher();
+  const quoteReceivedFetcher = useFetcher<{
+    success?: boolean;
+    error?: string;
+  }>();
   const receivePoFetcher = useFetcher<ReceivePoActionData>();
   const revalidator = useRevalidator();
   const [isAddingNote, setIsAddingNote] = useState(false);
@@ -2433,6 +2516,22 @@ export default function QuoteDetail() {
   } | null>(null);
   const [drawingModalOpen, setDrawingModalOpen] = useState(false);
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
+  const [quoteReceivedConfirmOpen, setQuoteReceivedConfirmOpen] =
+    useState(false);
+  const quoteReceivedIdempotencyRef = useRef(crypto.randomUUID());
+  const isQuoteReceivedEmailSending = quoteReceivedFetcher.state !== "idle";
+
+  useEffect(() => {
+    if (quoteReceivedFetcher.state !== "idle") return;
+    if (!quoteReceivedFetcher.data?.success) return;
+    quoteReceivedIdempotencyRef.current = crypto.randomUUID();
+    revalidator.revalidate();
+  }, [
+    quoteReceivedFetcher.state,
+    quoteReceivedFetcher.data,
+    revalidator,
+  ]);
+
   const [copiedLink, setCopiedLink] = useState(false);
   const actionsButtonRef = useRef<HTMLButtonElement>(null);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
@@ -2724,6 +2823,27 @@ export default function QuoteDetail() {
     ) {
       fetcher.submit({ intent: "reviseQuote" }, { method: "post" });
     }
+  };
+
+  const submitQuoteReceivedEmail = () => {
+    quoteReceivedFetcher.submit(
+      {
+        intent: "sendQuoteReceivedEmail",
+        idempotencyKey: quoteReceivedIdempotencyRef.current,
+      },
+      { method: "post" },
+    );
+    setQuoteReceivedConfirmOpen(false);
+  };
+
+  const handleQuoteReceivedEmail = () => {
+    if (isQuoteReceivedEmailSending) return;
+    setIsActionsDropdownOpen(false);
+    if (quoteReceivedLastSend) {
+      setQuoteReceivedConfirmOpen(true);
+      return;
+    }
+    submitQuoteReceivedEmail();
   };
 
   const handleDuplicateQuote = () => {
@@ -3155,6 +3275,18 @@ export default function QuoteDetail() {
                         ? () => setIsReceivePoModalOpen(true)
                         : undefined
                     }
+                    onQuoteReceived={
+                      quoteReceivedEmailReadiness.canSend
+                        ? handleQuoteReceivedEmail
+                        : undefined
+                    }
+                    quoteReceivedDisabledReason={
+                      quoteReceivedEmailReadiness.outboundEnabled &&
+                      !quoteReceivedEmailReadiness.canSend
+                        ? quoteReceivedEmailReadiness.disabledReason
+                        : undefined
+                    }
+                    isQuoteReceivedSending={isQuoteReceivedEmailSending}
                     isDownloading={isDownloading}
                     hasCustomer={!!quote.customerId}
                   />
@@ -4301,6 +4433,36 @@ export default function QuoteDetail() {
           mode={calculatorMode}
         />
       )}
+
+      <Modal
+        isOpen={quoteReceivedConfirmOpen}
+        onClose={() => setQuoteReceivedConfirmOpen(false)}
+        title="Send quote received email again?"
+      >
+        <div className="space-y-4 p-1">
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            {quoteReceivedLastSend
+              ? describeQuoteReceivedResendPrompt(quoteReceivedLastSend)
+              : "A prior acknowledgment is on record."}{" "}
+            Send again using the current template?
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setQuoteReceivedConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={submitQuoteReceivedEmail}
+              disabled={isQuoteReceivedEmailSending}
+            >
+              Send anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Send Email Modal */}
       {outboundEmailEnabled && isSendEmailModalOpen && (

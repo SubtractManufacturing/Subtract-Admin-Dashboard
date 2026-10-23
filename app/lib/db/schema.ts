@@ -277,6 +277,10 @@ export const quotes = pgTable("quotes", {
   leadTimeBusinessDaysMax: integer("lead_time_business_days_max"),
   ndaRequired: boolean("nda_required").default(false).notNull(),
   sourceReceiptNumber: text("source_receipt_number").unique(),
+  /** Structured intake contact for system-created quotes (RFQ import); null for manual creates */
+  creationMetadata: jsonb("creation_metadata").$type<
+    import("~/lib/quotes/creation-metadata").QuoteCreationMetadata | null
+  >(),
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -1021,6 +1025,8 @@ export const emailTemplates = pgTable("email_templates", {
   contextKey: text("context_key").unique(),
   emailIdentityId: integer("email_identity_id").references(() => emailIdentities.id).notNull(),
   subjectTemplate: text("subject_template").notNull(),
+  /** Merge-token string resolved to the primary To address at send time */
+  toTemplate: text("to_template").notNull().default("{{customerEmail}}"),
   bodyCopy: jsonb("body_copy").notNull(),
   /** Classified document kinds that must be included when sending; empty = none required */
   requiredAttachmentDocumentKinds: jsonb("required_attachment_document_kinds")

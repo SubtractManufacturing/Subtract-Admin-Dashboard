@@ -26,6 +26,7 @@ import {
 } from "~/lib/email/email-context-registry";
 import { validateMergeTokens } from "~/lib/email/resolve";
 import { resolveActorMergeTokens } from "~/lib/email/resolve/actor-merge.server";
+import { resolveToAddressFromTemplate } from "~/lib/email/resolve-to-address.server";
 import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
 import { getEnv } from "~/lib/env.server";
 
@@ -38,6 +39,7 @@ export type BuildEmailContentResult =
       fromEmail: string;
       fromDisplayName: string | null;
       replyToEmail: string | null;
+      toAddress: string;
     }
   | { ok: false; status: number; error: string };
 
@@ -190,7 +192,16 @@ export async function buildEmailContent({
     }
   }
 
-  const subject = subjectRaw?.trim() ?? "";
+  const subject =
+    subjectRaw?.trim() || templateData.template.subjectTemplate?.trim() || "";
+
+  const toResolved = resolveToAddressFromTemplate(
+    templateData.template.toTemplate ?? "{{customerEmail}}",
+    stringProps,
+  );
+  if (!toResolved.ok) {
+    return fail(400, toResolved.error);
+  }
 
   const tokenValidationError = validateMergeTokens(
     [subject, ...collectBodyCopyStrings(mergedCopy)],
@@ -248,5 +259,6 @@ export async function buildEmailContent({
     fromEmail,
     fromDisplayName: templateData.identity.fromDisplayName ?? null,
     replyToEmail: templateData.identity.replyToEmail ?? null,
+    toAddress: toResolved.address,
   };
 }

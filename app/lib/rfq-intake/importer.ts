@@ -22,6 +22,7 @@ import type {
   RfqPersistence,
   RfqQueue,
 } from "./types";
+import { tryEnqueueQuoteReceivedAutoEmail } from "~/lib/email/enqueue-quote-received-email.server";
 
 const RETRY_DELAYS_MS = [
   60_000,
@@ -174,6 +175,9 @@ async function handleCleanupOnly(
   try {
     await dependencies.intake.deletePrefix(intakePrefix(receipt.sessionId));
     await dependencies.persistence.markCompleted(receipt, quoteId, dependencies.now());
+    await tryEnqueueQuoteReceivedAutoEmail(quoteId).catch((error) =>
+      console.error("[RFQ Intake] Quote received auto-email failed", error),
+    );
     return {
       status: "already_completed",
       quoteId,
@@ -388,6 +392,13 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
             receipt,
             committed.quoteId,
             dependencies.now(),
+          );
+          await tryEnqueueQuoteReceivedAutoEmail(committed.quoteId).catch(
+            (error) =>
+              console.error(
+                "[RFQ Intake] Quote received auto-email failed",
+                error,
+              ),
           );
           return {
             status: "completed",

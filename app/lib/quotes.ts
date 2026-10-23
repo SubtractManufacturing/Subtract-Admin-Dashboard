@@ -93,6 +93,7 @@ export type QuoteWithRelations = {
   leadTimeBusinessDaysMin: number | null;
   leadTimeBusinessDaysMax: number | null;
   ndaRequired: boolean;
+  creationMetadata?: import("./quotes/creation-metadata").QuoteCreationMetadata | null;
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -105,7 +106,7 @@ export type QuoteWithRelations = {
 function quoteWithoutSourceReceiptNumber(quote: Quote) {
   const { sourceReceiptNumber, ...safeQuote } = quote;
   void sourceReceiptNumber;
-  return safeQuote;
+  return safeQuote as Omit<Quote, "sourceReceiptNumber">;
 }
 
 export type QuoteInput = {

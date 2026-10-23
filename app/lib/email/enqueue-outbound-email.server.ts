@@ -15,6 +15,7 @@ import {
 import { sendEmailJob } from "~/lib/queue/producer.server";
 import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
 import { buildEmailContent } from "~/lib/email/build-email-content.server";
+import { SYSTEM_ACTOR_EMAIL, SYSTEM_ACTOR_ID } from "~/lib/system-actor";
 
 const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ENTITY_THROTTLE_WINDOW_MS = 60_000;
@@ -94,9 +95,17 @@ export async function enqueueOutboundUserEmail(
     return fail(400, "order_confirmation requires entity type order");
   }
 
+  if (
+    (contextKey === EMAIL_CONTEXT.QUOTE_AUTO_CREATED ||
+      contextKey === EMAIL_CONTEXT.QUOTE_MANUAL_CREATED) &&
+    entityType !== "quote"
+  ) {
+    return fail(400, "quote received email requires entity type quote");
+  }
+
   const subject = subjectRaw?.trim() ?? "";
   const cc = ccRaw?.trim() ?? "";
-  if (!subject || /[\r\n]/.test(subject) || /[\r\n]/.test(cc)) {
+  if (/[\r\n]/.test(subject) || /[\r\n]/.test(cc)) {
     return fail(400, "Invalid subject or header value");
   }
 
@@ -143,6 +152,9 @@ export async function enqueueOutboundUserEmail(
       and(
         eq(sentEmails.entityType, entityType),
         eq(sentEmails.entityId, entityId),
+        // Scoped per context so an auto/manual "quote received" ack doesn't
+        // block a priced quote_send on the same quote.
+        eq(sentEmails.contextKey, contextKey),
         inArray(sentEmails.status, [
           "queued",
           "sending",
@@ -185,16 +197,6 @@ export async function enqueueOutboundUserEmail(
 
   const settings = await getEmailSettings();
 
-  // Resolve recipient email
-  let recipientEmail: string;
-  try {
-    recipientEmail = await handler.getRecipientEmail(auth, entityId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return fail(400, msg);
-  }
-
-  // Build rendered email content (shared with preview endpoint)
   const contentResult = await buildEmailContent({
     auth,
     contextKey,
@@ -214,6 +216,7 @@ export async function enqueueOutboundUserEmail(
     fromEmail,
     fromDisplayName,
     replyToEmail,
+    toAddress: recipientEmail,
   } = contentResult;
 
   const quoteIdForRow =
@@ -295,6 +298,197 @@ export async function enqueueOutboundUserEmail(
       );
     } catch (e) {
       console.error("[enqueueOutboundUserEmail] sendEmailJob failed", e);
+    }
+  }
+
+  return {
+    ok: true,
+    delivery: settings.approvalRequired ? "awaiting_approval" : "queued",
+  };
+}
+
+export type EnqueueOutboundSystemEmailInput = Omit<
+  EnqueueOutboundEmailInput,
+  "auth"
+>;
+
+function systemEnqueueAuth(): EmailEnqueueAuth {
+  return {
+    user: {
+      id: SYSTEM_ACTOR_ID,
+      email: SYSTEM_ACTOR_EMAIL,
+      app_metadata: {},
+      user_metadata: {},
+      aud: "authenticated",
+      created_at: new Date().toISOString(),
+    } as EmailEnqueueAuth["user"],
+    userDetails: {
+      id: SYSTEM_ACTOR_ID,
+      email: SYSTEM_ACTOR_EMAIL,
+      name: "System",
+      role: "User",
+    },
+  };
+}
+
+/** System-provenance outbound email (no per-user throttle). */
+export async function enqueueOutboundSystemEmail(
+  input: EnqueueOutboundSystemEmailInput,
+): Promise<EnqueueOutboundEmailResult> {
+  const {
+    contextKey,
+    entityType,
+    entityId,
+    subject: subjectRaw,
+    cc: ccRaw,
+    attachmentIds,
+    idempotencyKey,
+    bodyCopyOverrides,
+  } = input;
+
+  if (!idempotencyKey || !/^[0-9a-f-]{36}$/i.test(idempotencyKey)) {
+    return fail(400, "Missing or invalid idempotency key");
+  }
+
+  if (!isSentEmailEntityType(entityType)) {
+    return fail(400, "Invalid entity type");
+  }
+
+  let handler;
+  try {
+    handler = getEmailSendHandler(contextKey);
+  } catch {
+    return fail(500, "Email send is not configured for this context");
+  }
+
+  const auth = systemEnqueueAuth();
+  const subject = subjectRaw?.trim() ?? "";
+  const cc = ccRaw?.trim() ?? "";
+  if (/[\r\n]/.test(subject) || /[\r\n]/.test(cc)) {
+    return fail(400, "Invalid subject or header value");
+  }
+
+  try {
+    await handler.assertCanSend(auth, entityId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return fail(400, msg);
+  }
+
+  try {
+    await handler.verifyAttachmentIds(auth, entityId, attachmentIds);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return fail(400, msg);
+  }
+
+  if (handler.beforeEnqueue) {
+    try {
+      await handler.beforeEnqueue(entityId, auth);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return fail(400, msg);
+    }
+  }
+
+  const settings = await getEmailSettings();
+  const contentResult = await buildEmailContent({
+    auth,
+    contextKey,
+    entityId,
+    subject,
+    bodyCopyOverrides,
+  });
+  if (!contentResult.ok) {
+    return fail(contentResult.status, contentResult.error);
+  }
+
+  const {
+    subjectResolved,
+    htmlBody,
+    textBody,
+    fromEmail,
+    fromDisplayName,
+    replyToEmail,
+    toAddress: recipientEmail,
+  } = contentResult;
+
+  const quoteIdForRow =
+    entityType === "quote" ? Number.parseInt(entityId, 10) : null;
+  if (entityType === "quote" && !Number.isFinite(quoteIdForRow)) {
+    return fail(400, "Invalid quote id");
+  }
+
+  const initialStatus = settings.approvalRequired
+    ? "pending_approval"
+    : "queued";
+
+  let sentEmailId: number;
+  try {
+    sentEmailId = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(sentEmails)
+        .values({
+          quoteId:
+            entityType === "quote" && quoteIdForRow != null
+              ? quoteIdForRow
+              : null,
+          contextKey,
+          entityType,
+          entityId,
+          idempotencyKey,
+          fromEmail,
+          fromDisplayName,
+          subject: subjectResolved,
+          toAddresses: [recipientEmail],
+          ccAddresses: cc ? [cc] : undefined,
+          replyTo: replyToEmail,
+          recipientOverride: settings.recipientOverride || null,
+          htmlBody,
+          textBody,
+          source: "system",
+          sentByUserId: SYSTEM_ACTOR_ID,
+          sentByUserEmail: SYSTEM_ACTOR_EMAIL,
+          status: initialStatus,
+        })
+        .returning({ id: sentEmails.id });
+      if (!row) {
+        throw new Error("insert returned no row");
+      }
+      if (attachmentIds.length > 0) {
+        await tx.insert(sentEmailAttachments).values(
+          attachmentIds.map((aid) => ({
+            sentEmailId: row.id,
+            attachmentId: aid,
+          })),
+        );
+      }
+      return row.id;
+    });
+  } catch (err: unknown) {
+    const dbError = err as { code?: string };
+    if (dbError.code === "23505") {
+      return fail(409, "Duplicate send request");
+    }
+    throw err;
+  }
+
+  if (settings.approvalRequired && handler.afterPendingApprovalQueued) {
+    const [fullRow] = await db
+      .select()
+      .from(sentEmails)
+      .where(eq(sentEmails.id, sentEmailId))
+      .limit(1);
+    if (fullRow) {
+      await handler.afterPendingApprovalQueued(fullRow, auth);
+    }
+  }
+
+  if (!settings.approvalRequired) {
+    try {
+      await sendEmailJob({ sentEmailId }, settings.outboundDelayMinutes);
+    } catch (e) {
+      console.error("[enqueueOutboundSystemEmail] sendEmailJob failed", e);
     }
   }
 

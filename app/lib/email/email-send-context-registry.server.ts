@@ -3,6 +3,10 @@ import type { EmailContextKey } from "~/lib/email/email-context-registry";
 import type { EmailEnqueueAuth } from "~/lib/email/handlers/quote-send-email.server";
 import { quoteSendEmailHandler } from "~/lib/email/handlers/quote-send-email.server";
 import { orderConfirmationEmailHandler } from "~/lib/email/handlers/order-confirmation-email.server";
+import {
+  quoteAutoCreatedEmailHandler,
+  quoteManualCreatedEmailHandler,
+} from "~/lib/email/handlers/quote-received-email.server";
 
 /**
  * Per–email-context server behavior: validation, merge props, attachments, side effects.
@@ -41,6 +45,8 @@ export interface EmailSendContextHandler {
 export const EMAIL_SEND_CONTEXT_HANDLERS = {
   quote_send: quoteSendEmailHandler,
   order_confirmation: orderConfirmationEmailHandler,
+  quote_auto_created: quoteAutoCreatedEmailHandler,
+  quote_manual_created: quoteManualCreatedEmailHandler,
 } as const satisfies Record<EmailContextKey, EmailSendContextHandler>;
 
 export function getEmailSendHandler(

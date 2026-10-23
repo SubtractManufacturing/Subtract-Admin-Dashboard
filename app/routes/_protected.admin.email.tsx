@@ -793,6 +793,10 @@ export async function action({ request }: ActionFunctionArgs) {
       10,
     );
     const subjectTemplate = (formData.get("subjectTemplate") as string)?.trim();
+    const toTemplateRaw = (formData.get("toTemplate") as string)?.trim();
+    const { normalizeToTemplateString } =
+      await import("~/lib/email/resolve-to-address.server");
+    const toTemplate = normalizeToTemplateString(toTemplateRaw ?? "");
     const exampleEmailLayoutsEnabled = await isExampleEmailLayoutsEnabled();
 
     if (intent === "createTemplate" && !slug && name) {
@@ -808,10 +812,10 @@ export async function action({ request }: ActionFunctionArgs) {
         headers,
       );
     }
-    if (!name || !subjectTemplate) {
+    if (!name || !subjectTemplate || !toTemplate) {
       return withAuthHeaders(
         json(
-          { error: "Template name and subject are required." },
+          { error: "Template name, subject, and To template are required." },
           { status: 400 },
         ),
         headers,
@@ -961,6 +965,7 @@ export async function action({ request }: ActionFunctionArgs) {
           contextKey,
           emailIdentityId,
           subjectTemplate,
+          toTemplate,
           bodyCopy,
           requiredAttachmentDocumentKinds,
           updatedBy,
@@ -974,6 +979,7 @@ export async function action({ request }: ActionFunctionArgs) {
             contextKey,
             emailIdentityId,
             subjectTemplate,
+            toTemplate,
             bodyCopy,
             requiredAttachmentDocumentKinds,
             updatedAt: new Date(),
@@ -2570,6 +2576,24 @@ export default function AdminEmail() {
               required
               defaultValue={editingTemplate?.subjectTemplate ?? ""}
               placeholder="Your Quote {{quoteNumber}} from Subtract Manufacturing"
+              className={inputClass}
+            />
+          </div>
+
+          <div>
+            <label className={labelClass}>To Template</label>
+            <p className={helperClass}>
+              Merge-token string for the primary recipient (e.g.{" "}
+              <code className="text-xs">{"{{customerEmail}}"}</code> or{" "}
+              <code className="text-xs">{"{{submissionEmail}}"}</code>).
+            </p>
+            <input
+              name="toTemplate"
+              required
+              defaultValue={
+                editingTemplate?.toTemplate ?? "{{customerEmail}}"
+              }
+              placeholder="{{customerEmail}}"
               className={inputClass}
             />
           </div>

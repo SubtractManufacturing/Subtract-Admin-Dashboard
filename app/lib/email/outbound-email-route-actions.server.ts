@@ -103,7 +103,11 @@ export async function handleEmailPreviewAction({
     return json({ error: result.error }, { status: result.status });
   }
 
-  return json({ subject: result.subjectResolved, html: result.htmlBody });
+  return json({
+    subject: result.subjectResolved,
+    html: result.htmlBody,
+    to: result.toAddress,
+  });
 }
 
 export async function handleEmailQueueAction({
