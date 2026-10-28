@@ -75,6 +75,7 @@ describe("parseManifest", () => {
     expect(manifest.parts).toHaveLength(2);
     expect(manifest.parts[0].drawings).toHaveLength(2);
     expect(manifest.parts[1].drawings).toHaveLength(0);
+    expect(manifest.parts[1].customerNotes).toBe("Rush review");
     expect(manifest.parts[0].note).toContain("Target price: 12.5");
     expect(manifest.ndaRequired).toBe(false);
     expect(manifest.leadTimePreference).toBe("standard");

@@ -17,7 +17,8 @@ export type QuoteCreationMetadataV1 = {
   destinationPostalCode: string;
   requestedDeliveryDate: string;
   poNumber: string;
-  referenceNumber: string;
+  /** Present on imports after manifest v3 support; omitted on older RFQ quotes. */
+  referenceNumber?: string;
   ndaRequired: boolean;
 };
 
