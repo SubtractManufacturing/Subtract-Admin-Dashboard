@@ -24,6 +24,17 @@ export const QUOTE_PDF_PRESETS = [
 
 export type QuotePdfPresetId = (typeof QUOTE_PDF_PRESETS)[number]["id"];
 
+function formatPartsLineItemDescription(
+  item: { description?: string | null; notes?: string | null },
+  quotePart?: { description?: string | null },
+): string {
+  const segments = [item.description, item.notes]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+  if (segments.length > 0) return segments.join("\n");
+  return quotePart?.description?.trim() || "";
+}
+
 function getQuotePresetFields(
   presetId: QuotePdfPresetId,
   ctx: { partsSubtotal: number; grandTotal: number },
@@ -212,7 +223,7 @@ export function QuotePdfTemplate({
     0
   );
 
-  /** Prefer stored line total; fall back to qty × unit so discounts are detected reliably. */
+  /** Prefer stored line total; fall back to qty Ã— unit so discounts are detected reliably. */
   const nonPartLineExtended = (item: (typeof serviceLineItems)[number]) => {
     const tpRaw = item.totalPrice?.toString() ?? "";
     const fromTotal = parseFloat(tpRaw);
@@ -379,44 +390,32 @@ export function QuotePdfTemplate({
             overflow-wrap: break-word;
           }
 
-          /* Smart column sizing for parts table */
-          .parts-section th:nth-child(1),
-          .parts-section td:nth-child(1) {
-            width: auto;
-            min-width: 80px;
-            max-width: 150px;
-          }
 
-          .parts-section th:nth-child(2),
-          .parts-section td:nth-child(2) {
-            width: auto;
-            min-width: 200px;
+          .parts-section table { table-layout: fixed; }
+          .parts-section .quantity-column { width: 10%; }
+          .parts-section .price-column { width: 18%; }
+          .parts-section th, .parts-section td {
+            padding: 8px 10px;
+            vertical-align: top;
+            overflow-wrap: anywhere;
           }
-
-          .parts-section th:nth-child(3),
-          .parts-section td:nth-child(3) {
-            width: auto;
-            min-width: 120px;
-            max-width: 200px;
-          }
-
-          .parts-section th:nth-child(4),
-          .parts-section td:nth-child(4) {
-            width: 60px;
-            text-align: center;
-            white-space: nowrap;
-          }
-
-          .parts-section th:nth-child(5),
-          .parts-section td:nth-child(5),
-          .parts-section th:nth-child(6),
-          .parts-section td:nth-child(6) {
-            width: auto;
-            min-width: 90px;
-            max-width: 130px;
+          .parts-section .numeric-cell {
             text-align: right;
-            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
           }
+          .part-name { font-weight: 700; color: #2c3e50; }
+          .part-description { margin-top: 4px; white-space: pre-wrap; }
+          .part-specifications {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 18px;
+            margin-top: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+          }
+          .part-specification { flex: 1 1 140px; min-width: 0; white-space: pre-wrap; }
+          .part-specification-label { font-weight: 600; }
+          .parts-section tr { break-inside: avoid; page-break-inside: avoid; }
 
           /* Smart column sizing for services table */
           .line-items th:nth-child(1),
@@ -783,81 +782,85 @@ export function QuotePdfTemplate({
             <div className="parts-section">
               <h2 className="section-title">Parts Specification</h2>
               <table>
+                <colgroup>
+                  <col />
+                  <col className="quantity-column" />
+                  {quotePresetFields.showLinePricing && (
+                    <>
+                      <col className="price-column" />
+                      <col className="price-column" />
+                    </>
+                  )}
+                </colgroup>
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Description</th>
-                    <th>Material</th>
-                    <th>Qty</th>
+                    <th>Part / Specifications</th>
+                    <th className="numeric-cell">Qty</th>
                     {quotePresetFields.showLinePricing && (
                       <>
-                        <th>Unit Price</th>
-                        <th>Line Total</th>
+                        <th className="numeric-cell">Unit Price</th>
+                        <th className="numeric-cell">Line Total</th>
                       </>
                     )}
                   </tr>
                 </thead>
                 <tbody>
-                  {partsLineItems.map((item, index) => {
+                  {partsLineItems.map((item) => {
                     const quotePart = (quote.parts || []).find(
                       (p) => p.id === item.quotePartId
                     );
                     return (
-                      <tr key={index}>
+                      <tr key={item.id}>
                         <td>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {/* Customer-facing line item name wins; quote part name is underlying CAD identity only. */}
-                            {item.name || quotePart?.partName || ""}
-                          </span>
+                          <div className="part-name">
+                            <span className={editable ? "editable" : ""}
+                              contentEditable={editable} suppressContentEditableWarning>
+                              {item.name || quotePart?.partName || ""}
+                            </span>
+                          </div>
+                          {(item.description || quotePart?.description || editable) && (
+                            <div className="part-description">
+                              <span className={editable ? "editable" : ""}
+                                contentEditable={editable} suppressContentEditableWarning>
+                                {formatPartsLineItemDescription(item, quotePart)}
+                              </span>
+                            </div>
+                          )}
+                          <div className="part-specifications">
+                            {[
+                              ["Material", quotePart?.material],
+                              ["Tolerance", quotePart?.tolerance],
+                              ["Finish", quotePart?.finish],
+                            ].map(([label, value]) =>
+                              value || editable ? (
+                                <div className="part-specification" key={label}>
+                                  <span className="part-specification-label">{label}: </span>
+                                  <span className={editable ? "editable" : ""}
+                                    contentEditable={editable} suppressContentEditableWarning>
+                                    {value || ""}
+                                  </span>
+                                </div>
+                              ) : null
+                            )}
+                          </div>
                         </td>
-                        <td>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {item.description || quotePart?.description || ""}
-                          </span>
-                        </td>
-                        <td>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
-                            {quotePart?.material || ""}
-                          </span>
-                        </td>
-                        <td>
-                          <span
-                            className={editable ? "editable" : ""}
-                            contentEditable={editable}
-                            suppressContentEditableWarning
-                          >
+                        <td className="numeric-cell">
+                          <span className={editable ? "editable" : ""}
+                            contentEditable={editable} suppressContentEditableWarning>
                             {item.quantity}
                           </span>
                         </td>
                         {quotePresetFields.showLinePricing && (
                           <>
-                            <td>
-                              <span
-                                className={editable ? "editable" : ""}
-                                contentEditable={editable}
-                                suppressContentEditableWarning
-                              >
+                            <td className="numeric-cell">
+                              <span className={editable ? "editable" : ""}
+                                contentEditable={editable} suppressContentEditableWarning>
                                 {formatCurrency(item.unitPrice)}
                               </span>
                             </td>
-                            <td>
-                              <span
-                                className={editable ? "editable" : ""}
-                                contentEditable={editable}
-                                suppressContentEditableWarning
-                              >
+                            <td className="numeric-cell">
+                              <span className={editable ? "editable" : ""}
+                                contentEditable={editable} suppressContentEditableWarning>
                                 {formatCurrency(item.totalPrice)}
                               </span>
                             </td>

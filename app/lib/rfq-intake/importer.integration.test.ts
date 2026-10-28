@@ -483,8 +483,23 @@ describe("RFQ importer with Postgres persistence", () => {
         finish: "Anodize Type II - Black",
         tolerance: '+/- 0.005"',
       });
-      expect(partRows.description).toContain("Deburr all edges");
+      expect(partRows.description).toContain("Threads / features");
+      expect(partRows.description).not.toContain("Deburr all edges");
       expect(partRows.description).not.toContain("Primary tolerance");
+
+      const [lineItemRow] = await db.execute<{
+        notes: string | null;
+        description: string | null;
+      }>(sql`
+        select notes, description
+        from quote_line_items
+        where quote_id = ${v2QuoteId!}
+        order by sort_order
+        limit 1
+      `);
+      expect(lineItemRow.notes).toBe("Deburr all edges");
+      expect(lineItemRow.description).toContain("Threads / features");
+      expect(lineItemRow.description).not.toContain("Deburr all edges");
 
       const [secondPart] = await db.execute<{
         material: string | null;
