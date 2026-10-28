@@ -83,7 +83,9 @@ export type IntakePart = {
   material: string | null;
   finish: string | null;
   tolerance: string | null;
+  /** Internal metadata for quote part / line item description (not customer notes). */
   note: string;
+  customerNotes: string | null;
   raw: Record<string, unknown>;
 };
 
@@ -95,7 +97,10 @@ export type IntakeManifest = {
   requestedDeliveryDate: string | null;
   leadTimePreference: string | null;
   destinationPostalCode: string | null;
+  /** Customer PO from WordPress intake (manifest v1/v2 only). */
   poNumber: string | null;
+  /** Customer quote reference label from WordPress intake (manifest v3). */
+  referenceNumber: string | null;
   globalNotes: string | null;
   parts: IntakePart[];
   raw: Record<string, unknown>;

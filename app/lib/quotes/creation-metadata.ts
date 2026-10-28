@@ -17,6 +17,7 @@ export type QuoteCreationMetadataV1 = {
   destinationPostalCode: string;
   requestedDeliveryDate: string;
   poNumber: string;
+  referenceNumber: string;
   ndaRequired: boolean;
 };
 
@@ -44,6 +45,7 @@ export function buildRfqIntakeCreationMetadata(
     destinationPostalCode: (manifest.destinationPostalCode ?? "").trim(),
     requestedDeliveryDate: (manifest.requestedDeliveryDate ?? "").trim(),
     poNumber: (manifest.poNumber ?? "").trim(),
+    referenceNumber: (manifest.referenceNumber ?? "").trim(),
     ndaRequired: manifest.ndaRequired,
   };
 }

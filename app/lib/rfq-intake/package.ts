@@ -148,7 +148,7 @@ function parseFileKey(
   };
 }
 
-const SUPPORTED_MANIFEST_VERSIONS = new Set([1, 2]);
+const SUPPORTED_MANIFEST_VERSIONS = new Set([1, 2, 3]);
 
 function parseManifestVersion(input: Record<string, unknown>): number {
   if (!("manifest_version" in input)) return 1;
@@ -199,7 +199,6 @@ function formatPartNoteV1(part: Record<string, unknown>): string {
     ["Primary tolerance", part.tolerance],
     ["Custom tolerance", part.tolerance_detail],
     ["Threads / features", part.threads_features],
-    ["Customer notes", part.notes],
     ["Target price", part.target_unit_price],
   ];
   const lines = labels
@@ -222,24 +221,17 @@ function formatPartNoteV1(part: Record<string, unknown>): string {
 }
 
 function formatPartNoteV2(part: Record<string, unknown>): string {
-  const lines: string[] = [];
-  if (typeof part.notes === "string" && part.notes.trim()) {
-    lines.push(part.notes.trim());
-  }
-
   const labels: Array<[string, unknown]> = [
     ["Threads / features", part.threads_features],
     ["Target price", part.target_unit_price],
     ["Tolerance detail", part.tolerance_detail],
   ];
-  lines.push(
-    ...labels
-      .filter(([, value]) => value !== undefined && value !== null && value !== "")
-      .map(
-        ([label, value]) =>
-          `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
-      ),
-  );
+  const lines = labels
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(
+      ([label, value]) =>
+        `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+    );
 
   const knownKeys = new Set([
     "part_id",
@@ -259,6 +251,10 @@ function formatPartNoteV2(part: Record<string, unknown>): string {
   ]);
   appendAdditionalPartFields(part, knownKeys, lines);
   return lines.join("\n");
+}
+
+function parseCustomerNotes(part: Record<string, unknown>): string | null {
+  return optionalString(part, "notes");
 }
 
 function parsePartShared(value: unknown, sessionId: string): {
@@ -329,6 +325,7 @@ function parsePartV1(value: unknown, sessionId: string): IntakePart {
     finish: null,
     tolerance,
     note: formatPartNoteV1(input),
+    customerNotes: parseCustomerNotes(input),
     raw: input,
   };
 }
@@ -357,6 +354,7 @@ function parsePartV2(value: unknown, sessionId: string): IntakePart {
     finish,
     tolerance,
     note: formatPartNoteV2(input),
+    customerNotes: parseCustomerNotes(input),
     raw: input,
   };
 }
@@ -372,7 +370,7 @@ export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeMa
     throw new IntakeValidationError("manifest must contain at least one part");
   }
 
-  const parsePart = manifestVersion === 2 ? parsePartV2 : parsePartV1;
+  const parsePart = manifestVersion >= 2 ? parsePartV2 : parsePartV1;
   const parts = input.parts.map((part) => parsePart(part, sessionId));
   if (new Set(parts.map((part) => part.id)).size !== parts.length) {
     throw new IntakeValidationError("manifest contains duplicate part IDs");
@@ -407,7 +405,12 @@ export function parseManifest(value: unknown, receipt: ReceiptPointer): IntakeMa
       "postal_code",
       "shipping destination postal code",
     ),
-    poNumber: optionalString(globalInput, "po_number"),
+    poNumber:
+      manifestVersion === 3 ? null : optionalString(globalInput, "po_number"),
+    referenceNumber:
+      manifestVersion === 3
+        ? optionalString(globalInput, "reference_number")
+        : null,
     globalNotes: optionalString(globalInput, "notes"),
     parts,
     raw: input,
@@ -435,6 +438,7 @@ export function quoteIntakeNote(manifest: IntakeManifest, receipt: ReceiptPointe
     ["Lead-time preference", manifest.leadTimePreference],
     ["Destination postal code", manifest.destinationPostalCode],
     ["PO number", manifest.poNumber],
+    ["Customer reference", manifest.referenceNumber],
     ["NDA required", manifest.ndaRequired ? "Yes" : "No"],
     ["Global notes", manifest.globalNotes],
   ];
