@@ -20,7 +20,7 @@ export default function GenerateQuotePdfModal({
   quote,
   autoDownload = true,
 }: GenerateQuotePdfModalProps) {
-  const [presetId, setPresetId] = useState<QuotePdfPresetId>("default");
+  const [presetId, setPresetId] = useState<QuotePdfPresetId>("lineItemPricing");
 
   return (
     <PdfGenerationModal

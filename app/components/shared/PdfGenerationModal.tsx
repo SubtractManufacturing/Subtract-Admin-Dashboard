@@ -114,7 +114,9 @@ export default function PdfGenerationModal({
           'Part notes',
         ];
 
-        if (defaultPlaceholders.includes(text)) {
+        const defaultText = element.getAttribute('data-default-text');
+
+        if (defaultPlaceholders.includes(text) || (defaultText && text === defaultText)) {
           // Remove the parent <p> element
           element.parentElement?.remove();
         }
