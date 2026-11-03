@@ -32,6 +32,9 @@ export async function startWorkerQueue(): Promise<PgBoss> {
   for (const name of Object.values(QUEUES)) {
     if (name === QUEUES.RFQ_IMPORT || name === QUEUES.DRAWING_THUMBNAIL) {
       await boss.createQueue(name, { policy: "key_strict_fifo" });
+    } else if (name === QUEUES.TWENTY_SYNC) {
+      // At most one active and one queued run, across every worker replica.
+      await boss.createQueue(name, { policy: "stately" });
     } else {
       await boss.createQueue(name);
     }

@@ -34,6 +34,14 @@ export const JOB_BOARD_SETTINGS = {
   NOTIFY_ROLE_ID: "job_board_notify_role_id",
 } as const;
 
+export const TWENTY_SETTINGS = {
+  ENABLED: "twenty_sync_enabled",
+  WORKSPACE_URL: "twenty_workspace_url",
+  /** Set on first enable. Quotes older than this are left for a separate backfill. */
+  SYNC_STARTED_AT: "twenty_sync_started_at",
+  LAST_RUN_AT: "twenty_sync_last_run_at",
+} as const;
+
 export const LINE_ITEM_ARCHIVE_RETENTION_MIN_DAYS = 1;
 export const LINE_ITEM_ARCHIVE_RETENTION_MAX_DAYS = 90;
 export const LINE_ITEM_ARCHIVE_RETENTION_DEFAULT_DAYS = 7;

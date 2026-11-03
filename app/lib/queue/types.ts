@@ -6,6 +6,7 @@ export const QUEUES = {
   RFQ_IMPORT: "rfq-import",
   RFQ_RECEIPT_SCAN: "rfq-receipt-scan",
   DRAWING_THUMBNAIL: "drawing-thumbnail",
+  TWENTY_SYNC: "twenty-sync",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -40,6 +41,15 @@ export interface DrawingThumbnailPayload {
   attachmentId: string;
 }
 
+export interface TwentySyncPayload {
+  triggeredAt: string;
+}
+
+/** Scheduled sweep. Override via TWENTY_SYNC_CRON. */
+export function getTwentySyncCron(): string {
+  return process.env.TWENTY_SYNC_CRON?.trim() || "*/2 * * * *";
+}
+
 /** pg-boss cron for discovering new intake receipts. Override via RFQ_RECEIPT_SCAN_CRON. */
 export function getRfqReceiptScanCron(): string {
   const override = process.env.RFQ_RECEIPT_SCAN_CRON?.trim();
@@ -61,6 +71,12 @@ export const DRAWING_THUMBNAIL_OPTIONS = {
   retryDelay: 30,
   retryBackoff: true,
   expireInSeconds: 600,
+} as const;
+
+export const TWENTY_SYNC_OPTIONS = {
+  // Sync links own per-record retries; a failed run is simply the next sweep.
+  retryLimit: 0,
+  expireInSeconds: 900,
 } as const;
 
 export const DEFAULT_RETRY_OPTIONS = {

@@ -520,7 +520,8 @@ export async function mergeCustomers(
 
     const movedQuotes = await tx
       .update(quotes)
-      .set({ customerId: survivorId })
+      // updatedAt: the Twenty sync detects the customer change through it.
+      .set({ customerId: survivorId, updatedAt: now })
       .where(eq(quotes.customerId, mergedId))
       .returning({ id: quotes.id });
     const movedOrders = await tx

@@ -8,6 +8,7 @@ import {
   numeric,
   pgEnum,
   uuid,
+  bigint,
   primaryKey,
   boolean,
   jsonb,
@@ -117,6 +118,12 @@ export const actionItemStatusEnum = pgEnum("action_item_status", [
   "resolved",
 ]);
 
+/**
+ * UTC wall-clock time whatever the session timezone. Plain `timestamp` columns
+ * take defaultNow() in session time, while Drizzle writes JS Dates as UTC.
+ */
+const utcNow = sql`(now() at time zone 'utc')`;
+
 export const users = pgTable("users", {
   id: text("id").primaryKey(), // Will match Supabase auth.users.id
   name: text("name"),
@@ -168,8 +175,8 @@ export const customers = pgTable(
     ),
 
     isArchived: boolean("is_archived").default(false).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").default(utcNow).notNull(),
+    updatedAt: timestamp("updated_at").default(utcNow).notNull(),
   },
   (table) => ({
     companyNameIdx: index("customers_company_name_idx").on(table.companyName),
@@ -282,8 +289,8 @@ export const quotes = pgTable("quotes", {
     import("~/lib/quotes/creation-metadata").QuoteCreationMetadata | null
   >(),
   isArchived: boolean("is_archived").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").default(utcNow).notNull(),
+  updatedAt: timestamp("updated_at").default(utcNow).notNull(),
 });
 
 export const orders = pgTable("orders", {
@@ -994,6 +1001,45 @@ export const developerSettings = pgTable("developer_settings", {
   updatedBy: text("updated_by"),
 });
 
+/**
+ * One row per ERP Customer or Quote the Twenty CRM sync has touched. Holds the
+ * Twenty record IDs and the source version last pushed. Several Customers may
+ * share one Twenty person, so the Twenty IDs are deliberately not unique.
+ */
+export const twentySyncLinks = pgTable(
+  "twenty_sync_links",
+  {
+    entityType: text("entity_type").$type<"customer" | "quote">().notNull(),
+    entityId: integer("entity_id").notNull(),
+
+    twentyPersonId: text("twenty_person_id"),
+    twentyCompanyId: text("twenty_company_id"),
+    twentyOpportunityId: text("twenty_opportunity_id"),
+
+    /** The source row's updatedAt at read time, not when the push finished. */
+    syncedSourceUpdatedAt: timestamp("synced_source_updated_at"),
+    /** Customer only: the company identity the stored company ID was resolved from. */
+    syncedCompanyKey: text("synced_company_key"),
+    /** Quote only: the ERP status last applied, so rfqStatus moves on real changes. */
+    syncedQuoteStatus: text("synced_quote_status"),
+    /** Quote only: the amount last pushed, so a corrected $0 total can clear it. */
+    syncedAmountMicros: bigint("synced_amount_micros", { mode: "number" }),
+
+    syncState: text("sync_state").$type<"synced" | "failed">(),
+    lastError: text("last_error"),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    lastAttemptAt: timestamp("last_attempt_at"),
+    nextAttemptAt: timestamp("next_attempt_at"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.entityType, table.entityId] }),
+    stateIdx: index("twenty_sync_links_state_idx").on(table.syncState),
+  }),
+);
+
 export const emailSettings = pgTable("email_settings", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
@@ -1137,5 +1183,6 @@ export type NewQuotePriceCalculationTemplate =
   typeof quotePriceCalculationTemplates.$inferInsert;
 export type CadFileVersion = typeof cadFileVersions.$inferSelect;
 export type NewCadFileVersion = typeof cadFileVersions.$inferInsert;
+export type TwentySyncLink = typeof twentySyncLinks.$inferSelect;
 export type DeveloperSetting = typeof developerSettings.$inferSelect;
 export type NewDeveloperSetting = typeof developerSettings.$inferInsert;
