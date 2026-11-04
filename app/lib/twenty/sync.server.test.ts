@@ -65,7 +65,8 @@ class FakeStore implements TwentySyncStore {
       const link = this.link(type, id);
       if (createdAt < syncStartedAt && !link) return;
       if (link?.syncedSourceUpdatedAt && updatedAt <= link.syncedSourceUpdatedAt) return;
-      if (link?.nextAttemptAt && link.nextAttemptAt > now) return;
+      const changedSinceLastTry = Boolean(link?.lastAttemptAt && updatedAt > link.lastAttemptAt);
+      if (link?.nextAttemptAt && link.nextAttemptAt > now && !changedSinceLastTry) return;
       due.push({
         entityType: type,
         entityId: id,
@@ -1243,6 +1244,23 @@ describe("failures and outages", () => {
     expect(store.link("customer", 2)?.syncState).toBe("synced");
     expect(store.link("quote", 11)?.syncState).toBe("synced");
     expect(store.link("customer", 1)?.attemptCount).toBe(attempts);
+  });
+
+  it("lets a new change skip the wait instead of sitting in backoff", async () => {
+    addCustomer(1);
+    addQuote(10, 1, { status: "Sent" });
+    twenty.down = true;
+    await run();
+    await run();
+    twenty.down = false;
+
+    const paid = new Date(T1.getTime() + 60_000);
+    clock = paid;
+    addCustomer(1, { updatedAt: paid });
+    addQuote(10, 1, { status: "Accepted", updatedAt: paid });
+    await run();
+
+    expect(twenty.opportunities[0].fields.rfqStatus).toBe("WON");
   });
 
   it("does not leak an unexpected error's text into the failure message", async () => {

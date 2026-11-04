@@ -1,7 +1,7 @@
 /**
- * One-way ERP to Twenty sync, run by the scheduled pg-boss sweep. It reads the
- * tables instead of hooking each write, so manual quotes, duplicated quotes and
- * RFQ imports are all covered, and nothing here can delay quotes or emails.
+ * One-way ERP to Twenty sync. Every run reads the tables for what changed, so a run
+ * started by a hook (see notify.server.ts) and the scheduled reconciliation sweep do
+ * the same work, and nothing here can delay quotes or emails.
  */
 import type { TwentySyncLink } from "../db/schema";
 import { normalizeEmail } from "../email-normalize";

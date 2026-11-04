@@ -43,11 +43,16 @@ export interface DrawingThumbnailPayload {
 
 export interface TwentySyncPayload {
   triggeredAt: string;
+  /** What caused a hook-driven run. Scheduled sweeps have none. */
+  reason?: string;
 }
 
-/** Scheduled sweep. Override via TWENTY_SYNC_CRON. */
+/**
+ * Reconciliation sweep. Hooks keep Twenty current; this catches anything a hook
+ * missed and retries failures. Override via TWENTY_SYNC_CRON.
+ */
 export function getTwentySyncCron(): string {
-  return process.env.TWENTY_SYNC_CRON?.trim() || "*/2 * * * *";
+  return process.env.TWENTY_SYNC_CRON?.trim() || "*/10 * * * *";
 }
 
 /** pg-boss cron for discovering new intake receipts. Override via RFQ_RECEIPT_SCAN_CRON. */

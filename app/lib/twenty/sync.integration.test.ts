@@ -3,14 +3,25 @@
  * Requires DATABASE_URL pointing at a migrated Postgres instance.
  */
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { FakeTwenty } from "~/test/fake-twenty";
 import { mergeCustomers } from "../customer-merge.server";
 import { db } from "../db";
 import { customers, quotes, sentEmails, twentySyncLinks, users } from "../db/schema";
-import { createQuote, updateQuote } from "../quotes";
+import { archiveCustomer, createCustomer, updateCustomer } from "../customers";
+import {
+  archiveQuote,
+  calculateQuoteTotals,
+  convertQuoteToOrder,
+  createQuote,
+  duplicateQuote,
+  restoreQuote,
+  updateQuote,
+} from "../quotes";
+import { notifyTwentySync } from "./notify.server";
+import { seedQuoteForConversion } from "~/test/seed-quote-for-conversion";
 import wordpressManifest from "../rfq-intake/fixtures/wordpress-manifest.json";
 import { createRfqImporter } from "../rfq-intake/importer";
 import { createPostgresRfqPersistence } from "../rfq-intake/postgres.server";
@@ -26,6 +37,8 @@ import {
 } from "./store.server";
 import { companyIdentityFor, companyKeyFor } from "./matching";
 import { runTwentySync } from "./sync.server";
+
+vi.mock("./notify.server", () => ({ notifyTwentySync: vi.fn() }));
 
 const tag = randomUUID().slice(0, 8);
 const emailFor = (name: string) => `${name}-${tag}@example.invalid`;
@@ -395,6 +408,94 @@ describe("priced quote delivery", () => {
   });
 });
 
+describe("real-time hooks", () => {
+  const firedAfter = async (action: () => Promise<unknown>) => {
+    vi.mocked(notifyTwentySync).mockClear();
+    await action();
+    return vi.mocked(notifyTwentySync).mock.calls.map(([reason]) => reason);
+  };
+
+  it("fires for every customer change", async () => {
+    let id = 0;
+    expect(
+      await firedAfter(async () => {
+        const created = await createCustomer({ displayName: `Hook ${tag}` });
+        id = created.id;
+        customerIds.push(id);
+      }),
+    ).toEqual(["customer.created"]);
+    expect(await firedAfter(() => updateCustomer(id, { phone: "5551234567" }))).toEqual([
+      "customer.updated",
+    ]);
+    expect(await firedAfter(() => archiveCustomer(id))).toEqual(["customer.archived"]);
+  });
+
+  it("fires for a customer merge", async () => {
+    const survivor = await seedCustomer();
+    const merged = await seedCustomer();
+
+    expect(
+      await firedAfter(() =>
+        mergeCustomers(
+          { survivorId: survivor.id, mergedId: merged.id },
+          { userId: actorId, email: emailFor("actor"), role: "Admin" },
+        ),
+      ),
+    ).toEqual(["customer.merged"]);
+  });
+
+  it("fires for every quote change", async () => {
+    const customer = await seedCustomer();
+    let quoteId = 0;
+    expect(
+      await firedAfter(async () => {
+        quoteId = (await manualQuote(customer.id)).id;
+      }),
+    ).toEqual(["quote.created"]);
+    expect(await firedAfter(() => updateQuote(quoteId, { status: "Draft" }))).toEqual([
+      "quote.updated",
+    ]);
+    expect(await firedAfter(() => calculateQuoteTotals(quoteId))).toEqual([
+      "quote.totals_changed",
+    ]);
+    expect(await firedAfter(() => archiveQuote(quoteId))).toEqual(["quote.archived"]);
+    expect(await firedAfter(() => restoreQuote(quoteId))).toEqual(["quote.restored"]);
+  });
+
+  it("fires when a quote is duplicated", async () => {
+    const customer = await seedCustomer();
+    const quote = await manualQuote(customer.id);
+
+    const fired = await firedAfter(async () => {
+      const result = await duplicateQuote(quote.id);
+      if (result.quoteId) quoteIds.push(result.quoteId);
+    });
+
+    expect(fired).toContain("quote.duplicated");
+  });
+
+  it("fires when a quote converts to an order, only on success", async () => {
+    const seeded = await seedQuoteForConversion();
+
+    const fired = await firedAfter(async () => {
+      const result = await convertQuoteToOrder(seeded.quoteId);
+      expect(result.success).toBe(true);
+    });
+
+    expect(fired).toContain("quote.converted");
+  });
+
+  it("does not fire when a conversion fails", async () => {
+    expect(await firedAfter(() => convertQuoteToOrder(-1))).toEqual([]);
+  });
+
+  it("fires when a website RFQ imports", async () => {
+    const fired = await firedAfter(() => rfqQuote(emailFor("hooked")));
+
+    expect(fired).toContain("rfq.imported");
+  });
+});
+
 describe("shared lock", () => {
   it("turns away a second sync while one is running", async () => {
     let release = () => {};
@@ -493,6 +594,22 @@ describe("phone warnings", () => {
       customerName: customer.displayName,
       warning: expect.stringContaining("ask for Bob"),
     });
+  });
+});
+
+describe("backoff", () => {
+  it("lets a change made after a failure skip the wait", async () => {
+    const customer = await seedCustomer();
+    const quote = await manualQuote(customer.id);
+    twenty.down = true;
+    await sweep();
+    const failedAt = await store.getLink("quote", quote.id);
+    if (failedAt) expect(await isDue("quote", quote.id)).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await updateQuote(quote.id, { status: "Rejected", rejectionReason: "Price" });
+
+    expect(await isDue("quote", quote.id)).toBe(true);
   });
 });
 

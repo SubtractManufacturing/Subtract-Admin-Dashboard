@@ -3,8 +3,8 @@
  * health comes from what the sync has actually done.
  */
 
-/** Runs every 2 minutes. This allows for a slow run and a worker restart. */
-export const OVERDUE_AFTER_MINUTES = 10;
+/** The sweep runs every 10 minutes. This allows for a missed run and a worker restart. */
+export const OVERDUE_AFTER_MINUTES = 25;
 
 export type TwentyHealthState =
   | "setup"
@@ -76,7 +76,7 @@ export function twentySyncHealth(input: TwentyHealthInput, now: Date): TwentyHea
     return {
       state: "stopped",
       title: "Sync has stopped",
-      detail: `Last run was ${formatTimeAgo(input.lastRunAt, now).toLowerCase()}, but it should run every 2 minutes. Your quotes are safe and will catch up once it restarts. Ask whoever maintains the server to check the background worker.`,
+      detail: `Last run was ${formatTimeAgo(input.lastRunAt, now).toLowerCase()}, but it should run every 10 minutes. Your quotes are safe and will catch up once it restarts. Ask whoever maintains the server to check the background worker.`,
     };
   }
 
@@ -103,7 +103,7 @@ export function twentySyncHealth(input: TwentyHealthInput, now: Date): TwentyHea
   return {
     state: "healthy",
     title: "Syncing normally",
-    detail: "New quotes and customers reach Twenty within a few minutes.",
+    detail: "Changes reach Twenty within seconds, with a full check every 10 minutes.",
   };
 }
 

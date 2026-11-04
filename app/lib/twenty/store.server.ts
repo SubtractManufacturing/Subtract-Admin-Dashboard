@@ -77,7 +77,12 @@ function dueConditions(
       isNull(twentySyncLinks.syncedSourceUpdatedAt),
       sql`${versionSql} > ${twentySyncLinks.syncedSourceUpdatedAt}`,
     ),
-    or(isNull(twentySyncLinks.nextAttemptAt), lte(twentySyncLinks.nextAttemptAt, now)),
+    or(
+      isNull(twentySyncLinks.nextAttemptAt),
+      lte(twentySyncLinks.nextAttemptAt, now),
+      // A change since the last try may be what fixes it, and it should not wait.
+      sql`${versionSql} > ${twentySyncLinks.lastAttemptAt}`,
+    ),
   );
 }
 
