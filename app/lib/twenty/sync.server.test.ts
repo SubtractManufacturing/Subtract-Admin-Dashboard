@@ -621,6 +621,22 @@ describe("syncOneQuote", () => {
     expect(twenty.writes).toHaveLength(0);
   });
 
+  it("still reports the error when recording the failure also fails", async () => {
+    addCustomer(1);
+    addQuote(10, 1);
+    store.getLink = async () => {
+      throw new Error("column does not exist");
+    };
+    store.markFailed = async () => {
+      throw new Error("column does not exist");
+    };
+
+    await expect(single("Q2611-0010")).resolves.toEqual({
+      ok: false,
+      error: "Unexpected sync error; see the server log",
+    });
+  });
+
   it("records a failure the admin can see", async () => {
     addCustomer(1);
     addQuote(10, 1);
@@ -910,7 +926,7 @@ describe("failures and outages", () => {
     await run();
 
     expect(store.link("customer", 1)?.lastError).toBe(
-      "Unexpected sync error; see the worker log",
+      "Unexpected sync error; see the server log",
     );
   });
 

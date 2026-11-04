@@ -430,7 +430,7 @@ class SyncContext {
 function errorMessage(error: unknown): string {
   return error instanceof TwentyApiError
     ? error.message
-    : "Unexpected sync error; see the worker log";
+    : "Unexpected sync error; see the server log";
 }
 
 export interface SingleQuoteSyncReport {
@@ -500,8 +500,12 @@ export async function syncOneQuote(deps: {
     if (!(error instanceof TwentyApiError)) {
       console.error(`[Twenty] quote ${quote.id} failed`, error);
     }
-    await deps.store.markFailed(record, errorMessage(error), now());
-    return { ok: false, error: errorMessage(error) };
+    const message = errorMessage(error);
+    // Recording can fail for the same reason the sync did; the caller still gets the result.
+    await deps.store.markFailed(record, message, now()).catch((saveError) => {
+      console.error(`[Twenty] could not record the failure for quote ${quote.id}`, saveError);
+    });
+    return { ok: false, error: message };
   }
 }
 
