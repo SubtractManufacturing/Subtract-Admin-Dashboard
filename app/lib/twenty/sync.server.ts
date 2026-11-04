@@ -24,6 +24,7 @@ import {
   splitContactName,
   toTwentyAmount,
   toTwentyPhone,
+  type CompanyChoiceDetail,
   type CompanyIdentity,
   type TwentyCompanySummary,
 } from "./matching";
@@ -53,8 +54,11 @@ export interface SyncQuote {
   total: string | null;
   /** The quote's change version: its updatedAt or its latest quote send, whichever is newer. */
   updatedAt: Date;
+  /** When the quote last moved to Sent. */
+  sentAt: Date | null;
   /** Status of the latest priced quote email; null when none was ever queued. */
   lastSendStatus: string | null;
+  lastSendUpdatedAt: Date | null;
 }
 
 export interface DueRecord {
@@ -81,8 +85,11 @@ export interface TwentySyncStore {
       twentyCompanyId: string | null;
       syncedCompanyKey: string;
       syncedSourceUpdatedAt: Date;
+      syncWarning: string | null;
     },
     now: Date,
+    /** In one transaction, so a correction cannot save without reaching its quotes. */
+    options: { invalidateQuotes: boolean },
   ): Promise<void>;
   saveQuoteLink(
     quoteId: number,
@@ -91,12 +98,17 @@ export interface TwentySyncStore {
       syncedQuoteStatus: string;
       syncedAmountMicros: number | null;
       syncedSourceUpdatedAt: Date;
+      twentyCompanyId: string | null;
+      twentyPersonId: string | null;
     },
     now: Date,
   ): Promise<void>;
-  markFailed(record: DueRecord, error: string, now: Date): Promise<void>;
-  /** Forces a customer's quotes to re-sync after its Twenty company or person changes. */
-  invalidateCustomerQuotes(customerId: number): Promise<void>;
+  markFailed(
+    record: DueRecord,
+    error: string,
+    now: Date,
+    detail?: CompanyChoiceDetail | null,
+  ): Promise<void>;
 }
 
 export interface TwentySyncResult {
@@ -104,6 +116,22 @@ export interface TwentySyncResult {
   failed: number;
   /** True when Twenty looked unavailable and the run stopped early. */
   stoppedEarly: boolean;
+}
+
+/** Staff decide which company is right; the sync never guesses or asks them to change Twenty. */
+export class CompanyChoiceRequiredError extends TwentyApiError {
+  constructor(readonly detail: CompanyChoiceDetail) {
+    super(
+      `More than one Twenty company could be ${detail.companyName}. Choose the right one.`,
+      null,
+      false,
+    );
+    this.name = "CompanyChoiceRequiredError";
+  }
+}
+
+function phoneWarning(phone: string): string {
+  return `Phone "${phone}" could not be synced to Twenty. Correct it on the customer.`;
 }
 
 export function retryDelayMinutes(attemptCount: number): number {
@@ -141,18 +169,22 @@ class SyncContext {
     private readonly now: () => Date,
   ) {}
 
-  private async resolveCompany(identity: CompanyIdentity): Promise<string | null> {
+  private async resolveCompany(
+    customer: SyncCustomer,
+    identity: CompanyIdentity,
+  ): Promise<string | null> {
     if (!identity.name && !identity.weakName && !identity.domain) return null;
 
     this.companies ??= await this.twenty.listCompanies();
     const match = matchCompany(this.companies, identity);
     if (match.kind === "matched") return match.id;
     if (match.kind === "ambiguous") {
-      throw new TwentyApiError(
-        `Several Twenty companies could match: ${match.candidates.join(", ")}. Merge them in Twenty, then retry.`,
-        null,
-        false,
-      );
+      throw new CompanyChoiceRequiredError({
+        kind: "company_choice",
+        customerId: customer.id,
+        companyName: identity.name ?? identity.weakName ?? customer.displayName,
+        candidates: match.candidates,
+      });
     }
 
     // A weak name may be a person, so on its own it never creates a company.
@@ -241,11 +273,13 @@ class SyncContext {
   private async withoutRejectedPhone<T>(
     fields: TwentyFields,
     write: (fields: TwentyFields) => Promise<T>,
+    onRejected: () => void,
   ): Promise<T> {
     try {
       return await write(fields);
     } catch (error) {
       if (!fields.phones || !isPhoneRejection(error)) throw error;
+      onRejected();
       const withoutPhone = { ...fields };
       delete withoutPhone.phones;
       return write(withoutPhone);
@@ -256,10 +290,16 @@ class SyncContext {
     customer: SyncCustomer,
     link: TwentySyncLink | null,
     companyId: string | null,
-  ): Promise<string | null> {
+  ): Promise<{ id: string | null; warning: string | null }> {
     const email = normalizeEmail(customer.email);
     const person = await this.findPerson(customer, link, email, companyId);
     const fields = this.personChanges(customer, person, email);
+
+    const phone = nonBlank(customer.phone);
+    let warning = phone && !toTwentyPhone(phone) ? phoneWarning(phone) : null;
+    const onPhoneRejected = () => {
+      warning = phone ? phoneWarning(phone) : null;
+    };
 
     if (person) {
       // Twenty allows one company per person, and a contact may buy for several.
@@ -270,17 +310,19 @@ class SyncContext {
           if (Object.keys(changes).length > 0) {
             await this.twenty.updatePerson(person.id, changes);
           }
-        });
+        }, onPhoneRejected);
       }
-      return person.id;
+      return { id: person.id, warning };
     }
 
-    if (!email && !fields.name) return null;
+    if (!email && !fields.name) return { id: null, warning: null };
     if (companyId) fields.companyId = companyId;
-    const created = await this.withoutRejectedPhone(fields, (changes) =>
-      this.twenty.createPerson(changes),
+    const created = await this.withoutRejectedPhone(
+      fields,
+      (changes) => this.twenty.createPerson(changes),
+      onPhoneRejected,
     );
-    return created.id;
+    return { id: created.id, warning };
   }
 
   async syncCustomer(customerId: number): Promise<CustomerLinkIds> {
@@ -307,9 +349,12 @@ class SyncContext {
     const companyId =
       link?.twentyCompanyId && link.syncedCompanyKey === companyKey
         ? link.twentyCompanyId
-        : await this.resolveCompany(identity);
-    const personId = await this.resolvePerson(customer, link, companyId);
+        : await this.resolveCompany(customer, identity);
+    const { id: personId, warning } = await this.resolvePerson(customer, link, companyId);
 
+    const moved =
+      link?.syncedSourceUpdatedAt != null &&
+      (link.twentyCompanyId !== companyId || link.twentyPersonId !== personId);
     await this.store.saveCustomerLink(
       customerId,
       {
@@ -317,14 +362,11 @@ class SyncContext {
         twentyCompanyId: companyId,
         syncedCompanyKey: companyKey,
         syncedSourceUpdatedAt: customer.updatedAt,
+        syncWarning: warning,
       },
       this.now(),
+      { invalidateQuotes: moved },
     );
-
-    const moved =
-      link?.syncedSourceUpdatedAt != null &&
-      (link.twentyCompanyId !== companyId || link.twentyPersonId !== personId);
-    if (moved) await this.store.invalidateCustomerQuotes(customerId);
 
     const ids = { twentyPersonId: personId, twentyCompanyId: companyId };
     this.customersThisRun.set(customerId, ids);
@@ -367,7 +409,9 @@ class SyncContext {
     }
   }
 
-  async syncQuote(quoteId: number): Promise<{ opportunityId: string; created: boolean }> {
+  async syncQuote(
+    quoteId: number,
+  ): Promise<{ opportunityId: string; created: boolean; customerId: number }> {
     const quote = await this.store.getQuote(quoteId);
     if (!quote) {
       throw new TwentyApiError(`ERP quote ${quoteId} no longer exists`, null, false);
@@ -383,10 +427,13 @@ class SyncContext {
     const linkedId = link?.twentyOpportunityId ?? null;
     const opportunityId = linkedId ?? (await this.findExistingOpportunity(quoteId));
 
-    // Nothing the ERP lacks is sent, so a contact added by hand in Twenty stays.
     const fields: TwentyFields = { name: opportunityName(quote.quoteNumber, label) };
+    // A link the ERP supplied is cleared when it goes away, as when a quote moves to
+    // an individual. One added by hand in Twenty was never ours, so it stays.
     if (contact.twentyCompanyId) fields.companyId = contact.twentyCompanyId;
+    else if (link?.twentyCompanyId) fields.companyId = null;
     if (contact.twentyPersonId) fields.pointOfContactId = contact.twentyPersonId;
+    else if (link?.twentyPersonId) fields.pointOfContactId = null;
 
     const amount = toTwentyAmount(quote.total);
     if (amount) {
@@ -398,7 +445,12 @@ class SyncContext {
 
     // Until a priced quote is confirmed sent, the last confirmed status stands.
     const sendPending =
-      quote.status === "Sent" && !isQuoteSendConfirmed(quote.lastSendStatus);
+      quote.status === "Sent" &&
+      !isQuoteSendConfirmed({
+        status: quote.lastSendStatus,
+        updatedAt: quote.lastSendUpdatedAt,
+        quoteSentAt: quote.sentAt,
+      });
     const status = sendPending ? (link?.syncedQuoteStatus ?? "Draft") : quote.status;
     const rfqStatus = RFQ_STATUS_BY_QUOTE_STATUS[status];
     if (rfqStatus && link?.syncedQuoteStatus !== status) {
@@ -420,11 +472,17 @@ class SyncContext {
         syncedQuoteStatus: status,
         syncedAmountMicros: amount?.amountMicros ?? null,
         syncedSourceUpdatedAt: quote.updatedAt,
+        twentyCompanyId: contact.twentyCompanyId,
+        twentyPersonId: contact.twentyPersonId,
       },
       this.now(),
     );
-    return { opportunityId: result.id, created: result.created };
+    return { opportunityId: result.id, created: result.created, customerId: quote.customerId };
   }
+}
+
+function failureDetail(error: unknown): CompanyChoiceDetail | null {
+  return error instanceof CompanyChoiceRequiredError ? error.detail : null;
 }
 
 function errorMessage(error: unknown): string {
@@ -446,6 +504,8 @@ export interface SingleQuoteSyncReport {
   company: string | null;
   contactName: string | null;
   contactEmail: string | null;
+  /** Something the ERP holds that could not go to Twenty, such as a bad phone number. */
+  warning: string | null;
 }
 
 export type SingleQuoteSyncResult =
@@ -470,12 +530,30 @@ export async function syncOneQuote(deps: {
   if (quote.isArchived) return { ok: false, error: `Quote ${quoteNumber} is archived.` };
 
   const record: DueRecord = { entityType: "quote", entityId: quote.id };
+  let synced: { opportunityId: string; created: boolean; customerId: number };
   try {
-    const context = new SyncContext(deps.store, deps.twenty, now);
-    const { opportunityId, created } = await context.syncQuote(quote.id);
-    const [opportunity, matches] = await Promise.all([
+    synced = await new SyncContext(deps.store, deps.twenty, now).syncQuote(quote.id);
+  } catch (error) {
+    if (!(error instanceof TwentyApiError)) {
+      console.error(`[Twenty] quote ${quote.id} failed`, error);
+    }
+    const message = errorMessage(error);
+    // Recording can fail for the same reason the sync did; the caller still gets the result.
+    await deps.store
+      .markFailed(record, message, now(), failureDetail(error))
+      .catch((saveError) => {
+        console.error(`[Twenty] could not record the failure for quote ${quote.id}`, saveError);
+      });
+    return { ok: false, error: message };
+  }
+
+  // The sync itself succeeded, so a failed read-back is not a failed record.
+  try {
+    const { opportunityId, created, customerId } = synced;
+    const [opportunity, matches, customerLink] = await Promise.all([
       deps.twenty.readOpportunity(opportunityId),
       deps.twenty.findOpportunitiesByErpQuoteId(String(quote.id)),
+      deps.store.getLink("customer", customerId),
     ]);
     const micros = opportunity?.amount?.amountMicros;
     const person = opportunity?.pointOfContact;
@@ -494,18 +572,14 @@ export async function syncOneQuote(deps: {
           [person?.name?.firstName, person?.name?.lastName].filter(Boolean).join(" ") ||
           null,
         contactEmail: person?.emails?.primaryEmail ?? null,
+        warning: customerLink?.syncWarning ?? null,
       },
     };
   } catch (error) {
-    if (!(error instanceof TwentyApiError)) {
-      console.error(`[Twenty] quote ${quote.id} failed`, error);
-    }
-    const message = errorMessage(error);
-    // Recording can fail for the same reason the sync did; the caller still gets the result.
-    await deps.store.markFailed(record, message, now()).catch((saveError) => {
-      console.error(`[Twenty] could not record the failure for quote ${quote.id}`, saveError);
-    });
-    return { ok: false, error: message };
+    return {
+      ok: false,
+      error: `Synced, but could not read the result back: ${errorMessage(error)}`,
+    };
   }
 }
 
@@ -539,7 +613,7 @@ export async function runTwentySync(deps: {
       if (!(error instanceof TwentyApiError)) {
         console.error(`[Twenty] ${record.entityType} ${record.entityId} failed`, error);
       }
-      await deps.store.markFailed(record, errorMessage(error), now());
+      await deps.store.markFailed(record, errorMessage(error), now(), failureDetail(error));
       result.failed += 1;
       // During an outage the remaining records would only collect failed attempts.
       if (error instanceof TwentyApiError && error.transient) {

@@ -26,8 +26,10 @@ export function normalizeWorkspaceUrl(
   } catch {
     return { ok: false, error: "Enter a full URL, such as https://api.twenty.com" };
   }
-  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (url.protocol !== "https:" && !isLocal) {
+  const isLocalHttp =
+    url.protocol === "http:" &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+  if (url.protocol !== "https:" && !isLocalHttp) {
     return { ok: false, error: "The Twenty URL must use https://" };
   }
   if (url.hostname.endsWith(".twenty.com")) {
@@ -280,6 +282,31 @@ export function createTwentyClient(options: TwentyClientOptions) {
     },
   };
 
+  /** Null when this key cannot read field metadata. */
+  async function isErpQuoteFieldUnique(): Promise<boolean | null> {
+    type ObjectSummary = { id: string; nameSingular: string };
+    type FieldList = { fields?: Array<{ name: string; isUnique?: boolean | null }> };
+    try {
+      const objects = await request<{ data?: ObjectSummary[] }>(
+        "GET",
+        "/rest/metadata/objects",
+        { query: { limit: 200 } },
+      );
+      const summary = objects.data?.find((item) => item.nameSingular === "opportunity");
+      if (!summary) return null;
+      const detail = await request<FieldList & { data?: FieldList }>(
+        "GET",
+        `/rest/metadata/objects/${summary.id}`,
+      );
+      const fields = detail.data?.fields ?? detail.fields ?? [];
+      const field = fields.find((item) => item.name === ERP_QUOTE_ID_FIELD);
+      return field ? Boolean(field.isUnique) : null;
+    } catch (error) {
+      if (error instanceof TwentyApiError && !error.transient) return null;
+      throw error;
+    }
+  }
+
   /**
    * Read-only check that the key works and every field the sync writes exists.
    * The `fields` parameter takes relation names: asking for companyId is a 400.
@@ -296,7 +323,7 @@ export function createTwentyClient(options: TwentyClientOptions) {
     });
   }
 
-  return { ...api, checkConnection };
+  return { ...api, checkConnection, isErpQuoteFieldUnique };
 }
 
 export type TwentyClient = ReturnType<typeof createTwentyClient>;

@@ -29,6 +29,14 @@ describe("normalizeWorkspaceUrl", () => {
     });
   });
 
+  it("allows plain http only for a local instance", () => {
+    expect(normalizeWorkspaceUrl("http://localhost:3000/settings")).toEqual({
+      ok: true,
+      url: "http://localhost:3000",
+    });
+    expect(normalizeWorkspaceUrl("ftp://localhost:9090").ok).toBe(false);
+  });
+
   it("keeps self-hosted origins and refuses plain http", () => {
     expect(normalizeWorkspaceUrl("https://crm.example.com/settings")).toEqual({
       ok: true,
@@ -95,6 +103,30 @@ describe("createTwentyClient", () => {
 
     expect(urls.join(",")).not.toMatch(/companyId|pointOfContactId/);
     expect(urls.join(",")).toContain("rfqStatus");
+  });
+
+  it.each([
+    [{ isUnique: true }, true],
+    [{ isUnique: false }, false],
+  ])("reads whether erpQuoteId is unique: %j", async (flags, expected) => {
+    const client = createTwentyClient({
+      baseUrl: "https://api.twenty.com",
+      apiKey: API_KEY,
+      minIntervalMs: 0,
+      fetcher: (async (url: URL) =>
+        Response.json(
+          url.pathname === "/rest/metadata/objects"
+            ? { data: [{ id: "opp", nameSingular: "opportunity" }] }
+            : { fields: [{ name: "erpQuoteId", ...flags }] },
+        )) as unknown as typeof fetch,
+    });
+
+    await expect(client.isErpQuoteFieldUnique()).resolves.toBe(expected);
+  });
+
+  it("reports unknown uniqueness when metadata is not readable", async () => {
+    const { client } = clientReturning(new Response("", { status: 403 }));
+    await expect(client.isErpQuoteFieldUnique()).resolves.toBeNull();
   });
 
   it("follows pagination across all companies", async () => {

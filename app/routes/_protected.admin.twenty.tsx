@@ -21,10 +21,14 @@ import {
   testTwentyConnection,
 } from "~/lib/twenty/settings.server";
 import { syncOneQuote } from "~/lib/twenty/sync.server";
+import { companyIdentityFor, companyKeyFor } from "~/lib/twenty/matching";
 import {
   clearTwentyRetryDelay,
+  getTwentyCompanyChoice,
   getTwentySyncOverview,
   postgresTwentySyncStore,
+  saveTwentyCompanyChoice,
+  withTwentySyncLock,
 } from "~/lib/twenty/store.server";
 
 export { default } from "~/components/admin/TwentySettingsPanel";
@@ -52,6 +56,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     lastRunAt: settings.lastRunAt,
     syncedQuotes: overview.syncedQuotes,
     failures: overview.failures,
+    warnings: overview.warnings,
   };
   return withAuthHeaders(json(data), headers);
 }
@@ -87,7 +92,12 @@ export async function action({ request }: ActionFunctionArgs) {
       );
       return respond(
         result.ok
-          ? { ok: true, message: "Workspace URL saved." }
+          ? {
+              ok: true,
+              message: result.linksCleared
+                ? "Workspace URL saved. Links to the previous workspace were cleared."
+                : "Workspace URL saved.",
+            }
           : { ok: false, message: result.error },
       );
     }
@@ -96,7 +106,11 @@ export async function action({ request }: ActionFunctionArgs) {
       const result = await testTwentyConnection(workspaceUrl);
       return respond(
         result.ok
-          ? { ok: true, message: "Connected. The key works and the required fields exist." }
+          ? {
+              ok: true,
+              message:
+                "Connected. Read access and the required fields are confirmed. Write access is first tested by a sync.",
+            }
           : { ok: false, message: result.error },
       );
     }
@@ -125,22 +139,72 @@ export async function action({ request }: ActionFunctionArgs) {
           message: "Set the workspace URL and TWENTY_API_KEY first.",
         });
       }
-      const result = await syncOneQuote({
-        store: postgresTwentySyncStore,
-        twenty,
-        quoteNumber: String(formData.get("quoteNumber") ?? ""),
-      });
-      return respond(
-        result.ok
-          ? {
-              ok: true,
-              message: result.report.created
-                ? "Opportunity created."
-                : "Existing opportunity updated.",
-              report: result.report,
-            }
-          : { ok: false, message: result.error },
+      const run = await withTwentySyncLock(() =>
+        syncOneQuote({
+          store: postgresTwentySyncStore,
+          twenty,
+          quoteNumber: String(formData.get("quoteNumber") ?? ""),
+        }),
       );
+      if (!run.ran) {
+        return respond({ ok: false, message: "A sync is running. Try again in a minute." });
+      }
+      const result = run.value;
+      if (!result.ok) return respond({ ok: false, message: result.error });
+      const { report } = result;
+      if (report.matchingOpportunities !== 1) {
+        return respond({
+          ok: false,
+          message: `Expected 1 opportunity for this quote but found ${report.matchingOpportunities}.`,
+          report,
+        });
+      }
+      return respond({
+        ok: true,
+        message: report.created ? "Opportunity created." : "Existing opportunity updated.",
+        report,
+      });
+    }
+    case "chooseCompany": {
+      const customerId = Number.parseInt(String(formData.get("customerId")), 10);
+      const choice = String(formData.get("companyId") ?? "");
+      const pending = await getTwentyCompanyChoice(customerId);
+      const customer = await postgresTwentySyncStore.getCustomer(customerId);
+      if (!pending || !customer) {
+        return respond({ ok: false, message: "This choice is no longer needed." });
+      }
+      const isCandidate = pending.candidates.some((company) => company.id === choice);
+      if (choice !== "new" && !isCandidate) {
+        return respond({ ok: false, message: "Choose one of the listed companies." });
+      }
+
+      const { workspaceUrl, enabled } = await getTwentySettings();
+      const twenty = buildTwentyClient(workspaceUrl);
+      if (!twenty) {
+        return respond({
+          ok: false,
+          message: "Set the workspace URL and TWENTY_API_KEY first.",
+        });
+      }
+      const companyKey = companyKeyFor(companyIdentityFor(customer));
+      const run = await withTwentySyncLock(async () => {
+        const companyId =
+          choice === "new"
+            ? (await twenty.createCompany({ name: pending.companyName })).id
+            : choice;
+        await saveTwentyCompanyChoice(customerId, companyId, companyKey);
+      });
+      if (!run.ran) {
+        return respond({ ok: false, message: "A sync is running. Try again in a minute." });
+      }
+      if (!enabled) {
+        return respond({
+          ok: true,
+          message: "Company saved. Use Sync one quote, or it will apply when the sync is enabled.",
+        });
+      }
+      await sendTwentySyncJob({ triggeredAt: new Date().toISOString() });
+      return respond({ ok: true, message: "Company saved. The sync will pick it up shortly." });
     }
     case "retry":
     case "retryAll": {
@@ -149,6 +213,13 @@ export async function action({ request }: ActionFunctionArgs) {
         return respond({ ok: false, message: "Invalid record." });
       }
       await clearTwentyRetryDelay(target);
+      const { enabled } = await getTwentySettings();
+      if (!enabled) {
+        return respond({
+          ok: true,
+          message: "Ready to retry when the sync is enabled. Sync one quote works now.",
+        });
+      }
       await sendTwentySyncJob({ triggeredAt: new Date().toISOString() });
       return respond({ ok: true, message: "Retry queued." });
     }

@@ -292,6 +292,7 @@ export async function pruneStaleDeveloperSettings(): Promise<string[]> {
     ...Object.values(DATA_RETENTION_SETTINGS),
     ...Object.values(RFQ_INTAKE_SETTINGS),
     ...Object.values(JOB_BOARD_SETTINGS),
+    ...Object.values(TWENTY_SETTINGS),
   ] as string[];
   const stale = await db
     .select({ key: developerSettings.key })

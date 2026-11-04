@@ -4,6 +4,7 @@ import {
   TWENTY_SETTINGS,
 } from "../developerSettings";
 import { getEnv } from "../env.server";
+import { clearTwentySyncLinks, withTwentySyncLock } from "./store.server";
 import {
   createTwentyClient,
   normalizeWorkspaceUrl,
@@ -52,6 +53,12 @@ export async function testTwentyConnection(
   }
   try {
     await client.checkConnection();
+    if ((await client.isErpQuoteFieldUnique()) === false) {
+      return {
+        ok: false,
+        error: "The erpQuoteId field in Twenty must be set to Unique, or retries could duplicate opportunities.",
+      };
+    }
     return { ok: true };
   } catch (error) {
     return {
@@ -65,15 +72,31 @@ export async function testTwentyConnection(
 export async function saveTwentyWorkspaceUrl(
   rawUrl: string,
   updatedBy: string,
-): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; url: string; linksCleared: boolean } | { ok: false; error: string }
+> {
   const normalized = normalizeWorkspaceUrl(rawUrl);
   if (!normalized.ok) return normalized;
-  const saved = await setDeveloperSetting(
-    TWENTY_SETTINGS.WORKSPACE_URL,
-    normalized.url || null,
-    updatedBy,
-  );
-  return saved ? normalized : { ok: false, error: "Could not save the Twenty URL." };
+  const { workspaceUrl: previous } = await getTwentySettings();
+  const url = normalized.url;
+  const changedWorkspace = Boolean(previous) && previous !== url;
+
+  // Stored record IDs belong to one workspace and mean nothing in another.
+  const result = await withTwentySyncLock(async () => {
+    const saved = await setDeveloperSetting(
+      TWENTY_SETTINGS.WORKSPACE_URL,
+      url || null,
+      updatedBy,
+    );
+    if (saved && changedWorkspace) await clearTwentySyncLinks();
+    return saved;
+  });
+  if (!result.ran) {
+    return { ok: false, error: "A sync is running. Try again in a minute." };
+  }
+  return result.value
+    ? { ok: true, url, linksCleared: changedWorkspace }
+    : { ok: false, error: "Could not save the Twenty URL." };
 }
 
 /** Enabling requires a passing connection test, so a bad setup never starts syncing. */
@@ -86,11 +109,12 @@ export async function enableTwentySync(
 
   // The first enable fixes the start date; re-enabling keeps it so gaps catch up.
   if (!settings.syncStartedAt) {
-    await setDeveloperSetting(
+    const started = await setDeveloperSetting(
       TWENTY_SETTINGS.SYNC_STARTED_AT,
       new Date().toISOString(),
       updatedBy,
     );
+    if (!started) return { ok: false, error: "Could not save the sync start date." };
   }
   const saved = await setDeveloperSetting(TWENTY_SETTINGS.ENABLED, "true", updatedBy);
   return saved ? { ok: true } : { ok: false, error: "Could not enable the sync." };

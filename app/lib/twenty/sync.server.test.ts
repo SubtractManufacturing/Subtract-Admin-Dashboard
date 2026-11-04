@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { TwentySyncLink } from "../db/schema";
 import { FakeTwenty } from "~/test/fake-twenty";
 import { TwentyApiError } from "./client.server";
+import { companyIdentityFor, companyKeyFor } from "./matching";
 import {
   retryDelayMinutes,
   runTwentySync,
@@ -44,6 +45,8 @@ class FakeStore implements TwentySyncStore {
       syncedCompanyKey: null,
       syncedQuoteStatus: null,
       syncedAmountMicros: null,
+      failureDetail: null,
+      syncWarning: null,
       syncState: null,
       lastError: null,
       attemptCount: 0,
@@ -100,10 +103,33 @@ class FakeStore implements TwentySyncStore {
       attemptCount: 0,
       lastAttemptAt: now,
       nextAttemptAt: null,
+      failureDetail: null,
     };
   }
-  async saveCustomerLink(id: number, values: Partial<TwentySyncLink>, now: Date) {
+  async saveCustomerLink(
+    id: number,
+    values: Partial<TwentySyncLink>,
+    now: Date,
+    { invalidateQuotes }: { invalidateQuotes: boolean },
+  ) {
     this.merge("customer", id, { ...values, ...this.synced(now) });
+    if (!invalidateQuotes) return;
+    for (const quote of this.quotes.values()) {
+      if (quote.customerId !== id || !this.link("quote", quote.id)) continue;
+      this.merge("quote", quote.id, { syncedSourceUpdatedAt: null });
+    }
+  }
+  chooseCompany(customerId: number, companyId: string) {
+    const customer = this.customers.get(customerId) as SyncCustomer;
+    this.merge("customer", customerId, {
+      twentyCompanyId: companyId,
+      syncedCompanyKey: companyKeyFor(companyIdentityFor(customer)),
+      syncedSourceUpdatedAt: null,
+    });
+    for (const link of this.links.values()) {
+      if (link.failureDetail?.customerId !== customerId) continue;
+      this.merge(link.entityType, link.entityId, { nextAttemptAt: null, failureDetail: null });
+    }
   }
   async saveQuoteLink(id: number, values: Partial<TwentySyncLink>, now: Date) {
     if (this.crashOnQuoteLinkSave) {
@@ -112,22 +138,21 @@ class FakeStore implements TwentySyncStore {
     }
     this.merge("quote", id, { ...values, ...this.synced(now) });
   }
-  async markFailed(record: DueRecord, error: string, now: Date) {
+  async markFailed(
+    record: DueRecord,
+    error: string,
+    now: Date,
+    detail: TwentySyncLink["failureDetail"] = null,
+  ) {
     const attemptCount = (this.link(record.entityType, record.entityId)?.attemptCount ?? 0) + 1;
     this.merge(record.entityType, record.entityId, {
       syncState: "failed",
       lastError: error,
+      failureDetail: detail,
       attemptCount,
       lastAttemptAt: now,
       nextAttemptAt: new Date(now.getTime() + retryDelayMinutes(attemptCount) * 60_000),
     });
-  }
-  async invalidateCustomerQuotes(customerId: number) {
-    for (const quote of this.quotes.values()) {
-      if (quote.customerId !== customerId) continue;
-      const link = this.link("quote", quote.id);
-      if (link) this.merge("quote", quote.id, { syncedSourceUpdatedAt: null });
-    }
   }
 }
 
@@ -163,7 +188,9 @@ function addQuote(id: number, customerId: number, values: Partial<SyncQuote & { 
     total: "0.00",
     updatedAt: T1,
     createdAt: T1,
+    sentAt: null,
     lastSendStatus: null,
+    lastSendUpdatedAt: null,
     ...values,
   };
   store.quotes.set(id, quote);
@@ -481,6 +508,83 @@ describe("priced quote delivery", () => {
   });
 });
 
+describe("email outcomes and staff decisions", () => {
+  const later = (minutes: number) => new Date(T1.getTime() + minutes * 60_000);
+
+  async function update(values: Partial<SyncQuote>) {
+    addQuote(10, 1, { ...store.quotes.get(10), ...values });
+    clock = values.updatedAt ?? clock;
+    await run();
+  }
+
+  it.each(["failed", "bounced", "rejected"])(
+    "honors staff marking a quote sent after a %s email",
+    async (lastSendStatus) => {
+      addCustomer(1);
+      addQuote(10, 1, { status: "Draft" });
+      await run();
+
+      await update({
+        status: "Sent",
+        lastSendStatus,
+        lastSendUpdatedAt: later(1),
+        sentAt: later(2),
+        updatedAt: later(2),
+      });
+
+      expect(twenty.opportunities[0].fields.rfqStatus).toBe("QUOTE_SENT");
+    },
+  );
+
+  it.each(["failed", "bounced"])("holds a quote whose approved send then %s", async (status) => {
+    addCustomer(1);
+    addQuote(10, 1, { status: "Draft" });
+    await run();
+
+    await update({
+      status: "Sent",
+      lastSendStatus: status,
+      sentAt: later(1),
+      lastSendUpdatedAt: later(2),
+      updatedAt: later(2),
+    });
+
+    expect(twenty.opportunities[0].fields.rfqStatus).toBe("QUOTING");
+  });
+
+  it("is not fooled by a sweep between a rejection and the quote reverting", async () => {
+    addCustomer(1);
+    addQuote(10, 1, { status: "Draft" });
+    await run();
+
+    await update({
+      status: "Sent",
+      lastSendStatus: "rejected",
+      sentAt: later(1),
+      lastSendUpdatedAt: later(2),
+      updatedAt: later(2),
+    });
+
+    expect(twenty.opportunities[0].fields.rfqStatus).toBe("QUOTING");
+  });
+
+  it("does not treat an in-progress email as a staff decision", async () => {
+    addCustomer(1);
+    addQuote(10, 1, { status: "Draft" });
+    await run();
+
+    await update({
+      status: "Sent",
+      lastSendStatus: "pending_approval",
+      lastSendUpdatedAt: later(1),
+      sentAt: later(2),
+      updatedAt: later(2),
+    });
+
+    expect(twenty.opportunities[0].fields.rfqStatus).toBe("QUOTING");
+  });
+});
+
 describe("corrections", () => {
   const later = (minutes: number) => new Date(T1.getTime() + minutes * 60_000);
 
@@ -574,6 +678,7 @@ describe("syncOneQuote", () => {
         company: "Acme",
         contactName: "Bob Jones",
         contactEmail: "bob@acme.com",
+        warning: null,
       },
     });
   });
@@ -635,6 +740,22 @@ describe("syncOneQuote", () => {
       ok: false,
       error: "Unexpected sync error; see the server log",
     });
+  });
+
+  it("does not fail the record when only the read-back fails", async () => {
+    addCustomer(1);
+    addQuote(10, 1);
+    twenty.readOpportunity = async () => {
+      throw new TwentyApiError("Could not reach Twenty", null, true);
+    };
+
+    const result = await single("Q2611-0010");
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("could not read the result back"),
+    });
+    expect(store.link("quote", 10)?.syncState).toBe("synced");
   });
 
   it("records a failure the admin can see", async () => {
@@ -728,9 +849,53 @@ describe("linking imported records", () => {
     await run();
 
     expect(store.link("quote", 10)?.syncState).toBe("failed");
-    expect(store.link("quote", 10)?.lastError).toContain("Several Twenty companies");
+    const quote = store.link("quote", 10);
+    expect(quote?.lastError).toBe("More than one Twenty company could be Acme. Choose the right one.");
+    expect(quote?.lastError).not.toMatch(/merge/i);
+    expect(quote?.failureDetail).toMatchObject({
+      kind: "company_choice",
+      customerId: 1,
+      companyName: "Acme",
+      candidates: [{ id: "a" }, { id: "b" }],
+    });
     expect(store.link("quote", 11)?.syncState).toBe("synced");
     expect(twenty.opportunities).toHaveLength(1);
+  });
+
+  it("uses the company staff chose, without changing anything else in Twenty", async () => {
+    twenty.companies.push(
+      { id: "a", name: "Acme", domain: null },
+      { id: "b", name: "ACME LLC", domain: null },
+    );
+    addCustomer(1, { email: "bob@gmail.com" });
+    addQuote(10, 1);
+    await run();
+
+    store.chooseCompany(1, "b");
+    await run();
+
+    expect(store.link("quote", 10)).toMatchObject({ syncState: "synced", failureDetail: null });
+    expect(twenty.opportunities[0].fields.companyId).toBe("b");
+    expect(twenty.companies).toHaveLength(2);
+    expect(twenty.writesOf("createCompany")).toHaveLength(0);
+  });
+
+  it("keeps the staff choice on later customer edits", async () => {
+    twenty.companies.push(
+      { id: "a", name: "Acme", domain: null },
+      { id: "b", name: "ACME LLC", domain: null },
+    );
+    addCustomer(1, { email: "bob@gmail.com" });
+    addQuote(10, 1);
+    await run();
+    store.chooseCompany(1, "b");
+    await run();
+
+    addCustomer(1, { email: "bob@gmail.com", phone: "555-123-4567", updatedAt: T2 });
+    clock = T2;
+    await run();
+
+    expect(store.link("customer", 1)).toMatchObject({ syncState: "synced", twentyCompanyId: "b" });
   });
 });
 
@@ -858,7 +1023,91 @@ describe("preserving Twenty data", () => {
   });
 });
 
+describe("phone warnings", () => {
+  it("warns about a phone it cannot send, and still syncs the contact", async () => {
+    addCustomer(1, { phone: "call the front desk" });
+    addQuote(10, 1);
+
+    await run();
+
+    expect(store.link("customer", 1)?.syncWarning).toContain("call the front desk");
+    expect(store.link("customer", 1)?.syncState).toBe("synced");
+    expect(twenty.people).toHaveLength(1);
+    expect(twenty.opportunities).toHaveLength(1);
+  });
+
+  it("warns when Twenty refuses a phone that looked valid", async () => {
+    const createPerson = twenty.createPerson.bind(twenty);
+    twenty.createPerson = async (fields) => {
+      if (fields.phones) {
+        throw new TwentyApiError("Twenty returned 400: Invalid phone number", 400, false);
+      }
+      return createPerson(fields);
+    };
+    addCustomer(1, { phone: "555-123-4567" });
+
+    await run();
+
+    expect(store.link("customer", 1)?.syncWarning).toContain("555-123-4567");
+    expect(store.link("customer", 1)?.syncState).toBe("synced");
+  });
+
+  it("clears the warning once the phone is fixed", async () => {
+    addCustomer(1, { phone: "12345" });
+    await run();
+    expect(store.link("customer", 1)?.syncWarning).not.toBeNull();
+
+    addCustomer(1, { phone: "555-123-4567", updatedAt: T2 });
+    clock = T2;
+    await run();
+
+    expect(store.link("customer", 1)?.syncWarning).toBeNull();
+  });
+
+  it.each([null, "", "   ", "(555) 123-4567 x22"])("does not warn about %j", async (phone) => {
+    addCustomer(1, { phone });
+
+    await run();
+
+    expect(store.link("customer", 1)?.syncWarning).toBeNull();
+  });
+
+  it("shows the warning on a single-quote sync", async () => {
+    addCustomer(1, { phone: "12345" });
+    addQuote(10, 1);
+
+    const result = await syncOneQuote({ store, twenty, quoteNumber: "Q2611-0010" });
+
+    expect(result).toMatchObject({
+      ok: true,
+      report: { warning: expect.stringContaining("12345") },
+    });
+  });
+});
+
 describe("customer changes", () => {
+  it("clears an ERP-supplied company when a quote moves to an individual", async () => {
+    addCustomer(1);
+    addCustomer(2, {
+      companyName: null,
+      displayName: "Ann Hill",
+      contactName: "Ann Hill",
+      email: "ann@gmail.com",
+    });
+    addQuote(10, 1);
+    await run();
+    expect(twenty.opportunities[0].fields.companyId).toBeTruthy();
+
+    addQuote(10, 2, { updatedAt: T2 });
+    clock = T2;
+    await run();
+
+    expect(twenty.opportunities[0].fields.companyId).toBeNull();
+    expect(twenty.opportunities[0].fields.pointOfContactId).toBe(
+      store.link("customer", 2)?.twentyPersonId,
+    );
+  });
+
   it("repoints open opportunities when the customer's company changes", async () => {
     addCustomer(1);
     addQuote(10, 1);

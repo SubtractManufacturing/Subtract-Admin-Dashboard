@@ -19,8 +19,12 @@ import {
   clearTwentyRetryDelay,
   createdAtOrAfter,
   getTwentySyncOverview,
+  getTwentyCompanyChoice,
   postgresTwentySyncStore as store,
+  saveTwentyCompanyChoice,
+  withTwentySyncLock,
 } from "./store.server";
+import { companyIdentityFor, companyKeyFor } from "./matching";
 import { runTwentySync } from "./sync.server";
 
 const tag = randomUUID().slice(0, 8);
@@ -388,6 +392,83 @@ describe("priced quote delivery", () => {
     expect(await isDue("quote", quote.id)).toBe(false);
     expect((await store.getQuote(quote.id))?.lastSendStatus).toBeNull();
     expect(opportunityFor(quote.quoteNumber)?.fields.rfqStatus).toBe("NEW_RFQ");
+  });
+});
+
+describe("shared lock", () => {
+  it("turns away a second sync while one is running", async () => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = () => {};
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+
+    const first = withTwentySyncLock(async () => {
+      entered();
+      await held;
+      return "first";
+    });
+    await inside;
+
+    await expect(withTwentySyncLock(async () => "second")).resolves.toEqual({ ran: false });
+
+    release();
+    await expect(first).resolves.toEqual({ ran: true, value: "first" });
+    await expect(withTwentySyncLock(async () => "third")).resolves.toEqual({
+      ran: true,
+      value: "third",
+    });
+  });
+});
+
+describe("choosing a company", () => {
+  it("keeps the choice through a real sync", async () => {
+    const customer = await seedCustomer({
+      companyName: `Twin ${tag}`,
+      displayName: `Twin ${tag}`,
+      email: `twin-${tag}@gmail.com`,
+    });
+    const quote = await manualQuote(customer.id);
+    twenty.companies.push(
+      { id: "one", name: `Twin ${tag}`, domain: null },
+      { id: "two", name: `TWIN ${tag} LLC`, domain: null },
+    );
+
+    await sweep();
+    const pending = await getTwentyCompanyChoice(customer.id);
+    expect(pending?.candidates.map((item) => item.id)).toEqual(["one", "two"]);
+    expect((await getTwentySyncOverview()).failures.some((item) => item.companyChoice)).toBe(true);
+
+    await saveTwentyCompanyChoice(
+      customer.id,
+      "two",
+      companyKeyFor(companyIdentityFor(customer)),
+    );
+    await sweep();
+
+    expect(await store.getLink("customer", customer.id)).toMatchObject({
+      syncState: "synced",
+      twentyCompanyId: "two",
+    });
+    expect(opportunityFor(quote.quoteNumber)?.fields.companyId).toBe("two");
+  });
+});
+
+describe("phone warnings", () => {
+  it("lists a customer whose phone could not sync", async () => {
+    const customer = await seedCustomer({ phone: "ask for Bob" });
+
+    await sweep();
+
+    const { warnings } = await getTwentySyncOverview();
+    expect(warnings).toContainEqual({
+      customerId: customer.id,
+      customerName: customer.displayName,
+      warning: expect.stringContaining("ask for Bob"),
+    });
   });
 });
 

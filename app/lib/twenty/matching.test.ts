@@ -4,6 +4,7 @@ import {
   businessDomainFromEmail,
   companyIdentityFor,
   matchCompany,
+  isQuoteSendConfirmed,
   normalizeCompanyName,
   RFQ_STATUS_BY_QUOTE_STATUS,
   splitContactName,
@@ -149,8 +150,24 @@ describe("matchCompany", () => {
   it("reports ambiguity instead of guessing", () => {
     const twin = { id: "acme2", name: "ACME Manufacturing LLC", domain: null };
     expect(matchCompany([acme, twin], { ...noFree, name: "Acme Manufacturing" })).toEqual(
-      { kind: "ambiguous", candidates: [acme.name, twin.name] },
+      { kind: "ambiguous", candidates: [acme, twin] },
     );
+  });
+
+  it("asks rather than linking the same name on a different domain", () => {
+    const other = { id: "other", name: "Acme", domain: "other.com" };
+    expect(matchCompany([other], { ...noFree, name: "Acme", domain: "acme.com" })).toEqual({
+      kind: "ambiguous",
+      candidates: [other],
+    });
+  });
+
+  it("accepts a same-name company with no domain recorded", () => {
+    const bare = { id: "bare", name: "Acme", domain: null };
+    expect(matchCompany([bare], { ...noFree, name: "Acme", domain: "acme.com" })).toEqual({
+      kind: "matched",
+      id: "bare",
+    });
   });
 
   it("settles a duplicate name with the business domain", () => {
@@ -168,6 +185,26 @@ describe("matchCompany", () => {
     expect(
       matchCompany([{ id: "g", name: "gmail.com", domain: "gmail.com" }], noFree),
     ).toEqual({ kind: "none", domainTaken: false });
+  });
+});
+
+describe("isQuoteSendConfirmed", () => {
+  const before = new Date("2026-11-03T10:00:00.000Z");
+  const after = new Date("2026-11-03T11:00:00.000Z");
+
+  it("accepts delivery, and quotes that never had an email", () => {
+    expect(isQuoteSendConfirmed({ status: "sent", updatedAt: after, quoteSentAt: before })).toBe(true);
+    expect(isQuoteSendConfirmed({ status: null, updatedAt: null, quoteSentAt: after })).toBe(true);
+  });
+
+  it.each(["pending_approval", "queued", "sending"])("holds a %s email", (status) => {
+    expect(isQuoteSendConfirmed({ status, updatedAt: before, quoteSentAt: after })).toBe(false);
+  });
+
+  it.each(["failed", "bounced", "rejected"])("counts a %s email only if staff marked sent later", (status) => {
+    expect(isQuoteSendConfirmed({ status, updatedAt: before, quoteSentAt: after })).toBe(true);
+    expect(isQuoteSendConfirmed({ status, updatedAt: after, quoteSentAt: before })).toBe(false);
+    expect(isQuoteSendConfirmed({ status, updatedAt: after, quoteSentAt: null })).toBe(false);
   });
 });
 

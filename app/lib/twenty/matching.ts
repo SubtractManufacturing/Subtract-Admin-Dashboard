@@ -24,17 +24,31 @@ export const RFQ_STATUS_BY_QUOTE_STATUS: Readonly<Record<string, string>> = {
 /** Custom unique opportunity field holding the ERP quote ID; retries reconcile by it. */
 export const ERP_QUOTE_ID_FIELD = "erpQuoteId";
 
+/** Still on its way: the quote may say Sent, but the customer does not have it yet. */
+const SEND_IN_PROGRESS = new Set(["pending_approval", "queued", "sending"]);
+
+export interface QuoteSendState {
+  /** Status of the latest priced quote email, or null when none was ever queued. */
+  status: string | null;
+  updatedAt: Date | null;
+  /** When the quote last moved to Sent. */
+  quoteSentAt: Date | null;
+}
+
 /**
- * With approval on, a quote turns Sent before delivery, so Sent alone does not
- * prove the customer has it. A quote marked Sent by hand has no send to wait for,
- * and a rejected approval does not stop staff marking it sent afterwards.
- * Only the priced quote email counts; RFQ acknowledgments are never passed here.
+ * Whether a Sent quote has really gone out. With approval on, a quote turns Sent
+ * before delivery, so the status alone proves nothing. RFQ acknowledgments are
+ * never passed here. A failed, bounced or rejected email does not count, unless
+ * staff marked the quote sent afterwards: that is their decision, made after the
+ * email outcome, and it covers rejecting an approval then sending another way.
+ * A rejection is saved just before the quote reverts, so the timing also stops a
+ * sweep between those two writes from reading it as sent.
  */
-export function isQuoteSendConfirmed(lastSendStatus: string | null): boolean {
-  return (
-    lastSendStatus === null ||
-    lastSendStatus === "sent" ||
-    lastSendStatus === "rejected"
+export function isQuoteSendConfirmed(send: QuoteSendState): boolean {
+  if (send.status === null || send.status === "sent") return true;
+  if (SEND_IN_PROGRESS.has(send.status)) return false;
+  return Boolean(
+    send.quoteSentAt && send.updatedAt && send.quoteSentAt > send.updatedAt,
   );
 }
 
@@ -198,9 +212,17 @@ export interface TwentyCompanySummary {
   domain: string | null;
 }
 
+/** Saved with a failure so staff can pick the right company on the admin page. */
+export interface CompanyChoiceDetail {
+  kind: "company_choice";
+  customerId: number;
+  companyName: string;
+  candidates: TwentyCompanySummary[];
+}
+
 export type CompanyMatch =
   | { kind: "matched"; id: string }
-  | { kind: "ambiguous"; candidates: string[] }
+  | { kind: "ambiguous"; candidates: TwentyCompanySummary[] }
   | { kind: "none"; domainTaken: boolean };
 
 /** Imported accounts are often named after their domain: "acme.com" or "Acme". */
@@ -235,13 +257,16 @@ export function matchCompany(
     ? companies.filter((company) => normalizeCompanyName(company.name) === key)
     : [];
 
-  if (byName.length === 1) return { kind: "matched", id: byName[0].id };
-  if (byName.length > 1) {
+  if (byName.length > 0) {
     const sameDomain = byName.filter((company) => company.domain === domain);
     if (domain && sameDomain.length === 1) {
       return { kind: "matched", id: sameDomain[0].id };
     }
-    return { kind: "ambiguous", candidates: byName.map((company) => company.name) };
+    // One name on a different domain may be an unrelated company of the same name.
+    const conflicting =
+      Boolean(domain) && byName.every((company) => company.domain && company.domain !== domain);
+    if (byName.length === 1 && !conflicting) return { kind: "matched", id: byName[0].id };
+    return { kind: "ambiguous", candidates: byName };
   }
 
   if (!domain) return { kind: "none", domainTaken: false };
@@ -264,7 +289,7 @@ export function matchCompany(
   if (usable.length > 1) {
     const exact = usable.filter((company) => company.domain === domain);
     if (exact.length === 1) return { kind: "matched", id: exact[0].id };
-    return { kind: "ambiguous", candidates: usable.map((company) => company.name) };
+    return { kind: "ambiguous", candidates: usable };
   }
   return { kind: "none", domainTaken: holdsDomain };
 }

@@ -2,7 +2,7 @@ import type { Job } from "pg-boss";
 
 import { setDeveloperSetting, TWENTY_SETTINGS } from "../../developerSettings";
 import { buildTwentyClient, getTwentySettings } from "../../twenty/settings.server";
-import { postgresTwentySyncStore } from "../../twenty/store.server";
+import { postgresTwentySyncStore, withTwentySyncLock } from "../../twenty/store.server";
 import { runTwentySync } from "../../twenty/sync.server";
 import type { TwentySyncPayload } from "../types";
 
@@ -18,11 +18,13 @@ export async function handleTwentySync(jobs: Job<TwentySyncPayload>[]) {
       continue;
     }
 
-    const result = await runTwentySync({
-      store: postgresTwentySyncStore,
-      twenty,
-      syncStartedAt: settings.syncStartedAt,
-    });
+    const { syncStartedAt } = settings;
+    const run = await withTwentySyncLock(() =>
+      runTwentySync({ store: postgresTwentySyncStore, twenty, syncStartedAt }),
+    );
+    // Another sync holds the lock; this sweep's work simply waits for the next one.
+    if (!run.ran) continue;
+    const result = run.value;
     await setDeveloperSetting(
       TWENTY_SETTINGS.LAST_RUN_AT,
       new Date().toISOString(),

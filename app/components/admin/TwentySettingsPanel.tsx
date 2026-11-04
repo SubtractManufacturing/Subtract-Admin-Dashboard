@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { Link, useFetcher, useLoaderData } from "@remix-run/react";
 
 import AdminPageHeader from "~/components/admin/PageHeader";
+import type { CompanyChoiceDetail } from "~/lib/twenty/matching";
 import type { SingleQuoteSyncReport } from "~/lib/twenty/sync.server";
 
 interface TwentyFailure {
@@ -9,6 +10,7 @@ interface TwentyFailure {
   entityId: number;
   label: string;
   lastError: string | null;
+  companyChoice: CompanyChoiceDetail | null;
   attemptCount: number;
   lastAttemptAt: string | null;
   nextAttemptAt: string | null;
@@ -22,6 +24,7 @@ export type TwentyAdminLoaderData = {
   lastRunAt: string | null;
   syncedQuotes: number;
   failures: TwentyFailure[];
+  warnings: Array<{ customerId: number; customerName: string; warning: string }>;
 };
 
 export type TwentyAdminActionData = {
@@ -35,6 +38,45 @@ const BUTTON_CLASS =
 
 function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "Never";
+}
+
+function CompanyChoice({
+  choice,
+  disabled,
+  onChoose,
+}: {
+  choice: CompanyChoiceDetail;
+  disabled: boolean;
+  onChoose: (companyId: string) => void;
+}) {
+  const [selected, setSelected] = useState("");
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <select
+        aria-label={`Company for ${choice.companyName}`}
+        value={selected}
+        onChange={(event) => setSelected(event.target.value)}
+        className="min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-900 dark:text-gray-100"
+      >
+        <option value="">Choose a company</option>
+        {choice.candidates.map((company) => (
+          <option key={company.id} value={company.id}>
+            {company.name}
+            {company.domain ? ` (${company.domain})` : ""}
+          </option>
+        ))}
+        <option value="new">Create new: {choice.companyName}</option>
+      </select>
+      <button
+        type="button"
+        className={BUTTON_CLASS}
+        disabled={disabled || !selected}
+        onClick={() => onChoose(selected)}
+      >
+        Use this company
+      </button>
+    </div>
+  );
 }
 
 export default function TwentySettingsPanel() {
@@ -208,6 +250,12 @@ export default function TwentySettingsPanel() {
             <dd>{report.amount === null ? "None" : `${report.amount.toFixed(2)}`}</dd>
             <dt className="text-gray-500 dark:text-gray-400">rfqStatus</dt>
             <dd>{report.rfqStatus ?? "None"}</dd>
+            {report.warning && (
+              <>
+                <dt className="text-gray-500 dark:text-gray-400">Warning</dt>
+                <dd className="text-amber-700 dark:text-amber-300">{report.warning}</dd>
+              </>
+            )}
           </dl>
         )}
       </section>
@@ -248,6 +296,18 @@ export default function TwentySettingsPanel() {
                   <p className="mt-0.5 break-words text-sm text-red-700 dark:text-red-300">
                     {failure.lastError}
                   </p>
+                  {failure.companyChoice && (
+                    <CompanyChoice
+                      choice={failure.companyChoice}
+                      disabled={isBusy}
+                      onChoose={(companyId) =>
+                        submit("chooseCompany", {
+                          customerId: String(failure.companyChoice?.customerId),
+                          companyId,
+                        })
+                      }
+                    />
+                  )}
                   <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                     {failure.attemptCount} attempt(s). Next automatic retry:{" "}
                     {formatTime(failure.nextAttemptAt)}
@@ -271,6 +331,28 @@ export default function TwentySettingsPanel() {
           </ul>
         )}
       </section>
+
+      {data.warnings.length > 0 && (
+        <section className="mt-6 max-w-3xl rounded-xl border border-amber-200 bg-amber-50 p-5 sm:p-6 dark:border-amber-900/50 dark:bg-amber-950/30">
+          <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+            Sync warnings ({data.warnings.length})
+          </h2>
+          <p className="mt-1 mb-3 text-xs text-amber-800 dark:text-amber-200">
+            These customers synced, but some details did not reach Twenty. Fixing
+            the customer clears the warning on the next sync.
+          </p>
+          <ul className="space-y-1 text-sm text-amber-900 dark:text-amber-100">
+            {data.warnings.map((item) => (
+              <li key={item.customerId}>
+                <Link to={`/customers/${item.customerId}`} className="font-medium underline">
+                  {item.customerName}
+                </Link>
+                : {item.warning}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

@@ -1027,6 +1027,12 @@ export const twentySyncLinks = pgTable(
 
     syncState: text("sync_state").$type<"synced" | "failed">(),
     lastError: text("last_error"),
+    /** Set when a person needs to act, such as choosing between matching companies. */
+    failureDetail: jsonb("failure_detail").$type<
+      import("~/lib/twenty/matching").CompanyChoiceDetail | null
+    >(),
+    /** Synced, but something the ERP holds could not go to Twenty. */
+    syncWarning: text("sync_warning"),
     attemptCount: integer("attempt_count").default(0).notNull(),
     lastAttemptAt: timestamp("last_attempt_at"),
     nextAttemptAt: timestamp("next_attempt_at"),
@@ -1125,8 +1131,8 @@ export const sentEmails = pgTable(
     sentByUserId: text("sent_by_user_id").references(() => users.id),
     sentByUserEmail: text("sent_by_user_email"), // denormalized for audit
 
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").default(utcNow).notNull(),
+    updatedAt: timestamp("updated_at").default(utcNow).notNull(),
 
     approvedByUserId: text("approved_by_user_id").references(() => users.id),
     approvedAt: timestamp("approved_at"),

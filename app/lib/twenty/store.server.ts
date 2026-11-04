@@ -5,6 +5,7 @@ import { EMAIL_CONTEXT } from "../email/email-context-registry";
 
 import { db } from "../db";
 import { customers, quotes, twentySyncLinks } from "../db/schema";
+import type { CompanyChoiceDetail } from "./matching";
 import {
   retryDelayMinutes,
   type DueRecord,
@@ -32,6 +33,28 @@ const QUOTE_SEND_EMAILS = sql.raw(
 );
 const quoteVersionSql = sql`date_trunc('milliseconds', greatest("quotes"."updated_at", (select max(se."updated_at") ${QUOTE_SEND_EMAILS})))`;
 const lastSendStatusSql = sql<string | null>`(select se."status"::text ${QUOTE_SEND_EMAILS} order by se."id" desc limit 1)`;
+const lastSendUpdatedAtSql = sql<Date | null>`(select se."updated_at" ${QUOTE_SEND_EMAILS} order by se."id" desc limit 1)`;
+
+/** Any fixed number: it only has to be the same for every Twenty sync. */
+const TWENTY_SYNC_LOCK = 7_401_194;
+
+/**
+ * Runs one sync at a time across the web and worker processes, so a single-quote
+ * sync and a sweep cannot both create the same company. Busy callers skip rather
+ * than queue. The transaction exists only to hold the lock; `run` uses its own
+ * connections.
+ */
+export async function withTwentySyncLock<T>(
+  run: () => Promise<T>,
+): Promise<{ ran: true; value: T } | { ran: false }> {
+  return db.transaction(async (tx) => {
+    const rows = await tx.execute<{ locked: boolean }>(
+      sql`select pg_try_advisory_xact_lock(${TWENTY_SYNC_LOCK}) as locked`,
+    );
+    if (!rows[0]?.locked) return { ran: false };
+    return { ran: true, value: await run() };
+  });
+}
 
 /**
  * Created at or after an instant, independent of the session timezone. Stored
@@ -144,7 +167,9 @@ export const postgresTwentySyncStore: TwentySyncStore = {
         status: quotes.status,
         total: quotes.total,
         updatedAt: sql<Date>`${quoteVersionSql}`.mapWith(quotes.updatedAt),
+        sentAt: quotes.sentAt,
         lastSendStatus: lastSendStatusSql,
+        lastSendUpdatedAt: sql<Date | null>`${lastSendUpdatedAtSql}`.mapWith(quotes.updatedAt),
       })
       .from(quotes)
       .where(eq(quotes.id, id))
@@ -175,17 +200,38 @@ export const postgresTwentySyncStore: TwentySyncStore = {
     return row ?? null;
   },
 
-  saveCustomerLink: (customerId, values, now) =>
-    saveLink("customer", customerId, values, now),
+  async saveCustomerLink(customerId, values, now, { invalidateQuotes }) {
+    await db.transaction(async (tx) => {
+      await saveLink("customer", customerId, values, now, tx);
+      if (!invalidateQuotes) return;
+      // The quotes must re-sync to pick up the customer's new company or person.
+      await tx
+        .update(twentySyncLinks)
+        .set({ syncedSourceUpdatedAt: null })
+        .where(
+          and(
+            eq(twentySyncLinks.entityType, "quote"),
+            inArray(
+              twentySyncLinks.entityId,
+              tx
+                .select({ id: quotes.id })
+                .from(quotes)
+                .where(eq(quotes.customerId, customerId)),
+            ),
+          ),
+        );
+    });
+  },
 
   saveQuoteLink: (quoteId, values, now) => saveLink("quote", quoteId, values, now),
 
-  async markFailed({ entityType, entityId }, error, now) {
+  async markFailed({ entityType, entityId }, error, now, detail = null) {
     const link = await postgresTwentySyncStore.getLink(entityType, entityId);
     const attemptCount = (link?.attemptCount ?? 0) + 1;
     const failed = {
       syncState: "failed" as const,
       lastError: error.slice(0, MAX_ERROR_LENGTH),
+      failureDetail: detail,
       attemptCount,
       lastAttemptAt: now,
       nextAttemptAt: new Date(
@@ -201,24 +247,6 @@ export const postgresTwentySyncStore: TwentySyncStore = {
         set: failed,
       });
   },
-
-  async invalidateCustomerQuotes(customerId) {
-    await db
-      .update(twentySyncLinks)
-      .set({ syncedSourceUpdatedAt: null })
-      .where(
-        and(
-          eq(twentySyncLinks.entityType, "quote"),
-          inArray(
-            twentySyncLinks.entityId,
-            db
-              .select({ id: quotes.id })
-              .from(quotes)
-              .where(eq(quotes.customerId, customerId)),
-          ),
-        ),
-      );
-  },
 };
 
 async function saveLink(
@@ -226,17 +254,19 @@ async function saveLink(
   entityId: number,
   values: Partial<typeof twentySyncLinks.$inferInsert>,
   now: Date,
+  executor: Pick<typeof db, "insert"> = db,
 ) {
   const synced = {
     ...values,
     syncState: "synced" as const,
     lastError: null,
+    failureDetail: null,
     attemptCount: 0,
     lastAttemptAt: now,
     nextAttemptAt: null,
     updatedAt: now,
   };
-  await db
+  await executor
     .insert(twentySyncLinks)
     .values({ entityType, entityId, ...synced })
     .onConflictDoUpdate({
@@ -245,19 +275,84 @@ async function saveLink(
     });
 }
 
+/** Stored Twenty IDs belong to one workspace, so changing workspace starts them over. */
+export async function clearTwentySyncLinks(): Promise<void> {
+  await db.delete(twentySyncLinks);
+}
+
+/**
+ * Records a person's choice of company. The customer re-syncs using it, and every
+ * record held up by this customer becomes due at once.
+ */
+export async function saveTwentyCompanyChoice(
+  customerId: number,
+  companyId: string,
+  syncedCompanyKey: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const choice = {
+      twentyCompanyId: companyId,
+      syncedCompanyKey,
+      syncedSourceUpdatedAt: null,
+      updatedAt: new Date(),
+    };
+    await tx
+      .insert(twentySyncLinks)
+      .values({ entityType: "customer", entityId: customerId, ...choice })
+      .onConflictDoUpdate({
+        target: [twentySyncLinks.entityType, twentySyncLinks.entityId],
+        set: choice,
+      });
+    await tx
+      .update(twentySyncLinks)
+      .set({ nextAttemptAt: null, failureDetail: null })
+      .where(
+        and(
+          eq(twentySyncLinks.syncState, "failed"),
+          sql`(${twentySyncLinks.failureDetail}->>'customerId')::int = ${customerId}`,
+        ),
+      );
+  });
+}
+
+/** The saved choice for a customer, so a submitted company can be checked against it. */
+export async function getTwentyCompanyChoice(
+  customerId: number,
+): Promise<CompanyChoiceDetail | null> {
+  const [row] = await db
+    .select({ detail: twentySyncLinks.failureDetail })
+    .from(twentySyncLinks)
+    .where(
+      and(
+        eq(twentySyncLinks.syncState, "failed"),
+        sql`(${twentySyncLinks.failureDetail}->>'customerId')::int = ${customerId}`,
+      ),
+    )
+    .limit(1);
+  return row?.detail ?? null;
+}
+
 export interface TwentySyncFailure {
   entityType: SyncEntityType;
   entityId: number;
   label: string;
   lastError: string | null;
+  companyChoice: CompanyChoiceDetail | null;
   attemptCount: number;
   lastAttemptAt: string | null;
   nextAttemptAt: string | null;
 }
 
+export interface TwentySyncWarning {
+  customerId: number;
+  customerName: string;
+  warning: string;
+}
+
 export interface TwentySyncOverview {
   syncedQuotes: number;
   failures: TwentySyncFailure[];
+  warnings: TwentySyncWarning[];
 }
 
 /** Admin view. Archived records drop out, as the sweep no longer retries them. */
@@ -267,13 +362,12 @@ export async function getTwentySyncOverview(limit = 50): Promise<TwentySyncOverv
       entityType: twentySyncLinks.entityType,
       entityId: twentySyncLinks.entityId,
       lastError: twentySyncLinks.lastError,
+      failureDetail: twentySyncLinks.failureDetail,
       attemptCount: twentySyncLinks.attemptCount,
       lastAttemptAt: twentySyncLinks.lastAttemptAt,
       nextAttemptAt: twentySyncLinks.nextAttemptAt,
       quoteNumber: quotes.quoteNumber,
-      quoteArchived: quotes.isArchived,
       customerName: customers.displayName,
-      customerArchived: customers.isArchived,
     })
     .from(twentySyncLinks)
     .leftJoin(
@@ -287,8 +381,32 @@ export async function getTwentySyncOverview(limit = 50): Promise<TwentySyncOverv
         eq(twentySyncLinks.entityId, customers.id),
       ),
     )
-    .where(eq(twentySyncLinks.syncState, "failed"))
+    .where(
+      and(
+        eq(twentySyncLinks.syncState, "failed"),
+        or(isNull(quotes.isArchived), eq(quotes.isArchived, false)),
+        or(isNull(customers.isArchived), eq(customers.isArchived, false)),
+      ),
+    )
     .orderBy(desc(twentySyncLinks.lastAttemptAt))
+    .limit(limit);
+
+  const warnings = await db
+    .select({
+      customerId: customers.id,
+      customerName: customers.displayName,
+      warning: twentySyncLinks.syncWarning,
+    })
+    .from(twentySyncLinks)
+    .innerJoin(
+      customers,
+      and(
+        eq(twentySyncLinks.entityType, "customer"),
+        eq(twentySyncLinks.entityId, customers.id),
+      ),
+    )
+    .where(and(isNotNull(twentySyncLinks.syncWarning), eq(customers.isArchived, false)))
+    .orderBy(asc(customers.displayName))
     .limit(limit);
 
   const [counts] = await db
@@ -303,18 +421,21 @@ export async function getTwentySyncOverview(limit = 50): Promise<TwentySyncOverv
 
   return {
     syncedQuotes: counts?.synced ?? 0,
-    failures: failed
-      .filter((row) => !row.quoteArchived && !row.customerArchived)
-      .map((row) => ({
-        entityType: row.entityType,
-        entityId: row.entityId,
-        label:
-          row.quoteNumber ?? row.customerName ?? `${row.entityType} ${row.entityId}`,
-        lastError: row.lastError,
-        attemptCount: row.attemptCount,
-        lastAttemptAt: row.lastAttemptAt?.toISOString() ?? null,
-        nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
-      })),
+    failures: failed.map((row) => ({
+      entityType: row.entityType,
+      entityId: row.entityId,
+      label: row.quoteNumber ?? row.customerName ?? `${row.entityType} ${row.entityId}`,
+      lastError: row.lastError,
+      companyChoice: row.failureDetail ?? null,
+      attemptCount: row.attemptCount,
+      lastAttemptAt: row.lastAttemptAt?.toISOString() ?? null,
+      nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
+    })),
+    warnings: warnings.map((row) => ({
+      customerId: row.customerId,
+      customerName: row.customerName,
+      warning: row.warning ?? "",
+    })),
   };
 }
 
