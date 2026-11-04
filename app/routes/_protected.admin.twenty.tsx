@@ -21,6 +21,7 @@ import {
   testTwentyConnection,
 } from "~/lib/twenty/settings.server";
 import { syncOneQuote } from "~/lib/twenty/sync.server";
+import { formatTimeAgo, twentySyncHealth } from "~/lib/twenty/health";
 import { companyIdentityFor, companyKeyFor } from "~/lib/twenty/matching";
 import {
   clearTwentyRetryDelay,
@@ -43,18 +44,33 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return withAuthHeaders(redirect("/"), headers);
   }
 
-  const [settings, overview] = await Promise.all([
-    getTwentySettings(),
-    getTwentySyncOverview(),
-  ]);
+  const settings = await getTwentySettings();
+  const overview = await getTwentySyncOverview(settings.syncStartedAt);
+  const apiKeyConfigured = isTwentyApiKeyConfigured();
+  const now = new Date();
   const data: TwentyAdminLoaderData = {
     enabled: settings.enabled,
     workspaceUrl: settings.workspaceUrl,
     // Only ever a yes/no: the key itself stays on the server.
-    apiKeyConfigured: isTwentyApiKeyConfigured(),
+    apiKeyConfigured,
     syncStartedAt: settings.syncStartedAt?.toISOString() ?? null,
-    lastRunAt: settings.lastRunAt,
+    health: twentySyncHealth(
+      {
+        enabled: settings.enabled,
+        workspaceUrl: settings.workspaceUrl,
+        apiKeyConfigured,
+        lastRunAt: settings.lastRunAt,
+        enabledAt: settings.enabledAt,
+        failureCount: overview.failureCount,
+        warningCount: overview.warnings.length,
+        pendingCount: overview.pendingCount,
+      },
+      now,
+    ),
+    lastRunLabel: formatTimeAgo(settings.lastRunAt, now),
     syncedQuotes: overview.syncedQuotes,
+    pendingCount: overview.pendingCount,
+    failureCount: overview.failureCount,
     failures: overview.failures,
     warnings: overview.warnings,
   };
@@ -165,17 +181,30 @@ export async function action({ request }: ActionFunctionArgs) {
         report,
       });
     }
+    case "loadCompanies": {
+      const { workspaceUrl } = await getTwentySettings();
+      const twenty = buildTwentyClient(workspaceUrl);
+      if (!twenty) {
+        return respond({
+          ok: false,
+          message: "Set the workspace URL and TWENTY_API_KEY first.",
+        });
+      }
+      try {
+        const companies = await twenty.listCompanies();
+        companies.sort((a, b) => a.name.localeCompare(b.name));
+        return respond({ ok: true, message: "", companies });
+      } catch {
+        return respond({ ok: false, message: "Could not load companies from Twenty." });
+      }
+    }
     case "chooseCompany": {
       const customerId = Number.parseInt(String(formData.get("customerId")), 10);
       const choice = String(formData.get("companyId") ?? "");
       const pending = await getTwentyCompanyChoice(customerId);
       const customer = await postgresTwentySyncStore.getCustomer(customerId);
-      if (!pending || !customer) {
-        return respond({ ok: false, message: "This choice is no longer needed." });
-      }
-      const isCandidate = pending.candidates.some((company) => company.id === choice);
-      if (choice !== "new" && !isCandidate) {
-        return respond({ ok: false, message: "Choose one of the listed companies." });
+      if (!customer) {
+        return respond({ ok: false, message: "This customer no longer exists." });
       }
 
       const { workspaceUrl, enabled } = await getTwentySettings();
@@ -186,11 +215,21 @@ export async function action({ request }: ActionFunctionArgs) {
           message: "Set the workspace URL and TWENTY_API_KEY first.",
         });
       }
+
+      // Creating is only offered when settling a match; corrections pick an existing company.
+      const isListed =
+        pending?.candidates.some((company) => company.id === choice) ||
+        (choice !== "new" &&
+          (await twenty.listCompanies()).some((company) => company.id === choice));
+      if (!isListed && !(choice === "new" && pending)) {
+        return respond({ ok: false, message: "Choose one of the listed companies." });
+      }
+
       const companyKey = companyKeyFor(companyIdentityFor(customer));
       const run = await withTwentySyncLock(async () => {
         const companyId =
           choice === "new"
-            ? (await twenty.createCompany({ name: pending.companyName })).id
+            ? (await twenty.createCompany({ name: pending?.companyName ?? customer.displayName })).id
             : choice;
         await saveTwentyCompanyChoice(customerId, companyId, companyKey);
       });

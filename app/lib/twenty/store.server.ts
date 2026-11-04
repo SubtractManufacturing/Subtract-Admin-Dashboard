@@ -203,23 +203,7 @@ export const postgresTwentySyncStore: TwentySyncStore = {
   async saveCustomerLink(customerId, values, now, { invalidateQuotes }) {
     await db.transaction(async (tx) => {
       await saveLink("customer", customerId, values, now, tx);
-      if (!invalidateQuotes) return;
-      // The quotes must re-sync to pick up the customer's new company or person.
-      await tx
-        .update(twentySyncLinks)
-        .set({ syncedSourceUpdatedAt: null })
-        .where(
-          and(
-            eq(twentySyncLinks.entityType, "quote"),
-            inArray(
-              twentySyncLinks.entityId,
-              tx
-                .select({ id: quotes.id })
-                .from(quotes)
-                .where(eq(quotes.customerId, customerId)),
-            ),
-          ),
-        );
+      if (invalidateQuotes) await invalidateCustomerQuotes(customerId, tx);
     });
   },
 
@@ -248,6 +232,24 @@ export const postgresTwentySyncStore: TwentySyncStore = {
       });
   },
 };
+
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** The quotes must re-sync to pick up the customer's new company or person. */
+async function invalidateCustomerQuotes(customerId: number, tx: DbTransaction) {
+  await tx
+    .update(twentySyncLinks)
+    .set({ syncedSourceUpdatedAt: null })
+    .where(
+      and(
+        eq(twentySyncLinks.entityType, "quote"),
+        inArray(
+          twentySyncLinks.entityId,
+          tx.select({ id: quotes.id }).from(quotes).where(eq(quotes.customerId, customerId)),
+        ),
+      ),
+    );
+}
 
 async function saveLink(
   entityType: SyncEntityType,
@@ -281,8 +283,9 @@ export async function clearTwentySyncLinks(): Promise<void> {
 }
 
 /**
- * Records a person's choice of company. The customer re-syncs using it, and every
- * record held up by this customer becomes due at once.
+ * Records a person's choice of company, either settling a match or correcting one
+ * that was wrong. The customer and its existing opportunities re-sync using it, and
+ * every record held up by this customer becomes due at once.
  */
 export async function saveTwentyCompanyChoice(
   customerId: number,
@@ -303,6 +306,7 @@ export async function saveTwentyCompanyChoice(
         target: [twentySyncLinks.entityType, twentySyncLinks.entityId],
         set: choice,
       });
+    await invalidateCustomerQuotes(customerId, tx);
     await tx
       .update(twentySyncLinks)
       .set({ nextAttemptAt: null, failureDetail: null })
@@ -351,12 +355,28 @@ export interface TwentySyncWarning {
 
 export interface TwentySyncOverview {
   syncedQuotes: number;
+  /** Every blocked record, as `failures` is capped. */
+  failureCount: number;
+  /** Records the next run would pick up. */
+  pendingCount: number;
   failures: TwentySyncFailure[];
   warnings: TwentySyncWarning[];
 }
 
 /** Admin view. Archived records drop out, as the sweep no longer retries them. */
-export async function getTwentySyncOverview(limit = 50): Promise<TwentySyncOverview> {
+export async function getTwentySyncOverview(
+  syncStartedAt: Date | null,
+  limit = 50,
+): Promise<TwentySyncOverview> {
+  const activeFailures = and(
+    eq(twentySyncLinks.syncState, "failed"),
+    or(isNull(quotes.isArchived), eq(quotes.isArchived, false)),
+    or(isNull(customers.isArchived), eq(customers.isArchived, false)),
+  );
+  const pending = syncStartedAt
+    ? await postgresTwentySyncStore.listDue({ now: new Date(), syncStartedAt, limit: 500 })
+    : [];
+
   const failed = await db
     .select({
       entityType: twentySyncLinks.entityType,
@@ -381,15 +401,25 @@ export async function getTwentySyncOverview(limit = 50): Promise<TwentySyncOverv
         eq(twentySyncLinks.entityId, customers.id),
       ),
     )
-    .where(
-      and(
-        eq(twentySyncLinks.syncState, "failed"),
-        or(isNull(quotes.isArchived), eq(quotes.isArchived, false)),
-        or(isNull(customers.isArchived), eq(customers.isArchived, false)),
-      ),
-    )
+    .where(activeFailures)
     .orderBy(desc(twentySyncLinks.lastAttemptAt))
     .limit(limit);
+
+  const [failureTotal] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(twentySyncLinks)
+    .leftJoin(
+      quotes,
+      and(eq(twentySyncLinks.entityType, "quote"), eq(twentySyncLinks.entityId, quotes.id)),
+    )
+    .leftJoin(
+      customers,
+      and(
+        eq(twentySyncLinks.entityType, "customer"),
+        eq(twentySyncLinks.entityId, customers.id),
+      ),
+    )
+    .where(activeFailures);
 
   const warnings = await db
     .select({
@@ -421,6 +451,8 @@ export async function getTwentySyncOverview(limit = 50): Promise<TwentySyncOverv
 
   return {
     syncedQuotes: counts?.synced ?? 0,
+    failureCount: failureTotal?.total ?? 0,
+    pendingCount: pending.length,
     failures: failed.map((row) => ({
       entityType: row.entityType,
       entityId: row.entityId,

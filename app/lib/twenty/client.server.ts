@@ -238,12 +238,24 @@ export function createTwentyClient(options: TwentyClientOptions) {
     },
 
     async findPersonByEmail(email) {
-      const people = await list<TwentyPerson>("people", {
+      const primary = await list<TwentyPerson>("people", {
         filter: `emails.primaryEmail[eq]:${filterValue(email)}`,
         limit: 1,
         depth: 0,
       });
-      return people[0] ?? null;
+      if (primary[0]) return primary[0];
+
+      // ilike can match inside a longer address, so confirm the exact email.
+      const additional = await list<TwentyPerson>("people", {
+        filter: `emails.additionalEmails[ilike]:${filterValue(`%${email}%`)}`,
+        limit: 10,
+        depth: 0,
+      });
+      return (
+        additional.find((person) =>
+          person.emails?.additionalEmails?.some((known) => known.toLowerCase() === email),
+        ) ?? null
+      );
     },
 
     findPeopleByName: ({ firstName, lastName }) =>

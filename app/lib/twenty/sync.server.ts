@@ -225,8 +225,10 @@ class SyncContext {
     if (title && title !== (person?.jobTitle ?? "")) fields.jobTitle = title;
 
     const currentEmail = normalizeEmail(person?.emails?.primaryEmail);
-    if (email && email !== currentEmail) {
-      const additional = new Set(person?.emails?.additionalEmails ?? []);
+    const additionalEmails = person?.emails?.additionalEmails ?? [];
+    const isKnownAddress = additionalEmails.some((known) => normalizeEmail(known) === email);
+    if (email && email !== currentEmail && !isKnownAddress) {
+      const additional = new Set(additionalEmails);
       if (currentEmail) additional.add(currentEmail);
       additional.delete(email);
       fields.emails = { primaryEmail: email, additionalEmails: [...additional] };
@@ -256,7 +258,11 @@ class SyncContext {
       ? await this.twenty.getPerson(link.twentyPersonId)
       : null;
     if (linked) {
-      if (!email || email === normalizeEmail(linked.emails?.primaryEmail)) return linked;
+      const addresses = [
+        linked.emails?.primaryEmail,
+        ...(linked.emails?.additionalEmails ?? []),
+      ].map((address) => normalizeEmail(address));
+      if (!email || addresses.includes(email)) return linked;
       // The ERP email moved. Another person holding it wins, as emails are unique.
       return (await this.twenty.findPersonByEmail(email)) ?? linked;
     }
@@ -352,9 +358,12 @@ class SyncContext {
         : await this.resolveCompany(customer, identity);
     const { id: personId, warning } = await this.resolvePerson(customer, link, companyId);
 
+    // A renamed company keeps its IDs but still changes the opportunity's name.
     const moved =
       link?.syncedSourceUpdatedAt != null &&
-      (link.twentyCompanyId !== companyId || link.twentyPersonId !== personId);
+      (link.twentyCompanyId !== companyId ||
+        link.twentyPersonId !== personId ||
+        link.syncedCompanyKey !== companyKey);
     await this.store.saveCustomerLink(
       customerId,
       {
@@ -459,8 +468,15 @@ class SyncContext {
 
     let result: { id: string; created: boolean };
     if (opportunityId) {
-      await this.twenty.updateOpportunity(opportunityId, fields);
-      result = { id: opportunityId, created: false };
+      try {
+        await this.twenty.updateOpportunity(opportunityId, fields);
+        result = { id: opportunityId, created: false };
+      } catch (error) {
+        if (!(error instanceof TwentyApiError) || error.status !== 404) throw error;
+        // Deleted in Twenty. The ERP still has the quote, so bring its opportunity back.
+        const restored = { ...fields, rfqStatus: rfqStatus ?? "QUOTING" };
+        result = await this.createOpportunity(quoteId, restored);
+      }
     } else {
       result = await this.createOpportunity(quoteId, fields);
     }
@@ -493,6 +509,7 @@ function errorMessage(error: unknown): string {
 
 export interface SingleQuoteSyncReport {
   quoteNumber: string;
+  customerId: number;
   /** False on a repeat run, which must update the same opportunity. */
   created: boolean;
   /** Opportunities in Twenty carrying this quote's ID. Anything but 1 is a problem. */
@@ -561,6 +578,7 @@ export async function syncOneQuote(deps: {
       ok: true,
       report: {
         quoteNumber,
+        customerId,
         created,
         matchingOpportunities: matches.length,
         opportunityId,

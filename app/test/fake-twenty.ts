@@ -44,7 +44,11 @@ export class FakeTwenty implements TwentyApi {
   }
   async findPersonByEmail(email: string) {
     this.guard();
-    return this.people.find((person) => person.emails?.primaryEmail === email) ?? null;
+    return (
+      this.people.find((person) => person.emails?.primaryEmail === email) ??
+      this.people.find((person) => person.emails?.additionalEmails?.includes(email)) ??
+      null
+    );
   }
   async findPeopleByName(name: { firstName: string; lastName: string }) {
     this.guard();

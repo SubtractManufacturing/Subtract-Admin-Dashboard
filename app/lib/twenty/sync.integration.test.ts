@@ -440,7 +440,7 @@ describe("choosing a company", () => {
     await sweep();
     const pending = await getTwentyCompanyChoice(customer.id);
     expect(pending?.candidates.map((item) => item.id)).toEqual(["one", "two"]);
-    expect((await getTwentySyncOverview()).failures.some((item) => item.companyChoice)).toBe(true);
+    expect((await getTwentySyncOverview(syncStartedAt)).failures.some((item) => item.companyChoice)).toBe(true);
 
     await saveTwentyCompanyChoice(
       customer.id,
@@ -457,13 +457,37 @@ describe("choosing a company", () => {
   });
 });
 
+describe("correcting a company", () => {
+  it("moves an already synced opportunity to the chosen company", async () => {
+    const customer = await seedCustomer({
+      companyName: `Wrong ${tag}`,
+      displayName: `Wrong ${tag}`,
+      email: `wrong-${tag}@gmail.com`,
+    });
+    const quote = await manualQuote(customer.id);
+    await sweep();
+    expect(await isDue("quote", quote.id)).toBe(false);
+
+    twenty.companies.push({ id: "right", name: `Right ${tag}`, domain: null });
+    await saveTwentyCompanyChoice(
+      customer.id,
+      "right",
+      companyKeyFor(companyIdentityFor(customer)),
+    );
+
+    expect(await isDue("quote", quote.id)).toBe(true);
+    await sweep();
+    expect(opportunityFor(quote.quoteNumber)?.fields.companyId).toBe("right");
+  });
+});
+
 describe("phone warnings", () => {
   it("lists a customer whose phone could not sync", async () => {
     const customer = await seedCustomer({ phone: "ask for Bob" });
 
     await sweep();
 
-    const { warnings } = await getTwentySyncOverview();
+    const { warnings } = await getTwentySyncOverview(syncStartedAt);
     expect(warnings).toContainEqual({
       customerId: customer.id,
       customerName: customer.displayName,
@@ -481,7 +505,7 @@ describe("failures", () => {
     const outage = await sweep();
     expect(outage.stoppedEarly).toBe(true);
 
-    const { failures } = await getTwentySyncOverview();
+    const { failures } = await getTwentySyncOverview(syncStartedAt);
     const failure = failures.find((item) => item.lastError?.includes("Could not reach"));
     if (!failure) throw new Error("Expected a visible failure");
     expect(failure.attemptCount).toBe(1);
@@ -493,7 +517,7 @@ describe("failures", () => {
     await sweep();
 
     expect((await store.getLink("quote", quote.id))?.syncState).toBe("synced");
-    const remaining = (await getTwentySyncOverview()).failures;
+    const remaining = (await getTwentySyncOverview(syncStartedAt)).failures;
     expect(
       remaining.some(
         (item) =>

@@ -39,6 +39,7 @@ export const TWENTY_SETTINGS = {
   WORKSPACE_URL: "twenty_workspace_url",
   /** Set on first enable. Quotes older than this are left for a separate backfill. */
   SYNC_STARTED_AT: "twenty_sync_started_at",
+  ENABLED_AT: "twenty_sync_enabled_at",
   LAST_RUN_AT: "twenty_sync_last_run_at",
 } as const;
 

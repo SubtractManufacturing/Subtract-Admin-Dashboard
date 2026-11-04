@@ -16,6 +16,7 @@ export interface TwentySettings {
   enabled: boolean;
   workspaceUrl: string;
   syncStartedAt: Date | null;
+  enabledAt: string | null;
   lastRunAt: string | null;
 }
 
@@ -24,16 +25,18 @@ export function isTwentyApiKeyConfigured(): boolean {
 }
 
 export async function getTwentySettings(): Promise<TwentySettings> {
-  const [enabled, workspaceUrl, syncStartedAt, lastRunAt] = await Promise.all([
+  const [enabled, workspaceUrl, syncStartedAt, enabledAt, lastRunAt] = await Promise.all([
     getDeveloperSetting(TWENTY_SETTINGS.ENABLED),
     getDeveloperSetting(TWENTY_SETTINGS.WORKSPACE_URL),
     getDeveloperSetting(TWENTY_SETTINGS.SYNC_STARTED_AT),
+    getDeveloperSetting(TWENTY_SETTINGS.ENABLED_AT),
     getDeveloperSetting(TWENTY_SETTINGS.LAST_RUN_AT),
   ]);
   return {
     enabled: enabled === "true",
     workspaceUrl: workspaceUrl ?? "",
     syncStartedAt: syncStartedAt ? new Date(syncStartedAt) : null,
+    enabledAt,
     lastRunAt,
   };
 }
@@ -116,6 +119,7 @@ export async function enableTwentySync(
     );
     if (!started) return { ok: false, error: "Could not save the sync start date." };
   }
+  await setDeveloperSetting(TWENTY_SETTINGS.ENABLED_AT, new Date().toISOString(), updatedBy);
   const saved = await setDeveloperSetting(TWENTY_SETTINGS.ENABLED, "true", updatedBy);
   return saved ? { ok: true } : { ok: false, error: "Could not enable the sync." };
 }

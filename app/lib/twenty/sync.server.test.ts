@@ -130,6 +130,10 @@ class FakeStore implements TwentySyncStore {
       if (link.failureDetail?.customerId !== customerId) continue;
       this.merge(link.entityType, link.entityId, { nextAttemptAt: null, failureDetail: null });
     }
+    for (const quote of this.quotes.values()) {
+      if (quote.customerId !== customerId || !this.link("quote", quote.id)) continue;
+      this.merge("quote", quote.id, { syncedSourceUpdatedAt: null });
+    }
   }
   async saveQuoteLink(id: number, values: Partial<TwentySyncLink>, now: Date) {
     if (this.crashOnQuoteLinkSave) {
@@ -246,6 +250,30 @@ describe("opportunity creation", () => {
     await run();
 
     expect(twenty.opportunities).toHaveLength(0);
+  });
+});
+
+describe("deleted opportunities", () => {
+  it("brings back an opportunity deleted in Twenty, with its status", async () => {
+    addCustomer(1);
+    addQuote(10, 1, { status: "Draft", total: "100.00" });
+    await run();
+    twenty.opportunities.length = 0;
+
+    addQuote(10, 1, { status: "Draft", total: "200.00", updatedAt: T2 });
+    clock = T2;
+    await run();
+
+    expect(twenty.opportunities).toHaveLength(1);
+    expect(twenty.opportunities[0].fields).toMatchObject({
+      rfqStatus: "QUOTING",
+      erpQuoteId: "10",
+      amount: { amountMicros: 200_000_000 },
+    });
+    expect(store.link("quote", 10)).toMatchObject({
+      syncState: "synced",
+      twentyOpportunityId: twenty.opportunities[0].id,
+    });
   });
 });
 
@@ -669,6 +697,7 @@ describe("syncOneQuote", () => {
       ok: true,
       report: {
         quoteNumber: "Q2611-0010",
+        customerId: 1,
         created: true,
         matchingOpportunities: 1,
         opportunityId: twenty.opportunities[0].id,
@@ -899,6 +928,42 @@ describe("linking imported records", () => {
   });
 });
 
+describe("correcting a company", () => {
+  it("moves existing opportunities when staff change a wrong match", async () => {
+    twenty.companies.push(
+      { id: "wrong", name: "Acme", domain: null },
+      { id: "right", name: "Acme Holdings", domain: null },
+    );
+    addCustomer(1, { email: "bob@gmail.com" });
+    addQuote(10, 1);
+    await run();
+    expect(twenty.opportunities[0].fields.companyId).toBe("wrong");
+
+    store.chooseCompany(1, "right");
+    await run();
+
+    expect(twenty.opportunities[0].fields.companyId).toBe("right");
+    expect(twenty.opportunities).toHaveLength(1);
+  });
+});
+
+describe("imported contacts", () => {
+  it("links a person whose ERP email is one of their additional addresses", async () => {
+    twenty.people.push({
+      id: "imported",
+      emails: { primaryEmail: "bob@oldname.com", additionalEmails: ["bob@acme.com"] },
+    });
+    addCustomer(1);
+    addQuote(10, 1);
+
+    await run();
+
+    expect(twenty.writesOf("createPerson")).toHaveLength(0);
+    expect(store.link("customer", 1)?.twentyPersonId).toBe("imported");
+    expect(twenty.people[0].emails?.primaryEmail).toBe("bob@oldname.com");
+  });
+});
+
 describe("one contact for two companies", () => {
   const mark = { contactName: "Mark Britz", email: "trimarkperformance@gmail.com" };
 
@@ -1086,6 +1151,20 @@ describe("phone warnings", () => {
 });
 
 describe("customer changes", () => {
+  it("refreshes opportunity names when the company name changes", async () => {
+    twenty.companies.push({ id: "c", name: "Acme", domain: "acme.com" });
+    addCustomer(1);
+    addQuote(10, 1);
+    await run();
+
+    addCustomer(1, { companyName: "Acme Works", displayName: "Acme Works", updatedAt: T2 });
+    clock = T2;
+    await run();
+    await run();
+
+    expect(twenty.opportunities[0].fields.name).toBe("Q2611-0010 - Acme Works");
+  });
+
   it("clears an ERP-supplied company when a quote moves to an individual", async () => {
     addCustomer(1);
     addCustomer(2, {
