@@ -23,6 +23,7 @@ import {
 import { syncOneQuote } from "~/lib/twenty/sync.server";
 import { formatTimeAgo, twentySyncHealth } from "~/lib/twenty/health";
 import { companyIdentityFor, companyKeyFor } from "~/lib/twenty/matching";
+import { notifyTwentySync } from "~/lib/twenty/notify.server";
 import {
   clearTwentyRetryDelay,
   getTwentyCompanyChoice,
@@ -147,21 +148,16 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
     case "syncQuote": {
-      const { workspaceUrl } = await getTwentySettings();
-      const twenty = buildTwentyClient(workspaceUrl);
-      if (!twenty) {
-        return respond({
-          ok: false,
-          message: "Set the workspace URL and TWENTY_API_KEY first.",
-        });
-      }
-      const run = await withTwentySyncLock(() =>
-        syncOneQuote({
+      const run = await withTwentySyncLock(async () => {
+        const { workspaceUrl } = await getTwentySettings();
+        const twenty = buildTwentyClient(workspaceUrl);
+        if (!twenty) return { ok: false as const, error: "Set the workspace URL and TWENTY_API_KEY first." };
+        return syncOneQuote({
           store: postgresTwentySyncStore,
           twenty,
           quoteNumber: String(formData.get("quoteNumber") ?? ""),
-        }),
-      );
+        });
+      });
       if (!run.ran) {
         return respond({ ok: false, message: "A sync is running. Try again in a minute." });
       }
@@ -201,48 +197,63 @@ export async function action({ request }: ActionFunctionArgs) {
     case "chooseCompany": {
       const customerId = Number.parseInt(String(formData.get("customerId")), 10);
       const choice = String(formData.get("companyId") ?? "");
-      const pending = await getTwentyCompanyChoice(customerId);
-      const customer = await postgresTwentySyncStore.getCustomer(customerId);
-      if (!customer) {
-        return respond({ ok: false, message: "This customer no longer exists." });
-      }
 
-      const { workspaceUrl, enabled } = await getTwentySettings();
-      const twenty = buildTwentyClient(workspaceUrl);
-      if (!twenty) {
-        return respond({
-          ok: false,
-          message: "Set the workspace URL and TWENTY_API_KEY first.",
-        });
-      }
+      const saveChoice = async (): Promise<
+        { saved: true; enabled: boolean } | { saved: false; message: string }
+      > => {
+        const pending = await getTwentyCompanyChoice(customerId);
+        const customer = await postgresTwentySyncStore.getCustomer(customerId);
+        if (!customer) return { saved: false, message: "This customer no longer exists." };
 
-      // Creating is only offered when settling a match; corrections pick an existing company.
-      const isListed =
-        pending?.candidates.some((company) => company.id === choice) ||
-        (choice !== "new" &&
-          (await twenty.listCompanies()).some((company) => company.id === choice));
-      if (!isListed && !(choice === "new" && pending)) {
-        return respond({ ok: false, message: "Choose one of the listed companies." });
-      }
+        const { workspaceUrl, enabled } = await getTwentySettings();
+        const twenty = buildTwentyClient(workspaceUrl);
+        if (!twenty) {
+          return { saved: false, message: "Set the workspace URL and TWENTY_API_KEY first." };
+        }
 
-      const companyKey = companyKeyFor(companyIdentityFor(customer));
-      const run = await withTwentySyncLock(async () => {
+        // Creating is only offered when settling a match; corrections pick an existing company.
+        const isListed =
+          pending?.candidates.some((company) => company.id === choice) ||
+          (choice !== "new" &&
+            (await twenty.listCompanies()).some((company) => company.id === choice));
+        if (!isListed && !(choice === "new" && pending)) {
+          return { saved: false, message: "Choose one of the listed companies." };
+        }
+
         const companyId =
           choice === "new"
             ? (await twenty.createCompany({ name: pending?.companyName ?? customer.displayName })).id
             : choice;
-        await saveTwentyCompanyChoice(customerId, companyId, companyKey);
-      });
+        await saveTwentyCompanyChoice(
+          customerId,
+          companyId,
+          companyKeyFor(companyIdentityFor(customer)),
+        );
+        return { saved: true, enabled };
+      };
+
+      let run: Awaited<ReturnType<typeof withTwentySyncLock<Awaited<ReturnType<typeof saveChoice>>>>>;
+      try {
+        run = await withTwentySyncLock(saveChoice);
+      } catch (error) {
+        console.error("[Twenty] Could not save company choice", error);
+        return respond({
+          ok: false,
+          message: "Could not save the company. Check that Twenty is reachable, then try again.",
+        });
+      }
       if (!run.ran) {
         return respond({ ok: false, message: "A sync is running. Try again in a minute." });
       }
-      if (!enabled) {
+      if (!run.value.saved) return respond({ ok: false, message: run.value.message });
+      if (!run.value.enabled) {
         return respond({
           ok: true,
           message: "Company saved. Use Sync one quote, or it will apply when the sync is enabled.",
         });
       }
-      await sendTwentySyncJob({ triggeredAt: new Date().toISOString() });
+      // The choice is saved by now. If this fails, the next sweep still applies it.
+      notifyTwentySync("customer.updated");
       return respond({ ok: true, message: "Company saved. The sync will pick it up shortly." });
     }
     case "retry":

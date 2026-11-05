@@ -24,21 +24,18 @@ async function withLockRetries<T>(run: () => Promise<T>) {
 /** Logs counts only: customer details and the API key stay out of worker logs. */
 export async function handleTwentySync(jobs: Job<TwentySyncPayload>[]) {
   for (const job of jobs) {
-    const settings = await getTwentySettings();
-    if (!settings.enabled || !settings.syncStartedAt) continue;
-
-    const twenty = buildTwentyClient(settings.workspaceUrl);
-    if (!twenty) {
-      console.warn("[Worker:TwentySync] Enabled but the URL or API key is missing");
-      continue;
-    }
-
-    const { syncStartedAt } = settings;
-    const run = await withLockRetries(() =>
-      runTwentySync({ store: postgresTwentySyncStore, twenty, syncStartedAt }),
-    );
+    const run = await withLockRetries(async () => {
+      const settings = await getTwentySettings();
+      if (!settings.enabled || !settings.syncStartedAt) return null;
+      const twenty = buildTwentyClient(settings.workspaceUrl);
+      if (!twenty) {
+        console.warn("[Worker:TwentySync] Enabled but the URL or API key is missing");
+        return null;
+      }
+      return runTwentySync({ store: postgresTwentySyncStore, twenty, syncStartedAt: settings.syncStartedAt });
+    });
     // Still busy: the running sync or the next sweep picks this work up.
-    if (!run.ran) continue;
+    if (!run.ran || !run.value) continue;
     const result = run.value;
     await setDeveloperSetting(
       TWENTY_SETTINGS.LAST_RUN_AT,

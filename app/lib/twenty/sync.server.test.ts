@@ -278,6 +278,61 @@ describe("deleted opportunities", () => {
   });
 });
 
+describe("opportunities in the Twenty trash", () => {
+  it("restores a deleted opportunity instead of updating it unseen", async () => {
+    addCustomer(1);
+    addQuote(10, 1, { status: "Draft", total: "100.00" });
+    await run();
+    const { id } = twenty.opportunities[0];
+    twenty.trash.add(id);
+    twenty.opportunities[0].fields.rfqStatus = "REVIEWING";
+
+    addQuote(10, 1, { status: "Draft", total: "200.00", updatedAt: T2 });
+    clock = T2;
+    await run();
+
+    expect(twenty.trash.has(id)).toBe(false);
+    expect(twenty.opportunities).toHaveLength(1);
+    expect(twenty.writesOf("createOpportunity")).toHaveLength(1);
+    expect(twenty.opportunities[0].fields).toMatchObject({
+      rfqStatus: "QUOTING",
+      amount: { amountMicros: 200_000_000 },
+    });
+    expect(store.link("quote", 10)?.twentyOpportunityId).toBe(id);
+  });
+
+  it("reports a restored opportunity on a single-quote sync", async () => {
+    addCustomer(1);
+    addQuote(10, 1);
+    await run();
+    twenty.trash.add(twenty.opportunities[0].id);
+
+    const result = await syncOneQuote({
+      store,
+      twenty,
+      quoteNumber: "Q2611-0010",
+      now: () => clock,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      report: { created: false, matchingOpportunities: 1 },
+    });
+  });
+
+  it("leaves a normal update alone", async () => {
+    addCustomer(1);
+    addQuote(10, 1, { total: "100.00" });
+    await run();
+
+    addQuote(10, 1, { total: "200.00", updatedAt: T2 });
+    clock = T2;
+    await run();
+
+    expect(twenty.writesOf("restoreOpportunity")).toHaveLength(0);
+  });
+});
+
 describe("repeat processing", () => {
   it("does nothing when nothing changed", async () => {
     addCustomer(1);

@@ -129,6 +129,28 @@ describe("createTwentyClient", () => {
     await expect(client.isErpQuoteFieldUnique()).resolves.toBeNull();
   });
 
+  it("reports when an update landed on a record in the trash", async () => {
+    const { client } = clientReturning(
+      Response.json({
+        data: { updateOpportunity: { id: "o", deletedAt: "2026-11-03T00:00:00.000Z" } },
+      }),
+    );
+
+    await expect(client.updateOpportunity("o", { name: "x" })).resolves.toEqual({
+      deletedAt: "2026-11-03T00:00:00.000Z",
+    });
+  });
+
+  it("restores through the Twenty restore route", async () => {
+    const { client, fetcher } = clientReturning(Response.json({ data: {} }));
+
+    await client.restoreOpportunity("o");
+
+    const [url, init] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.pathname).toBe("/rest/opportunities/o/restore");
+    expect(init.method).toBe("PATCH");
+  });
+
   it("follows pagination across all companies", async () => {
     const pages = [
       {

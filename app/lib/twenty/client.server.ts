@@ -89,7 +89,12 @@ export interface TwentyApi {
   updatePerson(id: string, fields: TwentyFields): Promise<void>;
   findOpportunitiesByErpQuoteId(erpQuoteId: string): Promise<Array<{ id: string }>>;
   createOpportunity(fields: TwentyFields): Promise<{ id: string }>;
-  updateOpportunity(id: string, fields: TwentyFields): Promise<void>;
+  /** Twenty accepts updates to a record in its trash, so callers must check deletedAt. */
+  updateOpportunity(
+    id: string,
+    fields: TwentyFields,
+  ): Promise<{ deletedAt: string | null }>;
+  restoreOpportunity(id: string): Promise<void>;
   readOpportunity(id: string): Promise<TwentyOpportunity | null>;
 }
 
@@ -281,7 +286,14 @@ export function createTwentyClient(options: TwentyClientOptions) {
     createOpportunity: (fields) => create("opportunities", "Opportunity", fields),
 
     async updateOpportunity(id, fields) {
-      await request("PATCH", `/rest/opportunities/${id}`, { body: fields });
+      const result = await request<{
+        data?: { updateOpportunity?: { deletedAt?: string | null } };
+      }>("PATCH", `/rest/opportunities/${id}`, { body: fields });
+      return { deletedAt: result.data?.updateOpportunity?.deletedAt ?? null };
+    },
+
+    async restoreOpportunity(id) {
+      await request("PATCH", `/rest/opportunities/${id}/restore`);
     },
 
     async readOpportunity(id) {

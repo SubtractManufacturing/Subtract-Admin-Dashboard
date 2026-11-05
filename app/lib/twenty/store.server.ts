@@ -4,6 +4,7 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { EMAIL_CONTEXT } from "../email/email-context-registry";
 
 import { db } from "../db";
+import { createTwentyLockClient } from "../db/client";
 import { customers, quotes, twentySyncLinks } from "../db/schema";
 import type { CompanyChoiceDetail } from "./matching";
 import {
@@ -47,13 +48,16 @@ const TWENTY_SYNC_LOCK = 7_401_194;
 export async function withTwentySyncLock<T>(
   run: () => Promise<T>,
 ): Promise<{ ran: true; value: T } | { ran: false }> {
-  return db.transaction(async (tx) => {
-    const rows = await tx.execute<{ locked: boolean }>(
-      sql`select pg_try_advisory_xact_lock(${TWENTY_SYNC_LOCK}) as locked`,
-    );
-    if (!rows[0]?.locked) return { ran: false };
-    return { ran: true, value: await run() };
-  });
+  const lockClient = createTwentyLockClient();
+  try {
+    return await lockClient.begin(async (tx) => {
+      const rows = await tx.unsafe("select pg_try_advisory_xact_lock($1) as locked", [TWENTY_SYNC_LOCK]);
+      if (!rows[0]?.locked) return { ran: false as const };
+      return { ran: true as const, value: await run() };
+    });
+  } finally {
+    await lockClient.end();
+  }
 }
 
 /**

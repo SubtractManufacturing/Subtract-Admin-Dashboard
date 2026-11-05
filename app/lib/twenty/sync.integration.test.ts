@@ -497,6 +497,13 @@ describe("real-time hooks", () => {
 });
 
 describe("shared lock", () => {
+  it("allows app pool queries while the lock transaction is held", async () => {
+    await expect(withTwentySyncLock(async () => {
+      await db.execute(sql`select 1`);
+      return "queried";
+    })).resolves.toEqual({ ran: true, value: "queried" });
+  });
+
   it("turns away a second sync while one is running", async () => {
     let release = () => {};
     const held = new Promise<void>((resolve) => {

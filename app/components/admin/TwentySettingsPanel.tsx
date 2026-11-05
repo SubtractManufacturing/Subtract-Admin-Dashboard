@@ -92,10 +92,16 @@ const HEALTH_STYLES: Record<TwentyHealthState, { pill: string; dot: string; labe
   },
 };
 
-function formatDateTime(value: string | null): string {
-  return value
-    ? new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-    : "Not scheduled";
+/**
+ * The server does not know the viewer's locale or time zone, so the first render
+ * is a fixed UTC string that matches on both sides, then local time after mount.
+ */
+function formatDateTime(value: string | null, isMounted: boolean): string {
+  if (!value) return "Not scheduled";
+  const date = new Date(value);
+  return isMounted
+    ? date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : date.toISOString().replace("T", " ").replace(/:\d{2}\.\d{3}Z$/, " UTC");
 }
 
 function Fact({ label, value }: { label: string; value: string | number }) {
@@ -298,6 +304,7 @@ export default function TwentySettingsPanel() {
   const fetcher = useFetcher<TwentyAdminActionData>();
   const [draftUrl, setDraftUrl] = useState(data.workspaceUrl);
   const [quoteNumber, setQuoteNumber] = useState("");
+  const [isMounted, setIsMounted] = useState(false);
 
   const isBusy = fetcher.state !== "idle";
   const activeIntent = isBusy ? String(fetcher.formData?.get("intent") ?? "") : null;
@@ -318,6 +325,10 @@ export default function TwentySettingsPanel() {
   useEffect(() => {
     setDraftUrl(data.workspaceUrl);
   }, [data.workspaceUrl]);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const submit = (intent: string, fields: Record<string, string> = {}) => {
     fetcher.submit({ intent, ...fields }, { method: "post" });
@@ -459,7 +470,7 @@ export default function TwentySettingsPanel() {
                       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">{summary}</p>
                       <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                         {retriesItself
-                          ? `Next try ${formatDateTime(failure.nextAttemptAt)}`
+                          ? `Next try ${formatDateTime(failure.nextAttemptAt, isMounted)}`
                           : `Tried ${failure.attemptCount} time${failure.attemptCount === 1 ? "" : "s"}`}
                       </p>
                       {failure.lastError && <TechnicalDetails text={failure.lastError} />}
@@ -554,7 +565,7 @@ export default function TwentySettingsPanel() {
 
             {data.syncStartedAt && (
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Automatic sync covers quotes created since {formatDateTime(data.syncStartedAt)}.
+                Automatic sync covers quotes created since {formatDateTime(data.syncStartedAt, isMounted)}.
               </p>
             )}
           </div>

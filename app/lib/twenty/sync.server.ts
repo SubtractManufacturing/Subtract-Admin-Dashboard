@@ -468,14 +468,20 @@ class SyncContext {
 
     let result: { id: string; created: boolean };
     if (opportunityId) {
+      // The ERP still has the quote, so a deleted opportunity comes back with its status.
+      const restoredFields = { ...fields, rfqStatus: rfqStatus ?? "QUOTING" };
       try {
-        await this.twenty.updateOpportunity(opportunityId, fields);
+        const { deletedAt } = await this.twenty.updateOpportunity(opportunityId, fields);
+        if (deletedAt) {
+          // In Twenty's trash: it still holds the unique erpQuoteId, so a new one can't be made.
+          await this.twenty.restoreOpportunity(opportunityId);
+          await this.twenty.updateOpportunity(opportunityId, restoredFields);
+        }
         result = { id: opportunityId, created: false };
       } catch (error) {
         if (!(error instanceof TwentyApiError) || error.status !== 404) throw error;
-        // Deleted in Twenty. The ERP still has the quote, so bring its opportunity back.
-        const restored = { ...fields, rfqStatus: rfqStatus ?? "QUOTING" };
-        result = await this.createOpportunity(quoteId, restored);
+        // Permanently deleted, so only a new record can replace it.
+        result = await this.createOpportunity(quoteId, restoredFields);
       }
     } else {
       result = await this.createOpportunity(quoteId, fields);

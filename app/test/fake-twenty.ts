@@ -13,6 +13,8 @@ export class FakeTwenty implements TwentyApi {
   opportunities: Array<{ id: string; name: string; fields: TwentyFields }> = [];
   writes: Array<{ op: string; id?: string; fields: TwentyFields }> = [];
   down = false;
+  /** Opportunity IDs in Twenty's trash: hidden from reads, but still updatable. */
+  trash = new Set<string>();
   /** Twenty commits the next create, but the response never reaches the ERP. */
   loseNextCreateResponse = false;
   private nextId = 1;
@@ -73,7 +75,9 @@ export class FakeTwenty implements TwentyApi {
   async findOpportunitiesByErpQuoteId(erpQuoteId: string) {
     this.guard();
     return this.opportunities
-      .filter((item) => item.fields[ERP_QUOTE_ID_FIELD] === erpQuoteId)
+      .filter(
+        (item) => item.fields[ERP_QUOTE_ID_FIELD] === erpQuoteId && !this.trash.has(item.id),
+      )
       .map(({ id }) => ({ id }));
   }
   async createOpportunity(fields: TwentyFields) {
@@ -94,7 +98,7 @@ export class FakeTwenty implements TwentyApi {
   async readOpportunity(id: string) {
     this.guard();
     const item = this.opportunities.find((opportunity) => opportunity.id === id);
-    if (!item) return null;
+    if (!item || this.trash.has(id)) return null;
     const { fields } = item;
     return {
       id,
@@ -112,6 +116,12 @@ export class FakeTwenty implements TwentyApi {
     if (!item) throw new TwentyApiError("Twenty returned 404", 404, false);
     Object.assign(item.fields, fields);
     this.writes.push({ op: "updateOpportunity", id, fields });
+    return { deletedAt: this.trash.has(id) ? "2026-11-03T00:00:00.000Z" : null };
+  }
+  async restoreOpportunity(id: string) {
+    this.guard();
+    if (!this.trash.delete(id)) throw new TwentyApiError("Twenty returned 404", 404, false);
+    this.writes.push({ op: "restoreOpportunity", id, fields: {} });
   }
   writesOf(op: string) {
     return this.writes.filter((write) => write.op === op);
