@@ -62,6 +62,8 @@ describe("twentySyncHealth", () => {
 
   it("calls a sync that never ran stopped once it should have", () => {
     expect(stateOf({ lastRunAt: null, enabledAt: minutesAgo(60) })).toBe("stopped");
+    const { detail } = twentySyncHealth({ ...healthy, lastRunAt: null, enabledAt: minutesAgo(60) }, NOW);
+    expect(detail).toContain("It hasn't run yet");
   });
 
   it("summarizes what needs attention", () => {

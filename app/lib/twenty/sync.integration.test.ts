@@ -608,10 +608,14 @@ describe("backoff", () => {
   it("lets a change made after a failure skip the wait", async () => {
     const customer = await seedCustomer();
     const quote = await manualQuote(customer.id);
+    await sweep();
+
+    await updateQuote(quote.id, { status: "Draft" });
     twenty.down = true;
     await sweep();
     const failedAt = await store.getLink("quote", quote.id);
-    if (failedAt) expect(await isDue("quote", quote.id)).toBe(false);
+    expect(failedAt?.syncState).toBe("failed");
+    expect(await isDue("quote", quote.id)).toBe(false);
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     await updateQuote(quote.id, { status: "Rejected", rejectionReason: "Price" });

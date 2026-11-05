@@ -76,7 +76,7 @@ export function twentySyncHealth(input: TwentyHealthInput, now: Date): TwentyHea
     return {
       state: "stopped",
       title: "Sync has stopped",
-      detail: `Last run was ${formatTimeAgo(input.lastRunAt, now).toLowerCase()}, but it should run every 10 minutes. Your quotes are safe and will catch up once it restarts. Ask whoever maintains the server to check the background worker.`,
+      detail: `${input.lastRunAt ? `Last run was ${formatTimeAgo(input.lastRunAt, now).toLowerCase()}` : "It hasn't run yet"}, but it should run every 10 minutes. Your quotes are safe and will catch up once it restarts. Ask whoever maintains the server to check the background worker.`,
     };
   }
 

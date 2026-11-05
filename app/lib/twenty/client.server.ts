@@ -293,7 +293,21 @@ export function createTwentyClient(options: TwentyClientOptions) {
     },
 
     async restoreOpportunity(id) {
-      await request("PATCH", `/rest/opportunities/${id}/restore`);
+      // The mutation Twenty's own UI uses: its REST restore path doesn't match its docs.
+      const result = await request<{ errors?: Array<{ message?: string }> }>(
+        "POST",
+        "/graphql",
+        {
+          body: {
+            query: "mutation Restore($id: UUID!) { restoreOpportunity(id: $id) { id } }",
+            variables: { id },
+          },
+        },
+      );
+      if (result.errors?.length) {
+        const detail = safeError(result.errors[0].message ?? "unknown error");
+        throw new TwentyApiError(`Twenty could not restore the opportunity: ${detail}`, null, false);
+      }
     },
 
     async readOpportunity(id) {

@@ -18,6 +18,7 @@ import {
 const START = new Date("2026-11-01T00:00:00.000Z");
 const T1 = new Date("2026-11-03T10:00:00.000Z");
 const T2 = new Date("2026-11-03T11:00:00.000Z");
+const T3 = new Date("2026-11-03T12:00:00.000Z");
 
 /** In-memory store mirroring the Postgres store's selection and version rules. */
 class FakeStore implements TwentySyncStore {
@@ -299,6 +300,32 @@ describe("opportunities in the Twenty trash", () => {
       amount: { amountMicros: 200_000_000 },
     });
     expect(store.link("quote", 10)?.twentyOpportunityId).toBe(id);
+  });
+
+  it("still resets the status on retry when restoring fails partway", async () => {
+    addCustomer(1);
+    addQuote(10, 1, { status: "Draft", total: "100.00" });
+    await run();
+    const { id } = twenty.opportunities[0];
+    twenty.trash.add(id);
+    twenty.opportunities[0].fields.rfqStatus = "REVIEWING";
+    addQuote(10, 1, { status: "Draft", total: "200.00", updatedAt: T2 });
+    clock = T2;
+
+    const update = twenty.updateOpportunity.bind(twenty);
+    let updates = 0;
+    twenty.updateOpportunity = async (target, fields) => {
+      updates += 1;
+      if (updates === 2) throw new TwentyApiError("Twenty returned 503", 503, true);
+      return update(target, fields);
+    };
+    await run();
+    twenty.updateOpportunity = update;
+    clock = T3;
+    await run();
+
+    expect(twenty.trash.has(id)).toBe(false);
+    expect(twenty.opportunities[0].fields.rfqStatus).toBe("QUOTING");
   });
 
   it("reports a restored opportunity on a single-quote sync", async () => {

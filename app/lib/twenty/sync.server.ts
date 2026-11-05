@@ -473,9 +473,10 @@ class SyncContext {
       try {
         const { deletedAt } = await this.twenty.updateOpportunity(opportunityId, fields);
         if (deletedAt) {
-          // In Twenty's trash: it still holds the unique erpQuoteId, so a new one can't be made.
-          await this.twenty.restoreOpportunity(opportunityId);
+          // In Twenty's trash: it still holds the unique erpQuoteId, so a new one can't be
+          // made. Restore last, so a failure leaves it trashed and the retry redoes all of this.
           await this.twenty.updateOpportunity(opportunityId, restoredFields);
+          await this.twenty.restoreOpportunity(opportunityId);
         }
         result = { id: opportunityId, created: false };
       } catch (error) {

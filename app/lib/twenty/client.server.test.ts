@@ -141,14 +141,26 @@ describe("createTwentyClient", () => {
     });
   });
 
-  it("restores through the Twenty restore route", async () => {
+  it("restores through the GraphQL mutation Twenty's UI uses", async () => {
     const { client, fetcher } = clientReturning(Response.json({ data: {} }));
 
     await client.restoreOpportunity("o");
 
     const [url, init] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
-    expect(url.pathname).toBe("/rest/opportunities/o/restore");
-    expect(init.method).toBe("PATCH");
+    expect(url.pathname).toBe("/graphql");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string).variables).toEqual({ id: "o" });
+  });
+
+  it("treats a GraphQL error as a failed restore, with the key removed", async () => {
+    const { client } = clientReturning(
+      Response.json({ errors: [{ message: `denied ${API_KEY}` }] }),
+    );
+
+    const error = await client.restoreOpportunity("o").catch((caught: TwentyApiError) => caught);
+
+    expect(error).toBeInstanceOf(TwentyApiError);
+    expect((error as TwentyApiError).message).not.toContain(API_KEY);
   });
 
   it("follows pagination across all companies", async () => {
