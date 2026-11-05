@@ -55,6 +55,7 @@ import {
 } from "./quote-part-assets.server.js";
 import { contentTypeForDrawingFileName } from "./part-source-files.js";
 import crypto from "crypto";
+import { notifyTwentySync } from "./twenty/notify.server.js";
 import {
   addBusinessDays,
   businessDaysFrom,
@@ -318,6 +319,7 @@ export async function createQuote(
       userEmail: context?.userEmail,
     });
 
+    notifyTwentySync("quote.created");
     return newQuote;
   } catch (error) {
     console.error("Error creating quote:", error);
@@ -536,6 +538,7 @@ export async function updateQuote(
       });
     }
 
+    notifyTwentySync("quote.updated");
     return updatedQuote;
   } catch (error) {
     console.error("Error updating quote:", error);
@@ -578,6 +581,7 @@ export async function archiveQuote(
       userEmail: context?.userEmail,
     });
 
+    notifyTwentySync("quote.archived");
     return true;
   } catch (error) {
     console.error("Error archiving quote:", error);
@@ -620,6 +624,7 @@ export async function restoreQuote(
       userEmail: context?.userEmail,
     });
 
+    notifyTwentySync("quote.restored");
     return true;
   } catch (error) {
     console.error("Error restoring quote:", error);
@@ -1274,6 +1279,7 @@ export async function convertQuoteToOrder(
       },
     });
 
+    notifyTwentySync("quote.converted");
     return {
       success: true,
       orderId: result.orderId,
@@ -1698,6 +1704,7 @@ export async function duplicateQuote(
       userEmail: context?.userEmail,
     });
 
+    notifyTwentySync("quote.duplicated");
     return {
       success: true,
       quoteId: result.quoteId,
@@ -1742,6 +1749,7 @@ export async function calculateQuoteTotals(quoteId: number): Promise<{
       })
       .where(eq(quotes.id, quoteId));
 
+    notifyTwentySync("quote.totals_changed");
     return { subtotal, total };
   } catch (error) {
     console.error("Error calculating quote totals:", error);
@@ -1791,6 +1799,7 @@ export async function checkAndUpdateExpiredQuotes(): Promise<number> {
       });
     }
 
+    if (expiredQuotes.length > 0) notifyTwentySync("quote.expired");
     return expiredQuotes.length;
   } catch (error) {
     console.error("Error checking expired quotes:", error);

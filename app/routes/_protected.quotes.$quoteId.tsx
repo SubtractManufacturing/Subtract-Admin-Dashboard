@@ -1,3 +1,4 @@
+import { notifyTwentySync } from "~/lib/twenty/notify.server";
 import {
   json,
   LoaderFunctionArgs,
@@ -1686,6 +1687,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           userEmail: eventContext.userEmail,
         });
 
+        notifyTwentySync("quote.revised");
         return redirect(`/quotes/${quoteId}`);
       }
 

@@ -23,6 +23,7 @@ import type {
   RfqQueue,
 } from "./types";
 import { tryEnqueueQuoteReceivedAutoEmail } from "~/lib/email/enqueue-quote-received-email.server";
+import { notifyTwentySync } from "~/lib/twenty/notify.server";
 
 const RETRY_DELAYS_MS = [
   60_000,
@@ -385,6 +386,9 @@ export function createRfqImporter(dependencies: RfqImporterDependencies): {
             committed.drawingAttachmentIds,
           )
           .catch((error) => console.error("[RFQ Intake] Derived asset enqueue failed", error));
+
+        // Committed, so the quote and customer exist even if cleanup below fails.
+        notifyTwentySync("rfq.imported");
 
         try {
           await dependencies.intake.deletePrefix(intakePrefix(receipt.sessionId));
