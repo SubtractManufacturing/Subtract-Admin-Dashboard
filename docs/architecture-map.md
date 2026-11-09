@@ -31,7 +31,7 @@ Browser → Remix route (loader/action) → app/lib module → db / S3 / queue p
 
 ```
 app/
-├── routes/           # Remix pages and resource routes (~41 files)
+├── routes/           # Remix pages and resource routes (~41 files); detail routes are thin, see below
 ├── components/       # React UI by domain (orders/, quotes/, email/, admin/, shared/)
 ├── lib/              # Server logic and data access (~150 modules)
 │   ├── db/           # schema.ts, client, migrations metadata
@@ -69,15 +69,62 @@ docs/
 | **Auth** | `login`, `auth.callback`, `logout`, `setup-password` | `auth.server.ts`, `supabase.ts` |
 | **Stubs** | `_protected.ActionItems` | Coming soon — linked from nav |
 
-## God routes (high churn — refactor targets)
+## Detail routes: intent tables behind a seam
 
-| Route | Lines | Action intents | Notes |
-|-------|-------|----------------|-------|
-| `_protected.quotes.$quoteId.tsx` | ~4,924 | 35 | Line items, attachments, notes, email, PDF, Stripe |
-| `_protected.orders.$orderId.tsx` | ~4,337 | 48 | Same cross-cutting patterns + tracking, vendor pay, PO/invoice PDFs |
-| `_protected.settings.tsx` | ~1,600+ | many | Feature flags, dev settings, placeholder tabs |
+`_protected.quotes.$quoteId.tsx` and `_protected.orders.$orderId.tsx` used to hold their whole
+loader, action and page (about 4,400 lines each). They are now about 30 lines: the route
+authenticates, hands off, and renders. Behaviour lives in deep modules that can be tested without
+Postgres, S3 or Stripe.
 
-Business logic for these should eventually live in deep `app/lib` modules; routes become thin adapters.
+```
+route loader/action  ->  app/lib/{quote,order}-detail/{loader,action}.server.ts   (Request, auth, cookies)
+                              |
+                              v
+                         runQuoteIntent / runOrderIntent   (action.ts: authenticated input, Response out)
+                              |  dispatchIntent(table, intent)
+                              v
+                         intents/*.ts   one module per concern; each handler decides, never does I/O itself
+                              |  ctx.deps (ports)
+                              v
+              ports.ts  <-- production adapter: deps.server.ts (Postgres, S3, Stripe, queue)
+                        <-- test adapter:       test-support.ts (vi.fn fakes)
+
+route loader  ->  loadQuoteDetail / loadOrderDetail(input, deps)   (loader.ts: what to fetch, how to shape it)
+                              |  deps (QuoteLoaderDeps / OrderLoaderDeps)
+                              v
+                  production adapter: loader.server.ts (createQuoteLoaderDeps / createOrderLoaderDeps)
+                  test adapter:       loader.test.ts (vi.fn fakes)
+
+route default export  ->  components/quotes/QuoteDetailPage.tsx, components/orders/OrderDetailPage.tsx
+```
+
+| Path | Role |
+|------|------|
+| `app/lib/route-actions/core.ts` | `IntentTable`, `dispatchIntent`, `actorFromAuth`, response helpers |
+| `app/lib/route-actions/` (shared) | `uploadDrawings`, `generateEntityDocument`, `noteIntents`, `loadSendComposer`, `signDrawingAttachments`, part-attribute change events. Used by both routes. |
+| `app/lib/quote-detail/` | Quote ports, intents (`lifecycle`, `line-items`, `parts`, `attachments`, `receive-po`, `documents-email`), `acceptance.ts` (policy), `line-item-form.ts` (pure parsing), `loader.ts` + `part-view.ts` (page data), `view.ts` (UI rules), `line-item-edit.ts` (inline-edit plan) |
+| `app/hooks/usePolling.ts` | Capped interval polling; both pages use it to refresh while parts convert |
+| `app/lib/order-detail/` | Order ports, intents (`lifecycle`, `line-items`, `parts`, `attachments`, `tracking`, `job-board`, `documents-email`), `tracking-form.ts`, `loader.ts` (page data), `view.ts`, `line-item-edit.ts` (inline-edit plan) |
+
+**Adding or changing an action:** add a handler to the matching `intents/*.ts` table, reach the
+outside world only through `ctx.deps`, and test it with `makeQuoteCtx()` / `makeOrderCtx()` from
+`test-support.ts`. If a handler needs a new kind of I/O, add a method to `ports.ts` and implement it
+in `deps.server.ts`. `action.test.ts` in each folder pins the full list of intents, so renaming or
+dropping one fails a test instead of silently breaking a button.
+
+**Adding page data:** add the lookup to `QuoteLoaderDeps` / `OrderLoaderDeps` in `loader.ts`, wire
+the real function in `loader.server.ts`, and cover any condition around it in `loader.test.ts`.
+
+**Page logic:** the page components still hold their own UI state and JSX (about 2,200 lines
+each). Rules worth testing are pulled out as pure functions (`view.ts`, `line-item-edit.ts`) or
+hooks (`usePolling`); splitting the JSX into section components is the remaining step. Loader data
+is untyped in the pages because `withAuthHeaders` returns a plain `Response`.
+
+**Conventions:** handlers return a `Response` and never call `withAuthHeaders` (the route applies
+auth headers once). Pure rules (parsing, pricing, status policy, presentation) live in plain
+modules with no imports from `*.server.ts`.
+
+`_protected.settings.tsx` (~1,600+ lines) is still a god route and has not been reworked.
 
 ## Line-item modules (known duplication)
 
