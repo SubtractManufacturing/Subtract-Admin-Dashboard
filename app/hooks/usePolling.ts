@@ -6,6 +6,11 @@ export type UsePollingOptions = {
   intervalMs: number;
   /** Give up after this many ticks so a stuck job cannot poll forever. */
   maxTicks: number;
+  /**
+   * Restarts the tick count when it changes while `active` stays true, e.g. the
+   * quote/order id when the route stays mounted across detail pages.
+   */
+  resetKey?: string | number;
   onTick: () => void;
   /** Called once when `maxTicks` is reached. Polling stays stopped until `active` toggles. */
   onTimeout?: () => void;
@@ -21,6 +26,7 @@ export function usePolling({
   active,
   intervalMs,
   maxTicks,
+  resetKey,
   onTick,
   onTimeout,
 }: UsePollingOptions): void {
@@ -45,5 +51,5 @@ export function usePolling({
     }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [active, intervalMs, maxTicks]);
+  }, [active, intervalMs, maxTicks, resetKey]);
 }

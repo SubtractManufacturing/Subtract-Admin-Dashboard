@@ -241,6 +241,7 @@ export default function QuoteDetailPage() {
     active: hasConvertingQuoteParts(quote.parts),
     intervalMs: 5000,
     maxTicks: 120,
+    resetKey: quote.id,
     onTick: () => revalidator.revalidate(),
     onTimeout: () =>
       console.warn("Background status polling timeout reached (10 minutes)"),
@@ -256,6 +257,7 @@ export default function QuoteDetailPage() {
     active: isWaitingForSentStatus && quote.status !== "Sent",
     intervalMs: 3000,
     maxTicks: 40,
+    resetKey: quote.id,
     onTick: () => revalidator.revalidate(),
     onTimeout: () => setIsWaitingForSentStatus(false),
   });

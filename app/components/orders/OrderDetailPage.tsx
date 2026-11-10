@@ -327,7 +327,6 @@ export default function OrderDetailPage() {
   const handleDrawingUpload = useCallback(
     (partId: string, files: FileList | null) => {
       if (!files || files.length === 0) return;
-      setDrawingUploadingPartId(partId);
 
       // Validate file sizes (10MB limit per file)
       const MAX_DRAWING_SIZE = 10 * 1024 * 1024; // 10MB
@@ -344,6 +343,7 @@ export default function OrderDetailPage() {
         return;
       }
 
+      setDrawingUploadingPartId(partId);
       const formData = new FormData();
       formData.append("intent", "addDrawingToPart");
       formData.append("partId", partId);
@@ -427,6 +427,7 @@ export default function OrderDetailPage() {
     ),
     intervalMs: 5000,
     maxTicks: 120,
+    resetKey: order.id,
     onTick: () => revalidator.revalidate(),
   });
 

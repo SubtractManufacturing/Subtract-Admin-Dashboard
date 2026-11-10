@@ -181,13 +181,11 @@ export const lineItemIntents: IntentTable<Ctx> = {
 
     const rawId = formData.get("lineItemId");
     if (!rawId) return badRequest("Missing line item ID");
+    const lineItemId = toId(rawId);
+    if (lineItemId === null) return badRequest("Invalid line item ID");
 
     try {
-      await ctx.deps.lineItems.archive(
-        parseInt(String(rawId), 10),
-        ctx.quote.id,
-        ctx.actor,
-      );
+      await ctx.deps.lineItems.archive(lineItemId, ctx.quote.id, ctx.actor);
       return redirectToQuote(ctx.quote);
     } catch (error) {
       console.error("Error archiving line item:", error);
@@ -200,13 +198,11 @@ export const lineItemIntents: IntentTable<Ctx> = {
   async restoreLineItem(ctx, formData) {
     const rawId = formData.get("lineItemId");
     if (!rawId) return badRequest("Missing line item ID");
+    const lineItemId = toId(rawId);
+    if (lineItemId === null) return badRequest("Invalid line item ID");
 
     try {
-      await ctx.deps.lineItems.restore(
-        parseInt(String(rawId), 10),
-        ctx.quote.id,
-        ctx.actor,
-      );
+      await ctx.deps.lineItems.restore(lineItemId, ctx.quote.id, ctx.actor);
       return redirectToQuote(ctx.quote);
     } catch (error) {
       console.error("Error restoring line item:", error);

@@ -112,6 +112,11 @@ outside world only through `ctx.deps`, and test it with `makeQuoteCtx()` / `make
 in `deps.server.ts`. `action.test.ts` in each folder pins the full list of intents, so renaming or
 dropping one fails a test instead of silently breaking a button.
 
+Exception: the `partAssetAdmin` intent is not in the tables. `runQuoteIntent` / `runOrderIntent`
+hand it to `tryPartAssetAdminAction` (`app/lib/part-asset-admin.server.ts`) before table dispatch,
+so a table handler with that name would never run, and the `action.test.ts` intent lists do not
+cover it.
+
 **Adding page data:** add the lookup to `QuoteLoaderDeps` / `OrderLoaderDeps` in `loader.ts`, wire
 the real function in `loader.server.ts`, and cover any condition around it in `loader.test.ts`.
 

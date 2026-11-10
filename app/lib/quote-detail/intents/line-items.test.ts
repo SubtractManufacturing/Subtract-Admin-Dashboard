@@ -343,6 +343,14 @@ describe("archiveLineItem / restoreLineItem", () => {
     expect((await run(ctx, "restoreLineItem")).status).toBe(400);
   });
 
+  it("rejects a non-numeric line item id with 400 before touching the port", async () => {
+    const ctx = makeQuoteCtx();
+    expect((await run(ctx, "archiveLineItem", { lineItemId: "abc" })).status).toBe(400);
+    expect((await run(ctx, "restoreLineItem", { lineItemId: "abc" })).status).toBe(400);
+    expect(ctx.deps.lineItems.archive).not.toHaveBeenCalled();
+    expect(ctx.deps.lineItems.restore).not.toHaveBeenCalled();
+  });
+
   it("surfaces the domain error message with a 500", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const ctx = makeQuoteCtx();

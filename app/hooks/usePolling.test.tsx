@@ -78,6 +78,24 @@ describe("usePolling", () => {
     expect(second).toHaveBeenCalledTimes(1);
   });
 
+  it("starts a fresh count when resetKey changes while staying active", () => {
+    const onTick = vi.fn();
+    const onTimeout = vi.fn();
+    const { rerender } = renderHook(
+      (props: UsePollingOptions) => usePolling(props),
+      { initialProps: { ...base, active: true, resetKey: 1, onTick, onTimeout } },
+    );
+
+    vi.advanceTimersByTime(60_000);
+    expect(onTick).toHaveBeenCalledTimes(3);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+
+    rerender({ ...base, active: true, resetKey: 2, onTick, onTimeout });
+    vi.advanceTimersByTime(60_000);
+    expect(onTick).toHaveBeenCalledTimes(6);
+    expect(onTimeout).toHaveBeenCalledTimes(2);
+  });
+
   it("clears the interval on unmount", () => {
     const onTick = vi.fn();
     const { unmount } = renderHook(() => usePolling({ ...base, active: true, onTick }));
