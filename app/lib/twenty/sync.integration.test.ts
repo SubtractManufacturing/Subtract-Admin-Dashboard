@@ -36,7 +36,7 @@ import {
   withTwentySyncLock,
 } from "./store.server";
 import { companyIdentityFor, companyKeyFor } from "./matching";
-import { runTwentySync } from "./sync.server";
+import { runTwentySync, syncOneQuote } from "./sync.server";
 
 vi.mock("./notify.server", () => ({ notifyTwentySync: vi.fn() }));
 
@@ -625,6 +625,26 @@ describe("backoff", () => {
 });
 
 describe("failures", () => {
+  it("retries a failure recorded on an already synced quote", async () => {
+    const customer = await seedCustomer();
+    const quote = await manualQuote(customer.id);
+    await sweep();
+    expect(await isDue("quote", quote.id)).toBe(false);
+
+    twenty.down = true;
+    const result = await syncOneQuote({ store, twenty, quoteNumber: quote.quoteNumber });
+    expect(result.ok).toBe(false);
+    expect((await store.getLink("quote", quote.id))?.syncState).toBe("failed");
+
+    twenty.down = false;
+    await clearTwentyRetryDelay({ entityType: "quote", entityId: quote.id });
+    expect(await isDue("quote", quote.id)).toBe(true);
+    await sweep();
+
+    expect((await store.getLink("quote", quote.id))?.syncState).toBe("synced");
+    expect(await isDue("quote", quote.id)).toBe(false);
+  });
+
   it("backs off, shows the failure, and clears after a retry", async () => {
     const customer = await seedCustomer();
     const quote = await manualQuote(customer.id);

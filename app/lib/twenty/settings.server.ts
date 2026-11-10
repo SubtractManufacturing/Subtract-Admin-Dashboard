@@ -76,16 +76,22 @@ export async function saveTwentyWorkspaceUrl(
   rawUrl: string,
   updatedBy: string,
 ): Promise<
-  { ok: true; url: string; linksCleared: boolean } | { ok: false; error: string }
+  | { ok: true; url: string; linksCleared: boolean; syncDisabled: boolean }
+  | { ok: false; error: string }
 > {
   const normalized = normalizeWorkspaceUrl(rawUrl);
   if (!normalized.ok) return normalized;
-  const { workspaceUrl: previous } = await getTwentySettings();
+  const { workspaceUrl: previous, enabled } = await getTwentySettings();
   const url = normalized.url;
   const changedWorkspace = Boolean(previous) && previous !== url;
+  // Enabling is what tests a workspace, so a new one must be enabled again.
+  const disableSync = enabled && previous !== url;
 
   // Stored record IDs belong to one workspace and mean nothing in another.
   const result = await withTwentySyncLock(async () => {
+    // Off first: if the URL then fails to save, the sync stays off rather than
+    // running against a workspace nobody tested.
+    if (disableSync && !(await disableTwentySync(updatedBy))) return false;
     const saved = await setDeveloperSetting(
       TWENTY_SETTINGS.WORKSPACE_URL,
       url || null,
@@ -98,7 +104,7 @@ export async function saveTwentyWorkspaceUrl(
     return { ok: false, error: "A sync is running. Try again in a minute." };
   }
   return result.value
-    ? { ok: true, url, linksCleared: changedWorkspace }
+    ? { ok: true, url, linksCleared: changedWorkspace, syncDisabled: disableSync }
     : { ok: false, error: "Could not save the Twenty URL." };
 }
 

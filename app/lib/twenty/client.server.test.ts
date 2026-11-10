@@ -108,6 +108,8 @@ describe("createTwentyClient", () => {
   it.each([
     [{ isUnique: true }, true],
     [{ isUnique: false }, false],
+    [{}, null],
+    [{ isUnique: null }, null],
   ])("reads whether erpQuoteId is unique: %j", async (flags, expected) => {
     const client = createTwentyClient({
       baseUrl: "https://api.twenty.com",

@@ -80,6 +80,9 @@ function dueConditions(
     or(
       isNull(twentySyncLinks.syncedSourceUpdatedAt),
       sql`${versionSql} > ${twentySyncLinks.syncedSourceUpdatedAt}`,
+      // A failure can land on a row whose version is already synced, as when a
+      // single-quote sync fails. It must still retry, or it stays failed for good.
+      eq(twentySyncLinks.syncState, "failed"),
     ),
     or(
       isNull(twentySyncLinks.nextAttemptAt),

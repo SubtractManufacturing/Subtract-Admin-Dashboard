@@ -271,8 +271,11 @@ export function matchCompany(
 
   if (!domain) return { kind: "none", domainTaken: false };
 
+  // A name that merely resembles the domain counts only when the company records
+  // no domain of its own: "Acme" at other.com is not the account for acme.com.
   const byDomain = companies.filter(
-    (company) => company.domain === domain || isNamedAfterDomain(company, domain),
+    (company) =>
+      company.domain === domain || (!company.domain && isNamedAfterDomain(company, domain)),
   );
   const holdsDomain = byDomain.some((company) => company.domain === domain);
   // A stated name that disagrees with the domain's account is a different company:

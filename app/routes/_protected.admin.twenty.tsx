@@ -107,16 +107,15 @@ export async function action({ request }: ActionFunctionArgs) {
         typeof rawUrl === "string" ? rawUrl : "",
         updatedBy,
       );
-      return respond(
-        result.ok
-          ? {
-              ok: true,
-              message: result.linksCleared
-                ? "Workspace URL saved. Links to the previous workspace were cleared."
-                : "Workspace URL saved.",
-            }
-          : { ok: false, message: result.error },
-      );
+      if (!result.ok) return respond({ ok: false, message: result.error });
+      const notes = [
+        "Workspace URL saved.",
+        result.linksCleared ? "Links to the previous workspace were cleared." : null,
+        result.syncDisabled
+          ? "Automatic sync was turned off. Test the connection, then enable it again."
+          : null,
+      ];
+      return respond({ ok: true, message: notes.filter(Boolean).join(" ") });
     }
     case "test": {
       const { workspaceUrl } = await getTwentySettings();

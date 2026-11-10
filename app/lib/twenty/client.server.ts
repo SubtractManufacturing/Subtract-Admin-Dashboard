@@ -338,7 +338,8 @@ export function createTwentyClient(options: TwentyClientOptions) {
       );
       const fields = detail.data?.fields ?? detail.fields ?? [];
       const field = fields.find((item) => item.name === ERP_QUOTE_ID_FIELD);
-      return field ? Boolean(field.isUnique) : null;
+      // A missing flag is unknown, not "not unique".
+      return typeof field?.isUnique === "boolean" ? field.isUnique : null;
     } catch (error) {
       if (error instanceof TwentyApiError && !error.transient) return null;
       throw error;

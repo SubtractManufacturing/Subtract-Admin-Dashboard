@@ -65,7 +65,8 @@ class FakeStore implements TwentySyncStore {
     const consider = (type: SyncEntityType, id: number, updatedAt: Date, createdAt: Date) => {
       const link = this.link(type, id);
       if (createdAt < syncStartedAt && !link) return;
-      if (link?.syncedSourceUpdatedAt && updatedAt <= link.syncedSourceUpdatedAt) return;
+      const isCurrent = link?.syncedSourceUpdatedAt && updatedAt <= link.syncedSourceUpdatedAt;
+      if (isCurrent && link.syncState !== "failed") return;
       const changedSinceLastTry = Boolean(link?.lastAttemptAt && updatedAt > link.lastAttemptAt);
       if (link?.nextAttemptAt && link.nextAttemptAt > now && !changedSinceLastTry) return;
       due.push({
@@ -793,6 +794,23 @@ describe("syncOneQuote", () => {
         warning: null,
       },
     });
+  });
+
+  it("leaves a failure on an already synced quote retryable", async () => {
+    addCustomer(1);
+    addQuote(10, 1);
+    await run();
+    expect(store.link("quote", 10)?.syncState).toBe("synced");
+
+    twenty.down = true;
+    expect((await single("Q2611-0010")).ok).toBe(false);
+    expect(store.link("quote", 10)?.syncState).toBe("failed");
+
+    twenty.down = false;
+    clock = new Date(clock.getTime() + 2 * 60 * 60_000);
+    await run();
+
+    expect(store.link("quote", 10)?.syncState).toBe("synced");
   });
 
   it("touches only the chosen quote", async () => {

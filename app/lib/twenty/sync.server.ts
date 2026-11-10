@@ -341,7 +341,10 @@ class SyncContext {
     }
 
     const link = await this.store.getLink("customer", customerId);
-    if (link?.syncedSourceUpdatedAt?.getTime() === customer.updatedAt.getTime()) {
+    if (
+      link?.syncState !== "failed" &&
+      link?.syncedSourceUpdatedAt?.getTime() === customer.updatedAt.getTime()
+    ) {
       const ids = {
         twentyPersonId: link.twentyPersonId,
         twentyCompanyId: link.twentyCompanyId,

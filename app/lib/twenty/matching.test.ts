@@ -147,6 +147,17 @@ describe("matchCompany", () => {
     ).toEqual({ kind: "matched", id: "z" });
   });
 
+  it("does not link a domain-named company that records a different domain", () => {
+    const other = { id: "other", name: "Acme", domain: "other.com" };
+    expect(matchCompany([other], { ...noFree, domain: "acme.com" })).toEqual({
+      kind: "none",
+      domainTaken: false,
+    });
+    expect(
+      matchCompany([other], { ...noFree, name: "Acme Robotics", domain: "acme.com" }),
+    ).toEqual({ kind: "none", domainTaken: false });
+  });
+
   it("reports ambiguity instead of guessing", () => {
     const twin = { id: "acme2", name: "ACME Manufacturing LLC", domain: null };
     expect(matchCompany([acme, twin], { ...noFree, name: "Acme Manufacturing" })).toEqual(
