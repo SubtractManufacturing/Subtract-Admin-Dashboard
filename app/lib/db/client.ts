@@ -42,3 +42,7 @@ export const client = postgres(connectionString, {
   prepare: getEnv("DATABASE_USE_PREPARE") === "true" ? true : !useTransactionPool,
 });
 export const db = drizzle(client, { schema });
+/** Separate transaction connection so lock holders never consume the app pool. */
+export function createTwentyLockClient() {
+  return postgres(connectionString, { ssl: sslMode, max: 1, prepare: false, connect_timeout: 60 });
+}

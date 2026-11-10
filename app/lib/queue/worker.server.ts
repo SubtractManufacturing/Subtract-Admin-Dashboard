@@ -32,6 +32,10 @@ export async function startWorkerQueue(): Promise<PgBoss> {
   for (const name of Object.values(QUEUES)) {
     if (name === QUEUES.RFQ_IMPORT || name === QUEUES.DRAWING_THUMBNAIL) {
       await boss.createQueue(name, { policy: "key_strict_fifo" });
+    } else if (name === QUEUES.TWENTY_SYNC) {
+      // One waiting run, so a burst collapses; the advisory lock stops runs overlapping.
+      // Not stately: its fetch trusts a cached "active" flag and can stall a hook for minutes.
+      await boss.createQueue(name, { policy: "short" });
     } else {
       await boss.createQueue(name);
     }

@@ -1,6 +1,8 @@
 /**
- * S3 adapter contract. CI and local runs point these tests at disposable Adobe S3Mock,
- * with one bucket standing in for WordPress intake and another for the application.
+ * S3 adapter contract, run only against a disposable emulator (S3Mock in CI), with
+ * one bucket standing in for WordPress intake and another for the application.
+ * See RFQ_STORAGE_TEST_* in .env.example. Without them this file fails to load,
+ * before any S3 client exists.
  */
 import {
   CreateBucketCommand,
@@ -11,18 +13,27 @@ import {
 import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { getS3Client } from "../s3.server";
+import { createS3Client } from "../s3.server";
 import { createAwsRfqStorage } from "./storage.server";
+import { resolveIsolatedStorageConfig } from "./test-support/isolated-storage-env";
 
-const APP_BUCKET = process.env.S3_BUCKET || "rfq-contract";
-const INTAKE_BUCKET = process.env.INTAKE_S3_BUCKET || "rfq-intake-contract";
+const isolated = resolveIsolatedStorageConfig();
+const s3 = createS3Client({
+  endpoint: isolated.endpoint,
+  region: isolated.region,
+  accessKeyId: isolated.accessKeyId,
+  secretAccessKey: isolated.secretAccessKey,
+});
+
+const APP_BUCKET = isolated.appBucket;
+const INTAKE_BUCKET = isolated.intakeBucket;
 const SESSION = "018f0f7d-9f65-7eb4-bf9c-0fca82a87a99";
 const PREFIX = `intake/${SESSION}/`;
 const CANONICAL_PREFIX = `contract-test/${SESSION}/`;
 
 async function ensureBucket(bucket: string) {
   try {
-    await getS3Client().send(new CreateBucketCommand({ Bucket: bucket }));
+    await s3.send(new CreateBucketCommand({ Bucket: bucket }));
   } catch (error) {
     const name = (error as { name?: string }).name;
     if (name !== "BucketAlreadyOwnedByYou" && name !== "BucketAlreadyExists") throw error;
@@ -30,11 +41,11 @@ async function ensureBucket(bucket: string) {
 }
 
 async function deleteAll(bucket: string, prefix: string) {
-  const listed = await getS3Client().send(
+  const listed = await s3.send(
     new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }),
   );
   if (!listed.Contents?.length) return;
-  await getS3Client().send(
+  await s3.send(
     new DeleteObjectsCommand({
       Bucket: bucket,
       Delete: { Objects: listed.Contents.map(({ Key }) => ({ Key })) },
@@ -43,10 +54,9 @@ async function deleteAll(bucket: string, prefix: string) {
 }
 
 function storageFor(sameAccount: boolean, strategies: string[]) {
-  const client = getS3Client();
   return createAwsRfqStorage({
-    intake: { client, bucket: INTAKE_BUCKET },
-    app: { client, bucket: APP_BUCKET },
+    intake: { client: s3, bucket: INTAKE_BUCKET },
+    app: { client: s3, bucket: APP_BUCKET },
     sameAccount,
     onCopyStrategy: (strategy) => strategies.push(strategy),
   });
@@ -54,10 +64,6 @@ function storageFor(sameAccount: boolean, strategies: string[]) {
 
 describe("AWS RFQ storage adapter contract", () => {
   beforeAll(async () => {
-    if (!process.env.S3_ENDPOINT) {
-      throw new Error("S3_ENDPOINT must point to disposable S3Mock for this integration test");
-    }
-    expect(INTAKE_BUCKET).not.toBe(APP_BUCKET);
     await ensureBucket(APP_BUCKET);
     await ensureBucket(INTAKE_BUCKET);
   });
@@ -74,7 +80,7 @@ describe("AWS RFQ storage adapter contract", () => {
       [`${PREFIX}meta/manifest.json`, "manifest"],
       [`${PREFIX}parts/model.step`, "model"],
     ]) {
-      await getS3Client().send(
+      await s3.send(
         new PutObjectCommand({
           Bucket: INTAKE_BUCKET,
           Key: key,
@@ -126,7 +132,7 @@ describe("AWS RFQ storage adapter contract", () => {
       const destinationKey = `${CANONICAL_PREFIX}${expectedStrategy}/model.step`;
       // Larger than one 16 MiB streaming part so the multipart path is exercised.
       const body = Buffer.alloc(17 * 1024 * 1024, 3);
-      await getS3Client().send(
+      await s3.send(
         new PutObjectCommand({
           Bucket: INTAKE_BUCKET,
           Key: sourceKey,

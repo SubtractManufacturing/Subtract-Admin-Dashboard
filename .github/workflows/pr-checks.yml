@@ -204,6 +204,11 @@ jobs:
           INTAKE_S3_SECRET_ACCESS_KEY: test
           INTAKE_S3_BUCKET: rfq-intake-contract
           RFQ_S3_LIST_PAGE_SIZE: "2"
+          RFQ_STORAGE_TEST_ENDPOINT: http://localhost:9090
+          RFQ_STORAGE_TEST_ACCESS_KEY_ID: test
+          RFQ_STORAGE_TEST_SECRET_ACCESS_KEY: test
+          RFQ_STORAGE_TEST_APP_BUCKET: rfq-contract
+          RFQ_STORAGE_TEST_INTAKE_BUCKET: rfq-intake-contract
 
   security:
     name: Security Scan

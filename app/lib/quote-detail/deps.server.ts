@@ -55,6 +55,7 @@ import {
   notesAdapter,
 } from "~/lib/route-actions/adapters.server";
 import { deactivateQuotePaymentLink } from "~/lib/stripe.server";
+import { notifyTwentySync } from "~/lib/twenty/notify.server";
 import type { QuoteDeps } from "./ports";
 
 type NewPriceCalculation = Parameters<typeof createPriceCalculation>[0];
@@ -79,6 +80,7 @@ export function createQuoteDeps(): QuoteDeps {
             updatedAt: new Date(),
           })
           .where(eq(quotesTable.id, id));
+        notifyTwentySync("quote.revised");
       },
       recalculateTotals: calculateQuoteTotals,
       savePriceCalculation: (data, userId) =>

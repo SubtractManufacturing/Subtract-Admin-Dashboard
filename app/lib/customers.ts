@@ -10,6 +10,7 @@ import { and, asc, desc, eq, inArray, max } from 'drizzle-orm'
 import type { Customer, Vendor } from "./db/schema.js"
 import { getCustomerAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
+import { notifyTwentySync } from "./twenty/notify.server.js"
 import type { CustomerSortBy } from "./customer-sort.js"
 
 export type { Customer }
@@ -208,6 +209,7 @@ export async function createCustomer(customerData: CustomerInput, eventContext?:
       userEmail: eventContext?.userEmail,
     })
 
+    notifyTwentySync("customer.created")
     return customer
   } catch (error) {
     throw new Error(`Failed to create customer: ${error}`)
@@ -254,6 +256,7 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
       })
     }
 
+    notifyTwentySync("customer.updated")
     return customer
   } catch (error) {
     throw new Error(`Failed to update customer: ${error}`)
@@ -311,6 +314,7 @@ export async function archiveCustomer(id: number, eventContext?: CustomerEventCo
       userId: eventContext?.userId,
       userEmail: eventContext?.userEmail,
     })
+    notifyTwentySync("customer.archived")
   } catch (error) {
     throw new Error(`Failed to archive customer: ${error}`)
   }
