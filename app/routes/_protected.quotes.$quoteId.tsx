@@ -1399,7 +1399,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         // Stripe payment link creation when sending a quote
         if (status === "Sent") {
-          const { transitionQuoteToSent } = await import("~/lib/quotes.server");
+          const { ensureQuoteStripePaymentLink, transitionQuoteToSent } =
+            await import("~/lib/quotes.server");
+          // Retire a stale link (quote re-priced since it was created) before reuse.
+          const ensured = await ensureQuoteStripePaymentLink(
+            quote.id,
+            eventContext,
+          );
+          if (!ensured.success) {
+            return json({ error: ensured.error }, { status: 400 });
+          }
           const result = await transitionQuoteToSent(quote.id, eventContext);
           if (!result.success) {
             return json({ error: result.error }, { status: 400 });
