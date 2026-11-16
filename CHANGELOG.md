@@ -6,6 +6,13 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.8.6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.5...v1.8.6) (2026-11-16)
+
+
+### Bug Fixes
+
+* **quotes:** replace stale Stripe payment link when quote total changes ([#197](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/197)) ([716e6eb](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/716e6eb0f4e62c247b5e4ec9f8bfaeb0f9881b91))
+
 ## [1.8.5](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.4...v1.8.5) (2026-11-02)
 
 
