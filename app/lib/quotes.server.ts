@@ -33,6 +33,33 @@ export async function validateQuoteCanBeSent(
   return { success: true };
 }
 
+/**
+ * An existing active link is only reusable if it still matches the quote total;
+ * Stripe links are immutable, so a re-priced quote needs a fresh link.
+ * Deactivates a stale link and returns false in that case.
+ */
+async function isExistingPaymentLinkCurrent(quote: {
+  stripePaymentLinkId: string | null;
+  stripePaymentLinkActive: boolean | null;
+  total: string | null;
+}): Promise<boolean> {
+  if (!quote.stripePaymentLinkId || !quote.stripePaymentLinkActive) {
+    return false;
+  }
+  const { paymentLinkMatchesTotal, deactivateQuotePaymentLink } = await import(
+    "~/lib/stripe.server"
+  );
+  try {
+    if (await paymentLinkMatchesTotal(quote.stripePaymentLinkId, quote.total!)) {
+      return true;
+    }
+    await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
+  } catch (e) {
+    console.error("Stripe payment link staleness check failed:", e);
+  }
+  return false;
+}
+
 /** Creates or reuses an active Stripe payment link without changing quote status (e.g. before rendering send-email). */
 export async function ensureQuoteStripePaymentLink(
   quoteId: number,
@@ -58,11 +85,7 @@ export async function ensureQuoteStripePaymentLink(
     return { success: false, error: "Stripe is not configured" };
   }
 
-  if (
-    quote.stripePaymentLinkId &&
-    quote.stripePaymentLinkActive &&
-    quote.stripePaymentLinkUrl
-  ) {
+  if (quote.stripePaymentLinkUrl && (await isExistingPaymentLinkCurrent(quote))) {
     return { success: true };
   }
 
@@ -116,7 +139,7 @@ export async function transitionQuoteToSent(
       return { success: false, error: "Stripe is not configured" };
     }
 
-    if (!quote.stripePaymentLinkId || !quote.stripePaymentLinkActive) {
+    if (!(await isExistingPaymentLinkCurrent(quote))) {
       const paymentLink = await createQuotePaymentLink({
         quoteId: quote.id,
         quoteNumber: quote.quoteNumber,

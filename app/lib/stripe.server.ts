@@ -99,3 +99,18 @@ export async function deactivateQuotePaymentLink(
 
   await stripe.paymentLinks.update(paymentLinkId, { active: false });
 }
+
+/** True when the payment link's total charge equals `totalDollars` (Stripe links are immutable). */
+export async function paymentLinkMatchesTotal(
+  paymentLinkId: string,
+  totalDollars: string
+): Promise<boolean> {
+  const stripe = getStripeClient();
+  if (!stripe) return false;
+
+  const items = await stripe.paymentLinks.listLineItems(paymentLinkId, {
+    limit: 100,
+  });
+  const linkCents = items.data.reduce((sum, i) => sum + i.amount_total, 0);
+  return linkCents === Math.round(parseFloat(totalDollars) * 100);
+}
