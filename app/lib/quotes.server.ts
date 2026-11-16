@@ -51,9 +51,12 @@ export async function ensureQuoteStripePaymentLink(
   const quote = await getQuote(quoteId);
   if (!quote) return { success: false, error: "Quote not found" };
 
-  const { isStripeConfigured, createQuotePaymentLink } = await import(
-    "~/lib/stripe.server"
-  );
+  const {
+    isStripeConfigured,
+    createQuotePaymentLink,
+    deactivateQuotePaymentLink,
+    paymentLinkMatchesTotal,
+  } = await import("~/lib/stripe.server");
   if (!isStripeConfigured()) {
     return { success: false, error: "Stripe is not configured" };
   }
@@ -63,7 +66,24 @@ export async function ensureQuoteStripePaymentLink(
     quote.stripePaymentLinkActive &&
     quote.stripePaymentLinkUrl
   ) {
-    return { success: true };
+    // Stripe links are immutable: reuse only if the amount still matches the
+    // quote total, otherwise retire it. On any Stripe error, fail rather than
+    // replace a link that may be live or already emailed.
+    try {
+      if (
+        await paymentLinkMatchesTotal(quote.stripePaymentLinkId, quote.total!)
+      ) {
+        return { success: true };
+      }
+      await deactivateQuotePaymentLink(quote.stripePaymentLinkId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        success: false,
+        error: `Could not verify the existing payment link: ${msg}`,
+      };
+    }
+    await updateQuote(quoteId, { stripePaymentLinkActive: false }, eventContext);
   }
 
   let paymentLink: { url: string; id: string };

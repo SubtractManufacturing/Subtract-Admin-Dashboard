@@ -40,7 +40,10 @@ import {
   updateQuote,
   updateQuoteLineItem,
 } from "~/lib/quotes";
-import { transitionQuoteToSent } from "~/lib/quotes.server";
+import {
+  ensureQuoteStripePaymentLink,
+  transitionQuoteToSent,
+} from "~/lib/quotes.server";
 import { createPriceCalculation } from "~/lib/quotePriceCalculations";
 import {
   ensureDrawingOnlyQuotePartAssets,
@@ -67,7 +70,13 @@ export function createQuoteDeps(): QuoteDeps {
       restore: restoreQuote,
       convertToOrder: convertQuoteToOrder,
       duplicate: duplicateQuote,
-      transitionToSent: transitionQuoteToSent,
+      // Manual "mark as Sent" has no email step, so retire a stale payment link
+      // (quote re-priced since it was created) before the transition reuses it.
+      async transitionToSent(id, actor) {
+        const ensured = await ensureQuoteStripePaymentLink(id, actor);
+        if (!ensured.success) return ensured;
+        return transitionQuoteToSent(id, actor);
+      },
       async resetToDraftForRevision(id) {
         await db
           .update(quotesTable)
