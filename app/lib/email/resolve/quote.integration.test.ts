@@ -12,7 +12,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { SeededQuoteIds } from "~/test/seed-minimal-quote";
 import { seedMinimalQuote, cleanupMinimalQuote } from "~/test/seed-minimal-quote";
 import { db } from "~/lib/db";
-import { quoteLineItems, quoteParts } from "~/lib/db/schema";
+import { quoteLineItems, quoteParts, quotes } from "~/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { getEnv } from "~/lib/env.server";
 import { resolveQuoteTokens } from "./quote.server";
 
@@ -107,5 +108,36 @@ describe("resolveQuoteTokens", () => {
     expect(tokens.estimatedDeliveryDate).toBeDefined();
     expect(tokens.estimatedDeliveryDate).not.toMatch(/\(ET\)/);
     expect(tokens.leadTimeBusinessDays).toBe("7–12 Business Days");
+  });
+
+  it("tolerates RFQ intake metadata without referenceNumber", async () => {
+    await db
+      .update(quotes)
+      .set({
+        creationMetadata: {
+          version: 1,
+          origin: "rfq_intake",
+          contact: {
+            email: "legacy@example.com",
+            firstName: "Legacy",
+            lastName: "Import",
+            company: "",
+            phone: "",
+            jobTitle: "",
+          },
+          receiptNumber: "RFQ-LEGACY-1",
+          submittedAt: "2026-01-01T00:00:00+00:00",
+          leadTimePreference: "standard",
+          destinationPostalCode: "90210",
+          requestedDeliveryDate: "",
+          poNumber: "PO-OLD",
+          ndaRequired: false,
+        },
+      })
+      .where(eq(quotes.id, seeded.quoteId));
+
+    const tokens = await resolveQuoteTokens(String(seeded.quoteId));
+    expect(tokens.submissionPoNumber).toBe("PO-OLD");
+    expect(tokens.submissionReferenceNumber).toBeUndefined();
   });
 });

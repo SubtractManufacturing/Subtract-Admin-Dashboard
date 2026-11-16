@@ -349,6 +349,7 @@ export function createPostgresRfqPersistence(input: {
           unitPrice: "0.00",
           totalPrice: "0.00",
           description: part.note || null,
+          notes: part.customerNotes,
           sortOrder: index,
           createdAt: prepared.now,
           updatedAt: prepared.now,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
 import wordpressManifestV2 from "./fixtures/wordpress-manifest-v2.json";
+import wordpressManifestV3 from "./fixtures/wordpress-manifest-v3.json";
 import wordpressReceipt from "./fixtures/wordpress-receipt.json";
 import {
   composeIntakeFinish,
@@ -11,6 +12,7 @@ import {
   parseReceipt,
   quoteIntakeNote,
 } from "./package";
+import { buildRfqIntakeCreationMetadata } from "~/lib/quotes/creation-metadata";
 import type { ReceiptPointer } from "./types";
 
 const RECEIPT_KEY = wordpressReceipt.manifest_key.replace(
@@ -73,6 +75,7 @@ describe("parseManifest", () => {
     expect(manifest.parts).toHaveLength(2);
     expect(manifest.parts[0].drawings).toHaveLength(2);
     expect(manifest.parts[1].drawings).toHaveLength(0);
+    expect(manifest.parts[1].customerNotes).toBe("Rush review");
     expect(manifest.parts[0].note).toContain("Target price: 12.5");
     expect(manifest.ndaRequired).toBe(false);
     expect(manifest.leadTimePreference).toBe("standard");
@@ -167,8 +170,69 @@ describe("parseManifest", () => {
 
   it("rejects unsupported manifest versions", () => {
     expect(() =>
-      parseManifest({ ...wordpressManifest, manifest_version: 3 }, receiptPointer()),
-    ).toThrow(/manifest version 3 is not supported/i);
+      parseManifest({ ...wordpressManifest, manifest_version: 4 }, receiptPointer()),
+    ).toThrow(/manifest version 4 is not supported/i);
+  });
+
+  it("parses manifest v3 with customer reference and no PO field", () => {
+    const manifest = parseManifest(wordpressManifestV3, receiptPointer());
+    expect(manifest.manifestVersion).toBe(3);
+    expect(manifest.referenceNumber).toBe("CUST-REF-9911");
+    expect(manifest.poNumber).toBeNull();
+    expect(manifest.parts[0]).toMatchObject({
+      material: "6061-T6 Aluminum",
+      finish: "Anodize Type II - Black",
+      tolerance: '+/- 0.005"',
+    });
+
+    const metadata = buildRfqIntakeCreationMetadata(manifest, receiptPointer());
+    expect(metadata.referenceNumber).toBe("CUST-REF-9911");
+    expect(metadata.poNumber).toBe("");
+
+    const note = quoteIntakeNote(manifest, receiptPointer());
+    expect(note).toContain("Customer reference: CUST-REF-9911");
+    expect(note).not.toContain("PO number:");
+  });
+
+  it("accepts manifest v3 with null reference_number", () => {
+    const manifest = parseManifest(
+      {
+        ...wordpressManifestV3,
+        global: { ...wordpressManifestV3.global, reference_number: null },
+      },
+      receiptPointer(),
+    );
+    expect(manifest.referenceNumber).toBeNull();
+    expect(quoteIntakeNote(manifest, receiptPointer())).not.toContain("Customer reference:");
+  });
+
+  it("does not map po_number on manifest v3", () => {
+    const manifest = parseManifest(
+      {
+        ...wordpressManifestV3,
+        global: {
+          ...wordpressManifestV3.global,
+          po_number: "SHOULD-NOT-MAP",
+        },
+      },
+      receiptPointer(),
+    );
+    expect(manifest.poNumber).toBeNull();
+    expect(quoteIntakeNote(manifest, receiptPointer())).not.toContain("PO number:");
+  });
+
+  it("keeps PO number mapping for manifest v2", () => {
+    const manifest = parseManifest(
+      {
+        ...wordpressManifestV2,
+        global: { ...wordpressManifestV2.global, po_number: "PO-7788" },
+      },
+      receiptPointer(),
+    );
+    expect(manifest.manifestVersion).toBe(2);
+    expect(manifest.poNumber).toBe("PO-7788");
+    expect(manifest.referenceNumber).toBeNull();
+    expect(quoteIntakeNote(manifest, receiptPointer())).toContain("PO number: PO-7788");
   });
 
   it("parses manifest v2 with composed finish, material, and slim notes", () => {
@@ -181,11 +245,11 @@ describe("parseManifest", () => {
     });
     expect(manifest.parts[0].note).toBe(
       [
-        "Deburr all edges",
         "Threads / features: 4-40 helicoils",
         "Target price: 12.5",
       ].join("\n"),
     );
+    expect(manifest.parts[0].customerNotes).toBe("Deburr all edges");
     expect(manifest.parts[0].note).not.toContain("Material:");
     expect(manifest.parts[0].note).not.toContain("Primary tolerance");
 

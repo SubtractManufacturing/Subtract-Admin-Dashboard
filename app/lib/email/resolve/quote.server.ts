@@ -69,6 +69,8 @@ export async function resolveQuoteTokens(entityId: string): Promise<ResolvedToke
         intakeMeta.requestedDeliveryDate.trim();
     }
     if (intakeMeta.poNumber.trim()) tokens.submissionPoNumber = intakeMeta.poNumber.trim();
+    const referenceNumber = (intakeMeta.referenceNumber ?? "").trim();
+    if (referenceNumber) tokens.submissionReferenceNumber = referenceNumber;
   }
 
   // ── Document identifiers ────────────────────────────────────────────

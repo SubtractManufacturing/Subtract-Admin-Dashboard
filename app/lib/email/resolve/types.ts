@@ -278,6 +278,14 @@ export const MERGE_TOKEN_CATALOG = [
     presence: "when-available" as TokenPresence,
     format: "string" as TokenFormat,
   },
+  {
+    key: "submissionReferenceNumber",
+    label: "Submission Customer Reference",
+    description: "Customer quote reference from RFQ intake (manifest v3).",
+    suppliedBy: ["quote"] as EntityKind[],
+    presence: "when-available" as TokenPresence,
+    format: "string" as TokenFormat,
+  },
 
   // ── Staff (logged-in user) — distinct from customer ────────────────────
   {

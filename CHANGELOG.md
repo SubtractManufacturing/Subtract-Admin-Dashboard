@@ -6,6 +6,20 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.8.5](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.4...v1.8.5) (2026-11-02)
+
+
+### Bug Fixes
+
+* **quote-pdf:** redesign parts table, per-page footer, NDA marker ([#192](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/192)) ([1967050](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/1967050221d09b8491d5ba60960e9b04cab9a749))
+
+## [1.8.4](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.3...v1.8.4) (2026-10-28)
+
+
+### Bug Fixes
+
+* **rfq-intake:** support WordPress manifest v3 ([#190](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/190)) ([8d6c3cc](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/8d6c3ccd8a726de607d7f9a9146b5cfd1230c342))
+
 ## [1.8.3](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.2...v1.8.3) (2026-10-23)
 
 
