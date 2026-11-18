@@ -66,7 +66,7 @@ docs/
 | **Settings / flags** | `_protected.settings` | `featureFlags.ts`, developer settings in schema |
 | **Downloads** | `_protected.download.$.ts` | `file-download.server.ts`, `downloadQuoteFiles.ts`, `s3.server.ts` |
 | **Events** | `_protected.events._index` | `events.ts` |
-| **Auth** | `login`, `auth.callback`, `logout`, `setup-password` | `auth.server.ts`, `supabase.ts` |
+| **Auth** | `login`, `auth.callback`, `logout`, `setup-password` | `auth.server.ts` (`requireStaff` staff gate), `authorization/` (`authorize(actor, action, resource)`, deny-by-default), `supabase.ts` |
 | **Stubs** | `_protected.ActionItems` | Coming soon — linked from nav |
 
 ## Detail routes: intent tables behind a seam

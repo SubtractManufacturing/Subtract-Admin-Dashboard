@@ -38,55 +38,40 @@ export async function getAllUsers() {
     .orderBy(desc(users.createdAt));
 }
 
-export async function ensureUserExists(
+/**
+ * Staff gate lookup. Refreshes email/name on an existing `public.users` row
+ * (activating a pending invite) and returns it, or null when the Supabase
+ * identity has no row. Never creates one: a Supabase session alone does not
+ * make someone staff. Staff are provisioned by invite (`inviteUser`) or
+ * `npm run sync:users`.
+ *
+ * Fails closed: if the database cannot be reached this throws.
+ */
+export async function syncStaffUser(
   userId: string,
   email: string,
-  name?: string | null
-): Promise<{ role: User["role"]; status: User["status"]; isArchived: boolean }> {
+  name: string | null,
+): Promise<{ role: User["role"]; status: User["status"]; isArchived: boolean } | null> {
   try {
-    // Use upsert to avoid race conditions
-    const result = await db
-      .insert(users)
-      .values({
-        id: userId,
+    const [row] = await db
+      .update(users)
+      .set({
         email,
         name,
-        role: "User", // Default role for new users
-        status: "active",
+        status: sql`CASE WHEN ${users.status} = 'pending' THEN 'active' ELSE ${users.status} END`,
+        updatedAt: new Date(),
       })
-      .onConflictDoUpdate({
-        target: users.id,
-        set: {
-          email,
-          name,
-          status: sql`CASE WHEN ${users.status} = 'pending' THEN 'active' ELSE ${users.status} END`,
-          updatedAt: new Date(),
-        },
-      })
+      .where(eq(users.id, userId))
       .returning();
 
-    return {
-      role: result[0].role,
-      status: result[0].status,
-      isArchived: result[0].isArchived,
-    };
+    if (!row) return null;
+    return { role: row.role, status: row.status, isArchived: row.isArchived };
   } catch (error) {
-    // If upsert still fails, fallback to reading existing user (e.g. timeout, race)
-    console.error("Error in ensureUserExists, falling back to read:", error);
-    try {
-      const existingUser = await getUserById(userId);
-      return {
-        role: existingUser?.role || "User",
-        status: existingUser?.status || "active",
-        isArchived: existingUser?.isArchived || false,
-      };
-    } catch (readError) {
-      console.error("ensureUserExists fallback read failed:", readError);
-      throw new Error(
-        "Could not reach the database to verify your account (timeout or connection error). Check DATABASE_URL, VPN, and that Postgres is reachable.",
-        { cause: readError },
-      );
-    }
+    console.error("syncStaffUser failed:", error);
+    throw new Error(
+      "Could not reach the database to verify your account (timeout or connection error). Check DATABASE_URL, VPN, and that Postgres is reachable.",
+      { cause: error },
+    );
   }
 }
 
