@@ -1,6 +1,6 @@
 import { LoaderFunctionArgs, ActionFunctionArgs, json, redirect } from "@remix-run/node";
 import { Outlet, useLoaderData, useLocation } from "@remix-run/react";
-import { requireAuth, withAuthHeaders, canUsePartAssetAdmin } from "~/lib/auth.server";
+import { requireStaff, withAuthHeaders, canUsePartAssetAdmin } from "~/lib/auth.server";
 import { createServerClient } from "~/lib/supabase.server";
 import { getAppConfig } from "~/lib/config.server";
 import { canUserAccessAdminConsole, shouldShowEventsInNav, shouldShowVersionInHeader, isOutboundEmailEnabled } from "~/lib/featureFlags";
@@ -15,7 +15,7 @@ import { SidebarProvider, useSidebar } from "~/contexts/SidebarContext";
 import { getActionItemCounts } from "~/lib/action-items.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { user, userDetails, headers } = await requireAuth(request);
+  const { user, userDetails, headers } = await requireStaff(request);
   const appConfig = getAppConfig();
   
   const [showEventsLink, showVersionInHeader, showAdminConsole, showEmailNav, actionItemCounts] =

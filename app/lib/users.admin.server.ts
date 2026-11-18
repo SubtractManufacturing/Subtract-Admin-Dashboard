@@ -5,6 +5,10 @@ import { createEvent } from "./events";
 import { createAdminClient } from "./supabase.admin.server";
 import { getUserById, type UserEventContext } from "./users";
 
+function insertPendingUser(values: typeof users.$inferInsert) {
+  return db.insert(users).values(values).onConflictDoNothing();
+}
+
 export async function inviteUser(
   email: string,
   redirectTo: string,
@@ -28,15 +32,32 @@ export async function inviteUser(
     throw new Error("Invite failed: user was not returned");
   }
 
-  await db
-    .insert(users)
-    .values({
-      id: authUser.id,
-      email,
-      role: "User",
-      status: "pending",
-    })
-    .onConflictDoNothing();
+  // The staff gate refuses anyone without a users row, so the row must be
+  // saved. Retry once for transient errors. Never delete the auth user on
+  // failure: inviteUserByEmail can return an existing identity, so we cannot
+  // prove this call created it. Inviting again is idempotent and repairs the row.
+  const pendingUser = {
+    id: authUser.id,
+    email,
+    role: "User" as const,
+    status: "pending" as const,
+  };
+  try {
+    await insertPendingUser(pendingUser);
+  } catch (firstError) {
+    console.error("inviteUser: pending user insert failed, retrying:", firstError);
+    try {
+      await insertPendingUser(pendingUser);
+    } catch (insertError) {
+      console.error("inviteUser: could not save pending user:", insertError, {
+        authUserId: authUser.id,
+      });
+      throw new Error(
+        "Invite email was sent but the user could not be saved. Please invite the user again.",
+        { cause: insertError },
+      );
+    }
+  }
 
   await createEvent({
     entityType: "user",

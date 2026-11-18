@@ -44,6 +44,16 @@ Note: The Database will also be force applied any time you run the dev server `n
 npm run dev  # Runs on http://localhost:5173
 ```
 
+### Staff access
+
+A Supabase login alone does not grant access to the app. A person is internal
+staff only when they have an active row in `public.users`. Staff are created by
+inviting them from the Admin console, or, for the very first users on a fresh
+install, with `npm run sync:users -- --create-missing` (imports existing
+Supabase Auth users as role `User`). Promote the first Admin by setting
+`role = 'Admin'` on their `users` row. Without `--create-missing` the script
+only refreshes existing rows.
+
 ### Development Commands
 
 - `npm run dev` - Start development server with hot reloading

@@ -1,6 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { requireAuth } from "~/lib/auth.server";
+import { requireStaff } from "~/lib/auth.server";
+import { assertAuthorized } from "~/lib/authorization/authorize";
+import { downloadAccess } from "~/lib/authorization/downloads";
 import { downloadFromS3 } from "~/lib/s3.server";
 import { getAttachment } from "~/lib/attachments";
 import { getPartWithAttachments, getPartMeshUrl } from "~/lib/parts";
@@ -39,7 +41,7 @@ import { createEvent } from "~/lib/events";
  *              type so browsers can render the file (used by FileViewerModal).
  */
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { user, userDetails } = await requireAuth(request);
+  const { actor, user, userDetails } = await requireStaff(request);
 
   const path = params["*"];
   if (!path) {
@@ -52,10 +54,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const [type, ...rest] = path.split("/");
   const id = rest.join("/");
 
+  // The access map is the only way to reach a handler: authorize before any
+  // lookup or file fetch, and reject types it does not know.
+  const access = downloadAccess(type, id);
+  if (!access) {
+    throw new Response(`Unknown download type: ${type}`, { status: 400 });
+  }
+  assertAuthorized(actor, access.action, access.resource);
+
   if (type === "export-customers" || type === "export-vendors") {
-    if (userDetails.role !== "Admin" && userDetails.role !== "Dev") {
-      return new Response("Forbidden", { status: 403 });
-    }
     const idsParam = url.searchParams.get("ids");
     const format = url.searchParams.get("format") ?? "csv";
     if (!idsParam || !["csv", "json"].includes(format)) {
