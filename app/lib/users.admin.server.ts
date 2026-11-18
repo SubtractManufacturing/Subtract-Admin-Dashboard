@@ -5,6 +5,18 @@ import { createEvent } from "./events";
 import { createAdminClient } from "./supabase.admin.server";
 import { getUserById, type UserEventContext } from "./users";
 
+/** True when Supabase created the user during this invite (both stamps set by the same insert). */
+function wasCreatedByInvite(authUser: {
+  created_at?: string;
+  invited_at?: string;
+}): boolean {
+  if (!authUser.created_at || !authUser.invited_at) return false;
+  const gap =
+    new Date(authUser.invited_at).getTime() -
+    new Date(authUser.created_at).getTime();
+  return Number.isFinite(gap) && Math.abs(gap) < 5000;
+}
+
 export async function inviteUser(
   email: string,
   redirectTo: string,
@@ -42,11 +54,15 @@ export async function inviteUser(
       .onConflictDoNothing();
   } catch (insertError) {
     console.error("inviteUser: could not save pending user, rolling back:", insertError);
-    const { error: rollbackError } = await adminClient.auth.admin.deleteUser(
-      authUser.id,
-    );
-    if (rollbackError) {
-      console.error("inviteUser: rollback failed:", rollbackError);
+    // Only delete an identity this call created. A re-invite of an existing
+    // unconfirmed user returns the old id, with invited_at later than created_at.
+    if (wasCreatedByInvite(authUser)) {
+      const { error: rollbackError } = await adminClient.auth.admin.deleteUser(
+        authUser.id,
+      );
+      if (rollbackError) {
+        console.error("inviteUser: rollback failed:", rollbackError);
+      }
     }
     throw new Error("Invite failed: could not save the user. Please try again.", {
       cause: insertError,

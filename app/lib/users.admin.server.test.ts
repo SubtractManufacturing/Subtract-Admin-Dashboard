@@ -24,12 +24,18 @@ vi.mock("./supabase.admin.server", () => ({
 
 import { inviteUser } from "./users.admin.server";
 
+const freshUser = {
+  id: "new-id",
+  created_at: "2026-11-18T10:00:00.000Z",
+  invited_at: "2026-11-18T10:00:00.200Z",
+};
+
 const ctx = { userId: "admin", userEmail: "admin@example.com" };
 
 beforeEach(() => {
   vi.resetAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {});
-  mocks.invite.mockResolvedValue({ data: { user: { id: "new-id" } }, error: null });
+  mocks.invite.mockResolvedValue({ data: { user: freshUser }, error: null });
   mocks.deleteAuthUser.mockResolvedValue({ error: null });
 });
 
@@ -45,5 +51,31 @@ describe("inviteUser", () => {
     mocks.onConflictDoNothing.mockRejectedValue(new Error("db down"));
     await expect(inviteUser("n@example.com", "http://x", ctx)).rejects.toThrow();
     expect(mocks.deleteAuthUser).toHaveBeenCalledWith("new-id");
+  });
+
+  it("keeps an existing auth user that a re-invite returned", async () => {
+    mocks.invite.mockResolvedValue({
+      data: {
+        user: {
+          id: "old-id",
+          created_at: "2026-10-01T10:00:00.000Z",
+          invited_at: "2026-11-18T10:00:00.000Z",
+        },
+      },
+      error: null,
+    });
+    mocks.onConflictDoNothing.mockRejectedValue(new Error("db down"));
+    await expect(inviteUser("n@example.com", "http://x", ctx)).rejects.toThrow();
+    expect(mocks.deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("does not roll back when it cannot tell the user was just created", async () => {
+    mocks.invite.mockResolvedValue({
+      data: { user: { id: "x", created_at: "2026-11-18T10:00:00.000Z" } },
+      error: null,
+    });
+    mocks.onConflictDoNothing.mockRejectedValue(new Error("db down"));
+    await expect(inviteUser("n@example.com", "http://x", ctx)).rejects.toThrow();
+    expect(mocks.deleteAuthUser).not.toHaveBeenCalled();
   });
 });
