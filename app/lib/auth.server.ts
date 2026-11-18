@@ -2,7 +2,17 @@ import { createServerClient } from "./supabase.server";
 import { redirect } from "@remix-run/node";
 import { syncStaffUser } from "./users";
 import { assertAuthorized } from "./authorization/authorize";
-import { resolveStaffActor, STAFF_GATE_MESSAGES } from "./authorization/staff-gate";
+import {
+  resolveStaffActor,
+  type StaffGateDenial,
+} from "./authorization/staff-gate";
+
+const STAFF_GATE_MESSAGES: Record<StaffGateDenial, string> = {
+  not_provisioned:
+    "This account does not have access. Contact your administrator.",
+  disabled: "Account disabled. Contact your administrator.",
+  archived: "Account disabled. Contact your administrator.",
+};
 
 /**
  * Resolves the signed-in Supabase identity to a staff actor, or null with the
@@ -70,7 +80,10 @@ export async function requireStaff(request: Request) {
   return { user, userDetails, actor, supabase, headers };
 }
 
-/** @deprecated Every caller is an internal route; prefer {@link requireStaff}. */
+/**
+ * @deprecated Every current caller is an internal route; use {@link requireStaff}.
+ * Remove this alias once the remaining `requireAuth` call sites are renamed.
+ */
 export const requireAuth = requireStaff;
 
 export async function getOptionalAuth(request: Request) {

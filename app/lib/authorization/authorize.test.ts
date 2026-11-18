@@ -82,6 +82,38 @@ describe("authorize", () => {
     });
   });
 
+  it.each(["constructor", "toString", "__proto__", "hasOwnProperty"])(
+    "denies prototype key %s as an unknown action",
+    (key) => {
+      expect(authorize(staff("Dev"), key as Action)).toEqual({
+        allowed: false,
+        reason: "unknown_action",
+      });
+    },
+  );
+
+  it("denies a missing actor", () => {
+    expect(authorize(null as unknown as Actor, "app.access")).toEqual({
+      allowed: false,
+      reason: "not_staff",
+    });
+  });
+
+  it("denies a resource supplied for an action that targets none", () => {
+    expect(
+      authorize(staff("Dev"), "export.customers", { type: "part", id: "1" }),
+    ).toEqual({ allowed: false, reason: "resource_mismatch" });
+    expect(
+      authorize(staff("Dev"), "app.access", { type: "quote", id: "1" }),
+    ).toEqual({ allowed: false, reason: "resource_mismatch" });
+  });
+
+  it("checks the role before the resource", () => {
+    expect(
+      authorize(staff("User"), "export.customers", { type: "part", id: "1" }),
+    ).toEqual({ allowed: false, reason: "role_not_permitted" });
+  });
+
   it("denies a resource of the wrong type for the action", () => {
     expect(
       authorize(staff("Dev"), "download.attachment", { type: "quote", id: "1" }),

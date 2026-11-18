@@ -63,6 +63,26 @@ describe("resolveStaffActor", () => {
     });
   });
 
+  it("rejects an unrecognised status", async () => {
+    const syncStaffUser = vi
+      .fn()
+      .mockResolvedValue(record({ status: "suspended" as never }));
+    expect(await resolveStaffActor(authUser, { syncStaffUser })).toEqual({
+      ok: false,
+      reason: "not_provisioned",
+    });
+  });
+
+  it("reports archived ahead of disabled", async () => {
+    const syncStaffUser = vi
+      .fn()
+      .mockResolvedValue(record({ isArchived: true, status: "disabled" }));
+    expect(await resolveStaffActor(authUser, { syncStaffUser })).toEqual({
+      ok: false,
+      reason: "archived",
+    });
+  });
+
   it("rejects a role outside the staff roles", async () => {
     const syncStaffUser = vi
       .fn()

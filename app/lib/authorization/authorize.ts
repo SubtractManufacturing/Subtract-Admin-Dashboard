@@ -65,6 +65,12 @@ export type Decision = { allowed: true } | { allowed: false; reason: DenyReason 
 
 const deny = (reason: DenyReason): Decision => ({ allowed: false, reason });
 
+/**
+ * `resource` is optional: omit it for a capability-only check ("may this actor
+ * ever do X?"). When supplied it must be the type the action targets. Checks
+ * that depend on the specific resource (ownership, assignment) arrive with the
+ * relationship-aware engine and will read `resource.id`.
+ */
 export function authorize(
   actor: Actor,
   action: Action,

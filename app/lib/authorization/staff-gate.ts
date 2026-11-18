@@ -66,10 +66,3 @@ export async function resolveStaffActor(
     },
   };
 }
-
-export const STAFF_GATE_MESSAGES: Record<StaffGateDenial, string> = {
-  not_provisioned:
-    "This account does not have access. Contact your administrator.",
-  disabled: "Account disabled. Contact your administrator.",
-  archived: "Account disabled. Contact your administrator.",
-};

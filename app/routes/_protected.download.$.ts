@@ -54,9 +54,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const [type, ...rest] = path.split("/");
   const id = rest.join("/");
 
-  // Authorize before any lookup or file fetch; unknown types stay a 400.
+  // The access map is the only way to reach a handler: authorize before any
+  // lookup or file fetch, and reject types it does not know.
   const access = downloadAccess(type, id);
-  if (access) assertAuthorized(actor, access.action, access.resource);
+  if (!access) {
+    throw new Response(`Unknown download type: ${type}`, { status: 400 });
+  }
+  assertAuthorized(actor, access.action, access.resource);
 
   if (type === "export-customers" || type === "export-vendors") {
     const idsParam = url.searchParams.get("ids");

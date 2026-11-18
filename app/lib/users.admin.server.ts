@@ -28,15 +28,30 @@ export async function inviteUser(
     throw new Error("Invite failed: user was not returned");
   }
 
-  await db
-    .insert(users)
-    .values({
-      id: authUser.id,
-      email,
-      role: "User",
-      status: "pending",
-    })
-    .onConflictDoNothing();
+  // The staff gate refuses anyone without a users row, so an invite whose row
+  // cannot be saved would be unusable. Roll the auth user back instead.
+  try {
+    await db
+      .insert(users)
+      .values({
+        id: authUser.id,
+        email,
+        role: "User",
+        status: "pending",
+      })
+      .onConflictDoNothing();
+  } catch (insertError) {
+    console.error("inviteUser: could not save pending user, rolling back:", insertError);
+    const { error: rollbackError } = await adminClient.auth.admin.deleteUser(
+      authUser.id,
+    );
+    if (rollbackError) {
+      console.error("inviteUser: rollback failed:", rollbackError);
+    }
+    throw new Error("Invite failed: could not save the user. Please try again.", {
+      cause: insertError,
+    });
+  }
 
   await createEvent({
     entityType: "user",

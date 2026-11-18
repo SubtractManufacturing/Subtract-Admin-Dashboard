@@ -42,10 +42,12 @@ export async function getAllUsers() {
  * Staff gate lookup. Refreshes email/name on an existing `public.users` row
  * (activating a pending invite) and returns it, or null when the Supabase
  * identity has no row. Never creates one: a Supabase session alone does not
- * make someone staff. Staff are provisioned by invite (`inviteUser`) or
- * `npm run sync:users`.
+ * make someone staff. Staff are provisioned by invite (`inviteUser`) or by an
+ * operator running `npm run sync:users -- --create-missing`.
  *
- * Fails closed: if the database cannot be reached this throws.
+ * If the refresh fails, falls back to reading the existing row (the caller
+ * still rejects anything that is not active). If the database cannot be read
+ * either, this throws, so the gate fails closed.
  */
 export async function syncStaffUser(
   userId: string,
@@ -56,7 +58,8 @@ export async function syncStaffUser(
     const [row] = await db
       .update(users)
       .set({
-        email,
+        // Never blank out a stored email when the auth identity has none.
+        ...(email ? { email } : {}),
         name,
         status: sql`CASE WHEN ${users.status} = 'pending' THEN 'active' ELSE ${users.status} END`,
         updatedAt: new Date(),
@@ -67,11 +70,22 @@ export async function syncStaffUser(
     if (!row) return null;
     return { role: row.role, status: row.status, isArchived: row.isArchived };
   } catch (error) {
-    console.error("syncStaffUser failed:", error);
-    throw new Error(
-      "Could not reach the database to verify your account (timeout or connection error). Check DATABASE_URL, VPN, and that Postgres is reachable.",
-      { cause: error },
-    );
+    console.error("syncStaffUser update failed, falling back to read:", error);
+    try {
+      const existing = await getUserById(userId);
+      if (!existing) return null;
+      return {
+        role: existing.role,
+        status: existing.status,
+        isArchived: existing.isArchived,
+      };
+    } catch (readError) {
+      console.error("syncStaffUser fallback read failed:", readError);
+      throw new Error(
+        "Could not reach the database to verify your account (timeout or connection error). Check DATABASE_URL, VPN, and that Postgres is reachable.",
+        { cause: readError },
+      );
+    }
   }
 }
 

@@ -61,7 +61,7 @@ async function call(path: string, query = "") {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.getAttachment.mockResolvedValue({
     s3Key: "k",
     fileName: "f.step",
@@ -123,6 +123,35 @@ describe("/download/* authorization", () => {
     const response = await call("export-customers", "?ids=template&format=csv");
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("text/csv");
+  });
+
+  it("answers 403 for an external actor before the missing-id 400", async () => {
+    signIn(external);
+    expect((await call("attachment/")).status).toBe(403);
+  });
+
+  it("gates a trailing path on an export type", async () => {
+    signIn(staff("User"));
+    expect((await call("export-customers/x", "?ids=template&format=csv")).status).toBe(403);
+  });
+
+  it("forbids User staff from the export template", async () => {
+    signIn(staff("User"));
+    expect((await call("export-customers", "?ids=template&format=csv")).status).toBe(403);
+  });
+
+  it("lets Admin export customers and answers 404 when none match", async () => {
+    signIn(staff("Admin"));
+    mocks.getCustomersByIds.mockResolvedValue([]);
+    expect((await call("export-customers", "?ids=1&format=csv")).status).toBe(404);
+    expect(mocks.getCustomersByIds).toHaveBeenCalledWith([1]);
+  });
+
+  it("does not match download types case-insensitively", async () => {
+    signIn(staff("Dev"));
+    const response = await call("Attachment/1");
+    expect(response.status).toBe(400);
+    expect(mocks.getAttachment).not.toHaveBeenCalled();
   });
 
   it("still answers 400 for an unknown download type", async () => {

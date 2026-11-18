@@ -35,7 +35,7 @@ async function thrownBy(fn: () => Promise<unknown>): Promise<Response> {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.signOut.mockResolvedValue({});
 });
 
@@ -48,6 +48,7 @@ describe("requireStaff", () => {
       `/login?next=${encodeURIComponent("/quotes?tab=open")}`,
     );
     expect(mocks.syncStaffUser).not.toHaveBeenCalled();
+    expect(response.headers.get("x-test")).toBe("1");
   });
 
   it("signs out and refuses a Supabase user with no staff record", async () => {
@@ -57,6 +58,7 @@ describe("requireStaff", () => {
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toMatch(/^\/login\?error=/);
     expect(mocks.signOut).toHaveBeenCalledOnce();
+    expect(response.headers.get("x-test")).toBe("1");
   });
 
   it("signs out and refuses a disabled user", async () => {
@@ -70,6 +72,19 @@ describe("requireStaff", () => {
     expect(decodeURIComponent(response.headers.get("Location")!)).toContain(
       "Account disabled",
     );
+    expect(mocks.signOut).toHaveBeenCalledOnce();
+    expect(response.headers.get("x-test")).toBe("1");
+  });
+
+  it("refuses an archived user", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: supabaseUser } });
+    mocks.syncStaffUser.mockResolvedValue({
+      role: "Admin",
+      status: "active",
+      isArchived: true,
+    });
+    const response = await thrownBy(() => requireStaff(request));
+    expect(response.status).toBe(302);
     expect(mocks.signOut).toHaveBeenCalledOnce();
   });
 
@@ -94,6 +109,18 @@ describe("requireStaff", () => {
 });
 
 describe("getOptionalAuth", () => {
+  it("signs out and returns no user for a disabled user", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: supabaseUser } });
+    mocks.syncStaffUser.mockResolvedValue({
+      role: "User",
+      status: "disabled",
+      isArchived: false,
+    });
+    const result = await getOptionalAuth(request);
+    expect(result.user).toBeNull();
+    expect(mocks.signOut).toHaveBeenCalledOnce();
+  });
+
   it("returns no user for an unprovisioned Supabase user", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: supabaseUser } });
     mocks.syncStaffUser.mockResolvedValue(null);

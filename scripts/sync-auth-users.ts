@@ -48,6 +48,14 @@ async function listAllAuthUsers(): Promise<User[]> {
   return allUsers;
 }
 
+/**
+ * By default this only refreshes existing `public.users` rows. Creating a row
+ * makes a Supabase identity internal staff (role User, active), so it needs
+ * the explicit `--create-missing` flag. Use it to bootstrap staff, never after
+ * external or self-signup accounts exist.
+ */
+const createMissing = process.argv.includes("--create-missing");
+
 async function syncAuthUsers() {
   let hadFailure = false;
 
@@ -91,6 +99,10 @@ async function syncAuthUsers() {
             update.email = authUser.email;
           }
           await db.update(users).set(update).where(eq(users.id, authUser.id));
+        } else if (!createMissing) {
+          console.log(
+            `Skipping ${userLabel(authUser)}: no staff record (pass --create-missing to create one)`,
+          );
         } else {
           if (!authUser.email) {
             console.error(
