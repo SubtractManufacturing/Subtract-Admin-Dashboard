@@ -5,16 +5,8 @@ import { createEvent } from "./events";
 import { createAdminClient } from "./supabase.admin.server";
 import { getUserById, type UserEventContext } from "./users";
 
-/** True when Supabase created the user during this invite (both stamps set by the same insert). */
-function wasCreatedByInvite(authUser: {
-  created_at?: string;
-  invited_at?: string;
-}): boolean {
-  if (!authUser.created_at || !authUser.invited_at) return false;
-  const gap =
-    new Date(authUser.invited_at).getTime() -
-    new Date(authUser.created_at).getTime();
-  return Number.isFinite(gap) && Math.abs(gap) < 5000;
+function insertPendingUser(values: typeof users.$inferInsert) {
+  return db.insert(users).values(values).onConflictDoNothing();
 }
 
 export async function inviteUser(
@@ -40,33 +32,31 @@ export async function inviteUser(
     throw new Error("Invite failed: user was not returned");
   }
 
-  // The staff gate refuses anyone without a users row, so an invite whose row
-  // cannot be saved would be unusable. Roll the auth user back instead.
+  // The staff gate refuses anyone without a users row, so the row must be
+  // saved. Retry once for transient errors. Never delete the auth user on
+  // failure: inviteUserByEmail can return an existing identity, so we cannot
+  // prove this call created it. Inviting again is idempotent and repairs the row.
+  const pendingUser = {
+    id: authUser.id,
+    email,
+    role: "User" as const,
+    status: "pending" as const,
+  };
   try {
-    await db
-      .insert(users)
-      .values({
-        id: authUser.id,
-        email,
-        role: "User",
-        status: "pending",
-      })
-      .onConflictDoNothing();
-  } catch (insertError) {
-    console.error("inviteUser: could not save pending user, rolling back:", insertError);
-    // Only delete an identity this call created. A re-invite of an existing
-    // unconfirmed user returns the old id, with invited_at later than created_at.
-    if (wasCreatedByInvite(authUser)) {
-      const { error: rollbackError } = await adminClient.auth.admin.deleteUser(
-        authUser.id,
+    await insertPendingUser(pendingUser);
+  } catch (firstError) {
+    console.error("inviteUser: pending user insert failed, retrying:", firstError);
+    try {
+      await insertPendingUser(pendingUser);
+    } catch (insertError) {
+      console.error("inviteUser: could not save pending user:", insertError, {
+        authUserId: authUser.id,
+      });
+      throw new Error(
+        "Invite email was sent but the user could not be saved. Please invite the user again.",
+        { cause: insertError },
       );
-      if (rollbackError) {
-        console.error("inviteUser: rollback failed:", rollbackError);
-      }
     }
-    throw new Error("Invite failed: could not save the user. Please try again.", {
-      cause: insertError,
-    });
   }
 
   await createEvent({

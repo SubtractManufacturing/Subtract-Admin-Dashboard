@@ -43,39 +43,34 @@ describe("inviteUser", () => {
   it("records the pending staff row after sending the invite", async () => {
     mocks.onConflictDoNothing.mockResolvedValue(undefined);
     await inviteUser("n@example.com", "http://x", ctx);
-    expect(mocks.deleteAuthUser).not.toHaveBeenCalled();
+    expect(mocks.onConflictDoNothing).toHaveBeenCalledOnce();
     expect(mocks.createEvent).toHaveBeenCalledOnce();
   });
 
-  it("removes the auth user when the pending row cannot be saved", async () => {
-    mocks.onConflictDoNothing.mockRejectedValue(new Error("db down"));
-    await expect(inviteUser("n@example.com", "http://x", ctx)).rejects.toThrow();
-    expect(mocks.deleteAuthUser).toHaveBeenCalledWith("new-id");
+  it("retries the pending-row insert once before failing", async () => {
+    mocks.onConflictDoNothing
+      .mockRejectedValueOnce(new Error("blip"))
+      .mockResolvedValueOnce(undefined);
+    await inviteUser("n@example.com", "http://x", ctx);
+    expect(mocks.onConflictDoNothing).toHaveBeenCalledTimes(2);
+    expect(mocks.createEvent).toHaveBeenCalledOnce();
   });
 
-  it("keeps an existing auth user that a re-invite returned", async () => {
-    mocks.invite.mockResolvedValue({
-      data: {
-        user: {
-          id: "old-id",
-          created_at: "2026-10-01T10:00:00.000Z",
-          invited_at: "2026-11-18T10:00:00.000Z",
-        },
-      },
-      error: null,
-    });
-    mocks.onConflictDoNothing.mockRejectedValue(new Error("db down"));
-    await expect(inviteUser("n@example.com", "http://x", ctx)).rejects.toThrow();
+  it("never deletes the auth user when the row cannot be saved", async () => {
+    // A re-invite returns an existing auth id, so creation cannot be proven.
+    // Re-inviting is idempotent and repairs the missing row.
+    for (const timing of [
+      { created_at: "2026-11-18T10:00:00.000Z", invited_at: "2026-11-18T10:00:00.200Z" },
+      { created_at: "2026-10-01T10:00:00.000Z", invited_at: "2026-11-18T10:00:00.000Z" },
+      { created_at: "2026-11-18T10:00:00.000Z" },
+    ]) {
+      mocks.invite.mockResolvedValue({ data: { user: { id: "x", ...timing } }, error: null });
+      mocks.onConflictDoNothing.mockRejectedValue(new Error("db down"));
+      await expect(inviteUser("n@example.com", "http://x", ctx)).rejects.toThrow(
+        /invite the user again/i,
+      );
+    }
     expect(mocks.deleteAuthUser).not.toHaveBeenCalled();
-  });
-
-  it("does not roll back when it cannot tell the user was just created", async () => {
-    mocks.invite.mockResolvedValue({
-      data: { user: { id: "x", created_at: "2026-11-18T10:00:00.000Z" } },
-      error: null,
-    });
-    mocks.onConflictDoNothing.mockRejectedValue(new Error("db down"));
-    await expect(inviteUser("n@example.com", "http://x", ctx)).rejects.toThrow();
-    expect(mocks.deleteAuthUser).not.toHaveBeenCalled();
+    expect(mocks.createEvent).not.toHaveBeenCalled();
   });
 });
