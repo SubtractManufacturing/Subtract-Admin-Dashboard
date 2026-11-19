@@ -2,7 +2,7 @@ import type Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { db } from "~/lib/db";
 import { quotes } from "~/lib/db/schema";
-import type { Customer } from "~/lib/db/schema";
+import type { Customer } from "~/lib/organizations/types";
 import {
   extractBillingAddress,
   extractShippingAddress,
@@ -326,7 +326,7 @@ export function checkoutConflictPreviewToModalPayload(
 export async function previewCheckoutAddressImportForOrder(params: {
   orderId: number;
   sourceQuoteId: number | null;
-  customerId: number | null;
+  customerId: string | null;
 }): Promise<CheckoutImportPreview> {
   const flagOn = await isStripePaymentLinksEnabled();
   if (!flagOn) {
@@ -561,7 +561,7 @@ function mergeConflictApply(params: {
 export async function applyCheckoutAddressImportForOrder(params: {
   orderId: number;
   sourceQuoteId: number | null;
-  customerId: number | null;
+  customerId: string | null;
   /** Conflict path only */
   billingChoice?: "checkout" | "on_file";
   shippingChoice?: "checkout" | "on_file";
@@ -684,7 +684,7 @@ export type QuickImportResult =
 export async function importCheckoutAddressesQuickFromOrder(params: {
   orderId: number;
   sourceQuoteId: number | null;
-  customerId: number | null;
+  customerId: string | null;
   eventContext?: CustomerEventContext;
 }): Promise<QuickImportResult> {
   const preview = await previewCheckoutAddressImportForOrder(params);
@@ -720,7 +720,7 @@ export async function importCheckoutAddressesQuickFromOrder(params: {
  */
 export async function tryAutoFillBlankCustomerFromQuoteCheckout(params: {
   quoteId: number;
-  customerId: number;
+  customerId: string;
   orderId: number;
   eventContext?: CustomerEventContext;
 }): Promise<void> {
