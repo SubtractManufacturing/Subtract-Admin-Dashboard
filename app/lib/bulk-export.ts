@@ -81,6 +81,8 @@ export function toExportCustomer(row: {
   email?: string | null;
   phone?: string | null;
   isPrimaryContact?: boolean | null;
+  /** ADR-0013 records: the row's person is the primary Contact when one exists. */
+  primaryContactId?: string | null;
   billingAddressLine1?: string | null;
   billingAddressLine2?: string | null;
   billingCity?: string | null;
@@ -105,7 +107,7 @@ export function toExportCustomer(row: {
     title: row.title ?? null,
     email: row.email ?? null,
     phone: row.phone ?? null,
-    isPrimaryContact: row.isPrimaryContact ?? null,
+    isPrimaryContact: row.isPrimaryContact ?? (row.primaryContactId ? true : null),
     billingAddressLine1: row.billingAddressLine1 ?? null,
     billingAddressLine2: row.billingAddressLine2 ?? null,
     billingCity: row.billingCity ?? null,
@@ -127,7 +129,7 @@ export function toExportCustomer(row: {
 
 /** Accepts DB-like row (e.g. Vendor with Date fields) or export-shaped row. */
 export function toExportVendor(
-  row: Omit<ExportCustomer, "createdAt" | "updatedAt"> & {
+  row: Parameters<typeof toExportCustomer>[0] & {
     address?: string | null;
     notes?: string | null;
     discordId?: string | null;

@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Actor } from "~/lib/authorization/authorize";
 
@@ -143,8 +144,8 @@ describe("/download/* authorization", () => {
   it("lets Admin export customers and answers 404 when none match", async () => {
     signIn(staff("Admin"));
     mocks.getCustomersByIds.mockResolvedValue([]);
-    expect((await call("export-customers", "?ids=1&format=csv")).status).toBe(404);
-    expect(mocks.getCustomersByIds).toHaveBeenCalledWith([1]);
+    expect((await call("export-customers", `?ids=${testUuid(1)}&format=csv`)).status).toBe(404);
+    expect(mocks.getCustomersByIds).toHaveBeenCalledWith([testUuid(1)]);
   });
 
   it("does not match download types case-insensitively", async () => {
