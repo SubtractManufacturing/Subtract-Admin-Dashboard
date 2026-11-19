@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, expect, it, vi } from "vitest";
 import { runOrderIntent } from "./action";
 import { orderIntents } from "./intents";
@@ -176,7 +177,7 @@ describe("checkout address import", () => {
     expect(ctx.deps.checkoutAddresses.importQuick).toHaveBeenCalledWith({
       orderId: 12,
       sourceQuoteId: 7,
-      customerId: 3,
+      customerId: testUuid(3),
       actor: ctx.actor,
     });
     expect(await res.json()).toEqual({ status: "imported" });

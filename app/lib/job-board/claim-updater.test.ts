@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MemoryDiscordWebhookClient } from "./discord-webhook";
@@ -58,7 +59,7 @@ describe("updateJobBoardClaim", () => {
 
     const result = await updateJobBoardClaim({
       orderId: 1,
-      vendorId: 2,
+      vendorId: testUuid(2),
       webhookUrl: "https://discord.com/api/webhooks/1/token",
       discord,
     });

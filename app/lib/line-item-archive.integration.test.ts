@@ -105,7 +105,7 @@ describe("line item archive lifecycle", () => {
       .from(parts)
       .where(eq(parts.id, seeded.partId))
       .limit(1);
-    expect(part?.customerId).toBe(seeded.customerId);
+    expect(part?.customerAccountId).toBe(seeded.customerId);
 
     await restoreOrderLineItem(seeded.orderLineItemId, seeded.orderId);
 
@@ -211,7 +211,7 @@ describe("line item archive lifecycle", () => {
     const [extraPart] = await db
       .insert(parts)
       .values({
-        customerId: seeded.customerId,
+        customerAccountId: seeded.customerId,
         partName: "Hard Delete Part",
       })
       .returning({ id: parts.id });

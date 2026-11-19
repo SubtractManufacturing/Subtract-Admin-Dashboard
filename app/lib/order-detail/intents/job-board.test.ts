@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, expect, it, vi } from "vitest";
 import type { IntentTable } from "~/lib/route-actions/core";
 import type { OrderCtx } from "../context";
@@ -134,22 +135,22 @@ describe("assignShop", () => {
     const ctx = makeOrderCtx(waiting);
     expect((await run(ctx, "assignShop")).status).toBe(400);
     const wrongStatus = makeOrderCtx();
-    const res = await run(wrongStatus, "assignShop", { vendorId: "4" });
+    const res = await run(wrongStatus, "assignShop", { vendorId: testUuid(4) });
     expect(res.status).toBe(400);
     expect(wrongStatus.deps.orders.update).not.toHaveBeenCalled();
   });
 
   it("assigns the vendor, starts production and updates the post", async () => {
     const ctx = makeOrderCtx(waiting);
-    const res = await run(ctx, "assignShop", { vendorId: "4" });
+    const res = await run(ctx, "assignShop", { vendorId: testUuid(4) });
     expect(ctx.deps.orders.update).toHaveBeenCalledWith(
       12,
-      { vendorId: 4, status: "In_Production" },
+      { vendorAccountId: testUuid(4), status: "In_Production" },
       ctx.actor,
     );
     expect(ctx.deps.jobBoard.updateClaim).toHaveBeenCalledWith({
       orderId: 12,
-      vendorId: 4,
+      vendorId: testUuid(4),
       webhookUrl: "https://discord.test/hook",
     });
     expect(locationOf(res)).toBe("/orders/26Z00012");
@@ -161,7 +162,7 @@ describe("assignShop", () => {
       ok: false,
       warning: "Could not edit the post & more",
     });
-    const res = await run(ctx, "assignShop", { vendorId: "4" });
+    const res = await run(ctx, "assignShop", { vendorId: testUuid(4) });
     expect(ctx.deps.orders.update).toHaveBeenCalled();
     expect(locationOf(res)).toBe(
       "/orders/26Z00012?jobBoardClaimWarning=Could%20not%20edit%20the%20post%20%26%20more",

@@ -97,8 +97,8 @@ export async function loadQuoteDetail(
   }
 
   const [customer, vendor, customers, vendors, partPorts] = await Promise.all([
-    quote.customerId ? deps.directory.customer(quote.customerId) : null,
-    quote.vendorId ? deps.directory.vendor(quote.vendorId) : null,
+    quote.customerAccountId ? deps.directory.customer(quote.customerAccountId) : null,
+    quote.vendorAccountId ? deps.directory.vendor(quote.vendorAccountId) : null,
     deps.directory.customers(),
     deps.directory.vendors(),
     deps.partViewPorts(),

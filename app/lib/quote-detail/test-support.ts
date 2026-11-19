@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 /**
  * Test adapter for the Quote detail seam: every port is a `vi.fn` with a
  * harmless default, so a test overrides only what it cares about.
@@ -12,8 +13,8 @@ export function makeQuote(over: Partial<QuoteEntity> = {}): QuoteEntity {
   return {
     id: 7,
     quoteNumber: "25Q00007",
-    customerId: 1,
-    vendorId: null,
+    customerAccountId: testUuid(1),
+    vendorAccountId: null,
     status: "Draft",
     validUntil: null,
     expirationDays: 30,

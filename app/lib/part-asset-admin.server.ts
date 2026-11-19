@@ -20,8 +20,8 @@ import { quotePartUsesPlaceholderCad } from "./quote-part-assets.server";
 
 export type PartAssetAdminRoute =
   | { type: "quote"; quoteId: number }
-  | { type: "order"; orderId: number; customerId: number | null }
-  | { type: "customer"; customerId: number };
+  | { type: "order"; orderId: number; customerId: string | null }
+  | { type: "customer"; customerId: string };
 
 type UserBundle = {
   user: { id: string };
@@ -36,10 +36,10 @@ type UserBundle = {
 
 async function assertCustomerPart(
   partId: string,
-  customerId: number
+  customerId: string
 ): Promise<{ ok: true; part: NonNullable<Awaited<ReturnType<typeof getPart>>> } | { ok: false; response: Response }> {
   const part = await getPart(partId);
-  if (!part || part.customerId !== customerId) {
+  if (!part || part.customerAccountId !== customerId) {
     return {
       ok: false,
       response: json({ error: "Part not found" }, { status: 404 }),
@@ -152,7 +152,7 @@ export async function tryPartAssetAdminAction(
             bundle.headers
           );
         }
-        const check = await assertCustomerPart(partId, customerId as number);
+        const check = await assertCustomerPart(partId, customerId as string);
         if (!check.ok) {
           return withAuthHeaders(check.response, bundle.headers);
         }
@@ -219,7 +219,7 @@ export async function tryPartAssetAdminAction(
             bundle.headers
           );
         }
-        const check = await assertCustomerPart(partId, customerId as number);
+        const check = await assertCustomerPart(partId, customerId as string);
         if (!check.ok) {
           return withAuthHeaders(check.response, bundle.headers);
         }
@@ -278,7 +278,7 @@ export async function tryPartAssetAdminAction(
               bundle.headers
             );
           }
-          const check = await assertCustomerPart(version.entityId, customerId as number);
+          const check = await assertCustomerPart(version.entityId, customerId as string);
           if (!check.ok) {
             return withAuthHeaders(check.response, bundle.headers);
           }

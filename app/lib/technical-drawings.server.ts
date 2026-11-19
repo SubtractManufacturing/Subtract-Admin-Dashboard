@@ -97,7 +97,7 @@ export async function deleteQuotePartDrawing(
 export async function deleteOrderPartDrawing(
   drawingId: string,
   partId: string,
-  expectedCustomerId: number,
+  expectedCustomerId: string,
   eventContext: AttachmentEventContext,
   audit: { userId?: string; userEmail?: string; orderId: number }
 ): Promise<DrawingDeleteResult> {
@@ -107,7 +107,7 @@ export async function deleteOrderPartDrawing(
     .where(eq(parts.id, partId))
     .limit(1);
 
-  if (!part || part.customerId !== expectedCustomerId) {
+  if (!part || part.customerAccountId !== expectedCustomerId) {
     return { ok: false, error: "Part not found for this order", status: 404 };
   }
 

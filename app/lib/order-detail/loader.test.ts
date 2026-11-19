@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, expect, it, vi } from "vitest";
 import { isJobBoardEligible, loadOrderDetail, type OrderLoaderDeps } from "./loader";
 import { makeOrder, testAuth } from "./test-support";
@@ -35,8 +36,8 @@ function fakeDeps(order: ReturnType<typeof makeOrder> | null = makeOrder()) {
       ),
     },
     directory: {
-      customer: vi.fn(async () => ({ id: 3, displayName: "Acme" })),
-      vendor: vi.fn(async () => ({ id: 9, displayName: "Shop" })),
+      customer: vi.fn(async () => ({ id: testUuid(3), displayName: "Acme" })),
+      vendor: vi.fn(async () => ({ id: testUuid(9), displayName: "Shop" })),
       vendors: vi.fn(async () => []),
     },
     parts: {
@@ -109,9 +110,9 @@ const thrownStatus = async (promise: Promise<unknown>) => {
 
 describe("isJobBoardEligible", () => {
   it("is true only for a pending order with no shop", () => {
-    expect(isJobBoardEligible({ status: "Pending", vendorId: null })).toBe(true);
-    expect(isJobBoardEligible({ status: "Pending", vendorId: 9 })).toBe(false);
-    expect(isJobBoardEligible({ status: "In_Production", vendorId: null })).toBe(false);
+    expect(isJobBoardEligible({ status: "Pending", vendorAccountId: null })).toBe(true);
+    expect(isJobBoardEligible({ status: "Pending", vendorAccountId: testUuid(9) })).toBe(false);
+    expect(isJobBoardEligible({ status: "In_Production", vendorAccountId: null })).toBe(false);
   });
 });
 
@@ -150,7 +151,7 @@ describe("loadOrderDetail", () => {
   });
 
   it("lists the customer's parts only when the order has a customer", async () => {
-    const without = fakeDeps(makeOrder({ customerId: null }));
+    const without = fakeDeps(makeOrder({ customerAccountId: null }));
     const data = await load(without);
     expect(data.parts).toEqual([]);
     expect(data.customer).toBeNull();
@@ -161,17 +162,17 @@ describe("loadOrderDetail", () => {
     expect((await load(withCustomer)).parts).toEqual([
       { id: "p-9", thumbnailUrl: "signed:k" },
     ]);
-    expect(withCustomer.parts.forCustomer).toHaveBeenCalledWith(3);
+    expect(withCustomer.parts.forCustomer).toHaveBeenCalledWith(testUuid(3));
   });
 
   it("loads job-board input only for a pending order with no shop", async () => {
-    const eligible = fakeDeps(makeOrder({ status: "Pending", vendorId: null }));
+    const eligible = fakeDeps(makeOrder({ status: "Pending", vendorAccountId: null }));
     const data = await load(eligible);
     expect(data.jobBoardOrderInput).toEqual({ orderNumber: "26Z00012" });
     expect(data.jobBoardWebhookConfigured).toBe(true);
     expect(data.jobBoardNotifyRoleId).toBe("role-1");
 
-    const assigned = fakeDeps(makeOrder({ status: "Pending", vendorId: 9 }));
+    const assigned = fakeDeps(makeOrder({ status: "Pending", vendorAccountId: testUuid(9) }));
     expect((await load(assigned)).jobBoardOrderInput).toBeNull();
     expect(assigned.jobBoard.orderInput).not.toHaveBeenCalled();
   });

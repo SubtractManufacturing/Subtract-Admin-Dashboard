@@ -2,6 +2,7 @@
  * Job Board intents: post an Order to the Discord Job Board, mark it as sent
  * without posting, and assign a shop (which edits the post to name the Vendor).
  */
+import { isUuid } from "~/lib/organizations/types";
 import { json, redirect } from "@remix-run/node";
 import type { JobBoardSentMessageRecord } from "~/lib/job-board/types";
 import { badRequest, type IntentTable } from "~/lib/route-actions/core";
@@ -94,12 +95,12 @@ export const jobBoardIntents: IntentTable<Ctx> = {
         "Assign Shop is only available while the order is Waiting for Shop Selection",
       );
     }
-    const vendorId = parseInt(String(raw), 10);
-    if (Number.isNaN(vendorId)) return badRequest("Invalid vendor ID");
+    const vendorId = String(raw).trim();
+    if (!isUuid(vendorId)) return badRequest("Invalid vendor ID");
 
     await ctx.deps.orders.update(
       ctx.order.id,
-      { vendorId, status: "In_Production" },
+      { vendorAccountId: vendorId, status: "In_Production" },
       ctx.actor,
     );
 

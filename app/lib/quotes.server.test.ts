@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./db", () => ({ db: {} }));
@@ -27,7 +28,7 @@ import {
 const quote = {
   id: 7,
   quoteNumber: "25Q00007",
-  customerId: 3,
+  customerAccountId: testUuid(3),
   total: "200.00",
   stripePaymentLinkId: "plink_old",
   stripePaymentLinkActive: true,

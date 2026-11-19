@@ -92,7 +92,7 @@ export async function ensureQuoteStripePaymentLink(
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
       totalDollars: quote.total!,
-      customerId: quote.customerId,
+      customerId: quote.customerAccountId,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -141,7 +141,7 @@ export async function transitionQuoteToSent(
         quoteId: quote.id,
         quoteNumber: quote.quoteNumber,
         totalDollars: quote.total!,
-        customerId: quote.customerId,
+        customerId: quote.customerAccountId,
       });
       await updateQuote(
         quoteId,

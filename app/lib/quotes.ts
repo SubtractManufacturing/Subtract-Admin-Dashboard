@@ -14,8 +14,6 @@
 import { db } from "./db/index.js";
 import {
   quotes,
-  customers,
-  vendors,
   quoteLineItems,
   quoteParts,
   orders,
@@ -30,9 +28,12 @@ import {
   cadFileVersions,
 } from "./db/schema.js";
 import { eq, desc, asc, and, lte, isNull, sql } from "drizzle-orm";
+import type { Customer, Vendor } from "./organizations/types.js";
+import {
+  loadAccountRecord,
+  loadAccountRecordMap,
+} from "./organizations/accounts.server.js";
 import type {
-  Customer,
-  Vendor,
   QuoteLineItem,
   QuotePart,
   Quote,
@@ -64,8 +65,8 @@ import {
 export type QuoteWithRelations = {
   id: number;
   quoteNumber: string;
-  customerId: number;
-  vendorId: number | null;
+  customerAccountId: string | null;
+  vendorAccountId: string | null;
   status:
     | "RFQ"
     | "Draft"
@@ -111,8 +112,8 @@ function quoteWithoutSourceReceiptNumber(quote: Quote) {
 
 export type QuoteInput = {
   quoteNumber?: string | null;
-  customerId: number;
-  vendorId?: number | null;
+  customerAccountId: string;
+  vendorAccountId?: string | null;
   status?:
     | "RFQ"
     | "Draft"
@@ -148,19 +149,23 @@ export async function getQuotes(
     await checkAndUpdateExpiredQuotes();
 
     // Fetch all quotes with customers and vendors using joins
-    const quotesWithBasicRelations = await db
-      .select({
-        quote: quotes,
-        customer: customers,
-        vendor: vendors,
-      })
+    const quoteRows = await db
+      .select()
       .from(quotes)
-      .leftJoin(customers, eq(quotes.customerId, customers.id))
-      .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
       .where(includeArchived ? sql`1=1` : eq(quotes.isArchived, false))
       .orderBy(desc(quotes.createdAt));
 
-    if (!quotesWithBasicRelations.length) return [];
+    if (!quoteRows.length) return [];
+
+    const [customersById, vendorsById] = await Promise.all([
+      loadAccountRecordMap("customer", quoteRows.map((quote) => quote.customerAccountId)),
+      loadAccountRecordMap("vendor", quoteRows.map((quote) => quote.vendorAccountId)),
+    ]);
+    const quotesWithBasicRelations = quoteRows.map((quote) => ({
+      quote,
+      customer: (quote.customerAccountId && customersById.get(quote.customerAccountId)) || null,
+      vendor: (quote.vendorAccountId && vendorsById.get(quote.vendorAccountId)) || null,
+    }));
 
     // Fetch all line items for these quotes in bulk
     const quoteIds = quotesWithBasicRelations.map((q) => q.quote.id);
@@ -231,20 +236,12 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
     if (!quote) return null;
 
     const [customer, vendor, lineItems, parts] = await Promise.all([
-      quote.customerId
-        ? db
-            .select()
-            .from(customers)
-            .where(eq(customers.id, quote.customerId))
-            .limit(1)
-        : [null],
-      quote.vendorId
-        ? db
-            .select()
-            .from(vendors)
-            .where(eq(vendors.id, quote.vendorId))
-            .limit(1)
-        : [null],
+      quote.customerAccountId
+        ? loadAccountRecord("customer", quote.customerAccountId)
+        : null,
+      quote.vendorAccountId
+        ? loadAccountRecord("vendor", quote.vendorAccountId)
+        : null,
       db
         .select()
         .from(quoteLineItems)
@@ -269,8 +266,8 @@ export async function getQuote(id: number): Promise<QuoteWithRelations | null> {
 
     return {
       ...quoteWithoutSourceReceiptNumber(quote),
-      customer: customer[0],
-      vendor: vendor[0],
+      customer,
+      vendor,
       lineItems,
       parts,
     };
@@ -291,8 +288,8 @@ export async function createQuote(
       .insert(quotes)
       .values({
         quoteNumber,
-        customerId: input.customerId,
-        vendorId: input.vendorId,
+        customerAccountId: input.customerAccountId,
+        vendorAccountId: input.vendorAccountId,
         status: input.status || "RFQ",
         validUntil: input.validUntil,
         expirationDays: input.expirationDays,
@@ -311,7 +308,7 @@ export async function createQuote(
       description: `Quote ${quoteNumber} was created`,
       metadata: {
         quoteNumber,
-        customerId: input.customerId,
+        customerAccountId: input.customerAccountId,
         status: newQuote.status,
       },
       userId: context?.userId,
@@ -438,32 +435,24 @@ export async function updateQuote(
 
     // Log vendor change events
     if (
-      updates.vendorId !== undefined &&
-      updates.vendorId !== oldQuote.vendorId
+      updates.vendorAccountId !== undefined &&
+      updates.vendorAccountId !== oldQuote.vendorAccountId
     ) {
       // Fetch vendor names for the event
       let oldVendorName = "None";
       let newVendorName = "None";
 
-      if (oldQuote.vendorId) {
-        const oldVendor = await db
-          .select()
-          .from(vendors)
-          .where(eq(vendors.id, oldQuote.vendorId))
-          .limit(1);
-        if (oldVendor[0]) {
-          oldVendorName = oldVendor[0].displayName;
+      if (oldQuote.vendorAccountId) {
+        const oldVendor = await loadAccountRecord("vendor", oldQuote.vendorAccountId);
+        if (oldVendor) {
+          oldVendorName = oldVendor.displayName;
         }
       }
 
-      if (updates.vendorId) {
-        const newVendor = await db
-          .select()
-          .from(vendors)
-          .where(eq(vendors.id, updates.vendorId))
-          .limit(1);
-        if (newVendor[0]) {
-          newVendorName = newVendor[0].displayName;
+      if (updates.vendorAccountId) {
+        const newVendor = await loadAccountRecord("vendor", updates.vendorAccountId);
+        if (newVendor) {
+          newVendorName = newVendor.displayName;
         }
       }
 
@@ -475,8 +464,8 @@ export async function updateQuote(
         title: "Quote Vendor Updated",
         description: `Quote vendor changed from ${oldVendorName} to ${newVendorName}`,
         metadata: {
-          oldVendorId: oldQuote.vendorId,
-          newVendorId: updates.vendorId,
+          oldVendorId: oldQuote.vendorAccountId,
+          newVendorId: updates.vendorAccountId,
           oldVendorName,
           newVendorName,
           quoteNumber: oldQuote.quoteNumber,
@@ -488,32 +477,24 @@ export async function updateQuote(
 
     // Log customer change events
     if (
-      updates.customerId !== undefined &&
-      updates.customerId !== oldQuote.customerId
+      updates.customerAccountId !== undefined &&
+      updates.customerAccountId !== oldQuote.customerAccountId
     ) {
       // Fetch customer names for the event
       let oldCustomerName = "Unknown";
       let newCustomerName = "Unknown";
 
-      if (oldQuote.customerId) {
-        const oldCustomer = await db
-          .select()
-          .from(customers)
-          .where(eq(customers.id, oldQuote.customerId))
-          .limit(1);
-        if (oldCustomer[0]) {
-          oldCustomerName = oldCustomer[0].displayName;
+      if (oldQuote.customerAccountId) {
+        const oldCustomer = await loadAccountRecord("customer", oldQuote.customerAccountId);
+        if (oldCustomer) {
+          oldCustomerName = oldCustomer.displayName;
         }
       }
 
-      if (updates.customerId) {
-        const newCustomer = await db
-          .select()
-          .from(customers)
-          .where(eq(customers.id, updates.customerId))
-          .limit(1);
-        if (newCustomer[0]) {
-          newCustomerName = newCustomer[0].displayName;
+      if (updates.customerAccountId) {
+        const newCustomer = await loadAccountRecord("customer", updates.customerAccountId);
+        if (newCustomer) {
+          newCustomerName = newCustomer.displayName;
         }
       }
 
@@ -525,8 +506,8 @@ export async function updateQuote(
         title: "Quote Customer Updated",
         description: `Quote customer changed from ${oldCustomerName} to ${newCustomerName}`,
         metadata: {
-          oldCustomerId: oldQuote.customerId,
-          newCustomerId: updates.customerId,
+          oldCustomerId: oldQuote.customerAccountId,
+          newCustomerId: updates.customerAccountId,
           oldCustomerName,
           newCustomerName,
           quoteNumber: oldQuote.quoteNumber,
@@ -795,8 +776,8 @@ export async function convertQuoteToOrder(
         .insert(orders)
         .values({
           orderNumber,
-          customerId: quote.customerId,
-          vendorId: quote.vendorId,
+          customerAccountId: quote.customerAccountId,
+          vendorAccountId: quote.vendorAccountId,
           sourceQuoteId: quoteId,
           status: "Pending",
           ndaRequired: quote.ndaRequired,
@@ -842,7 +823,7 @@ export async function convertQuoteToOrder(
             const [customerPart] = await tx
               .insert(parts)
               .values({
-                customerId: quote.customerId,
+                customerAccountId: quote.customerAccountId,
                 partName: quotePart.partName,
                 material: quotePart.material || null,
                 tolerance: quotePart.tolerance || null,
@@ -1211,8 +1192,8 @@ export async function convertQuoteToOrder(
         orderNumber: result.orderNumber,
         sourceQuoteId: quoteId,
         quoteNumber: quote.quoteNumber,
-        customerId: quote.customerId,
-        vendorId: quote.vendorId,
+        customerAccountId: quote.customerAccountId,
+        vendorAccountId: quote.vendorAccountId,
         initialStatus: "Pending",
         ...(options?.poNumber
           ? { poNumber: normalizePoNumber(options.poNumber) }
@@ -1264,15 +1245,17 @@ export async function convertQuoteToOrder(
     const { tryAutoFillBlankCustomerFromQuoteCheckout } = await import(
       "~/lib/stripe/checkout-addresses.server"
     );
-    await tryAutoFillBlankCustomerFromQuoteCheckout({
-      quoteId,
-      customerId: quote.customerId,
-      orderId: result.orderId,
-      eventContext: {
-        userId: context?.userId,
-        userEmail: context?.userEmail,
-      },
-    });
+    if (quote.customerAccountId) {
+      await tryAutoFillBlankCustomerFromQuoteCheckout({
+        quoteId,
+        customerId: quote.customerAccountId,
+        orderId: result.orderId,
+        eventContext: {
+          userId: context?.userId,
+          userEmail: context?.userEmail,
+        },
+      });
+    }
 
     return {
       success: true,
@@ -1312,8 +1295,8 @@ export async function duplicateQuote(
         .insert(quotes)
         .values({
           quoteNumber: newQuoteNumber,
-          customerId: quote.customerId,
-          vendorId: quote.vendorId,
+          customerAccountId: quote.customerAccountId,
+          vendorAccountId: quote.vendorAccountId,
           status: "RFQ",
           expirationDays: quote.expirationDays,
           subtotal: quote.subtotal,

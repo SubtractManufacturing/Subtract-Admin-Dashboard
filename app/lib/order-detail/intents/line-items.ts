@@ -90,7 +90,7 @@ export const lineItemIntents: IntentTable<Ctx> = {
     const unitPriceRaw = text(formData, "unitPrice");
     const notes = text(formData, "notes");
     const file = formData.get("file");
-    const customerId = ctx.order.customerId;
+    const customerId = ctx.order.customerAccountId;
 
     if (
       !name ||

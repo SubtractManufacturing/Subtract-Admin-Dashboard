@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 /**
  * Test adapter for the Order detail seam: every port is a `vi.fn` with a
  * harmless default. Not imported by app code.
@@ -11,8 +12,8 @@ export function makeOrder(over: Partial<OrderEntity> = {}): OrderEntity {
   return {
     id: 12,
     orderNumber: "26Z00012",
-    customerId: 3,
-    vendorId: null,
+    customerAccountId: testUuid(3),
+    vendorAccountId: null,
     sourceQuoteId: null,
     status: "Pending",
     totalPrice: "100.00",

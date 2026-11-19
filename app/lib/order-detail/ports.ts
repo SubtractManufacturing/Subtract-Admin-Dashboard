@@ -85,7 +85,7 @@ export type OrderPartsPort = {
   find(id: string): Promise<PartRow | null>;
   create(
     data: {
-      customerId: number;
+      customerId: string;
       partName: string;
       notes: string | null;
       material: string | null;
@@ -175,7 +175,7 @@ export type JobBoardPort = {
   markAsSent(params: { orderId: number; orderNumber: string; actor: Actor }): Promise<void>;
   updateClaim(params: {
     orderId: number;
-    vendorId: number;
+    vendorId: string;
     webhookUrl: string | null;
   }): Promise<{ ok: true } | { ok: false; warning: string }>;
 };
@@ -184,13 +184,13 @@ export type CheckoutAddressesPort = {
   importQuick(params: {
     orderId: number;
     sourceQuoteId: number | null;
-    customerId: number | null;
+    customerId: string | null;
     actor: Actor;
   }): Promise<unknown>;
   applyChoices(params: {
     orderId: number;
     sourceQuoteId: number | null;
-    customerId: number | null;
+    customerId: string | null;
     billingChoice?: "checkout" | "on_file";
     shippingChoice?: "checkout" | "on_file";
     phoneChoice?: "checkout" | "on_file";
