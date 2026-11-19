@@ -14,6 +14,8 @@ import {
   index,
   uniqueIndex,
   foreignKey,
+  check,
+  unique,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
@@ -128,7 +130,12 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const customers = pgTable(
+/**
+ * LEGACY (ADR-0013). Read-only reference copy kept until deployment 2 drops it.
+ * Application code reads and writes `organizations`, `contacts` and `accounts`;
+ * only the backfill, reconciliation and legacy-id redirects read this table.
+ */
+export const legacyCustomers = pgTable(
   "customers",
   {
     id: serial("id").primaryKey(),
@@ -164,7 +171,7 @@ export const customers = pgTable(
     // Set when this Customer was merged into another one (it is also archived).
     // Pointers can chain (A -> B -> C); follow them to the final active survivor.
     mergedIntoCustomerId: integer("merged_into_customer_id").references(
-      (): AnyPgColumn => customers.id,
+      (): AnyPgColumn => legacyCustomers.id,
     ),
 
     isArchived: boolean("is_archived").default(false).notNull(),
@@ -185,12 +192,12 @@ export const customers = pgTable(
  * Deliberately NOT unique on `email`: existing data may already hold several
  * active Customers sharing an email; the merge tool is what cleans that up.
  */
-export const customerEmailAliases = pgTable(
+export const legacyCustomerEmailAliases = pgTable(
   "customer_email_aliases",
   {
     customerId: integer("customer_id")
       .notNull()
-      .references(() => customers.id),
+      .references(() => legacyCustomers.id),
     email: text("email").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -200,7 +207,8 @@ export const customerEmailAliases = pgTable(
   })
 );
 
-export const vendors = pgTable(
+/** LEGACY (ADR-0013). See `legacyCustomers`. */
+export const legacyVendors = pgTable(
   "vendors",
   {
     id: serial("id").primaryKey(),
@@ -247,13 +255,208 @@ export const vendors = pgTable(
   })
 );
 
+// ---------------------------------------------------------------------------
+// Organizations, Contacts and Accounts (ADR-0013)
+// ---------------------------------------------------------------------------
+
+export const organizationKindEnum = pgEnum("organization_kind", [
+  "business",
+  "individual",
+]);
+export type OrganizationKind = (typeof organizationKindEnum.enumValues)[number];
+
+export const accountTypeEnum = pgEnum("account_type", ["customer", "vendor"]);
+export type AccountType = (typeof accountTypeEnum.enumValues)[number];
+
+/** A business, or an individual buyer stored as a thin Organization. */
+export const organizations = pgTable(
+  "organizations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: organizationKindEnum("kind").notNull(),
+    name: text("name").notNull(),
+    phone: text("phone"),
+    website: text("website"),
+    // Set when merged into another Organization (it is also archived).
+    // Pointers can chain; follow them to the final active survivor.
+    mergedIntoOrganizationId: uuid("merged_into_organization_id").references(
+      (): AnyPgColumn => organizations.id,
+    ),
+    /** Backfill, reconciliation and `/customers/123` redirects only. */
+    legacyCustomerId: integer("legacy_customer_id"),
+    /** Backfill, reconciliation and `/vendors/123` redirects only. */
+    legacyVendorId: integer("legacy_vendor_id"),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    nameIdx: index("organizations_name_idx").on(table.name),
+    legacyCustomerIdx: uniqueIndex("organizations_legacy_customer_id_idx").on(
+      table.legacyCustomerId,
+    ),
+    legacyVendorIdx: uniqueIndex("organizations_legacy_vendor_id_idx").on(
+      table.legacyVendorId,
+    ),
+  }),
+);
+
+/** A person. A Contact is a CRM record, not an authenticated user. */
+export const contacts = pgTable(
+  "contacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name"),
+    title: text("title"),
+    /** Primary email as entered; its normalized form is also an alias row. */
+    email: text("email"),
+    phone: text("phone"),
+    mergedIntoContactId: uuid("merged_into_contact_id").references(
+      (): AnyPgColumn => contacts.id,
+    ),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    activeEmailIdx: index("contacts_active_email_idx")
+      .on(sql`lower(trim(${table.email}))`)
+      .where(sql`${table.isArchived} = false and ${table.email} is not null`),
+  }),
+);
+
+/** Which Contacts belong to which Organizations. */
+export const organizationContacts = pgTable(
+  "organization_contacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id),
+    /** Role or title at this Organization; may differ from `contacts.title`. */
+    role: text("role"),
+    isPrimary: boolean("is_primary").default(false).notNull(),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    orgContactIdx: uniqueIndex("organization_contacts_org_contact_idx").on(
+      table.organizationId,
+      table.contactId,
+    ),
+    contactIdx: index("organization_contacts_contact_idx").on(table.contactId),
+    onePrimaryIdx: uniqueIndex("organization_contacts_one_primary_idx")
+      .on(table.organizationId)
+      .where(sql`${table.isPrimary} = true and ${table.isArchived} = false`),
+  }),
+);
+
+/**
+ * Every normalized email a Contact is known by (see `normalizeEmail`),
+ * including the primary email. Replaces `customer_email_aliases`. Not unique
+ * on `email`: duplicates are cleaned up through the merge tool (ADR-0012).
+ */
+export const contactEmailAliases = pgTable(
+  "contact_email_aliases",
+  {
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id),
+    email: text("email").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.contactId, table.email] }),
+    emailIdx: index("contact_email_aliases_email_idx").on(table.email),
+  }),
+);
+
+/** Addresses of an Organization; at most one active default shipping address. */
+export const addresses = pgTable(
+  "addresses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    label: text("label"),
+    line1: text("line1"),
+    line2: text("line2"),
+    city: text("city"),
+    state: text("state"),
+    postalCode: text("postal_code"),
+    country: text("country").default("US"),
+    isDefaultShipping: boolean("is_default_shipping").default(false).notNull(),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("addresses_organization_idx").on(table.organizationId),
+    oneDefaultShippingIdx: uniqueIndex("addresses_one_default_shipping_idx")
+      .on(table.organizationId)
+      .where(sql`${table.isDefaultShipping} = true and ${table.isArchived} = false`),
+  }),
+);
+
+/** A role an Organization plays: a customer account or a vendor account. */
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    type: accountTypeEnum("type").notNull(),
+    paymentTerms: text("payment_terms"),
+    billingAddressId: uuid("billing_address_id").references(() => addresses.id),
+    // Vendor-only fields; customer accounts leave them null.
+    discordId: text("discord_id"),
+    legacyAddress: text("legacy_address"),
+    notes: text("notes"),
+    /** Backfill, reconciliation and `/customers/123` redirects only. */
+    legacyCustomerId: integer("legacy_customer_id"),
+    /** Backfill, reconciliation and `/vendors/123` redirects only. */
+    legacyVendorId: integer("legacy_vendor_id"),
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    orgTypeIdx: uniqueIndex("accounts_organization_type_idx").on(
+      table.organizationId,
+      table.type,
+    ),
+    // Target of the composite foreign keys that pin a reference to one type.
+    idTypeUnique: unique("accounts_id_type_unique").on(table.id, table.type),
+    legacyCustomerIdx: uniqueIndex("accounts_legacy_customer_id_idx").on(
+      table.legacyCustomerId,
+    ),
+    legacyVendorIdx: uniqueIndex("accounts_legacy_vendor_id_idx").on(
+      table.legacyVendorId,
+    ),
+    legacyTypeCheck: check(
+      "accounts_legacy_type_check",
+      sql`(${table.legacyCustomerId} is null or ${table.type} = 'customer') and (${table.legacyVendorId} is null or ${table.type} = 'vendor')`,
+    ),
+  }),
+);
+
 export const quotes = pgTable("quotes", {
   id: serial("id").primaryKey(),
   quoteNumber: text("quote_number").notNull().unique(),
-  customerId: integer("customer_id")
-    .references(() => customers.id)
-    .notNull(),
-  vendorId: integer("vendor_id").references(() => vendors.id),
+  /** LEGACY (ADR-0013): read only by the backfill and reconciliation. */
+  legacyCustomerId: integer("customer_id").references(() => legacyCustomers.id),
+  /** LEGACY (ADR-0013): read only by the backfill and reconciliation. */
+  legacyVendorId: integer("vendor_id").references(() => legacyVendors.id),
+  customerAccountId: uuid("customer_account_id"),
+  customerAccountType: accountTypeEnum("customer_account_type").default("customer").notNull(),
+  vendorAccountId: uuid("vendor_account_id"),
+  vendorAccountType: accountTypeEnum("vendor_account_type").default("vendor").notNull(),
   status: quoteStatusEnum("status").default("RFQ").notNull(),
   validUntil: timestamp("valid_until"),
   expirationDays: integer("expiration_days"),
@@ -284,13 +487,34 @@ export const quotes = pgTable("quotes", {
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  customerAccountFk: foreignKey({
+    name: "quotes_customer_account_fk",
+    columns: [table.customerAccountId, table.customerAccountType],
+    foreignColumns: [accounts.id, accounts.type],
+  }),
+  vendorAccountFk: foreignKey({
+    name: "quotes_vendor_account_fk",
+    columns: [table.vendorAccountId, table.vendorAccountType],
+    foreignColumns: [accounts.id, accounts.type],
+  }),
+  customerAccountTypeCheck: check("quotes_customer_account_type_check", sql`${table.customerAccountType} = 'customer'`),
+  vendorAccountTypeCheck: check("quotes_vendor_account_type_check", sql`${table.vendorAccountType} = 'vendor'`),
+  customerAccountIdx: index("quotes_customer_account_idx").on(table.customerAccountId),
+  vendorAccountIdx: index("quotes_vendor_account_idx").on(table.vendorAccountId),
+}));
 
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
   orderNumber: text("order_number").notNull(),
-  customerId: integer("customer_id").references(() => customers.id),
-  vendorId: integer("vendor_id").references(() => vendors.id),
+  /** LEGACY (ADR-0013): read only by the backfill and reconciliation. */
+  legacyCustomerId: integer("customer_id").references(() => legacyCustomers.id),
+  /** LEGACY (ADR-0013): read only by the backfill and reconciliation. */
+  legacyVendorId: integer("vendor_id").references(() => legacyVendors.id),
+  customerAccountId: uuid("customer_account_id"),
+  customerAccountType: accountTypeEnum("customer_account_type").default("customer").notNull(),
+  vendorAccountId: uuid("vendor_account_id"),
+  vendorAccountType: accountTypeEnum("vendor_account_type").default("vendor").notNull(),
   quoteId: integer("quote_id"),
   sourceQuoteId: integer("source_quote_id"),
   status: orderStatusEnum("status").default("Pending").notNull(),
@@ -306,7 +530,22 @@ export const orders = pgTable("orders", {
   leadTime: integer("lead_time"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  customerAccountFk: foreignKey({
+    name: "orders_customer_account_fk",
+    columns: [table.customerAccountId, table.customerAccountType],
+    foreignColumns: [accounts.id, accounts.type],
+  }),
+  vendorAccountFk: foreignKey({
+    name: "orders_vendor_account_fk",
+    columns: [table.vendorAccountId, table.vendorAccountType],
+    foreignColumns: [accounts.id, accounts.type],
+  }),
+  customerAccountTypeCheck: check("orders_customer_account_type_check", sql`${table.customerAccountType} = 'customer'`),
+  vendorAccountTypeCheck: check("orders_vendor_account_type_check", sql`${table.vendorAccountType} = 'vendor'`),
+  customerAccountIdx: index("orders_customer_account_idx").on(table.customerAccountId),
+  vendorAccountIdx: index("orders_vendor_account_idx").on(table.vendorAccountId),
+}));
 
 export const orderTrackingNumbers = pgTable(
   "order_tracking_numbers",
@@ -339,7 +578,10 @@ export const meshConversionStatusEnum = pgEnum("mesh_conversion_status", [
 
 export const parts = pgTable("parts", {
   id: uuid("id").primaryKey().defaultRandom(),
-  customerId: integer("customer_id").references(() => customers.id),
+  /** LEGACY (ADR-0013): read only by the backfill and reconciliation. */
+  legacyCustomerId: integer("customer_id").references(() => legacyCustomers.id),
+  customerAccountId: uuid("customer_account_id"),
+  customerAccountType: accountTypeEnum("customer_account_type").default("customer").notNull(),
   partName: text("part_name"),
   notes: text("notes"),
   material: text("material"),
@@ -356,7 +598,15 @@ export const parts = pgTable("parts", {
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  customerAccountFk: foreignKey({
+    name: "parts_customer_account_fk",
+    columns: [table.customerAccountId, table.customerAccountType],
+    foreignColumns: [accounts.id, accounts.type],
+  }),
+  customerAccountTypeCheck: check("parts_customer_account_type_check", sql`${table.customerAccountType} = 'customer'`),
+  customerAccountIdx: index("parts_customer_account_idx").on(table.customerAccountId),
+}));
 
 export const attachments = pgTable("attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -557,12 +807,13 @@ export const quoteAttachments = pgTable(
   })
 );
 
-export const customerAttachments = pgTable(
+/** LEGACY (ADR-0013): replaced by `organizationAttachments`. */
+export const legacyCustomerAttachments = pgTable(
   "customer_attachments",
   {
     customerId: integer("customer_id")
       .notNull()
-      .references(() => customers.id),
+      .references(() => legacyCustomers.id),
     attachmentId: uuid("attachment_id")
       .notNull()
       .references(() => attachments.id),
@@ -573,12 +824,13 @@ export const customerAttachments = pgTable(
   })
 );
 
-export const vendorAttachments = pgTable(
+/** LEGACY (ADR-0013): replaced by `organizationAttachments`. */
+export const legacyVendorAttachments = pgTable(
   "vendor_attachments",
   {
     vendorId: integer("vendor_id")
       .notNull()
-      .references(() => vendors.id),
+      .references(() => legacyVendors.id),
     attachmentId: uuid("attachment_id")
       .notNull()
       .references(() => attachments.id),
@@ -611,13 +863,14 @@ export const notes = pgTable("notes", {
   isArchived: boolean("is_archived").default(false).notNull(),
 });
 
-export const customerCommunications = pgTable(
+/** LEGACY (ADR-0013): replaced by `organizationCommunications`. */
+export const legacyCustomerCommunications = pgTable(
   "customer_communications",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     customerId: integer("customer_id")
       .notNull()
-      .references(() => customers.id),
+      .references(() => legacyCustomers.id),
     method: communicationMethodEnum("method").notNull(),
     note: text("note").notNull(),
     createdBy: text("created_by")
@@ -633,6 +886,51 @@ export const customerCommunications = pgTable(
       table.customerId,
     ),
     createdAtIdx: index("customer_communications_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
+
+/** Files of an Organization (NDAs, certificates), whichever role it acts in. */
+export const organizationAttachments = pgTable(
+  "organization_attachments",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    attachmentId: uuid("attachment_id")
+      .notNull()
+      .references(() => attachments.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.organizationId, table.attachmentId] }),
+  }),
+);
+
+/** Logged calls, texts and emails with an Organization, optionally one Contact. */
+export const organizationCommunications = pgTable(
+  "organization_communications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    contactId: uuid("contact_id").references(() => contacts.id),
+    method: communicationMethodEnum("method").notNull(),
+    note: text("note").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    // Append-only, like the legacy table.
+    isArchived: boolean("is_archived").default(false).notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("organization_communications_organization_idx").on(
+      table.organizationId,
+    ),
+    createdAtIdx: index("organization_communications_created_at_idx").on(
       table.createdAt,
     ),
   }),
@@ -822,11 +1120,21 @@ export const cadFileVersions = pgTable(
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
-export type Customer = typeof customers.$inferSelect;
-export type NewCustomer = typeof customers.$inferInsert;
-export type CustomerEmailAlias = typeof customerEmailAliases.$inferSelect;
-export type Vendor = typeof vendors.$inferSelect;
-export type NewVendor = typeof vendors.$inferInsert;
+export type LegacyCustomer = typeof legacyCustomers.$inferSelect;
+export type LegacyVendor = typeof legacyVendors.$inferSelect;
+export type Organization = typeof organizations.$inferSelect;
+export type NewOrganization = typeof organizations.$inferInsert;
+export type Contact = typeof contacts.$inferSelect;
+export type NewContact = typeof contacts.$inferInsert;
+export type OrganizationContact = typeof organizationContacts.$inferSelect;
+export type ContactEmailAlias = typeof contactEmailAliases.$inferSelect;
+export type Address = typeof addresses.$inferSelect;
+export type NewAddress = typeof addresses.$inferInsert;
+export type Account = typeof accounts.$inferSelect;
+export type NewAccount = typeof accounts.$inferInsert;
+export type OrganizationAttachment = typeof organizationAttachments.$inferSelect;
+export type OrganizationCommunication = typeof organizationCommunications.$inferSelect;
+export type NewOrganizationCommunication = typeof organizationCommunications.$inferInsert;
 export type Quote = typeof quotes.$inferSelect;
 export type NewQuote = typeof quotes.$inferInsert;
 export type Order = typeof orders.$inferSelect;
@@ -859,17 +1167,10 @@ export type OrderAttachment = typeof orderAttachments.$inferSelect;
 export type NewOrderAttachment = typeof orderAttachments.$inferInsert;
 export type QuoteAttachment = typeof quoteAttachments.$inferSelect;
 export type NewQuoteAttachment = typeof quoteAttachments.$inferInsert;
-export type CustomerAttachment = typeof customerAttachments.$inferSelect;
-export type NewCustomerAttachment = typeof customerAttachments.$inferInsert;
-export type VendorAttachment = typeof vendorAttachments.$inferSelect;
-export type NewVendorAttachment = typeof vendorAttachments.$inferInsert;
 export type LoginAuditLog = typeof loginAuditLogs.$inferSelect;
 export type NewLoginAuditLog = typeof loginAuditLogs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
-export type CustomerCommunication = typeof customerCommunications.$inferSelect;
-export type NewCustomerCommunication =
-  typeof customerCommunications.$inferInsert;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
 export type NewFeatureFlag = typeof featureFlags.$inferInsert;
 export type EventLog = typeof eventLogs.$inferSelect;
