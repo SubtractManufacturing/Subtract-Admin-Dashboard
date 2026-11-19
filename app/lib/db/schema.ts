@@ -807,7 +807,11 @@ export const quoteAttachments = pgTable(
   })
 );
 
-/** LEGACY (ADR-0013): replaced by `organizationAttachments`. */
+/**
+ * LEGACY (ADR-0013): replaced by `organizationAttachments`. Its foreign key
+ * still pins attachments, so `isReferencedByLegacyLinks` reads it before a
+ * file is deleted.
+ */
 export const legacyCustomerAttachments = pgTable(
   "customer_attachments",
   {
