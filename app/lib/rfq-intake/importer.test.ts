@@ -86,8 +86,8 @@ class MemoryPersistence implements RfqPersistence {
     return {
       quoteId: 42,
       quoteNumber: "Q269-00001",
-      customerId: 7,
-      customerName: "Analytical Engines - Ada Lovelace",
+      customerId: "acct-7",
+      customerName: "Analytical Engines",
       partCount: prepared.parts.length,
       ndaRequired: prepared.manifest.ndaRequired,
       importedEventId: "imported-event",
@@ -194,8 +194,8 @@ describe("importReceipt", () => {
         data: {
           quoteId: 42,
           quoteNumber: "Q269-00001",
-          customerId: 7,
-          customerName: "Analytical Engines - Ada Lovelace",
+          customerId: "acct-7",
+          customerName: "Analytical Engines",
           partCount: 1,
           ndaRequired: true,
         },
@@ -675,8 +675,8 @@ describe("importReceipt", () => {
       return {
         quoteId: 42,
         quoteNumber: "Q269-00001",
-        customerId: 7,
-        customerName: "Analytical Engines - Ada Lovelace",
+        customerId: "acct-7",
+        customerName: "Analytical Engines",
         partCount: prepared.parts.length,
         ndaRequired: prepared.manifest.ndaRequired,
         importedEventId: "imported-event",

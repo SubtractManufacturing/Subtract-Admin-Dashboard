@@ -15,7 +15,8 @@ export type RfqImportedWebhookEvent = {
   data: {
     quoteId: number;
     quoteNumber: string;
-    customerId: number;
+    /** Customer account uuid (ADR-0013); was the integer Customer id before. */
+    customerId: string;
     customerName: string;
     partCount: number;
     ndaRequired: boolean;
