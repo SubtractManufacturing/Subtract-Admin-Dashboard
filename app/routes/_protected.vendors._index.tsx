@@ -94,7 +94,8 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Vendors() {
-  const { vendors } = useLoaderData<typeof loader>()
+  const { vendors, userDetails } = useLoaderData<typeof loader>()
+  const canMerge = userDetails?.role === "Admin" || userDetails?.role === "Dev"
   const fetcher = useFetcher()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
@@ -169,6 +170,14 @@ export default function Vendors() {
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 transition-colors duration-150">Vendors ({filteredVendors.length})</h2>
           <div className="flex items-center gap-3">
             <ViewToggle view={view} onChange={setView} />
+            {canMerge && (
+              <Link
+                to="/customers/merge?scope=vendors"
+                className="whitespace-nowrap text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+              >
+                Find duplicates
+              </Link>
+            )}
             <Button onClick={handleAdd}>Add Vendor</Button>
           </div>
         </div>
@@ -185,9 +194,9 @@ export default function Vendors() {
           }
           columns={[
             {
-              key: "id",
-              header: "ID",
-              render: (vendor) => vendor.id,
+              key: "kind",
+              header: "Type",
+              render: (vendor) => (vendor.kind === "business" ? "Business" : "Individual"),
             },
             {
               key: "displayName",
