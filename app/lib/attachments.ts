@@ -1,5 +1,5 @@
 import { db } from "./db/index.js"
-import { attachments, orderAttachments, quoteAttachments, organizationAttachments, partModels } from "./db/schema.js"
+import { attachments, legacyCustomerAttachments, legacyVendorAttachments, orderAttachments, quoteAttachments, organizationAttachments, partModels } from "./db/schema.js"
 import { eq, and, desc } from 'drizzle-orm'
 import type { Attachment, NewAttachment } from "./db/schema.js"
 import { createEvent } from "./events.js"
@@ -286,6 +286,28 @@ export async function unlinkAttachmentFromAccount(owner: AttachmentOwner, attach
   } catch (error) {
     throw new Error(`Failed to unlink attachment from ${owner.type}: ${error}`)
   }
+}
+
+/**
+ * ADR-0013 deployment 1: the legacy `customer_attachments` and
+ * `vendor_attachments` tables are a read-only reference copy whose foreign
+ * keys still point at `attachments`. A file they reference cannot be deleted
+ * until deployment 2 drops them, so removing it from an Organization only
+ * unlinks it; the file and its row stay.
+ */
+export async function isReferencedByLegacyLinks(attachmentId: string): Promise<boolean> {
+  const [customerLink] = await db
+    .select({ id: legacyCustomerAttachments.attachmentId })
+    .from(legacyCustomerAttachments)
+    .where(eq(legacyCustomerAttachments.attachmentId, attachmentId))
+    .limit(1)
+  if (customerLink) return true
+  const [vendorLink] = await db
+    .select({ id: legacyVendorAttachments.attachmentId })
+    .from(legacyVendorAttachments)
+    .where(eq(legacyVendorAttachments.attachmentId, attachmentId))
+    .limit(1)
+  return Boolean(vendorLink)
 }
 
 export async function getOrganizationAttachments(organizationId: string): Promise<Attachment[]> {

@@ -1,7 +1,7 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, useFetcher, Link } from "@remix-run/react";
 import { getVendor, updateVendor, archiveVendor, getVendorOrders, getVendorStats, getVendorWithAttachments } from "~/lib/vendors";
-import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, linkAttachmentToAccount, unlinkAttachmentFromAccount, type AttachmentEventContext } from "~/lib/attachments";
+import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, linkAttachmentToAccount, unlinkAttachmentFromAccount, isReferencedByLegacyLinks, type AttachmentEventContext } from "~/lib/attachments";
 import {
   accountIdForLegacyId,
   listOrganizationAddresses,
@@ -333,11 +333,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         // Unlink from vendor first
         await unlinkAttachmentFromAccount(vendor, attachmentId, eventContext);
 
-        // Delete from S3
-        await deleteFile(authorizedAttachment.s3Key);
-
-        // Delete database record
-        await deleteAttachment(attachmentId, eventContext);
+        // Files the legacy link tables still reference stay until deployment 2 (ADR-0013).
+        if (!(await isReferencedByLegacyLinks(attachmentId))) {
+          await deleteFile(authorizedAttachment.s3Key);
+          await deleteAttachment(attachmentId, eventContext);
+        }
 
         // Return a redirect to refresh the page
         return redirect(`/vendors/${vendorId}`);

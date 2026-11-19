@@ -18,7 +18,7 @@ import { findDuplicateContacts } from "~/lib/customer-merge.server";
 import { createVendor } from "~/lib/vendors";
 import { ContactsSection } from "~/components/organizations/ContactsSection";
 import { AddressesSection } from "~/components/organizations/AddressesSection";
-import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToAccount, unlinkAttachmentFromAccount, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
+import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToAccount, unlinkAttachmentFromAccount, isReferencedByLegacyLinks, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
 import type { Part } from "~/lib/db/schema";
 import type { Customer, Vendor } from "~/lib/organizations/types";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
@@ -713,11 +713,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
         // Unlink from customer first
         await unlinkAttachmentFromAccount(customer, attachmentId, eventContext);
 
-        // Delete from S3
-        await deleteFile(authorizedAttachment.s3Key);
-
-        // Delete database record
-        await deleteAttachment(attachmentId, eventContext);
+        // Files the legacy link tables still reference stay until deployment 2 (ADR-0013).
+        if (!(await isReferencedByLegacyLinks(attachmentId))) {
+          await deleteFile(authorizedAttachment.s3Key);
+          await deleteAttachment(attachmentId, eventContext);
+        }
 
         // Return a redirect to refresh the page
         return redirect(`/customers/${customerId}`);
