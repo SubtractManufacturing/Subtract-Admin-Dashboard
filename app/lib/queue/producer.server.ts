@@ -12,6 +12,8 @@ import {
   type SendEmailPayload,
   RFQ_IMPORT_OPTIONS,
   type RfqImportPayload,
+  TWENTY_SYNC_OPTIONS,
+  type TwentySyncPayload,
 } from "./types";
 
 declare global {
@@ -88,6 +90,15 @@ export async function sendEmailJob(
     options.startAfter = delayMinutes * 60; // pg-boss startAfter is in seconds
   }
   return producer.send(QUEUES.SEND_EMAIL, payload, options);
+}
+
+export async function sendTwentySyncJob(
+  payload: TwentySyncPayload,
+): Promise<string | null> {
+  const producer = await getProducer();
+  return producer.send(QUEUES.TWENTY_SYNC, payload, {
+    ...TWENTY_SYNC_OPTIONS,
+  });
 }
 
 export async function sendRfqImportJob(

@@ -23,12 +23,12 @@ export default function ToggleSlider({
       <div className="relative">
         <input
           type="checkbox"
-          className="sr-only"
+          className="peer sr-only"
           checked={checked}
           onChange={(e) => !disabled && onChange(e.target.checked)}
           disabled={disabled}
         />
-        <div className={`block w-10 h-6 rounded-full transition-colors duration-200 ${
+        <div className={`block w-10 h-6 rounded-full transition-colors duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 peer-focus-visible:ring-offset-2 dark:peer-focus-visible:ring-offset-slate-800 ${
           checked 
             ? 'bg-blue-600 dark:bg-blue-500' 
             : 'bg-gray-300 dark:bg-gray-600'

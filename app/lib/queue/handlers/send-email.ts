@@ -5,8 +5,9 @@ import { sentEmails } from "../../db/schema";
 import { eq, and } from "drizzle-orm";
 import { sendOutboundEmail } from "../../email/send-outbound.server";
 import { isOutboundEmailEnabled } from "../../featureFlags";
-import { isEmailContextKey } from "../../email/email-context-registry";
 import { getEmailSendHandler } from "../../email/email-send-context-registry.server";
+import { EMAIL_CONTEXT, isEmailContextKey } from "../../email/email-context-registry";
+import { notifyTwentySync } from "../../twenty/notify.server";
 
 type PermanentError = Error & { permanent?: boolean };
 
@@ -75,6 +76,10 @@ export async function handleSendEmail(jobs: Job<SendEmailPayload>[]) {
           `[Worker:afterSent] context=${rowForEffects.contextKey} sentEmailId=${sentEmailId}`,
           afterErr,
         );
+      }
+      // Delivery is what makes a priced quote QUOTE_SENT; acknowledgments do not count.
+      if (rowForEffects.contextKey === EMAIL_CONTEXT.QUOTE_SEND) {
+        notifyTwentySync("quote.email_delivered");
       }
     } catch (err: unknown) {
       const normalizedErr: PermanentError =

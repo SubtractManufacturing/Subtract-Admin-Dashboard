@@ -10,7 +10,9 @@ import {
   type SendEmailPayload,
   type RfqImportPayload,
   type RfqReceiptScanPayload,
+  type TwentySyncPayload,
   getRfqReceiptScanCron,
+  getTwentySyncCron,
 } from "../app/lib/queue/types";
 import { handleCadConversion } from "../app/lib/queue/handlers/cad-conversion";
 import { handleDrawingThumbnail } from "../app/lib/queue/handlers/drawing-thumbnail";
@@ -29,6 +31,8 @@ import {
   handleRfqImport,
   handleRfqReceiptScan,
 } from "../app/lib/queue/handlers/rfq-intake";
+
+import { handleTwentySync } from "../app/lib/queue/handlers/twenty-sync";
 
 let isShuttingDown = false;
 
@@ -116,6 +120,20 @@ async function main() {
   console.log(
     `[Worker] Scheduled hourly purge: ${QUEUES.PURGE_ARCHIVED_LINE_ITEMS}`,
   );
+
+  await boss.work<TwentySyncPayload>(
+    QUEUES.TWENTY_SYNC,
+    { batchSize: 1 },
+    handleTwentySync,
+  );
+  const twentySyncCron = getTwentySyncCron();
+  await boss.schedule(
+    QUEUES.TWENTY_SYNC,
+    twentySyncCron,
+    { triggeredAt: new Date().toISOString() },
+    { missed: "once" },
+  );
+  console.log(`[Worker] Scheduled ${QUEUES.TWENTY_SYNC} cron: ${twentySyncCron}`);
 
   await boss.work<RfqImportPayload>(
     QUEUES.RFQ_IMPORT,

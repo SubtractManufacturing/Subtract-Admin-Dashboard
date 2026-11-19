@@ -5,6 +5,7 @@ import {
   resolveSatisfiedCustomerMatchReviews,
   type DbExecutor,
 } from "./customer-match-review.server";
+import { notifyTwentySync } from "./twenty/notify.server";
 import { CustomerMergeError } from "./customer-merge-error";
 import {
   compareFields,
@@ -493,7 +494,7 @@ export async function mergeCustomers(
     throw new CustomerMergeError("A Customer cannot be merged into itself", 400);
   }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     // Lock in id order so concurrent merges of the same pair cannot deadlock.
     const locked = await tx
       .select()
@@ -520,7 +521,8 @@ export async function mergeCustomers(
 
     const movedQuotes = await tx
       .update(quotes)
-      .set({ customerId: survivorId })
+      // updatedAt: the Twenty sync detects the customer change through it.
+      .set({ customerId: survivorId, updatedAt: now })
       .where(eq(quotes.customerId, mergedId))
       .returning({ id: quotes.id });
     const movedOrders = await tx
@@ -653,6 +655,8 @@ export async function mergeCustomers(
       attachmentsAlreadyLinked: alreadyLinked.length,
     };
   });
+  notifyTwentySync("customer.merged");
+  return result;
 }
 
 /**
