@@ -141,3 +141,65 @@ describe("resolveQuoteTokens", () => {
     expect(tokens.submissionReferenceNumber).toBeUndefined();
   });
 });
+
+describe("customer merge tokens on the Organization model (ADR-0013)", () => {
+  const created: { orgIds: string[]; quoteIds: number[] } = { orgIds: [], quoteIds: [] };
+
+  afterAll(async () => {
+    const { inArray } = await import("drizzle-orm");
+    const { deleteTestOrganizations } = await import("~/test/seed-organizations");
+    if (created.quoteIds.length) await db.delete(quotes).where(inArray(quotes.id, created.quoteIds));
+    await deleteTestOrganizations(created.orgIds);
+  });
+
+  async function quoteForCustomer(input: Parameters<typeof import("~/test/seed-organizations").createTestCustomer>[0]) {
+    const { createTestCustomer } = await import("~/test/seed-organizations");
+    const customer = await createTestCustomer(input);
+    created.orgIds.push(customer.organizationId);
+    const [quote] = await db
+      .insert(quotes)
+      .values({ quoteNumber: `TOK-${Date.now()}-${Math.random()}`, customerAccountId: customer.id })
+      .returning({ id: quotes.id });
+    created.quoteIds.push(quote.id);
+    return { customer, tokens: await resolveQuoteTokens(String(quote.id)) };
+  }
+
+  it("takes the name from the Organization, reach-out details from the primary Contact and addresses from billing and default shipping", async () => {
+    const { tokens } = await quoteForCustomer({
+      name: "Token Works",
+      kind: "business",
+      contactName: "Jane Token",
+      email: "jane@tokenworks.example",
+      phone: "+15550101",
+      paymentTerms: "Net 30",
+      billingAddressLine1: "1 Bill St",
+      billingCity: "Billtown",
+      billingState: "IL",
+      billingPostalCode: "60000",
+      shippingAddressLine1: "2 Ship Rd",
+      shippingCity: "Shipville",
+      shippingState: "WI",
+      shippingPostalCode: "53000",
+    });
+    expect(tokens).toMatchObject({
+      customerName: "Token Works",
+      customerCompanyName: "Token Works",
+      customerEmail: "jane@tokenworks.example",
+      customerPhone: "+15550101",
+      paymentTerms: "Net 30",
+    });
+    expect(tokens.billingAddress).toContain("1 Bill St");
+    expect(tokens.shippingAddress).toContain("2 Ship Rd");
+  });
+
+  it("leaves customerCompanyName empty for an individual", async () => {
+    const { tokens } = await quoteForCustomer({
+      name: "Solo Token",
+      kind: "individual",
+      contactName: "Solo Token",
+      email: "solo@token.example",
+    });
+    expect(tokens.customerName).toBe("Solo Token");
+    expect(tokens.customerCompanyName).toBeUndefined();
+  });
+});
