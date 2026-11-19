@@ -163,25 +163,17 @@ export async function validateEntityExists(entityType: string, entityId: string)
         break;
       }
         
-      case "customer": {
-        const { customers } = await import("./db/schema");
-        const customer = await db
-          .select()
-          .from(customers)
-          .where(eq(customers.id, parseInt(entityId)))
-          .limit(1);
-        exists = customer.length > 0;
-        break;
-      }
-        
+      case "customer":
       case "vendor": {
-        const { vendors } = await import("./db/schema");
-        const vendor = await db
-          .select()
-          .from(vendors)
-          .where(eq(vendors.id, parseInt(entityId)))
+        const { accounts } = await import("./db/schema");
+        const { isUuid } = await import("./organizations/types");
+        if (!isUuid(entityId)) break;
+        const account = await db
+          .select({ id: accounts.id })
+          .from(accounts)
+          .where(and(eq(accounts.id, entityId), eq(accounts.type, entityType as "customer" | "vendor")))
           .limit(1);
-        exists = vendor.length > 0;
+        exists = account.length > 0;
         break;
       }
         

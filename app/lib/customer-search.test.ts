@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { searchCustomers, type CustomerSearchRecord } from "./customer-search";
 
 const record = (
-  id: number,
+  n: number,
   displayName: string,
   overrides: Partial<CustomerSearchRecord> = {},
 ): CustomerSearchRecord => ({
-  id,
+  id: `org-${n}`,
   displayName,
   companyName: null,
   contactName: null,
@@ -22,7 +22,8 @@ const customers = [
   record(3, "Bolt Brothers", { contactName: "Acme Liaison", phone: "+1 555 987 6543" }),
 ];
 
-const ids = (query: string) => searchCustomers(customers, query).results.map((c) => c.id);
+const ids = (query: string) =>
+  searchCustomers(customers, query).results.map((c) => Number(c.id.replace("org-", "")));
 
 describe("searchCustomers", () => {
   it("lists everyone, in order, for an empty search", () => {

@@ -5,12 +5,14 @@
  */
 
 import { db } from "~/lib/db";
-import { deleteCustomerMergeRows } from "~/lib/customers";
-import { customers, quoteLineItems, quotes } from "~/lib/db/schema";
+import { parts, quoteLineItems, quotes } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { createTestCustomer, deleteTestOrganizations } from "./seed-organizations";
 
 export type SeededConversionQuoteIds = {
-  customerId: number;
+  /** Customer account uuid. */
+  customerId: string;
+  organizationId: string;
   quoteId: number;
   quoteLineItemId: number;
   quoteNumber: string;
@@ -19,16 +21,13 @@ export type SeededConversionQuoteIds = {
 export async function seedQuoteForConversion(): Promise<SeededConversionQuoteIds> {
   const quoteNumber = `TEST-CONV-${Date.now()}`;
 
-  const [customer] = await db
-    .insert(customers)
-    .values({ displayName: "Conversion Test Co" })
-    .returning({ id: customers.id });
+  const customer = await createTestCustomer({ name: "Conversion Test Co", kind: "business" });
 
   const [quote] = await db
     .insert(quotes)
     .values({
       quoteNumber,
-      customerId: customer.id,
+      customerAccountId: customer.id,
       status: "Accepted",
       total: "100.00",
       subtotal: "100.00",
@@ -51,6 +50,7 @@ export async function seedQuoteForConversion(): Promise<SeededConversionQuoteIds
 
   return {
     customerId: customer.id,
+    organizationId: customer.organizationId,
     quoteId: quote.id,
     quoteLineItemId: lineItem.id,
     quoteNumber,
@@ -75,6 +75,6 @@ export async function cleanupQuoteForConversion(
     .delete(quoteLineItems)
     .where(eq(quoteLineItems.id, ids.quoteLineItemId));
   await db.delete(quotes).where(eq(quotes.id, ids.quoteId));
-  await deleteCustomerMergeRows([ids.customerId]);
-  await db.delete(customers).where(eq(customers.id, ids.customerId));
+  await db.delete(parts).where(eq(parts.customerAccountId, ids.customerId));
+  await deleteTestOrganizations([ids.organizationId]);
 }

@@ -1,7 +1,7 @@
 /** Client-safe Customer search for picking merge candidates by hand. */
 
 export type CustomerSearchRecord = {
-  id: number;
+  id: string;
   displayName: string;
   companyName: string | null;
   contactName: string | null;

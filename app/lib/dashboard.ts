@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
-import { actionItems, orders, quotes, customers, vendors, orderLineItems, quoteLineItems } from "./db/schema.js"
-import { eq, count, sum, gte, inArray, and, ne, sql, desc } from 'drizzle-orm'
+import { actionItems, orders, quotes, orderLineItems, quoteLineItems } from "./db/schema.js"
+import { eq, count, sum, gte, inArray, and, ne, sql, desc, type SQLWrapper } from 'drizzle-orm'
 
 export type DashboardStats = {
   actionItems: number
@@ -12,9 +12,9 @@ export type DashboardStats = {
 export type Order = {
   id: number
   order_number: string
-  customer_id: number | null
+  customer_id: string | null
   customer_name: string
-  vendor_id: number | null
+  vendor_id: string | null
   vendor_name: string
   status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   quantity: number
@@ -26,9 +26,9 @@ export type Order = {
 export type Quote = {
   id: number
   quote_number: string
-  customer_id: number | null
+  customer_id: string | null
   customer_name: string
-  vendor_id: number | null
+  vendor_id: string | null
   vendor_name: string
   status: 'RFQ' | 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Dropped' | 'Expired'
   quantity: number
@@ -83,6 +83,10 @@ export async function getDashboardStats(rfqDays: number = 7): Promise<DashboardS
   }
 }
 
+/** The Organization name behind an account id column. */
+const accountName = (column: SQLWrapper) =>
+  sql<string | null>`(select o.name from accounts a join organizations o on o.id = a.organization_id where a.id = ${column})`
+
 export async function getOrders(rfqDays: number = 7, limitCount: number = 10): Promise<Order[]> {
   try {
     const startDate = new Date()
@@ -92,19 +96,17 @@ export async function getOrders(rfqDays: number = 7, limitCount: number = 10): P
       .select({
         id: orders.id,
         order_number: orders.orderNumber,
-        customer_id: orders.customerId,
-        vendor_id: orders.vendorId,
+        customer_id: orders.customerAccountId,
+        vendor_id: orders.vendorAccountId,
         status: orders.status,
         total_price: orders.totalPrice,
         delivery_date: orders.deliveryDate,
         created_at: orders.createdAt,
-        customer_name: customers.displayName,
-        vendor_name: vendors.displayName,
+        customer_name: accountName(orders.customerAccountId),
+        vendor_name: accountName(orders.vendorAccountId),
         line_item_count: sql<number>`COALESCE(COUNT(DISTINCT ${orderLineItems.id}), 0)`
       })
       .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(vendors, eq(orders.vendorId, vendors.id))
       .leftJoin(orderLineItems, eq(orders.id, orderLineItems.orderId))
       .where(
         and(
@@ -112,7 +114,7 @@ export async function getOrders(rfqDays: number = 7, limitCount: number = 10): P
           gte(orders.createdAt, startDate)
         )
       )
-      .groupBy(orders.id, customers.displayName, vendors.displayName)
+      .groupBy(orders.id)
       .orderBy(desc(orders.createdAt))
       .limit(limitCount)
 
@@ -144,26 +146,24 @@ export async function getQuotes(rfqDays: number = 7, limitCount: number = 10): P
       .select({
         id: quotes.id,
         quote_number: quotes.quoteNumber,
-        customer_id: quotes.customerId,
-        vendor_id: quotes.vendorId,
+        customer_id: quotes.customerAccountId,
+        vendor_id: quotes.vendorAccountId,
         status: quotes.status,
         total_price: quotes.total,
         valid_until: quotes.validUntil,
         created_at: quotes.createdAt,
-        customer_name: customers.displayName,
-        vendor_name: vendors.displayName,
+        customer_name: accountName(quotes.customerAccountId),
+        vendor_name: accountName(quotes.vendorAccountId),
         line_item_count: sql<number>`COALESCE(COUNT(DISTINCT ${quoteLineItems.id}), 0)`
       })
       .from(quotes)
-      .leftJoin(customers, eq(quotes.customerId, customers.id))
-      .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
       .leftJoin(quoteLineItems, eq(quotes.id, quoteLineItems.quoteId))
       .where(and(
         inArray(quotes.status, ['RFQ', 'Draft', 'Sent']),
         eq(quotes.isArchived, false),
         gte(quotes.createdAt, startDate)
       ))
-      .groupBy(quotes.id, customers.displayName, vendors.displayName)
+      .groupBy(quotes.id)
       .orderBy(desc(quotes.createdAt))
       .limit(limitCount)
 

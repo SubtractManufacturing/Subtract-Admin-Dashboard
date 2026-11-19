@@ -57,17 +57,25 @@ type Seeded = {
 
 let seeded: Seeded;
 
+/** Row counts owned by this file's legacy rows; other test files run in parallel. */
 async function snapshot() {
+  const legacyCustomerIds = [seeded.businessId, seeded.individualId, seeded.mergedId];
   const [row] = await db.execute<Record<string, number>>(sql`
+    with orgs as (
+      select id from organizations
+      where legacy_customer_id in (${sql.join(legacyCustomerIds.map((id) => sql`${id}`), sql`, `)})
+         or legacy_vendor_id = ${seeded.vendorId}
+    ),
+    links as (select * from organization_contacts where organization_id in (select id from orgs))
     select
-      (select count(*)::int from organizations) as organizations,
-      (select count(*)::int from contacts) as contacts,
-      (select count(*)::int from organization_contacts) as links,
-      (select count(*)::int from contact_email_aliases) as aliases,
-      (select count(*)::int from addresses) as addresses,
-      (select count(*)::int from accounts) as accounts,
-      (select count(*)::int from organization_attachments) as attachments,
-      (select count(*)::int from organization_communications) as communications
+      (select count(*)::int from orgs) as organizations,
+      (select count(*)::int from links) as links,
+      (select count(distinct contact_id)::int from links) as contacts,
+      (select count(*)::int from contact_email_aliases where contact_id in (select contact_id from links)) as aliases,
+      (select count(*)::int from addresses where organization_id in (select id from orgs)) as addresses,
+      (select count(*)::int from accounts where organization_id in (select id from orgs)) as accounts,
+      (select count(*)::int from organization_attachments where organization_id in (select id from orgs)) as attachments,
+      (select count(*)::int from organization_communications where organization_id in (select id from orgs)) as communications
   `);
   return row;
 }

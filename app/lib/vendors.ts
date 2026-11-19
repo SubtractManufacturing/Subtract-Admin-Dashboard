@@ -1,98 +1,81 @@
+/**
+ * Vendors: Organizations with a vendor account (ADR-0013). Ids are vendor
+ * account uuids; see `./customers` for the read/write split.
+ */
+import { desc, eq } from "drizzle-orm"
+
 import { db } from "./db/index.js"
-import { vendors, orders, customers } from "./db/schema.js"
-import { eq, desc, inArray } from 'drizzle-orm'
-import type { Vendor } from "./db/schema.js"
-import { getVendorAttachments } from "./attachments.js"
+import { orders } from "./db/schema.js"
+import { getOrganizationAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
+import {
+  archiveAccount,
+  createAccount,
+  loadAccountRecord,
+  loadAccountRecordMap,
+  loadAccountRecords,
+  updateAccountProfile,
+  type Executor,
+} from "./organizations/accounts.server.js"
+import type { AccountProfileInput, Vendor } from "./organizations/types.js"
 
 export type { Vendor }
 
-export type VendorInput = {
-  displayName: string
-  companyName?: string | null
-  contactName?: string | null
-  title?: string | null
-  email?: string | null
-  phone?: string | null
-  isPrimaryContact?: boolean
-  billingAddressLine1?: string | null
-  billingAddressLine2?: string | null
-  billingCity?: string | null
-  billingState?: string | null
-  billingPostalCode?: string | null
-  billingCountry?: string | null
-  shippingAddressLine1?: string | null
-  shippingAddressLine2?: string | null
-  shippingCity?: string | null
-  shippingState?: string | null
-  shippingPostalCode?: string | null
-  shippingCountry?: string | null
-  paymentTerms?: string | null
-  address?: string | null
-  notes?: string | null
-  discordId?: string | null
-}
+export type VendorInput = AccountProfileInput
 
 export type VendorEventContext = {
   userId?: string
   userEmail?: string
 }
 
+/** Active Vendors, newest first. */
 export async function getVendors(): Promise<Vendor[]> {
   try {
-    const result = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.isArchived, false))
-      .orderBy(desc(vendors.createdAt))
-
-    return result
+    const rows = await loadAccountRecords("vendor", { activeOnly: true })
+    return rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
   } catch (error) {
     console.error('Error fetching vendors:', error)
     return []
   }
 }
 
-export async function getVendor(id: number): Promise<Vendor | null> {
+/** A Vendor by account id, archived or not. Null for unknown or non-uuid ids. */
+export async function getVendor(id: string, executor?: Executor): Promise<Vendor | null> {
   try {
-    const result = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.id, id))
-      .limit(1)
-
-    return result[0] || null
+    return await loadAccountRecord("vendor", id, executor)
   } catch (error) {
     throw new Error(`Failed to get vendor: ${error}`)
   }
 }
 
-export async function getVendorsByIds(ids: number[]): Promise<Vendor[]> {
+export async function getVendorsByIds(ids: string[]): Promise<Vendor[]> {
   if (ids.length === 0) return []
   try {
-    return await db
-      .select()
-      .from(vendors)
-      .where(inArray(vendors.id, ids))
+    return await loadAccountRecords("vendor", { ids })
   } catch (error) {
     console.error("Error fetching vendors by IDs:", error)
     return []
   }
 }
 
-export async function createVendor(vendorData: VendorInput, eventContext?: VendorEventContext): Promise<Vendor> {
+export async function getVendorMap(
+  ids: Array<string | null | undefined>,
+  executor?: Executor,
+): Promise<Map<string, Vendor>> {
+  return loadAccountRecordMap("vendor", ids, executor)
+}
+
+export async function createVendor(
+  vendorData: VendorInput,
+  eventContext?: VendorEventContext,
+  options: { organizationId?: string } = {},
+): Promise<Vendor> {
   try {
-    const result = await db
-      .insert(vendors)
-      .values(vendorData)
-      .returning()
+    const vendor = await createAccount("vendor", vendorData, { organizationId: options.organizationId })
 
-    const vendor = result[0]
-
-    // Log event for vendor creation
     await createEvent({
       entityType: "vendor",
-      entityId: vendor.id.toString(),
+      entityId: vendor.id,
       eventType: "vendor_created",
       eventCategory: "system",
       title: `Vendor "${vendor.displayName}" created`,
@@ -100,6 +83,7 @@ export async function createVendor(vendorData: VendorInput, eventContext?: Vendo
       metadata: {
         displayName: vendor.displayName,
         companyName: vendor.companyName,
+        organizationId: vendor.organizationId,
         email: vendor.email,
         phone: vendor.phone
       },
@@ -109,24 +93,17 @@ export async function createVendor(vendorData: VendorInput, eventContext?: Vendo
 
     return vendor
   } catch (error) {
-    throw new Error(`Failed to create vendor: ${error}`)
+    throw new Error(`Failed to create vendor: ${error instanceof Error ? error.message : error}`)
   }
 }
 
-export async function updateVendor(id: number, vendorData: Partial<VendorInput>, eventContext?: VendorEventContext): Promise<Vendor> {
+export async function updateVendor(id: string, vendorData: Partial<VendorInput>, eventContext?: VendorEventContext): Promise<Vendor> {
   try {
-    const result = await db
-      .update(vendors)
-      .set({ ...vendorData, updatedAt: new Date() })
-      .where(eq(vendors.id, id))
-      .returning()
+    const vendor = await updateAccountProfile("vendor", id, vendorData)
 
-    const vendor = result[0]
-
-    // Log event for vendor update
     await createEvent({
       entityType: "vendor",
-      entityId: id.toString(),
+      entityId: id,
       eventType: "vendor_updated",
       eventCategory: "system",
       title: `Vendor information updated`,
@@ -138,32 +115,19 @@ export async function updateVendor(id: number, vendorData: Partial<VendorInput>,
 
     return vendor
   } catch (error) {
-    throw new Error(`Failed to update vendor: ${error}`)
+    throw new Error(`Failed to update vendor: ${error instanceof Error ? error.message : error}`)
   }
 }
 
-export async function deleteVendor(id: number): Promise<void> {
+export async function archiveVendor(id: string, eventContext?: VendorEventContext): Promise<void> {
   try {
-    await db
-      .delete(vendors)
-      .where(eq(vendors.id, id))
-  } catch (error) {
-    throw new Error(`Failed to delete vendor: ${error}`)
-  }
-}
+    const vendor = await getVendor(id)
+    if (!vendor) throw new Error("Vendor not found")
+    await archiveAccount(id)
 
-export async function archiveVendor(id: number, eventContext?: VendorEventContext): Promise<void> {
-  try {
-    const [vendor] = await db
-      .update(vendors)
-      .set({ isArchived: true, updatedAt: new Date() })
-      .where(eq(vendors.id, id))
-      .returning()
-
-    // Log event for vendor archival
     await createEvent({
       entityType: "vendor",
-      entityId: id.toString(),
+      entityId: id,
       eventType: "vendor_archived",
       eventCategory: "system",
       title: `Vendor archived`,
@@ -179,50 +143,46 @@ export async function archiveVendor(id: number, eventContext?: VendorEventContex
   }
 }
 
-export async function getVendorOrders(vendorId: number) {
+export async function getVendorOrders(vendorId: string) {
   try {
-    const result = await db
+    const rows = await db
       .select({
         id: orders.id,
         orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        vendorId: orders.vendorId,
+        customerAccountId: orders.customerAccountId,
+        vendorAccountId: orders.vendorAccountId,
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
         deliveryDate: orders.deliveryDate,
         createdAt: orders.createdAt,
-        customer: customers
       })
       .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .where(eq(orders.vendorId, vendorId))
+      .where(eq(orders.vendorAccountId, vendorId))
       .orderBy(desc(orders.createdAt))
 
-    return result
+    const customersById = await loadAccountRecordMap("customer", rows.map((row) => row.customerAccountId))
+    return rows.map((row) => ({
+      ...row,
+      customer: (row.customerAccountId && customersById.get(row.customerAccountId)) || null,
+    }))
   } catch (error) {
     console.error('Error fetching vendor orders:', error)
     return []
   }
 }
 
-export async function getVendorStats(vendorId: number) {
+export async function getVendorStats(vendorId: string) {
   try {
     const vendorOrders = await getVendorOrders(vendorId)
 
-    const stats = {
+    return {
       totalOrders: vendorOrders.length,
       activeOrders: vendorOrders.filter(o => o.status === 'In_Production' || o.status === 'Pending').length,
       completedOrders: vendorOrders.filter(o => o.status === 'Completed').length,
-      totalEarnings: vendorOrders.reduce((sum, o) => {
-        // vendorPay is now stored as a dollar amount
-        const vendorEarnings = parseFloat(o.vendorPay || '0')
-        return sum + vendorEarnings
-      }, 0),
+      totalEarnings: vendorOrders.reduce((sum, o) => sum + parseFloat(o.vendorPay || '0'), 0),
       averageLeadTime: 0
     }
-
-    return stats
   } catch (error) {
     console.error('Error fetching vendor stats:', error)
     return {
@@ -235,13 +195,13 @@ export async function getVendorStats(vendorId: number) {
   }
 }
 
-export async function getVendorWithAttachments(vendorId: number) {
+export async function getVendorWithAttachments(vendorId: string) {
   try {
     const vendor = await getVendor(vendorId)
     if (!vendor) return null
-    
-    const attachments = await getVendorAttachments(vendorId)
-    
+
+    const attachments = await getOrganizationAttachments(vendor.organizationId)
+
     return {
       ...vendor,
       attachments
