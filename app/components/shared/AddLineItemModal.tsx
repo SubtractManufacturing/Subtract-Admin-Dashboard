@@ -14,7 +14,7 @@ interface AddLineItemModalProps {
   context: "order" | "quote";
   /** Sum of other lines' positive extended amounts; used for %-of-subtotal discount entry */
   positiveSubtotalForDiscount?: number;
-  customerId?: number | null;
+  customerId?: string | null;
   existingParts?: Part[];
   /** When set, modal pre-fills the line item name for promote-to-part flow */
   promoteLineItemId?: number | null;

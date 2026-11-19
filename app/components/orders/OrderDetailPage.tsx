@@ -19,7 +19,8 @@ import {
 import { orderPlacementAnchor } from "~/lib/order-delivery";
 import { formatDateForDisplay } from "~/lib/date-display";
 import BusinessDayCalendar from "~/components/shared/BusinessDayCalendar";
-import type { Attachment, OrderTrackingNumber, Vendor } from "~/lib/db/schema";
+import type { Attachment, OrderTrackingNumber } from "~/lib/db/schema";
+import type { Vendor } from "~/lib/organizations/types";
 
 import Button from "~/components/shared/Button";
 import { NdaRequiredBanner } from "~/components/shared/NdaRequiredBanner";
@@ -144,7 +145,7 @@ export default function OrderDetailPage() {
     useState(false);
   const [assignShopModalOpen, setAssignShopModalOpen] = useState(false);
   const [manageVendorModalOpen, setManageVendorModalOpen] = useState(false);
-  const [selectedVendorId, setSelectedVendorId] = useState<number | null>(null);
+  const [selectedVendorId, setSelectedVendorId] = useState<string | null>(null);
   const [editOrderModalOpen, setEditOrderModalOpen] = useState(false);
   const [trackingModalOpen, setTrackingModalOpen] = useState(false);
   const [trackingModalMode, setTrackingModalMode] = useState<
@@ -210,9 +211,9 @@ export default function OrderDetailPage() {
     stripePaymentLinksEnabled && !!quoteStripePaymentLinkId;
 
   const importCheckoutAddressesDisabled =
-    !order.customerId || !stripeConfigured;
+    !order.customerAccountId || !stripeConfigured;
 
-  const importCheckoutAddressesTooltip = !order.customerId
+  const importCheckoutAddressesTooltip = !order.customerAccountId
     ? "Orders need a customer to import addresses."
     : !stripeConfigured
       ? "Payment checkout is not configured."
@@ -571,7 +572,7 @@ export default function OrderDetailPage() {
   };
 
   const handleAssignShop = () => {
-    setSelectedVendorId(order.vendorId);
+    setSelectedVendorId(order.vendorAccountId);
     setAssignShopModalOpen(true);
   };
 
@@ -583,13 +584,13 @@ export default function OrderDetailPage() {
 
     const formData = new FormData();
     formData.append("intent", "assignShop");
-    formData.append("vendorId", selectedVendorId.toString());
+    formData.append("vendorId", selectedVendorId);
     lineItemFetcher.submit(formData, { method: "post" });
     setAssignShopModalOpen(false);
   };
 
   const handleManageVendor = () => {
-    setSelectedVendorId(order.vendorId);
+    setSelectedVendorId(order.vendorAccountId);
     setManageVendorModalOpen(true);
   };
 
@@ -735,7 +736,7 @@ export default function OrderDetailPage() {
     const formData = new FormData();
     formData.append("intent", "updateVendor");
     if (selectedVendorId) {
-      formData.append("vendorId", selectedVendorId.toString());
+      formData.append("vendorId", selectedVendorId);
     }
     lineItemFetcher.submit(formData, { method: "post" });
     setManageVendorModalOpen(false);
@@ -1010,8 +1011,8 @@ export default function OrderDetailPage() {
                 onSendOrderConfirmation={() =>
                   setSendOrderConfirmationModalOpen(true)
                 }
-                hasVendor={!!order.vendorId}
-                hasCustomer={!!order.customerId}
+                hasVendor={!!order.vendorAccountId}
+                hasCustomer={!!order.customerAccountId}
                 showOrderConfirmationInMenu={
                   outboundEmailEnabled &&
                   orderConfirmationEmailReady &&
@@ -1041,7 +1042,7 @@ export default function OrderDetailPage() {
                 </Button>
               )}
             {order.status === "Pending" &&
-              (order.vendorId ? (
+              (order.vendorAccountId ? (
                 <Button
                   onClick={handleStartProduction}
                   variant="primary"
@@ -1704,7 +1705,7 @@ export default function OrderDetailPage() {
         onSubmit={handleAddLineItemSubmit}
         context="order"
         positiveSubtotalForDiscount={orderPositiveSubForAddLineModal}
-        customerId={order.customerId}
+        customerId={order.customerAccountId}
         existingParts={parts}
       />
 
@@ -1852,10 +1853,10 @@ export default function OrderDetailPage() {
               setIsPackingSlipModalOpen(true);
             }
           }}
-          invoiceGenerateDisabled={!order.customerId}
-          orderConfirmationGenerateDisabled={!order.customerId}
-          purchaseOrderGenerateDisabled={!order.vendorId}
-          packingSlipGenerateDisabled={!order.customerId}
+          invoiceGenerateDisabled={!order.customerAccountId}
+          orderConfirmationGenerateDisabled={!order.customerAccountId}
+          purchaseOrderGenerateDisabled={!order.vendorAccountId}
+          packingSlipGenerateDisabled={!order.customerAccountId}
         />
       )}
 
@@ -1904,9 +1905,7 @@ export default function OrderDetailPage() {
                   id="vendor-select"
                   value={selectedVendorId || ""}
                   onChange={(e) =>
-                    setSelectedVendorId(
-                      e.target.value ? parseInt(e.target.value) : null
-                    )
+                    setSelectedVendorId(e.target.value || null)
                   }
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
@@ -1974,9 +1973,7 @@ export default function OrderDetailPage() {
                   id="vendor-manage-select"
                   value={selectedVendorId || ""}
                   onChange={(e) =>
-                    setSelectedVendorId(
-                      e.target.value ? parseInt(e.target.value) : null
-                    )
+                    setSelectedVendorId(e.target.value || null)
                   }
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 >
@@ -1991,7 +1988,7 @@ export default function OrderDetailPage() {
 
               <div className="flex gap-3 justify-between mt-6">
                 <div className="flex gap-3">
-                  {order.vendorId && (
+                  {order.vendorAccountId && (
                     <Button
                       variant="secondary"
                       onClick={handleRemoveVendor}

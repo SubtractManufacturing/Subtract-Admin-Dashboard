@@ -67,7 +67,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return redirect(`/vendors/${newVendor.id}`)
       }
       case "update": {
-        const id = parseInt(formData.get("id") as string)
+        const id = String(formData.get("id") ?? "")
         const vendorData: Partial<VendorInput> = {
           displayName: formData.get("displayName") as string,
           companyName: formData.get("companyName") as string || null,
@@ -82,7 +82,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return redirect("/vendors")
       }
       case "delete": {
-        const id = parseInt(formData.get("id") as string)
+        const id = String(formData.get("id") ?? "")
         await archiveVendor(id, eventContext)
         return redirect("/vendors")
       }

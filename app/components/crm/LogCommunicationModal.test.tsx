@@ -41,7 +41,7 @@ vi.mock("@remix-run/react", () => ({
 import LogCommunicationModal from "./LogCommunicationModal";
 
 const customers = [
-  { id: 1, displayName: "Acme", email: "a@example.com" },
+  { id: "acct-1", displayName: "Acme", email: "a@example.com" },
 ];
 
 describe("LogCommunicationModal", () => {
@@ -113,7 +113,7 @@ describe("LogCommunicationModal", () => {
         isOpen={true}
         onClose={() => {}}
         customers={customers}
-        defaultCustomerId={1}
+        defaultCustomerId="acct-1"
         lockCustomer
       />,
     );

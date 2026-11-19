@@ -27,7 +27,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     .select({
       id: parts.id,
       partName: parts.partName,
-      customerId: parts.customerId,
+      customerId: parts.customerAccountId,
     })
     .from(parts)
     .where(eq(parts.id, partId))
@@ -99,7 +99,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (part.customerId) {
       await createEvent({
         entityType: "customer",
-        entityId: part.customerId.toString(),
+        entityId: part.customerId,
         eventType: "cad_version_restored",
         eventCategory: "document",
         title: `CAD restored: ${part.partName || "Part"}`,

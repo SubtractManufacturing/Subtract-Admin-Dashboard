@@ -723,7 +723,7 @@ export default function QuoteDetailPage() {
                     }
                     isQuoteReceivedSending={isQuoteReceivedEmailSending}
                     isDownloading={isDownloading}
-                    hasCustomer={!!quote.customerId}
+                    hasCustomer={!!quote.customerAccountId}
                   />
                 </div>
                 {(quote.status === "RFQ" || quote.status === "Draft") && (
@@ -1419,7 +1419,7 @@ export default function QuoteDetailPage() {
                   {!areDetailsLocked ? (
                     editingVendor ? (
                       <select
-                        value={quote.vendorId?.toString() || ""}
+                        value={quote.vendorAccountId?.toString() || ""}
                         onChange={(e) => {
                           const vendorId = e.target.value;
                           fetcher.submit(
@@ -1837,7 +1837,7 @@ export default function QuoteDetailPage() {
         }
         context="quote"
         positiveSubtotalForDiscount={quotePositiveSubForAddLineModal}
-        customerId={quote.customerId}
+        customerId={quote.customerAccountId}
         promoteLineItemId={promoteLineItemTarget?.id ?? null}
         initialLineItemName={promoteLineItemTarget?.name ?? null}
         prefillFromLineItem={
@@ -1988,12 +1988,12 @@ export default function QuoteDetailPage() {
               </label>
               <select
                 id="quote-customer-account"
-                value={quote.customerId?.toString() || ""}
+                value={quote.customerAccountId?.toString() || ""}
                 onChange={(e) => {
                   const customerId = e.target.value;
                   if (
                     !customerId ||
-                    customerId === quote.customerId?.toString()
+                    customerId === quote.customerAccountId?.toString()
                   ) {
                     return;
                   }

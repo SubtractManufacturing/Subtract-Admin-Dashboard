@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import type { OrderWithRelations } from "~/lib/orders";
-import type { Part, OrderLineItem, Customer } from "~/lib/db/schema";
+import type { Part, OrderLineItem } from "~/lib/db/schema";
+import type { Customer } from "~/lib/organizations/types";
 import {
   formatDate,
   commonPdfStyles,

@@ -67,7 +67,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return redirect(`/customers/${newCustomer.id}`)
       }
       case "update": {
-        const id = parseInt(formData.get("id") as string)
+        const id = String(formData.get("id") ?? "")
         const customerData: Partial<CustomerInput> = {
           displayName: formData.get("displayName") as string,
           email: formData.get("email") as string || null,
@@ -77,7 +77,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return redirect("/customers")
       }
       case "delete": {
-        const id = parseInt(formData.get("id") as string)
+        const id = String(formData.get("id") ?? "")
         await archiveCustomer(id, eventContext)
         return redirect("/customers")
       }

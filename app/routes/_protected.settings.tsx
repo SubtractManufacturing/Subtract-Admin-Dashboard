@@ -1321,7 +1321,7 @@ export default function Settings() {
   const [bulkEntity, setBulkEntity] = useState<"customers" | "vendors">(
     "customers",
   );
-  const [selectedExportIds, setSelectedExportIds] = useState<number[]>([]);
+  const [selectedExportIds, setSelectedExportIds] = useState<string[]>([]);
   const [importPreview, setImportPreview] = useState<{
     preview: BulkImportPreviewRow[];
     entityType: "customers" | "vendors";

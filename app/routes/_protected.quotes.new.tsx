@@ -1,3 +1,4 @@
+import { isUuid } from "~/lib/organizations/types";
 import { json, unstable_parseMultipartFormData, type ActionFunctionArgs, type LoaderFunctionArgs, type UploadHandler } from "@remix-run/node";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { createQuoteWithParts, type QuoteInput, type QuoteEventContext } from "~/lib/quotes";
@@ -73,7 +74,7 @@ export async function action({ request }: ActionFunctionArgs) {
       userEmail: user?.email || userDetails?.name || undefined,
     };
 
-    let customerId: number;
+    let customerId: string;
     const shouldCreateCustomer = formData.get("createCustomer") === "true";
 
     if (shouldCreateCustomer) {
@@ -98,7 +99,7 @@ export async function action({ request }: ActionFunctionArgs) {
         eventCategory: "system",
         eventType: "customer_created",
         entityType: "customer",
-        entityId: customerId.toString(),
+        entityId: customerId,
         title: "Customer Created",
         description: `Customer ${newCustomer.displayName} created from quote`,
         metadata: {
@@ -111,13 +112,13 @@ export async function action({ request }: ActionFunctionArgs) {
     } else {
       const idString = formData.get("customerId") as string;
       if (!idString) throw new Error("Customer ID is required");
-      customerId = parseInt(idString, 10);
-      if (isNaN(customerId)) throw new Error("Invalid customer ID");
+      if (!isUuid(idString)) throw new Error("Invalid customer ID");
+      customerId = idString;
     }
 
     const quoteData: QuoteInput = {
-      customerId,
-      vendorId: null,
+      customerAccountId: customerId,
+      vendorAccountId: null,
       status: "RFQ",
       expirationDays: 14,
       createdById: user?.id,
