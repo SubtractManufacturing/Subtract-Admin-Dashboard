@@ -5,11 +5,23 @@ Internal admin application for Subtract Manufacturing operations: CRM, quoting, 
 ## Language
 
 **Customer**:
-A person or organization that receives quotes and places orders. Stored with structured billing and shipping addresses.
-_Avoid_: Client, buyer, account
+An Organization with an Account of type `customer`: a business, or an individual buyer stored as a thin Organization with one Contact. Receives Quotes and places Orders. See [ADR-0013](docs/adr/0013-organizations-contacts-accounts.md).
+_Avoid_: Client, buyer, account (on its own)
+
+**Organization**:
+The shared record for a business (`kind = business`) or an individual buyer (`kind = individual`). It holds Contacts, addresses, attachments, and communications, and has a customer account, a vendor account, or both. Staff see it as a Customer or a Vendor; it has no page of its own yet.
+_Avoid_: Company (in code), tenant
+
+**Contact**:
+A person at one or more Organizations, with a primary email, aliases, phone, and title. A Contact is a CRM record, not an authenticated user.
+_Avoid_: User (that is a staff login), member
+
+**Account**:
+A role an Organization plays, stored in `accounts` with `type` `customer` or `vendor` (at most one of each per Organization). Holds payment terms and a fixed billing address; vendor accounts also hold the Discord id. Quotes, Orders, and Parts reference a customer account; Quotes and Orders reference a vendor account when a Vendor is assigned. "Customer account" and "vendor account" mean an Account of that type.
+_Avoid_: Profile, using "account" for a staff login
 
 **Email alias**:
-A normalized email a Customer is known by, stored in `customer_email_aliases` (the primary email is kept there too). RFQ intake matches an incoming email against primary emails and aliases of active Customers. Normalization is `normalizeEmail`; plus-tags and gmail dots are never stripped.
+A normalized email a Contact is known by, stored in `contact_email_aliases` (the primary email is kept there too). RFQ intake matches an incoming email against primary emails and aliases of active Contacts, then uses their Organization's customer account. Normalization is `normalizeEmail`; plus-tags and gmail dots are never stripped.
 _Avoid_: Secondary email, alternate email
 
 **Customer merge**:
@@ -24,7 +36,7 @@ _Avoid_: Duplicate group (suggestions are pairs, never chained groups), Customer
 An Action Item raised when an RFQ matched several active Customers. It links into the merge tool and resolves itself once the candidates are merged or no longer active; an Admin or Dev resolves it by hand ("Not duplicates") when the Customers are genuinely distinct.
 
 **Vendor**:
-A shop or supplier that fulfills production work. May be assigned to quotes and orders.
+An Organization with an Account of type `vendor`: a shop or supplier that fulfills production work. May be assigned to quotes and orders.
 _Avoid_: Supplier (unless referring to external procurement), shop (use only for production context)
 
 **Job Board**:
