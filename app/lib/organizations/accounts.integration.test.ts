@@ -83,6 +83,12 @@ describe("account profile writes", () => {
     expect(aliases.map((alias) => alias.email)).toContain("new@partial.example");
   });
 
+  it("renames the Organization without touching the primary Contact's name", async () => {
+    const created = await customer("Rename", { contactName: "Person Stays" });
+    const updated = await updateAccountProfile("customer", created.id, { name: `Renamed ${tag}`, kind: "business" });
+    expect(updated).toMatchObject({ displayName: `Renamed ${tag}`, contactName: "Person Stays" });
+  });
+
   it("writes Stripe checkout addresses to the account's billing address and the default shipping address", async () => {
     const created = await customer("Checkout");
     await updateCustomer(

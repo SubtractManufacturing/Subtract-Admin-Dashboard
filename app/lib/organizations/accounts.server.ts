@@ -315,10 +315,14 @@ export async function rememberContactEmail(
     .onConflictDoNothing();
 }
 
-function contactFields(input: AccountProfileInput | ContactInput) {
+/** Contact columns from a profile write: `contactName` is the person; `name` is the Organization. */
+function contactFieldsFromProfile(input: AccountProfileInput) {
+  return contactColumns({ name: input.contactName, title: input.title, email: input.email, phone: input.phone });
+}
+
+function contactColumns(input: ContactInput) {
   const fields: Partial<typeof contacts.$inferInsert> = {};
-  const name = "contactName" in input ? input.contactName : (input as ContactInput).name;
-  if (name !== undefined) fields.name = blankToNull(name);
+  if (input.name !== undefined) fields.name = blankToNull(input.name);
   if (input.title !== undefined) fields.title = blankToNull(input.title);
   if (input.email !== undefined) fields.email = blankToNull(input.email);
   if (input.phone !== undefined) fields.phone = blankToNull(input.phone);
@@ -373,7 +377,7 @@ export async function createAccount(
         .returning({ id: organizations.id });
       organizationId = org.id;
 
-      const contact = contactFields(input);
+      const contact = contactFieldsFromProfile(input);
       if (Object.values(contact).some((value) => value !== null && value !== undefined)) {
         const [created] = await tx
           .insert(contacts)
@@ -504,7 +508,7 @@ export async function updateAccountProfile(
         .where(eq(organizations.id, current.organizationId));
     }
 
-    const contact = contactFields(input);
+    const contact = contactFieldsFromProfile(input);
     if (Object.keys(contact).length > 0) {
       if (current.primaryContactId) {
         await tx
@@ -673,7 +677,7 @@ export async function addContact(
 ): Promise<string> {
   const now = options.now ?? new Date();
   const run = async (tx: Executor) => {
-    const fields = contactFields(input);
+    const fields = contactColumns(input);
     if (!fields.name && !fields.email && !fields.phone) {
       throw new AccountProfileError("A Contact needs a name, email or phone");
     }
@@ -734,7 +738,7 @@ export async function updateContact(
   const now = options.now ?? new Date();
   await db.transaction(async (tx) => {
     const linkId = await assertMember(tx, organizationId, contactId);
-    const fields = contactFields(input);
+    const fields = contactColumns(input);
     if (Object.keys(fields).length > 0) {
       await tx.update(contacts).set({ ...fields, updatedAt: now }).where(eq(contacts.id, contactId));
       await rememberContactEmail(tx, contactId, fields.email);
