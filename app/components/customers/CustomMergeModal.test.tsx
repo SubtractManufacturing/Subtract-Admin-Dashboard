@@ -7,11 +7,11 @@ import type { CustomerSearchRecord } from "~/lib/customer-search";
 import { CustomMergeModal } from "./CustomMergeModal";
 
 const record = (
-  id: number,
+  n: number,
   displayName: string,
   overrides: Partial<CustomerSearchRecord> = {},
 ): CustomerSearchRecord => ({
-  id,
+  id: `org-${n}`,
   displayName,
   companyName: null,
   contactName: null,
@@ -63,7 +63,7 @@ describe("CustomMergeModal", () => {
     fireEvent.click(within(second).getByRole("button", { name: /Dana Rivera/ }));
     fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
 
-    expect(onReview).toHaveBeenCalledWith(1, 2);
+    expect(onReview).toHaveBeenCalledWith("org-1", "org-2");
   });
 
   it("reverses which Customer is kept when the arrow is clicked", () => {
@@ -74,7 +74,7 @@ describe("CustomMergeModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reverse which Customer is kept" }));
     fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
 
-    expect(onReview).toHaveBeenCalledWith(2, 1);
+    expect(onReview).toHaveBeenCalledWith("org-2", "org-1");
   });
 
   it("does not let the same Customer be picked on both sides", () => {

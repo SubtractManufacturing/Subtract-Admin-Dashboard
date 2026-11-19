@@ -2,37 +2,31 @@ import { and, eq } from "drizzle-orm";
 
 import { candidateIdsFromMetadata } from "./customer-merge-view";
 import { db } from "./db";
-import { actionItems, customers } from "./db/schema";
+import { actionItems } from "./db/schema";
+import {
+  accountIdForLegacyId,
+  resolveFinalAccountId,
+} from "./organizations/accounts.server";
+import { isUuid } from "./organizations/types";
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type DbExecutor = typeof db | DbTransaction;
 
 /**
- * Follow merge pointers (A -> B -> C) to the final active Customer. Returns
- * null when the Customer does not exist or was archived without being merged.
+ * The active customer account a candidate id ends up as: uuids follow
+ * Organization merges; legacy integer ids (resolved items from before
+ * ADR-0013) map through the backfill's legacy id first. Null when nothing
+ * active remains.
  */
 export async function resolveFinalCustomerId(
-  customerId: number,
+  customerId: string,
   executor: DbExecutor = db,
-): Promise<number | null> {
-  const seen = new Set<number>();
-  let currentId: number | null = customerId;
-  while (currentId !== null && !seen.has(currentId)) {
-    seen.add(currentId);
-    const [row] = await executor
-      .select({
-        id: customers.id,
-        isArchived: customers.isArchived,
-        mergedIntoCustomerId: customers.mergedIntoCustomerId,
-      })
-      .from(customers)
-      .where(eq(customers.id, currentId))
-      .limit(1);
-    if (!row) return null;
-    if (!row.isArchived) return row.id;
-    currentId = row.mergedIntoCustomerId;
-  }
-  return null;
+): Promise<string | null> {
+  const accountId = /^\d+$/.test(customerId)
+    ? await accountIdForLegacyId("customer", Number(customerId), executor)
+    : customerId;
+  if (!accountId || !isUuid(accountId)) return null;
+  return resolveFinalAccountId(accountId, executor);
 }
 
 /**
@@ -64,7 +58,7 @@ export async function resolveSatisfiedCustomerMatchReviews(
     const candidates = candidateIdsFromMetadata(item.metadata);
     if (candidates.length === 0) continue;
 
-    const remaining = new Set<number>();
+    const remaining = new Set<string>();
     for (const candidateId of candidates) {
       const finalId = await resolveFinalCustomerId(candidateId, executor);
       if (finalId !== null) remaining.add(finalId);

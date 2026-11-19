@@ -10,7 +10,7 @@ type Props = {
   isOpen: boolean;
   onClose: () => void;
   customers: CustomerSearchRecord[];
-  onReview: (keepId: number, mergeInId: number) => void;
+  onReview: (keepId: string, mergeInId: string) => void;
 };
 
 const RESULT_LIMIT = 50;
@@ -19,10 +19,10 @@ type PickerProps = {
   label: string;
   side: "keep" | "merge";
   customers: CustomerSearchRecord[];
-  selectedId: number | null;
+  selectedId: string | null;
   /** The Customer picked on the other side; it cannot be picked twice. */
-  takenId: number | null;
-  onSelect: (id: number | null) => void;
+  takenId: string | null;
+  onSelect: (id: string | null) => void;
   /** Move focus to the search box once the modal has opened. */
   focusOnOpen?: boolean;
 };
@@ -181,11 +181,11 @@ export function CustomMergeModal({
   customers,
   onReview,
 }: Props) {
-  const [firstId, setFirstId] = useState<number | null>(null);
-  const [secondId, setSecondId] = useState<number | null>(null);
+  const [firstId, setFirstId] = useState<string | null>(null);
+  const [secondId, setSecondId] = useState<string | null>(null);
   const [keepSecond, setKeepSecond] = useState(false);
 
-  const nameOf = (id: number | null) =>
+  const nameOf = (id: string | null) =>
     customers.find((customer) => customer.id === id)?.displayName ?? null;
   const ready = firstId !== null && secondId !== null && firstId !== secondId;
   const keepId = keepSecond ? secondId : firstId;

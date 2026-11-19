@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { DuplicateReasonKind } from "~/lib/customer-merge-view";
 import { MatchFilterChips } from "./MatchFilterChips";
 
-const counts = { email: 5, phone: 3, company: 8, name: 2 };
+const counts = { email: 5, domain: 4, phone: 3, company: 8, name: 2 };
 const hrefFor = (kinds: DuplicateReasonKind[]) =>
   kinds.length ? `/customers/merge?match=${kinds.join(",")}` : "/customers/merge";
 

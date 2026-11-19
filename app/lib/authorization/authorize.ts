@@ -49,6 +49,14 @@ const POLICY = {
   "download.mesh": { roles: ALL_STAFF, resourceType: "part" },
   "export.customers": { roles: ELEVATED_STAFF },
   "export.vendors": { roles: ELEVATED_STAFF },
+  /** Merge one Organization into another (ADR-0013). */
+  "organization.merge": { roles: ELEVATED_STAFF },
+  /** Merge two Contacts that are the same person (ADR-0013). */
+  "contact.merge": { roles: ELEVATED_STAFF },
+  /** Resolve a Customer match review by hand ("Not duplicates"). */
+  "customer-match-review.resolve": { roles: ELEVATED_STAFF },
+  /** The legacy-to-new reconciliation page (ADR-0013, deployment 1 only). */
+  "reconciliation.view": { roles: ELEVATED_STAFF },
 } as const satisfies Record<string, ActionPolicy>;
 
 export type Action = keyof typeof POLICY;

@@ -1,5 +1,6 @@
 import { and, count, desc, eq, sql } from "drizzle-orm";
 
+import { authorize } from "./authorization/authorize";
 import { resolveSatisfiedCustomerMatchReviews } from "./customer-match-review.server";
 import { db } from "./db";
 import { actionItems, type UserRole } from "./db/schema";
@@ -99,7 +100,13 @@ export async function resolveActionItem(
   }
   if (item.type === "customer_match_review") {
     // Same audience as the merge tool the item links to.
-    requireElevated(actor.role);
+    const decision = authorize(
+      { kind: "staff", userId: actor.userId, email: "", name: null, role: actor.role },
+      "customer-match-review.resolve",
+    );
+    if (!decision.allowed) {
+      throw new ActionItemCommandError("Admin or Dev role required", 403);
+    }
   }
   const now = new Date();
   const [updated] = await db

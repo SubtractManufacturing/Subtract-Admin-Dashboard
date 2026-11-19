@@ -12,42 +12,50 @@ import SearchHeader from "~/components/SearchHeader";
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { assertAuthorized } from "~/lib/authorization/authorize";
 import {
   findDuplicatePairs,
-  getActiveCustomerSummaries,
-  mergeCustomers,
+  getActiveOrganizationSummaries,
+  mergeContacts,
+  mergeOrganizations,
   pairsAmong,
+  previewContactMerge,
   previewMerge,
-  type MergeActor,
 } from "~/lib/customer-merge.server";
 import { CustomerMergeError } from "~/lib/customer-merge-error";
-import type { MergeChoices } from "~/lib/customer-merge-fields";
+import type { ContactMergeChoices, OrganizationMergeChoices } from "~/lib/customer-merge-fields";
 import { getCustomers } from "~/lib/customers";
+import { getVendors } from "~/lib/vendors";
 import {
+  organizationHref,
   parseMatchKinds,
+  parseMergeScope,
   type DuplicatePairView,
   type DuplicateReasonKind,
   type MergeFieldChoice,
   type MergePreviewView,
+  type MergeScope,
 } from "~/lib/customer-merge-view";
+import { isUuid } from "~/lib/organizations/types";
 
 const PAGE_SIZE = 10;
 const MAX_LIMIT = 200;
 
-function parseIds(value: string | null): number[] {
+/** Candidate customer account ids: uuids, or legacy integer ids from old Action Items. */
+function parseIds(value: string | null): string[] {
   return [
     ...new Set(
       (value ?? "")
         .split(",")
-        .map((part) => Number.parseInt(part, 10))
-        .filter((id) => Number.isInteger(id) && id > 0),
+        .map((part) => part.trim())
+        .filter((id) => isUuid(id) || /^\d+$/.test(id)),
     ),
   ];
 }
 
-function parseId(value: FormDataEntryValue | string | null): number | null {
-  const id = Number.parseInt(String(value ?? ""), 10);
-  return Number.isInteger(id) && id > 0 ? id : null;
+function parseId(value: FormDataEntryValue | string | null): string | null {
+  const id = String(value ?? "").trim();
+  return isUuid(id) ? id : null;
 }
 
 function parseLimit(value: string | null): number {
@@ -57,48 +65,83 @@ function parseLimit(value: string | null): number {
     : PAGE_SIZE;
 }
 
-function actorFrom(userDetails: {
-  id: string;
-  email?: string | null;
-  role: MergeActor["role"];
-}): MergeActor {
-  return { userId: userDetails.id, email: userDetails.email, role: userDetails.role };
+function parseChoices<T extends string>(form: FormData): Partial<Record<T, MergeFieldChoice>> {
+  const choices: Partial<Record<T, MergeFieldChoice>> = {};
+  for (const [key, value] of form.entries()) {
+    if (key.startsWith("choice:") && (value === "survivor" || value === "merged")) {
+      choices[key.slice("choice:".length) as T] = value;
+    }
+  }
+  return choices;
 }
 
-function requireElevatedRole(role: MergeActor["role"]) {
-  if (role !== "Admin" && role !== "Dev") {
-    throw new Response("Admin or Dev role required", { status: 403 });
+function parseExpected(form: FormData) {
+  const survivorUpdatedAt = new Date(String(form.get("survivorUpdatedAt")));
+  const mergedUpdatedAt = new Date(String(form.get("mergedUpdatedAt")));
+  // Fail closed: a merge without the previewed timestamps could silently
+  // overwrite edits made since the preview was shown.
+  if (Number.isNaN(survivorUpdatedAt.getTime()) || Number.isNaN(mergedUpdatedAt.getTime())) {
+    throw new CustomerMergeError("Preview is missing or invalid; review the merge again", 400);
   }
+  return { survivorUpdatedAt, mergedUpdatedAt };
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { userDetails, headers } = await requireAuth(request);
-  requireElevatedRole(userDetails.role);
+  const { actor, headers } = await requireAuth(request);
+  assertAuthorized(actor, "organization.merge");
   const url = new URL(request.url);
 
-  // Merge review dialog: only the preview is needed.
-  if (url.searchParams.get("preview")) {
+  // Review dialogs: only the preview is needed.
+  const previewKind = url.searchParams.get("preview");
+  if (previewKind) {
     const survivorId = parseId(url.searchParams.get("survivor"));
     const mergedId = parseId(url.searchParams.get("merged"));
     if (!survivorId || !mergedId) {
-      return withAuthHeaders(json({ error: "Choose two Customers to merge" }, { status: 400 }), headers);
+      return withAuthHeaders(json({ error: "Choose two records to merge" }, { status: 400 }), headers);
     }
     try {
-      return withAuthHeaders(json({ preview: await previewMerge({ survivorId, mergedId }) }), headers);
+      const preview =
+        previewKind === "contact"
+          ? await previewContactMerge({ survivorId, mergedId })
+          : await previewMerge({ survivorId, mergedId });
+      return withAuthHeaders(json({ preview }), headers);
     } catch (error) {
       if (!(error instanceof CustomerMergeError)) throw error;
       return withAuthHeaders(json({ error: error.message }, { status: error.status }), headers);
     }
   }
 
+  const scope = parseMergeScope(url.searchParams.get("scope"));
   const kinds = parseMatchKinds(url.searchParams.get("match"));
   const limit = parseLimit(url.searchParams.get("limit"));
   const candidateIds = parseIds(url.searchParams.get("ids"));
-  const [suggestions, candidates, allCustomers] = await Promise.all([
-    findDuplicatePairs({ kinds, limit }),
-    getActiveCustomerSummaries(candidateIds),
-    getCustomers({ sortBy: "name" }),
+  const [suggestions, candidates, allCustomers, allVendors] = await Promise.all([
+    findDuplicatePairs({ kinds, limit, scope }),
+    getActiveOrganizationSummaries(candidateIds),
+    scope === "vendors" ? [] : getCustomers({ sortBy: "name" }),
+    scope === "customers" ? [] : getVendors(),
   ]);
+
+  // The custom-merge picker lists Organizations, one row each.
+  const pickerRows = new Map<string, {
+    id: string;
+    displayName: string;
+    companyName: string | null;
+    contactName: string | null;
+    email: string | null;
+    phone: string | null;
+  }>();
+  for (const record of [...allCustomers, ...allVendors]) {
+    if (pickerRows.has(record.organizationId)) continue;
+    pickerRows.set(record.organizationId, {
+      id: record.organizationId,
+      displayName: record.displayName,
+      companyName: record.companyName,
+      contactName: record.contactName,
+      email: record.email,
+      phone: record.phone,
+    });
+  }
 
   return withAuthHeaders(
     json({
@@ -107,59 +150,55 @@ export async function loader({ request }: LoaderFunctionArgs) {
       candidateIds,
       candidateCount: candidates.length,
       candidateName: candidates[0]?.displayName ?? null,
+      scope,
       kinds,
       limit,
-      customerRecords: allCustomers.map((customer) => ({
-        id: customer.id,
-        displayName: customer.displayName,
-        companyName: customer.companyName,
-        contactName: customer.contactName,
-        email: customer.email,
-        phone: customer.phone,
-      })),
+      customerRecords: [...pickerRows.values()].sort((a, b) => a.displayName.localeCompare(b.displayName)),
     }),
     headers,
   );
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { userDetails, headers } = await requireAuth(request);
-  const actor = actorFrom(userDetails);
+  const { actor, headers } = await requireAuth(request);
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
 
   try {
-    if (intent !== "merge") {
-      return withAuthHeaders(json({ error: "Unknown action" }, { status: 400 }), headers);
-    }
     const survivorId = parseId(form.get("survivorId"));
     const mergedId = parseId(form.get("mergedId"));
+    if (intent !== "merge" && intent !== "mergeContacts") {
+      return withAuthHeaders(json({ error: "Unknown action" }, { status: 400 }), headers);
+    }
     if (!survivorId || !mergedId) {
-      return withAuthHeaders(json({ error: "Choose two Customers to merge" }, { status: 400 }), headers);
+      return withAuthHeaders(json({ error: "Choose two records to merge" }, { status: 400 }), headers);
     }
-    const choices: MergeChoices = {};
-    for (const [key, value] of form.entries()) {
-      if (key.startsWith("choice:") && (value === "survivor" || value === "merged")) {
-        choices[key.slice("choice:".length) as keyof MergeChoices] = value;
-      }
+    const expected = parseExpected(form);
+
+    if (intent === "mergeContacts") {
+      await mergeContacts(
+        { survivorId, mergedId, choices: parseChoices<keyof ContactMergeChoices>(form), expected },
+        actor,
+      );
+      const returnTo = String(form.get("returnTo") ?? "");
+      return withAuthHeaders(
+        returnTo.startsWith("/customers/") || returnTo.startsWith("/vendors/")
+          ? redirect(returnTo)
+          : json({ ok: true }),
+        headers,
+      );
     }
-    const survivorUpdatedAt = new Date(String(form.get("survivorUpdatedAt")));
-    const mergedUpdatedAt = new Date(String(form.get("mergedUpdatedAt")));
-    // Fail closed: a merge without the previewed timestamps could silently
-    // overwrite edits made since the preview was shown.
-    if (Number.isNaN(survivorUpdatedAt.getTime()) || Number.isNaN(mergedUpdatedAt.getTime())) {
-      throw new CustomerMergeError("Preview is missing or invalid; review the merge again", 400);
-    }
-    await mergeCustomers(
-      {
-        survivorId,
-        mergedId,
-        choices,
-        expected: { survivorUpdatedAt, mergedUpdatedAt },
-      },
+
+    const result = await mergeOrganizations(
+      { survivorId, mergedId, choices: parseChoices<keyof OrganizationMergeChoices>(form), expected },
       actor,
     );
-    return withAuthHeaders(redirect(`/customers/${survivorId}`), headers);
+    const href =
+      organizationHref({
+        customerAccountId: result.survivorCustomerAccountId,
+        vendorAccountId: result.survivorVendorAccountId,
+      }) ?? "/customers";
+    return withAuthHeaders(redirect(`${href}?merged=1`), headers);
   } catch (error) {
     if (!(error instanceof CustomerMergeError)) throw error;
     return withAuthHeaders(json({ error: error.message }, { status: error.status }), headers);
@@ -175,6 +214,7 @@ export default function CustomerMerge() {
     candidateIds,
     candidateCount,
     candidateName,
+    scope,
     kinds,
     limit,
     customerRecords,
@@ -183,10 +223,10 @@ export default function CustomerMerge() {
   const mergeFetcher = useFetcher<{ error?: string }>();
   const navigation = useNavigation();
 
-  const [reviewing, setReviewing] = useState<{ survivorId: number; mergedId: number } | null>(null);
+  const [reviewing, setReviewing] = useState<{ survivorId: string; mergedId: string } | null>(null);
   const [customMergeOpen, setCustomMergeOpen] = useState(false);
 
-  const openReview = (survivorId: number, mergedId: number) => {
+  const openReview = (survivorId: string, mergedId: string) => {
     setReviewing({ survivorId, mergedId });
     previewFetcher.load(
       `/customers/merge?preview=1&survivor=${survivorId}&merged=${mergedId}`,
@@ -228,6 +268,7 @@ export default function CustomerMerge() {
   // Filter and paging links keep the Action Item's candidates on screen.
   const hrefWith = (nextKinds: DuplicateReasonKind[], nextLimit?: number) => {
     const params = new URLSearchParams();
+    if (scope !== "customers") params.set("scope", scope);
     if (candidateIds.length > 0) params.set("ids", candidateIds.join(","));
     if (nextKinds.length > 0) params.set("match", nextKinds.join(","));
     if (nextLimit) params.set("limit", String(nextLimit));
@@ -235,6 +276,13 @@ export default function CustomerMerge() {
     return query ? `/customers/merge?${query}` : "/customers/merge";
   };
   const hrefFor = (nextKinds: DuplicateReasonKind[]) => hrefWith(nextKinds);
+  const scopeHref = (next: MergeScope) => {
+    const params = new URLSearchParams();
+    if (next !== "customers") params.set("scope", next);
+    if (kinds.length > 0) params.set("match", kinds.join(","));
+    const query = params.toString();
+    return query ? `/customers/merge?${query}` : "/customers/merge";
+  };
   const showMoreHref = hrefWith(kinds, limit + PAGE_SIZE);
 
   const pairs = suggestions.pairs as DuplicatePairView[];
@@ -282,6 +330,35 @@ export default function CustomerMerge() {
               </section>
             )}
 
+            <nav aria-label="Which records to compare" className="flex flex-wrap gap-2">
+              {(
+                [
+                  ["customers", "Customers"],
+                  ["vendors", "Vendors"],
+                  ["all", "Customers and Vendors"],
+                ] as const
+              ).map(([value, label]) => (
+                <Link
+                  key={value}
+                  to={scopeHref(value)}
+                  replace
+                  aria-current={scope === value ? "page" : undefined}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                    scope === value
+                      ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                      : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                  }`}
+                >
+                  {label}
+                </Link>
+              ))}
+            </nav>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Merging combines two Organizations: Contacts join the one you keep, and Customer and
+              Vendor accounts fold together. Two people at one company become one Customer with two
+              Contacts. Nothing merges automatically.
+            </p>
+
             <section aria-label="Suggested duplicates" className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <MatchFilterChips
@@ -309,7 +386,7 @@ export default function CustomerMerge() {
               {pairs.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-600 dark:border-gray-600 dark:text-gray-400">
                   {kinds.length > 0
-                    ? "No Customers match on every selected type."
+                    ? "No Organizations match on every selected type."
                     : "No likely duplicates found."}
                 </p>
               ) : (

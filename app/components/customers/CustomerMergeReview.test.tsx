@@ -4,12 +4,17 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { MergePreviewView } from "~/lib/customer-merge-view";
+import { testUuid } from "~/test/ids";
 import { CustomerMergeReview } from "./CustomerMergeReview";
 
-const summary = (id: number, displayName: string) => ({
-  id,
+const summary = (n: number, displayName: string) => ({
+  id: testUuid(n),
+  kind: "business" as const,
   displayName,
   companyName: null,
+  customerAccountId: testUuid(100 + n),
+  vendorAccountId: null,
+  contacts: [],
   contactName: null,
   email: `${displayName.toLowerCase()}@example.com`,
   phone: null,
@@ -22,8 +27,25 @@ const summary = (id: number, displayName: string) => ({
 const preview = (overrides: Partial<MergePreviewView> = {}): MergePreviewView => ({
   survivor: summary(1, "Survivor"),
   merged: summary(2, "Merged"),
-  counts: { quotes: 3, orders: 2, parts: 1, attachments: 4, communications: 5, notes: 6 },
+  counts: {
+    quotes: 3,
+    orders: 2,
+    parts: 1,
+    vendorQuotes: 0,
+    vendorOrders: 0,
+    contacts: 2,
+    addresses: 1,
+    attachments: 4,
+    communications: 5,
+    notes: 6,
+    events: 7,
+  },
+  contactsAlreadyLinked: 0,
   attachmentsAlreadyLinked: 0,
+  accounts: [
+    { type: "customer", mode: "fold" },
+    { type: "vendor", mode: "none" },
+  ],
   retainedEmails: ["merged@example.com", "survivor@example.com"],
   conflicts: [],
   autoFills: [],
@@ -45,6 +67,45 @@ describe("CustomerMergeReview", () => {
     expect(within(moving).getByText(/4 Attachments/)).toBeVisible();
     expect(within(moving).getByText(/5 communications/)).toBeVisible();
     expect(within(moving).getByText(/6 Notes/)).toBeVisible();
+    expect(within(moving).getByText(/2 Contacts/)).toBeVisible();
+    expect(within(moving).getByText(/1 address$/)).toBeVisible();
+    expect(screen.getByText(/Customer account: folded into Survivor's Customer account/)).toBeVisible();
+  });
+
+  it("says when the merged Organization's account moves over as is", () => {
+    render(
+      <CustomerMergeReview
+        preview={preview({ accounts: [{ type: "vendor", mode: "move" }] })}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Vendor account: becomes Survivor's Vendor account/)).toBeVisible();
+  });
+
+  it("pre-selects the suggested side, such as the business when an individual joins it", () => {
+    const onConfirm = vi.fn();
+    render(
+      <CustomerMergeReview
+        preview={preview({
+          conflicts: [
+            {
+              field: "name",
+              label: "Name",
+              survivorValue: "Jane Doe",
+              mergedValue: "Acme",
+              requiresExplicitChoice: false,
+              defaultChoice: "merged",
+            },
+          ],
+        })}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: /Acme/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    expect(onConfirm).toHaveBeenCalledWith({ name: "merged" });
   });
 
   it("lets staff swap which Customer is kept", () => {
@@ -58,7 +119,7 @@ describe("CustomerMergeReview", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Swap which Customer is kept" }));
+    fireEvent.click(screen.getByRole("button", { name: "Swap which one is kept" }));
 
     expect(onSwap).toHaveBeenCalledTimes(1);
   });
@@ -69,7 +130,7 @@ describe("CustomerMergeReview", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Swap which Customer is kept" }),
+      screen.queryByRole("button", { name: "Swap which one is kept" }),
     ).not.toBeInTheDocument();
   });
 
@@ -85,6 +146,7 @@ describe("CustomerMergeReview", () => {
               survivorValue: "+15550001",
               mergedValue: "+15550002",
               requiresExplicitChoice: false,
+              defaultChoice: "survivor",
             },
           ],
         })}
@@ -95,7 +157,7 @@ describe("CustomerMergeReview", () => {
 
     expect(screen.getByRole("radio", { name: /\+15550001/ })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: /\+15550002/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Merge Customers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
 
     expect(onConfirm).toHaveBeenCalledWith({ phone: "merged" });
   });
@@ -112,6 +174,7 @@ describe("CustomerMergeReview", () => {
               survivorValue: "Net 30",
               mergedValue: "Net 60",
               requiresExplicitChoice: true,
+              defaultChoice: "survivor",
             },
           ],
         })}
@@ -120,7 +183,7 @@ describe("CustomerMergeReview", () => {
       />,
     );
 
-    const confirm = screen.getByRole("button", { name: "Merge Customers" });
+    const confirm = screen.getByRole("button", { name: "Merge" });
     expect(screen.getByRole("radio", { name: /Net 30/ })).not.toBeChecked();
     expect(confirm).toBeDisabled();
 
