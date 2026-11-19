@@ -6,6 +6,13 @@
 
 * **toolpath:** move quote uploads to async pg-boss queue workers with background report polling
 
+## [1.8.7](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.6...v1.8.7) (2026-11-18)
+
+
+### Bug Fixes
+
+* **auth:** staff gate and deny-by-default authorize() seam ([#196](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/196) step 1) ([#199](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/issues/199)) ([18541e7](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/commit/18541e7c82f7230ceac692c24f68bbbe669f4d02))
+
 ## [1.8.6](https://github.com/SubtractManufacturing/Subtract-Admin-Dashboard/compare/v1.8.5...v1.8.6) (2026-11-16)
 
 
