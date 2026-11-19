@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted (2026-11-18). Deployment 1 is implemented as described below; the section **Implementation notes (deployment 1)** records where implementation refined the original proposal.
 
 Amends [ADR-0012](0012-customer-matching-and-merge.md): email aliases move from Customers to Contacts, and merging moves to Organizations and Contacts. Intake matching rules are unchanged. A later ADR (roadmap step 3) replaces ADR-0012 in full.
 
@@ -27,7 +27,7 @@ Roadmap #196 needs a business and the people at it to be separate records before
 | `addresses` | Many per Organization: label, street, city, state, postal code, country. `is_default_shipping` marks at most one per Organization. |
 | `accounts` | A role an Organization plays. `type` is `customer` or `vendor`, unique on (`organization_id`, `type`). Payment terms and `billing_address_id`. Vendor-only fields (Discord id, the legacy free-text address and notes) are nullable columns that only vendor accounts use. |
 
-Every new table has a uuid primary key (`gen_random_uuid()`) and `is_archived`. Existing tables keep their integer and uuid keys.
+Every new entity table (`organizations`, `contacts`, `organization_contacts`, `addresses`, `accounts`, `organization_communications`) has a uuid primary key (`gen_random_uuid()`) and `is_archived`. The two pure link tables, `contact_email_aliases` and `organization_attachments`, keep composite keys like the tables they replace. Existing tables keep their integer and uuid keys.
 
 **Customers and Vendors share one data model and have separate UI.** A Customer is an account of type `customer`, and a Vendor is an account of type `vendor`; the Customers and Vendors pages each list their own type. "Organization" is the shared record underneath and does not get its own page until step 3.
 
@@ -64,7 +64,7 @@ The backfill is written as hand-authored SQL in the feature migration, so produc
 Each deployment is one PR with many commits.
 
 1. **Cutover.** Add the new tables and the nullable new foreign-key columns, then run the backfill. All application code reads and writes the new model from this release. The old tables and columns stay in place, untouched, as a reference copy. This release also ships the merge tooling and the reconciliation page described below.
-2. **Contract.** Once the reconciliation page is clean, make the new foreign keys `NOT NULL` and drop `customers`, `vendors`, `customer_email_aliases`, `customer_attachments`, `vendor_attachments`, `customer_communications`, and the old foreign-key columns. The migration checks the counts itself and aborts if any mapped count differs.
+2. **Contract.** Once the reconciliation page is clean, make the new foreign keys `NOT NULL` and drop `customers`, `vendors`, `customer_email_aliases`, `customer_attachments`, `vendor_attachments`, `customer_communications`, and the old foreign-key columns. The migration checks the mapping itself and aborts if any legacy row is unmapped (the row-by-row checks of the reconciliation page, not raw counts, which work done after cutover changes legitimately). It also purges attachments that deployment 1 kept only because a legacy link still referenced them.
 
 A third deployment is used only if the reconciliation turns up something that needs a code fix before the old tables can go.
 
@@ -76,9 +76,10 @@ Admins and Devs get a page that checks every legacy Customer and Vendor against 
 
 - The Organization, Contact, account, and addresses exist.
 - Name, email, phone, address fields, and terms match.
-- The counts of Quotes, Orders, Parts, Notes, Attachments, communications, Event logs, and email aliases match.
+- Every legacy Quote, Order, Part, email alias, attachment link, and communication maps to its new link, row by row: the mapped account, or the account it ended up in after a merge.
+- No Note, Event log, or Action Item of type `customer` or `vendor` still holds an integer id, and active Customer match reviews hold account uuids.
 
-Each mismatch is listed with a link to the record. The page says the old tables are safe to drop only when there are no mismatches. It reads the legacy tables, so it is removed in deployment 2.
+Comparing counts was rejected: new Quotes, merges, and edits after cutover change counts legitimately, and rewriting polymorphic rows in place removes the legacy id a count would need. A finding is a **mismatch** when the backfill missed or mis-mapped something, and **information** when work in the app after cutover explains it (a record changed after the backfill's cutover marker, a file removed in the app) or the legacy row was already orphaned. Each finding is listed with a link to the record. The page says the old tables are safe to drop only when there are no mismatches. It lives at `/customers/reconciliation` for Admin and Dev (`reconciliation.view`), outside the flag-gated Admin Console. It reads the legacy tables, so it is removed in deployment 2.
 
 ### Merging
 
@@ -106,3 +107,15 @@ RFQ intake matches the normalized email against active Contacts and their aliase
 - Merge tooling gets more important: right after the backfill, every former Customer is its own Organization, and companies come together only through merges a person reviews.
 - Organization membership (Contacts or users with access to an Organization), per-Order ship-to selection, Contacts linked to Quotes or Orders, and organization-centric CRM views are out of scope here (roadmap steps 3 and 6).
 - `CONTEXT.md` gains Organization, Contact, Customer account, and Vendor account, and Customer and Vendor are redefined in those terms.
+
+## Implementation notes (deployment 1)
+
+- **Composite foreign keys need a type column.** `quotes`, `orders`, and `parts` carry `customer_account_type` (and `vendor_account_type`), defaulted and checked to the one allowed value, so the foreign key on (`*_account_id`, `*_account_type`) can target `accounts (id, type)`, a unique constraint rather than a unique index so the DDL orders correctly.
+- **One change to a legacy column.** `quotes.customer_id` drops `NOT NULL`: new Quotes no longer write the legacy columns. No other legacy table or column changes, and new code never writes them. Their TypeScript names carry a `legacy` prefix so the compiler finds any remaining use.
+- **Backfill details.** The legacy phone goes on the Contact (the Organization phone starts empty). The Contact's name is `contact_name`, falling back to `display_name` unless it only repeats the company. A billing address is created only when one is filled in. Contacts of archived legacy rows are archived. Communications keep their ids. Every primary email, normalized, is also an alias, for Vendors too. Active match reviews keep their integer ids under `legacy*` keys. The SQL takes an advisory lock so concurrent runs serialize, and writes one `organizations_backfilled` event as the cutover marker.
+- **Legacy attachment links still hold foreign keys.** Until deployment 2, removing a file that `customer_attachments` or `vendor_attachments` references only unlinks it from the Organization; the file and its row stay.
+- **Writes are partial.** A profile write changes only the fields it names; Organization, primary Contact, billing address, default shipping address, and account each get their own columns. Legacy `displayName` / `companyName` input (bulk import, quick-create forms) maps the way the backfill does; a rename alone keeps the Organization's kind.
+- **Merging.** When B lacks an account type that A has, A's account moves to B with its id, so its links and URL keep working. When both have it, A's records fold into B's account and A's account is archived. Shared files link once, one default shipping address survives (staff choose which), and B's primary Contact stays primary unless staff pick A's. When an individual joins a business, the preview pre-selects the business's name and type. A shared business email domain weighs 50 (email 100, phone 45, company 35, contact name 30). Suggestions can be scoped to Customers, Vendors, or both. Contact merges are offered on the Customer and Vendor pages, with duplicate Contacts on one Organization flagged.
+- **Intake.** A single match fills only the matched Contact's blank name and phone and never changes the Organization's name or kind; staff merge instead. When the matched Contact's only Organization has no customer account (a Vendor sending an RFQ), intake adds one to it rather than creating a second Organization.
+- **Ids outside the app.** The `rfq.imported` webhook's `customerId` and the Stripe payment link metadata's `customerId` are now customer account uuids.
+
