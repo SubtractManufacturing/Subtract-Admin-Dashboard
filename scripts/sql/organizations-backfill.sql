@@ -15,6 +15,11 @@
 -- generated DDL. Dev and test databases (db:push): `npm run backfill:organizations`.
 -- The legacy tables are read, never written.
 
+-- Serialize concurrent runs (two dev scripts, parallel test files). The lock
+-- is released when the surrounding transaction ends.
+SELECT pg_advisory_xact_lock(hashtext('organizations-backfill'));
+--> statement-breakpoint
+
 CREATE OR REPLACE FUNCTION pg_temp.crm_normalize_email(raw text) RETURNS text
 LANGUAGE sql IMMUTABLE AS $fn$
   -- Mirrors normalizeEmail (app/lib/email-normalize.ts) and migration 0022.
@@ -294,3 +299,17 @@ SET metadata = (i.metadata - 'createdCustomerId')
 WHERE i.type = 'customer_match_review'
   AND i.status = 'active'
   AND NOT (i.metadata ? 'legacyCandidateCustomerIds');
+--> statement-breakpoint
+
+-- Cutover marker, written once. The reconciliation page uses its time to tell
+-- records changed in the app after cutover from rows the backfill missed.
+INSERT INTO event_logs (entity_type, entity_id, event_type, event_category, title, description, metadata)
+SELECT 'system', 'organizations_backfill', 'organizations_backfilled', 'system',
+       'Organizations backfill ran',
+       'Legacy Customers and Vendors were copied to Organizations, Contacts and accounts (ADR-0013).',
+       jsonb_build_object(
+         'legacyCustomers', (SELECT count(*) FROM customers),
+         'legacyVendors', (SELECT count(*) FROM vendors))
+WHERE NOT EXISTS (
+  SELECT 1 FROM event_logs WHERE entity_type = 'system' AND entity_id = 'organizations_backfill'
+);
