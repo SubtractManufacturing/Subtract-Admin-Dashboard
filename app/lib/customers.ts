@@ -1,41 +1,34 @@
+/**
+ * Customers: Organizations with a customer account (ADR-0013). Ids are
+ * customer account uuids. Reads return the flat {@link Customer} record;
+ * writes accept the flat {@link CustomerInput} and are split across the
+ * Organization, its primary Contact, the account and its addresses.
+ */
+import { and, desc, eq, max } from "drizzle-orm"
+
 import { db } from "./db/index.js"
-import {
-  customerEmailAliases,
-  customers,
-  orders,
-  quotes,
-  vendors,
-} from "./db/schema.js"
-import { and, asc, desc, eq, inArray, max } from 'drizzle-orm'
-import type { Customer, Vendor } from "./db/schema.js"
-import { getCustomerAttachments } from "./attachments.js"
+import { orders, quotes } from "./db/schema.js"
+import { getOrganizationAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
 import type { CustomerSortBy } from "./customer-sort.js"
+import {
+  archiveAccount,
+  createAccount,
+  loadAccountRecord,
+  loadAccountRecordMap,
+  loadAccountRecords,
+  updateAccountProfile,
+  type Executor,
+} from "./organizations/accounts.server.js"
+import type {
+  AccountProfileInput,
+  Customer,
+  Vendor,
+} from "./organizations/types.js"
 
 export type { Customer }
 
-export type CustomerInput = {
-  displayName: string
-  companyName?: string | null
-  contactName?: string | null
-  title?: string | null
-  email?: string | null
-  phone?: string | null
-  isPrimaryContact?: boolean
-  billingAddressLine1?: string | null
-  billingAddressLine2?: string | null
-  billingCity?: string | null
-  billingState?: string | null
-  billingPostalCode?: string | null
-  billingCountry?: string | null
-  shippingAddressLine1?: string | null
-  shippingAddressLine2?: string | null
-  shippingCity?: string | null
-  shippingState?: string | null
-  shippingPostalCode?: string | null
-  shippingCountry?: string | null
-  paymentTerms?: string | null
-}
+export type CustomerInput = AccountProfileInput
 
 export type CustomerEventContext = {
   userId?: string
@@ -51,8 +44,8 @@ export type CustomerEventContext = {
 export type CustomerQuote = {
   id: number
   quoteNumber: string
-  customerId: number
-  vendorId: number | null
+  customerAccountId: string | null
+  vendorAccountId: string | null
   status: string
   total: string | null
   validUntil: Date | null
@@ -61,21 +54,27 @@ export type CustomerQuote = {
   vendor: Vendor | null
 }
 
+function toCustomer(record: Vendor): Customer {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { discordId, address, notes, ...customer } = record
+  return customer
+}
+
 function sortCustomersByLatestActivity(
   customerRows: Customer[],
-  activityRows: Array<{ customerId: number | null; latestAt: Date | null }>
+  activityRows: Array<{ accountId: string | null; latestAt: Date | null }>
 ): Customer[] {
-  const latestByCustomerId = new Map<number, number>()
+  const latestByAccountId = new Map<string, number>()
 
   for (const activity of activityRows) {
-    if (activity.customerId && activity.latestAt) {
-      latestByCustomerId.set(activity.customerId, activity.latestAt.getTime())
+    if (activity.accountId && activity.latestAt) {
+      latestByAccountId.set(activity.accountId, activity.latestAt.getTime())
     }
   }
 
   return [...customerRows].sort((a, b) => {
-    const aLatest = latestByCustomerId.get(a.id)
-    const bLatest = latestByCustomerId.get(b.id)
+    const aLatest = latestByAccountId.get(a.id)
+    const bLatest = latestByAccountId.get(b.id)
 
     if (aLatest === undefined && bLatest === undefined) {
       return b.createdAt.getTime() - a.createdAt.getTime()
@@ -93,114 +92,88 @@ function sortCustomersByLatestActivity(
   })
 }
 
+/** Active Customers. */
 export async function getCustomers(options: { sortBy?: CustomerSortBy } = {}): Promise<Customer[]> {
   try {
-    if (options.sortBy === "name") {
-      const result = await db
-        .select()
-        .from(customers)
-        .where(eq(customers.isArchived, false))
-        .orderBy(asc(customers.displayName))
+    const rows = (await loadAccountRecords("customer", { activeOnly: true })).map(toCustomer)
 
-      return result
+    if (options.sortBy === "name") {
+      return rows.sort((a, b) => a.displayName.localeCompare(b.displayName))
     }
 
     if (options.sortBy === "recentOrders") {
-      const [customerRows, latestOrders] = await Promise.all([
-        db
-          .select()
-          .from(customers)
-          .where(eq(customers.isArchived, false)),
-        db
-          .select({
-            customerId: orders.customerId,
-            latestAt: max(orders.createdAt)
-          })
-          .from(orders)
-          .groupBy(orders.customerId)
-      ])
-
-      return sortCustomersByLatestActivity(customerRows, latestOrders)
+      const latestOrders = await db
+        .select({ accountId: orders.customerAccountId, latestAt: max(orders.createdAt) })
+        .from(orders)
+        .groupBy(orders.customerAccountId)
+      return sortCustomersByLatestActivity(rows, latestOrders)
     }
 
     if (options.sortBy === "recentQuotes") {
-      const [customerRows, latestQuotes] = await Promise.all([
-        db
-          .select()
-          .from(customers)
-          .where(eq(customers.isArchived, false)),
-        db
-          .select({
-            customerId: quotes.customerId,
-            latestAt: max(quotes.createdAt)
-          })
-          .from(quotes)
-          .where(eq(quotes.isArchived, false))
-          .groupBy(quotes.customerId)
-      ])
-
-      return sortCustomersByLatestActivity(customerRows, latestQuotes)
+      const latestQuotes = await db
+        .select({ accountId: quotes.customerAccountId, latestAt: max(quotes.createdAt) })
+        .from(quotes)
+        .where(eq(quotes.isArchived, false))
+        .groupBy(quotes.customerAccountId)
+      return sortCustomersByLatestActivity(rows, latestQuotes)
     }
 
-    const result = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.isArchived, false))
-      .orderBy(desc(customers.createdAt))
-
-    return result
+    return rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
   } catch (error) {
     console.error('Error fetching customers:', error)
     return []
   }
 }
 
-export async function getCustomer(id: number): Promise<Customer | null> {
+/** A Customer by account id, archived or not. Null for unknown or non-uuid ids. */
+export async function getCustomer(id: string, executor?: Executor): Promise<Customer | null> {
   try {
-    const result = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, id))
-      .limit(1)
-
-    return result[0] || null
+    const record = await loadAccountRecord("customer", id, executor)
+    return record ? toCustomer(record) : null
   } catch (error) {
     throw new Error(`Failed to get customer: ${error}`)
   }
 }
 
-export async function getCustomersByIds(ids: number[]): Promise<Customer[]> {
+export async function getCustomersByIds(ids: string[]): Promise<Customer[]> {
   if (ids.length === 0) return []
   try {
-    return await db
-      .select()
-      .from(customers)
-      .where(inArray(customers.id, ids))
+    return (await loadAccountRecords("customer", { ids })).map(toCustomer)
   } catch (error) {
     console.error("Error fetching customers by IDs:", error)
     return []
   }
 }
 
-export async function createCustomer(customerData: CustomerInput, eventContext?: CustomerEventContext): Promise<Customer> {
+/** Customers keyed by account id; used to attach Customers to Quote and Order rows. */
+export async function getCustomerMap(
+  ids: Array<string | null | undefined>,
+  executor?: Executor,
+): Promise<Map<string, Customer>> {
+  const records = await loadAccountRecordMap("customer", ids, executor)
+  return new Map([...records].map(([id, record]) => [id, toCustomer(record)]))
+}
+
+export async function createCustomer(
+  customerData: CustomerInput,
+  eventContext?: CustomerEventContext,
+  options: { organizationId?: string } = {},
+): Promise<Customer> {
   try {
-    const result = await db
-      .insert(customers)
-      .values(customerData)
-      .returning()
+    const customer = toCustomer(
+      await createAccount("customer", customerData, { organizationId: options.organizationId }),
+    )
 
-    const customer = result[0]
-
-    // Log event for customer creation
     await createEvent({
       entityType: "customer",
-      entityId: customer.id.toString(),
+      entityId: customer.id,
       eventType: "customer_created",
       eventCategory: "system",
       title: `Customer "${customer.displayName}" created`,
       description: `New customer added to the system`,
       metadata: {
         displayName: customer.displayName,
+        organizationId: customer.organizationId,
         email: customer.email,
         phone: customer.phone
       },
@@ -210,24 +183,18 @@ export async function createCustomer(customerData: CustomerInput, eventContext?:
 
     return customer
   } catch (error) {
-    throw new Error(`Failed to create customer: ${error}`)
+    throw new Error(`Failed to create customer: ${error instanceof Error ? error.message : error}`)
   }
 }
 
-export async function updateCustomer(id: number, customerData: Partial<CustomerInput>, eventContext?: CustomerEventContext): Promise<Customer> {
+export async function updateCustomer(id: string, customerData: Partial<CustomerInput>, eventContext?: CustomerEventContext): Promise<Customer> {
   try {
-    const result = await db
-      .update(customers)
-      .set({ ...customerData, updatedAt: new Date() })
-      .where(eq(customers.id, id))
-      .returning()
-
-    const customer = result[0]
+    const customer = toCustomer(await updateAccountProfile("customer", id, customerData))
 
     if (eventContext?.checkoutAddressImport) {
       await createEvent({
         entityType: "customer",
-        entityId: id.toString(),
+        entityId: id,
         eventType: "customer_checkout_addresses_imported",
         eventCategory: "system",
         title: "Addresses imported from checkout",
@@ -240,10 +207,9 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
         userEmail: eventContext?.userEmail,
       })
     } else {
-      // Log event for customer update
       await createEvent({
         entityType: "customer",
-        entityId: id.toString(),
+        entityId: id,
         eventType: "customer_updated",
         eventCategory: "system",
         title: `Customer information updated`,
@@ -256,51 +222,19 @@ export async function updateCustomer(id: number, customerData: Partial<CustomerI
 
     return customer
   } catch (error) {
-    throw new Error(`Failed to update customer: ${error}`)
+    throw new Error(`Failed to update customer: ${error instanceof Error ? error.message : error}`)
   }
 }
 
-/**
- * Alias rows and merge pointers reference Customers with ON DELETE NO
- * ACTION, so they have to go before the Customer row itself.
- */
-export async function deleteCustomerMergeRows(
-  customerIds: number[],
-  executor: Pick<typeof db, "delete" | "update"> = db,
-): Promise<void> {
-  if (customerIds.length === 0) return;
-  await executor
-    .delete(customerEmailAliases)
-    .where(inArray(customerEmailAliases.customerId, customerIds));
-  await executor
-    .update(customers)
-    .set({ mergedIntoCustomerId: null })
-    .where(inArray(customers.mergedIntoCustomerId, customerIds));
-}
-
-export async function deleteCustomer(id: number): Promise<void> {
+export async function archiveCustomer(id: string, eventContext?: CustomerEventContext): Promise<void> {
   try {
-    await db.transaction(async (tx) => {
-      await deleteCustomerMergeRows([id], tx);
-      await tx.delete(customers).where(eq(customers.id, id));
-    });
-  } catch (error) {
-    throw new Error(`Failed to delete customer: ${error}`)
-  }
-}
+    const customer = await getCustomer(id)
+    if (!customer) throw new Error("Customer not found")
+    await archiveAccount(id)
 
-export async function archiveCustomer(id: number, eventContext?: CustomerEventContext): Promise<void> {
-  try {
-    const [customer] = await db
-      .update(customers)
-      .set({ isArchived: true, updatedAt: new Date() })
-      .where(eq(customers.id, id))
-      .returning()
-
-    // Log event for customer archival
     await createEvent({
       entityType: "customer",
-      entityId: id.toString(),
+      entityId: id,
       eventType: "customer_archived",
       eventCategory: "system",
       title: `Customer archived`,
@@ -316,72 +250,74 @@ export async function archiveCustomer(id: number, eventContext?: CustomerEventCo
   }
 }
 
-export async function getCustomerOrders(customerId: number) {
+export async function getCustomerOrders(customerId: string) {
   try {
-    const result = await db
+    const rows = await db
       .select({
         id: orders.id,
         orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        vendorId: orders.vendorId,
+        customerAccountId: orders.customerAccountId,
+        vendorAccountId: orders.vendorAccountId,
         status: orders.status,
         totalPrice: orders.totalPrice,
         vendorPay: orders.vendorPay,
         deliveryDate: orders.deliveryDate,
         createdAt: orders.createdAt,
-        vendor: vendors
       })
       .from(orders)
-      .leftJoin(vendors, eq(orders.vendorId, vendors.id))
-      .where(eq(orders.customerId, customerId))
+      .where(eq(orders.customerAccountId, customerId))
       .orderBy(desc(orders.createdAt))
 
-    return result
+    const vendorsById = await loadAccountRecordMap("vendor", rows.map((row) => row.vendorAccountId))
+    return rows.map((row) => ({
+      ...row,
+      vendor: (row.vendorAccountId && vendorsById.get(row.vendorAccountId)) || null,
+    }))
   } catch (error) {
     console.error('Error fetching customer orders:', error)
     return []
   }
 }
 
-export async function getCustomerQuotes(customerId: number): Promise<CustomerQuote[]> {
+export async function getCustomerQuotes(customerId: string): Promise<CustomerQuote[]> {
   try {
-    const result = await db
+    const rows = await db
       .select({
         id: quotes.id,
         quoteNumber: quotes.quoteNumber,
-        customerId: quotes.customerId,
-        vendorId: quotes.vendorId,
+        customerAccountId: quotes.customerAccountId,
+        vendorAccountId: quotes.vendorAccountId,
         status: quotes.status,
         total: quotes.total,
         validUntil: quotes.validUntil,
         createdAt: quotes.createdAt,
         convertedToOrderId: quotes.convertedToOrderId,
-        vendor: vendors
       })
       .from(quotes)
-      .leftJoin(vendors, eq(quotes.vendorId, vendors.id))
-      .where(and(eq(quotes.customerId, customerId), eq(quotes.isArchived, false)))
+      .where(and(eq(quotes.customerAccountId, customerId), eq(quotes.isArchived, false)))
       .orderBy(desc(quotes.createdAt))
 
-    return result
+    const vendorsById = await loadAccountRecordMap("vendor", rows.map((row) => row.vendorAccountId))
+    return rows.map((row) => ({
+      ...row,
+      vendor: (row.vendorAccountId && vendorsById.get(row.vendorAccountId)) || null,
+    }))
   } catch (error) {
     console.error('Error fetching customer quotes:', error)
     return []
   }
 }
 
-export async function getCustomerStats(customerId: number) {
+export async function getCustomerStats(customerId: string) {
   try {
     const customerOrders = await getCustomerOrders(customerId)
-    
-    const stats = {
+
+    return {
       totalOrders: customerOrders.length,
       activeOrders: customerOrders.filter(o => o.status === 'In_Production' || o.status === 'Pending').length,
       completedOrders: customerOrders.filter(o => o.status === 'Completed').length,
       totalSpent: customerOrders.reduce((sum, o) => sum + parseFloat(o.totalPrice || '0'), 0)
     }
-    
-    return stats
   } catch (error) {
     console.error('Error fetching customer stats:', error)
     return {
@@ -393,13 +329,13 @@ export async function getCustomerStats(customerId: number) {
   }
 }
 
-export async function getCustomerWithAttachments(customerId: number) {
+export async function getCustomerWithAttachments(customerId: string) {
   try {
     const customer = await getCustomer(customerId)
     if (!customer) return null
-    
-    const attachments = await getCustomerAttachments(customerId)
-    
+
+    const attachments = await getOrganizationAttachments(customer.organizationId)
+
     return {
       ...customer,
       attachments

@@ -29,8 +29,8 @@ export const orderConfirmationEmailHandler: EmailSendContextHandler = {
     if (!order) {
       throw new Error("Order not found");
     }
-    const customer = order.customerId
-      ? await getCustomer(order.customerId)
+    const customer = order.customerAccountId
+      ? await getCustomer(order.customerAccountId)
       : null;
     if (!customer?.email?.trim()) {
       throw new Error("Customer has no email address");
@@ -53,8 +53,8 @@ export const orderConfirmationEmailHandler: EmailSendContextHandler = {
     if (!order) {
       throw new Error("Order not found");
     }
-    const customer = order.customerId
-      ? await getCustomer(order.customerId)
+    const customer = order.customerAccountId
+      ? await getCustomer(order.customerAccountId)
       : null;
     const email = customer?.email?.trim();
     if (!email) {

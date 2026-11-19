@@ -446,7 +446,7 @@ export default function NewQuoteModal({
         formData.append("customerPhone", newCustomerData.phone || "");
         formData.append("customerZipCode", newCustomerData.zipCode || "");
       } else if (selectedCustomer) {
-        formData.append("customerId", selectedCustomer.id.toString());
+        formData.append("customerId", selectedCustomer.id);
       } else {
         alert("Please select or create a customer");
         return;
@@ -541,7 +541,7 @@ export default function NewQuoteModal({
         formData.append("intent", "createWithParts");
 
         if (selectedCustomer) {
-          formData.append("customerId", selectedCustomer.id.toString());
+          formData.append("customerId", selectedCustomer.id);
         } else {
           alert("Please select a customer");
           return;

@@ -3,6 +3,7 @@
  * duplication, archive/restore and header fields (customer, vendor, validity,
  * estimated delivery).
  */
+import { isUuid } from "~/lib/organizations/types";
 import { redirect } from "@remix-run/node";
 import { addBusinessDays } from "~/lib/business-days";
 import { badRequest, ok, type IntentTable } from "~/lib/route-actions/core";
@@ -161,10 +162,10 @@ export const lifecycleIntents: IntentTable<Ctx> = {
 
     const raw = formData.get("customerId");
     if (!raw) return badRequest("Customer ID is required");
-    const customerId = parseInt(String(raw), 10);
-    if (Number.isNaN(customerId)) return badRequest("Invalid customer ID");
+    const customerId = String(raw).trim();
+    if (!isUuid(customerId)) return badRequest("Invalid customer ID");
 
-    await ctx.deps.quotes.update(ctx.quote.id, { customerId }, ctx.actor);
+    await ctx.deps.quotes.update(ctx.quote.id, { customerAccountId: customerId }, ctx.actor);
     return ok();
   },
 
@@ -172,12 +173,12 @@ export const lifecycleIntents: IntentTable<Ctx> = {
     await ensureDraft(ctx);
 
     const raw = formData.get("vendorId");
-    const vendorId = raw ? parseInt(String(raw), 10) : null;
-    if (vendorId !== null && Number.isNaN(vendorId)) {
+    const vendorId = raw ? String(raw).trim() : null;
+    if (vendorId !== null && !isUuid(vendorId)) {
       return badRequest("Invalid vendor ID");
     }
 
-    await ctx.deps.quotes.update(ctx.quote.id, { vendorId }, ctx.actor);
+    await ctx.deps.quotes.update(ctx.quote.id, { vendorAccountId: vendorId }, ctx.actor);
     return ok();
   },
 

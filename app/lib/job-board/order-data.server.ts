@@ -110,7 +110,7 @@ export async function assertOrderEligibleForJobBoard(orderId: number) {
   if (order.status !== "Pending") {
     return { ok: false as const, error: "Order is not Pending" };
   }
-  if (order.vendorId) {
+  if (order.vendorAccountId) {
     return { ok: false as const, error: "Order already has a vendor assigned" };
   }
   return { ok: true as const, order };

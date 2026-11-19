@@ -3,9 +3,8 @@
  */
 
 import { db } from "~/lib/db";
-import { deleteCustomerMergeRows } from "~/lib/customers";
+import { createTestCustomer, deleteTestOrganizations } from "./seed-organizations";
 import {
-  customers,
   orders,
   orderLineItems,
   parts,
@@ -16,7 +15,9 @@ import {
 import { eq } from "drizzle-orm";
 
 export type SeededLineItemArchiveIds = {
-  customerId: number;
+  /** Customer account uuid. */
+  customerId: string;
+  organizationId: string;
   quoteId: number;
   quoteLineItemId: number;
   quotePartId: string;
@@ -28,16 +29,13 @@ export type SeededLineItemArchiveIds = {
 export async function seedLineItemArchiveFixture(): Promise<SeededLineItemArchiveIds> {
   const quoteNumber = `TEST-ARCH-${Date.now()}`;
 
-  const [customer] = await db
-    .insert(customers)
-    .values({ displayName: "Archive Test Co" })
-    .returning({ id: customers.id });
+  const customer = await createTestCustomer({ name: "Archive Test Co", kind: "business" });
 
   const [quote] = await db
     .insert(quotes)
     .values({
       quoteNumber,
-      customerId: customer.id,
+      customerAccountId: customer.id,
       status: "Draft",
       subtotal: "200.00",
       total: "200.00",
@@ -68,7 +66,7 @@ export async function seedLineItemArchiveFixture(): Promise<SeededLineItemArchiv
   const [part] = await db
     .insert(parts)
     .values({
-      customerId: customer.id,
+      customerAccountId: customer.id,
       partName: "Order Archive Part",
     })
     .returning({ id: parts.id });
@@ -77,7 +75,7 @@ export async function seedLineItemArchiveFixture(): Promise<SeededLineItemArchiv
     .insert(orders)
     .values({
       orderNumber: `ORD-ARCH-${Date.now()}`,
-      customerId: customer.id,
+      customerAccountId: customer.id,
       totalPrice: "75.00",
       status: "Pending",
     })
@@ -96,6 +94,7 @@ export async function seedLineItemArchiveFixture(): Promise<SeededLineItemArchiv
 
   return {
     customerId: customer.id,
+    organizationId: customer.organizationId,
     quoteId: quote.id,
     quoteLineItemId: quoteLineItem.id,
     quotePartId: quotePart.id,
@@ -112,12 +111,11 @@ export async function cleanupLineItemArchiveFixture(
     .delete(orderLineItems)
     .where(eq(orderLineItems.orderId, ids.orderId));
   await db.delete(orders).where(eq(orders.id, ids.orderId));
-  await db.delete(parts).where(eq(parts.customerId, ids.customerId));
+  await db.delete(parts).where(eq(parts.customerAccountId, ids.customerId));
   await db
     .delete(quoteLineItems)
     .where(eq(quoteLineItems.quoteId, ids.quoteId));
   await db.delete(quoteParts).where(eq(quoteParts.quoteId, ids.quoteId));
   await db.delete(quotes).where(eq(quotes.id, ids.quoteId));
-  await deleteCustomerMergeRows([ids.customerId]);
-  await db.delete(customers).where(eq(customers.id, ids.customerId));
+  await deleteTestOrganizations([ids.organizationId]);
 }

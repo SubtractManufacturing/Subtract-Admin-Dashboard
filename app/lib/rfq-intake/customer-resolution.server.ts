@@ -1,104 +1,146 @@
-import { and, eq, inArray, max, sql } from "drizzle-orm";
+import { and, eq, inArray, max } from "drizzle-orm";
 
 import type { db } from "../db";
 import { normalizeEmail } from "../email-normalize";
 import {
-  customerEmailAliases,
-  customers,
+  accounts,
+  contacts,
+  organizationContacts,
+  organizations,
   orders,
   quotes,
-  type Customer,
 } from "../db/schema";
+import {
+  activeAccountIdsForContacts,
+  createAccount,
+  findActiveContactIdsByEmail,
+  rememberContactEmail,
+} from "../organizations/accounts.server";
 import type { PreparedImport } from "./types";
 
 type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type IntakeContact = PreparedImport["manifest"]["contact"];
 
 export type IntakeCustomerResolution = {
-  /** The Customer the Quote attaches to. */
-  customerId: number;
+  /** The customer account the Quote attaches to. */
+  customerId: string;
   /**
-   * Every active Customer that matched. More than one means a human must
-   * review: intake attached the Quote to one of them and created nothing.
+   * Every active customer account that matched. More than one means a human
+   * must review: intake attached the Quote to one of them and created nothing.
    */
-  matchedCustomerIds: number[];
+  matchedCustomerIds: string[];
 };
 
 function fullName(contact: IntakeContact): string {
   return `${contact.firstName} ${contact.lastName}`.trim();
 }
 
-function displayName(contact: IntakeContact): string {
-  const name = fullName(contact);
-  return contact.company ? `${contact.company} - ${name}` : name;
-}
-
-async function findActiveCustomersByEmail(
-  tx: DbTransaction,
-  normalizedEmail: string,
-): Promise<Customer[]> {
-  return tx
-    .select()
-    .from(customers)
-    .where(
-      and(
-        eq(customers.isArchived, false),
-        sql`(
-          lower(trim(${customers.email})) = ${normalizedEmail}
-          or exists (
-            select 1 from ${customerEmailAliases}
-            where ${customerEmailAliases.customerId} = ${customers.id}
-              and ${customerEmailAliases.email} = ${normalizedEmail}
-          )
-        )`,
-      ),
-    );
-}
-
-/** The candidate with the most recent Quote or Order; ties go to the lowest id. */
+/** The candidate with the most recent Quote or Order; ties go to the oldest account. */
 async function pickMostRecentlyActive(
   tx: DbTransaction,
-  candidates: Customer[],
-): Promise<Customer> {
-  const ids = candidates.map((customer) => customer.id);
-  const [quoteActivity, orderActivity] = await Promise.all([
+  accountIds: string[],
+): Promise<string> {
+  const [quoteActivity, orderActivity, created] = await Promise.all([
     tx
-      .select({ customerId: quotes.customerId, latest: max(quotes.createdAt) })
+      .select({ accountId: quotes.customerAccountId, latest: max(quotes.createdAt) })
       .from(quotes)
-      .where(inArray(quotes.customerId, ids))
-      .groupBy(quotes.customerId),
+      .where(inArray(quotes.customerAccountId, accountIds))
+      .groupBy(quotes.customerAccountId),
     tx
-      .select({ customerId: orders.customerId, latest: max(orders.createdAt) })
+      .select({ accountId: orders.customerAccountId, latest: max(orders.createdAt) })
       .from(orders)
-      .where(inArray(orders.customerId, ids))
-      .groupBy(orders.customerId),
+      .where(inArray(orders.customerAccountId, accountIds))
+      .groupBy(orders.customerAccountId),
+    tx
+      .select({ id: accounts.id, createdAt: accounts.createdAt })
+      .from(accounts)
+      .where(inArray(accounts.id, accountIds)),
   ]);
 
-  const latestByCustomer = new Map<number, number>();
+  const latestByAccount = new Map<string, number>();
   for (const row of [...quoteActivity, ...orderActivity]) {
-    if (row.customerId === null || row.latest === null) continue;
+    if (row.accountId === null || row.latest === null) continue;
     const at = row.latest.getTime();
-    latestByCustomer.set(
-      row.customerId,
-      Math.max(at, latestByCustomer.get(row.customerId) ?? at),
-    );
+    latestByAccount.set(row.accountId, Math.max(at, latestByAccount.get(row.accountId) ?? at));
   }
+  const createdAt = new Map(created.map((row) => [row.id, row.createdAt.getTime()]));
 
-  return [...candidates].sort((a, b) => {
-    const aLatest = latestByCustomer.get(a.id) ?? Number.NEGATIVE_INFINITY;
-    const bLatest = latestByCustomer.get(b.id) ?? Number.NEGATIVE_INFINITY;
+  return [...accountIds].sort((a, b) => {
+    const aLatest = latestByAccount.get(a) ?? Number.NEGATIVE_INFINITY;
+    const bLatest = latestByAccount.get(b) ?? Number.NEGATIVE_INFINITY;
     if (aLatest !== bLatest) return bLatest > aLatest ? 1 : -1;
-    return a.id - b.id;
+    return (createdAt.get(a) ?? 0) - (createdAt.get(b) ?? 0) || a.localeCompare(b);
   })[0];
 }
 
+/** Fill only the blank name and phone of the Contact the email matched. */
+async function fillBlankContactFields(
+  tx: DbTransaction,
+  contactIds: string[],
+  contact: IntakeContact,
+  now: Date,
+) {
+  const rows = await tx
+    .select({ id: contacts.id, name: contacts.name, phone: contacts.phone })
+    .from(contacts)
+    .where(inArray(contacts.id, contactIds));
+  for (const row of rows) {
+    const name = row.name || fullName(contact) || null;
+    const phone = row.phone || contact.phone || null;
+    if (name !== row.name || phone !== row.phone) {
+      await tx
+        .update(contacts)
+        .set({ name, phone, updatedAt: now })
+        .where(eq(contacts.id, row.id));
+    }
+  }
+}
+
+/** Active Organizations of these Contacts that have no customer account yet. */
+async function organizationsWithoutCustomerAccount(
+  tx: DbTransaction,
+  contactIds: string[],
+): Promise<string[]> {
+  const rows = await tx
+    .selectDistinct({ id: organizations.id })
+    .from(organizationContacts)
+    .innerJoin(organizations, eq(organizations.id, organizationContacts.organizationId))
+    .where(
+      and(
+        inArray(organizationContacts.contactId, contactIds),
+        eq(organizationContacts.isArchived, false),
+        eq(organizations.isArchived, false),
+      ),
+    );
+  if (rows.length === 0) return [];
+  const withCustomer = await tx
+    .select({ organizationId: accounts.organizationId })
+    .from(accounts)
+    .where(
+      and(
+        inArray(
+          accounts.organizationId,
+          rows.map((row) => row.id),
+        ),
+        eq(accounts.type, "customer"),
+      ),
+    );
+  const taken = new Set(withCustomer.map((row) => row.organizationId));
+  return rows.map((row) => row.id).filter((id) => !taken.has(id));
+}
+
 /**
- * Decide which Customer an incoming RFQ belongs to. Email is the only
- * automatic signal (see ADR-0012); archived Customers never match.
+ * Decide which customer account an incoming RFQ belongs to. Email is the only
+ * automatic signal (ADR-0012, ADR-0013): it is matched against active
+ * Contacts' primary emails and aliases, and resolves to their Organizations'
+ * active customer accounts.
  *
- * - one active match: reuse it, filling only its blank company/contact/phone
- * - no match: create a Customer and record its email as an alias
- * - several matches: attach to the most recently active one and create nothing
+ * - one match: reuse it, filling only the matched Contact's blank name/phone
+ * - several matches: attach to the most recently active one, create nothing
+ * - no match, but the Contact's only Organization has no customer account
+ *   (a Vendor sending an RFQ): add a customer account to that Organization
+ * - no match at all: create an Organization (`business` when the form gave a
+ *   company, otherwise `individual`), its Contact and a customer account
  */
 export async function resolveIntakeCustomer(
   tx: DbTransaction,
@@ -106,52 +148,46 @@ export async function resolveIntakeCustomer(
   now: Date,
 ): Promise<IntakeCustomerResolution> {
   const normalizedEmail = normalizeEmail(contact.email);
-  const matches = normalizedEmail
-    ? await findActiveCustomersByEmail(tx, normalizedEmail)
+  const contactIds = normalizedEmail
+    ? await findActiveContactIdsByEmail(tx, normalizedEmail)
     : [];
+  const matches = await activeAccountIdsForContacts(tx, "customer", contactIds);
 
   if (matches.length > 1) {
     const chosen = await pickMostRecentlyActive(tx, matches);
-    return {
-      customerId: chosen.id,
-      matchedCustomerIds: matches.map((customer) => customer.id).sort((a, b) => a - b),
-    };
+    return { customerId: chosen, matchedCustomerIds: [...matches].sort() };
   }
 
   if (matches.length === 1) {
-    const customer = matches[0];
-    await tx
-      .update(customers)
-      .set({
-        companyName: customer.companyName || contact.company,
-        contactName: customer.contactName || fullName(contact),
-        phone: customer.phone || contact.phone,
-        updatedAt: now,
-      })
-      .where(eq(customers.id, customer.id));
-    if (normalizedEmail) {
-      await tx
-        .insert(customerEmailAliases)
-        .values({ customerId: customer.id, email: normalizedEmail })
-        .onConflictDoNothing();
+    await fillBlankContactFields(tx, contactIds, contact, now);
+    for (const contactId of contactIds) {
+      await rememberContactEmail(tx, contactId, normalizedEmail);
     }
-    return { customerId: customer.id, matchedCustomerIds: [customer.id] };
+    return { customerId: matches[0], matchedCustomerIds: matches };
   }
 
-  const [created] = await tx
-    .insert(customers)
-    .values({
-      displayName: displayName(contact),
-      companyName: contact.company,
-      contactName: fullName(contact),
+  if (contactIds.length > 0) {
+    const orphanOrgs = await organizationsWithoutCustomerAccount(tx, contactIds);
+    if (orphanOrgs.length === 1) {
+      const created = await createAccount("customer", {}, { organizationId: orphanOrgs[0], now }, tx);
+      await fillBlankContactFields(tx, contactIds, contact, now);
+      return { customerId: created.id, matchedCustomerIds: [] };
+    }
+  }
+
+  const company = contact.company?.trim() || null;
+  const person = fullName(contact);
+  const created = await createAccount(
+    "customer",
+    {
+      name: company ?? person ?? normalizedEmail ?? contact.email,
+      kind: company ? "business" : "individual",
+      contactName: person || null,
       email: normalizedEmail ?? contact.email,
       phone: contact.phone,
-    })
-    .returning({ id: customers.id });
-  if (normalizedEmail) {
-    await tx
-      .insert(customerEmailAliases)
-      .values({ customerId: created.id, email: normalizedEmail });
-  }
+    },
+    { now },
+    tx,
+  );
   return { customerId: created.id, matchedCustomerIds: [] };
 }

@@ -26,7 +26,14 @@ const STAFF_WIDE: Action[] = [
   "download.quote",
   "download.mesh",
 ];
-const ADMIN_ONLY: Action[] = ["export.customers", "export.vendors"];
+const ADMIN_ONLY: Action[] = [
+  "export.customers",
+  "export.vendors",
+  "organization.merge",
+  "contact.merge",
+  "customer-match-review.resolve",
+  "reconciliation.view",
+];
 
 describe("authorize", () => {
   it("covers every registered action in these tests", () => {

@@ -156,7 +156,8 @@ export interface RfqPersistence {
   ): Promise<{
     quoteId: number;
     quoteNumber: string;
-    customerId: number;
+    /** Customer account uuid. */
+    customerId: string;
     customerName: string;
     partCount: number;
     ndaRequired: boolean;

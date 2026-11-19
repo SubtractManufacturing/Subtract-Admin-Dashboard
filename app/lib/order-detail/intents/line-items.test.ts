@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, expect, it, vi } from "vitest";
 import type { IntentTable } from "~/lib/route-actions/core";
 import type { OrderCtx } from "../context";
@@ -99,7 +100,7 @@ describe("createLineItemWithUpload", () => {
     expect(vi.mocked(ctx.deps.files.upload).mock.calls[0][0].key).toMatch(/^parts\/\d+-my-part\.step$/);
     expect(ctx.deps.parts.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        customerId: 3,
+        customerId: testUuid(3),
         partName: "Setup",
         notes: "careful",
         material: "6061",
@@ -119,7 +120,7 @@ describe("createLineItemWithUpload", () => {
     const noFile = { ...upload } as Record<string, string | Blob>;
     delete noFile.file;
     expect((await run(makeOrderCtx(), "createLineItemWithUpload", noFile)).status).toBe(400);
-    const orphan = makeOrderCtx({ order: { customerId: null } as never });
+    const orphan = makeOrderCtx({ order: { customerAccountId: null } as never });
     expect((await run(orphan, "createLineItemWithUpload", upload)).status).toBe(400);
   });
 

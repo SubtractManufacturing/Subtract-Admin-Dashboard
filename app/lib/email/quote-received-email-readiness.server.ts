@@ -63,8 +63,8 @@ export async function getQuoteReceivedEmailReadiness(
   const template = await resolveEmailTemplateForContext(contextKey);
   const templateConfigured = Boolean(template);
 
-  const customer = quote.customerId
-    ? await getCustomer(quote.customerId)
+  const customer = quote.customerAccountId
+    ? await getCustomer(quote.customerAccountId)
     : null;
   const customerHasEmail = Boolean(customer?.email?.trim());
 

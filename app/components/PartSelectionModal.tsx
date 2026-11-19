@@ -8,7 +8,7 @@ interface PartSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectPart: (part: Part) => void;
-  customerId?: number | null;
+  customerId?: string | null;
   parts: Part[];
 }
 
@@ -30,7 +30,7 @@ export default function PartSelectionModal({
         part.material?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         part.notes?.toLowerCase().includes(searchTerm.toLowerCase());
       
-      const matchesCustomer = !customerId || part.customerId === customerId;
+      const matchesCustomer = !customerId || part.customerAccountId === customerId;
       
       return matchesSearch && matchesCustomer;
     });

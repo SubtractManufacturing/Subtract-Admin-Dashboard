@@ -33,7 +33,7 @@ import {
   snapshotToPartialCustomerInput,
   type CheckoutSessionAddressSource,
 } from "./checkout-addresses.server";
-import type { Customer } from "~/lib/db/schema";
+import type { Customer } from "~/lib/organizations/types";
 import { isAddressMeaningfullyEmpty } from "~/lib/address-utils";
 
 describe("checkout-addresses.server", () => {

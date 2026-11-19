@@ -55,8 +55,8 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
     if (!preflight.success) {
       throw new Error(`Cannot send email: ${preflight.error}`);
     }
-    const customer = quote.customerId
-      ? await getCustomer(quote.customerId)
+    const customer = quote.customerAccountId
+      ? await getCustomer(quote.customerAccountId)
       : null;
     if (!customer?.email) {
       throw new Error("Customer has no email address");
@@ -69,8 +69,8 @@ export const quoteSendEmailHandler: EmailSendContextHandler = {
     if (!quote) {
       throw new Error("Quote not found");
     }
-    const customer = quote.customerId
-      ? await getCustomer(quote.customerId)
+    const customer = quote.customerAccountId
+      ? await getCustomer(quote.customerAccountId)
       : null;
     const email = customer?.email?.trim();
     if (!email) {

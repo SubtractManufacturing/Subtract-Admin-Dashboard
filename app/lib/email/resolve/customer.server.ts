@@ -1,4 +1,5 @@
 import { getCustomer } from "~/lib/customers";
+import { isUuid } from "~/lib/organizations/types";
 import type { NormalizedAddress, ResolvedTokenMap } from "./types";
 import { formatAddress } from "./formatters";
 
@@ -7,8 +8,8 @@ import { formatAddress } from "./formatters";
  * Provides customer identity and address tokens without a parent document.
  */
 export async function resolveCustomerTokens(entityId: string): Promise<ResolvedTokenMap> {
-  const customerId = parseInt(entityId, 10);
-  if (!Number.isFinite(customerId) || customerId <= 0) {
+  const customerId = entityId.trim();
+  if (!isUuid(customerId)) {
     throw new Error(`Invalid customer id: ${entityId}`);
   }
 

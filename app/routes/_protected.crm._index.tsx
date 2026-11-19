@@ -10,7 +10,8 @@ import { useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { getCustomers } from "~/lib/customers";
+import { getCustomer, getCustomers } from "~/lib/customers";
+import { isUuid } from "~/lib/organizations/types";
 import {
   createCustomerCommunication,
   listCustomerCommunications,
@@ -55,15 +56,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   );
 
   const customerIdRaw = url.searchParams.get("customerId");
-  const customerId =
-    customerIdRaw && /^\d+$/.test(customerIdRaw)
-      ? parseInt(customerIdRaw, 10)
-      : undefined;
+  const customerId = isUuid(customerIdRaw) ? customerIdRaw : undefined;
+  const filterCustomer = customerId ? await getCustomer(customerId) : null;
 
   const [listResult, customers] = await Promise.all([
     listCustomerCommunications({
       page: pageParam,
-      customerId,
+      organizationId: filterCustomer?.organizationId,
     }),
     getCustomers({ sortBy: "name" }),
   ]);
@@ -98,17 +97,17 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const customerIdRaw = formData.get("customerId");
+  const contactIdRaw = formData.get("contactId");
   const methodRaw = formData.get("method");
   const noteRaw = formData.get("note");
 
-  const customerId =
-    typeof customerIdRaw === "string" && /^\d+$/.test(customerIdRaw)
-      ? parseInt(customerIdRaw, 10)
-      : NaN;
+  const customerId = typeof customerIdRaw === "string" ? customerIdRaw.trim() : "";
+  const contactId =
+    typeof contactIdRaw === "string" && isUuid(contactIdRaw.trim()) ? contactIdRaw.trim() : null;
   const method = typeof methodRaw === "string" ? methodRaw : "";
   const note = typeof noteRaw === "string" ? noteRaw : "";
 
-  if (!Number.isFinite(customerId)) {
+  if (!isUuid(customerId)) {
     return json({ error: "Customer is required" }, { status: 400 });
   }
   if (!isCommunicationMethod(method)) {
@@ -127,6 +126,7 @@ export async function action({ request }: ActionFunctionArgs) {
     await createCustomerCommunication(
       {
         customerId,
+        contactId,
         method,
         note,
         createdBy: user.id,
@@ -259,7 +259,7 @@ export default function CrmIndex() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-sm">
                         <Link
-                          to={`/customers/${item.customerId}`}
+                          to={item.customerAccountId ? `/customers/${item.customerAccountId}` : "/customers"}
                           className="font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
                         >
                           {item.customerDisplayName}

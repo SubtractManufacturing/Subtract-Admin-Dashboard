@@ -1,6 +1,6 @@
 import { db } from "./db/index.js"
-import { attachments, orderAttachments, quoteAttachments, customerAttachments, vendorAttachments, partModels } from "./db/schema.js"
-import { eq, and } from 'drizzle-orm'
+import { attachments, legacyCustomerAttachments, legacyVendorAttachments, orderAttachments, quoteAttachments, organizationAttachments, partModels } from "./db/schema.js"
+import { eq, and, desc } from 'drizzle-orm'
 import type { Attachment, NewAttachment } from "./db/schema.js"
 import { createEvent } from "./events.js"
 
@@ -220,108 +220,111 @@ export async function getOrderAttachments(orderId: number): Promise<Attachment[]
   }
 }
 
-// Customer attachment functions
-export async function linkAttachmentToCustomer(customerId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
+// Organization attachment functions (ADR-0013). Files belong to the
+// Organization whichever role it acts in; events are logged on the account
+// whose page the change was made from.
+export type AttachmentOwner = {
+  /** The account whose page the change came from. */
+  id: string
+  type: "customer" | "vendor"
+  organizationId: string
+}
+
+export async function linkAttachmentToAccount(owner: AttachmentOwner, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
-      .insert(customerAttachments)
-      .values({
-        customerId,
-        attachmentId,
-      })
+      .insert(organizationAttachments)
+      .values({ organizationId: owner.organizationId, attachmentId })
+      .onConflictDoNothing()
 
-    // Log event
+    const label = owner.type === "customer" ? "Customer" : "Vendor"
     await createEvent({
-      entityType: "customer",
-      entityId: customerId.toString(),
+      entityType: owner.type,
+      entityId: owner.id,
       eventType: "attachment_linked",
       eventCategory: "document",
-      title: "Attachment Linked to Customer",
-      description: `Linked attachment to customer`,
+      title: `Attachment Linked to ${label}`,
+      description: `Linked attachment to ${owner.type}`,
       metadata: {
-        attachmentId
+        attachmentId,
+        organizationId: owner.organizationId,
       },
       userId: eventContext?.userId,
       userEmail: eventContext?.userEmail
     })
   } catch (error) {
-    throw new Error(`Failed to link attachment to customer: ${error}`)
+    throw new Error(`Failed to link attachment to ${owner.type}: ${error}`)
   }
 }
 
-export async function unlinkAttachmentFromCustomer(customerId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
+export async function unlinkAttachmentFromAccount(owner: AttachmentOwner, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
   try {
     await db
-      .delete(customerAttachments)
+      .delete(organizationAttachments)
       .where(
         and(
-          eq(customerAttachments.customerId, customerId),
-          eq(customerAttachments.attachmentId, attachmentId)
+          eq(organizationAttachments.organizationId, owner.organizationId),
+          eq(organizationAttachments.attachmentId, attachmentId)
         )
       )
 
-    // Log event
+    const label = owner.type === "customer" ? "Customer" : "Vendor"
     await createEvent({
-      entityType: "customer",
-      entityId: customerId.toString(),
+      entityType: owner.type,
+      entityId: owner.id,
       eventType: "attachment_unlinked",
       eventCategory: "document",
-      title: "Attachment Unlinked from Customer",
-      description: `Unlinked attachment from customer`,
+      title: `Attachment Unlinked from ${label}`,
+      description: `Unlinked attachment from ${owner.type}`,
       metadata: {
-        attachmentId
+        attachmentId,
+        organizationId: owner.organizationId,
       },
       userId: eventContext?.userId,
       userEmail: eventContext?.userEmail
     })
   } catch (error) {
-    throw new Error(`Failed to unlink attachment from customer: ${error}`)
+    throw new Error(`Failed to unlink attachment from ${owner.type}: ${error}`)
   }
 }
 
-export async function getCustomerAttachments(customerId: number): Promise<Attachment[]> {
+/**
+ * ADR-0013 deployment 1: the legacy `customer_attachments` and
+ * `vendor_attachments` tables are a read-only reference copy whose foreign
+ * keys still point at `attachments`. A file they reference cannot be deleted
+ * until deployment 2 drops them, so removing it from an Organization only
+ * unlinks it; the file and its row stay.
+ */
+export async function isReferencedByLegacyLinks(attachmentId: string): Promise<boolean> {
+  const [customerLink] = await db
+    .select({ id: legacyCustomerAttachments.attachmentId })
+    .from(legacyCustomerAttachments)
+    .where(eq(legacyCustomerAttachments.attachmentId, attachmentId))
+    .limit(1)
+  if (customerLink) return true
+  const [vendorLink] = await db
+    .select({ id: legacyVendorAttachments.attachmentId })
+    .from(legacyVendorAttachments)
+    .where(eq(legacyVendorAttachments.attachmentId, attachmentId))
+    .limit(1)
+  return Boolean(vendorLink)
+}
+
+export async function getOrganizationAttachments(organizationId: string): Promise<Attachment[]> {
   try {
     const result = await db
       .select({
         attachment: attachments,
       })
-      .from(customerAttachments)
-      .innerJoin(attachments, eq(customerAttachments.attachmentId, attachments.id))
-      .where(eq(customerAttachments.customerId, customerId))
+      .from(organizationAttachments)
+      .innerJoin(attachments, eq(organizationAttachments.attachmentId, attachments.id))
+      .where(eq(organizationAttachments.organizationId, organizationId))
+      .orderBy(desc(organizationAttachments.createdAt))
 
     return result.map(row => row.attachment)
   } catch (error) {
-    console.error('Error fetching customer attachments:', error)
+    console.error('Error fetching organization attachments:', error)
     return []
-  }
-}
-
-// Vendor attachment functions
-export async function linkAttachmentToVendor(vendorId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
-  try {
-    await db
-      .insert(vendorAttachments)
-      .values({
-        vendorId,
-        attachmentId,
-      })
-
-    // Log event
-    await createEvent({
-      entityType: "vendor",
-      entityId: vendorId.toString(),
-      eventType: "attachment_linked",
-      eventCategory: "document",
-      title: "Attachment Linked to Vendor",
-      description: `Linked attachment to vendor`,
-      metadata: {
-        attachmentId
-      },
-      userId: eventContext?.userId,
-      userEmail: eventContext?.userEmail
-    })
-  } catch (error) {
-    throw new Error(`Failed to link attachment to vendor: ${error}`)
   }
 }
 
@@ -340,86 +343,40 @@ export async function linkAttachmentToPart(partId: string, attachmentId: string)
   }
 }
 
-export async function unlinkAttachmentFromVendor(vendorId: number, attachmentId: string, eventContext?: AttachmentEventContext): Promise<void> {
-  try {
-    await db
-      .delete(vendorAttachments)
-      .where(
-        and(
-          eq(vendorAttachments.vendorId, vendorId),
-          eq(vendorAttachments.attachmentId, attachmentId)
-        )
-      )
-
-    // Log event
-    await createEvent({
-      entityType: "vendor",
-      entityId: vendorId.toString(),
-      eventType: "attachment_unlinked",
-      eventCategory: "document",
-      title: "Attachment Unlinked from Vendor",
-      description: `Unlinked attachment from vendor`,
-      metadata: {
-        attachmentId
-      },
-      userId: eventContext?.userId,
-      userEmail: eventContext?.userEmail
-    })
-  } catch (error) {
-    throw new Error(`Failed to unlink attachment from vendor: ${error}`)
-  }
-}
-
-export async function getVendorAttachments(vendorId: number): Promise<Attachment[]> {
-  try {
-    const result = await db
-      .select({
-        attachment: attachments,
-      })
-      .from(vendorAttachments)
-      .innerJoin(attachments, eq(vendorAttachments.attachmentId, attachments.id))
-      .where(eq(vendorAttachments.vendorId, vendorId))
-
-    return result.map(row => row.attachment)
-  } catch (error) {
-    console.error('Error fetching vendor attachments:', error)
-    return []
-  }
-}
-
 export async function authorizeAttachmentDeletion(input: {
   attachmentId: string
-  entityType: "order" | "quote" | "customer" | "vendor"
-  entityId: number
   eventContext?: AttachmentEventContext
-}): Promise<Attachment | null> {
-  const relation =
+} & (
+  | { entityType: "order" | "quote"; entityId: number }
+  | { entityType: "organization"; entityId: string }
+)): Promise<Attachment | null> {
+  const rows =
     input.entityType === "order"
-      ? orderAttachments
+      ? await db
+          .select({ attachment: attachments })
+          .from(orderAttachments)
+          .innerJoin(attachments, eq(orderAttachments.attachmentId, attachments.id))
+          .where(and(eq(orderAttachments.orderId, input.entityId), eq(orderAttachments.attachmentId, input.attachmentId)))
+          .limit(1)
       : input.entityType === "quote"
-        ? quoteAttachments
-        : input.entityType === "customer"
-          ? customerAttachments
-          : vendorAttachments
-  const parentColumn =
-    input.entityType === "order"
-      ? orderAttachments.orderId
-      : input.entityType === "quote"
-        ? quoteAttachments.quoteId
-        : input.entityType === "customer"
-          ? customerAttachments.customerId
-          : vendorAttachments.vendorId
-  const [row] = await db
-    .select({ attachment: attachments })
-    .from(relation)
-    .innerJoin(attachments, eq(relation.attachmentId, attachments.id))
-    .where(
-      and(
-        eq(parentColumn, input.entityId),
-        eq(relation.attachmentId, input.attachmentId),
-      ),
-    )
-    .limit(1)
+        ? await db
+            .select({ attachment: attachments })
+            .from(quoteAttachments)
+            .innerJoin(attachments, eq(quoteAttachments.attachmentId, attachments.id))
+            .where(and(eq(quoteAttachments.quoteId, input.entityId), eq(quoteAttachments.attachmentId, input.attachmentId)))
+            .limit(1)
+        : await db
+            .select({ attachment: attachments })
+            .from(organizationAttachments)
+            .innerJoin(attachments, eq(organizationAttachments.attachmentId, attachments.id))
+            .where(
+              and(
+                eq(organizationAttachments.organizationId, String(input.entityId)),
+                eq(organizationAttachments.attachmentId, input.attachmentId),
+              ),
+            )
+            .limit(1)
+  const row = rows[0]
   if (!row) return null
   if (row.attachment.isProtected && !input.eventContext?.canDeleteProtected) {
     throw new Error("Admin or Dev role required to delete this protected attachment")

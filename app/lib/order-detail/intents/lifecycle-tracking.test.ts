@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, expect, it, vi } from "vitest";
 import type { IntentTable } from "~/lib/route-actions/core";
 import type { OrderCtx } from "../context";
@@ -78,10 +79,10 @@ describe("other lifecycle intents", () => {
 
   it("updateVendor sets or clears the vendor", async () => {
     const ctx = makeOrderCtx();
-    await runLife(ctx, "updateVendor", { vendorId: "4" });
-    expect(ctx.deps.orders.update).toHaveBeenLastCalledWith(12, { vendorId: 4 }, ctx.actor);
+    await runLife(ctx, "updateVendor", { vendorId: testUuid(4) });
+    expect(ctx.deps.orders.update).toHaveBeenLastCalledWith(12, { vendorAccountId: testUuid(4) }, ctx.actor);
     await runLife(ctx, "updateVendor", { vendorId: "" });
-    expect(ctx.deps.orders.update).toHaveBeenLastCalledWith(12, { vendorId: null }, ctx.actor);
+    expect(ctx.deps.orders.update).toHaveBeenLastCalledWith(12, { vendorAccountId: null }, ctx.actor);
     expect((await runLife(ctx, "updateVendor", { vendorId: "x" })).status).toBe(400);
   });
 

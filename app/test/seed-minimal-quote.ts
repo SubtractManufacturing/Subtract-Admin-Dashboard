@@ -8,12 +8,14 @@
  */
 
 import { db } from "~/lib/db";
-import { deleteCustomerMergeRows } from "~/lib/customers";
-import { customers, quoteLineItems, quoteParts, quotes } from "~/lib/db/schema";
+import { quoteLineItems, quoteParts, quotes } from "~/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { createTestCustomer, deleteTestOrganizations } from "./seed-organizations";
 
 export type SeededQuoteIds = {
-  customerId: number;
+  /** Customer account uuid. */
+  customerId: string;
+  organizationId: string;
   quoteId: number;
   quoteNumber: string;
   customerName: string;
@@ -27,16 +29,13 @@ export async function seedMinimalQuote(): Promise<SeededQuoteIds> {
   const quoteNumber = `TEST-${Date.now()}`;
   const customerName = "Test Integration Co";
 
-  const [customer] = await db
-    .insert(customers)
-    .values({ displayName: customerName })
-    .returning({ id: customers.id });
+  const customer = await createTestCustomer({ name: customerName, kind: "business" });
 
   const [quote] = await db
     .insert(quotes)
     .values({
       quoteNumber,
-      customerId: customer.id,
+      customerAccountId: customer.id,
       status: "RFQ",
       total: "100.00",
       subtotal: "90.00",
@@ -47,6 +46,7 @@ export async function seedMinimalQuote(): Promise<SeededQuoteIds> {
 
   return {
     customerId: customer.id,
+    organizationId: customer.organizationId,
     quoteId: quote.id,
     quoteNumber,
     customerName,
@@ -60,6 +60,5 @@ export async function cleanupMinimalQuote(ids: SeededQuoteIds): Promise<void> {
   await db.delete(quoteLineItems).where(eq(quoteLineItems.quoteId, ids.quoteId));
   await db.delete(quoteParts).where(eq(quoteParts.quoteId, ids.quoteId));
   await db.delete(quotes).where(eq(quotes.id, ids.quoteId));
-  await deleteCustomerMergeRows([ids.customerId]);
-  await db.delete(customers).where(eq(customers.id, ids.customerId));
+  await deleteTestOrganizations([ids.organizationId]);
 }

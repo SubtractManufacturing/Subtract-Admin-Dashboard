@@ -65,7 +65,7 @@ export function buildClaimedPostText(
 
 export async function updateJobBoardClaim(params: {
   orderId: number;
-  vendorId: number;
+  vendorId: string;
   webhookUrl: string | null;
   discord: DiscordWebhookClient;
 }): Promise<{ ok: true } | { ok: false; warning: string }> {

@@ -67,7 +67,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return redirect(`/customers/${newCustomer.id}`)
       }
       case "update": {
-        const id = parseInt(formData.get("id") as string)
+        const id = String(formData.get("id") ?? "")
         const customerData: Partial<CustomerInput> = {
           displayName: formData.get("displayName") as string,
           email: formData.get("email") as string || null,
@@ -77,7 +77,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return redirect("/customers")
       }
       case "delete": {
-        const id = parseInt(formData.get("id") as string)
+        const id = String(formData.get("id") ?? "")
         await archiveCustomer(id, eventContext)
         return redirect("/customers")
       }
@@ -183,6 +183,14 @@ export default function Customers() {
                 Find duplicates
               </Link>
             )}
+            {canMerge && (
+              <Link
+                to="/customers/reconciliation"
+                className="whitespace-nowrap text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+              >
+                Reconciliation
+              </Link>
+            )}
             <Button onClick={handleAdd}>Add Customer</Button>
           </div>
         </div>
@@ -199,9 +207,9 @@ export default function Customers() {
           }
           columns={[
             {
-              key: "id",
-              header: "ID",
-              render: (customer) => customer.id,
+              key: "kind",
+              header: "Type",
+              render: (customer) => (customer.kind === "business" ? "Business" : "Individual"),
             },
             {
               key: "name",

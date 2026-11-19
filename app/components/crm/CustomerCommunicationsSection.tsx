@@ -9,7 +9,7 @@ import type { CustomerCommunicationListItem } from "~/lib/crm";
 type Props = {
   items: CustomerCommunicationListItem[];
   totalCount: number;
-  customerId: number;
+  customerId: string;
   onLogClick: () => void;
 };
 
@@ -99,6 +99,11 @@ export default function CustomerCommunicationsSection({
                             item.method as CommunicationMethod
                           ]
                         }
+                        {item.contactName && (
+                          <span className="block text-xs text-gray-500 dark:text-gray-400">
+                            with {item.contactName}
+                          </span>
+                        )}
                       </td>
                       <td
                         className="max-w-md px-4 py-3 text-sm text-gray-700 dark:text-gray-300"

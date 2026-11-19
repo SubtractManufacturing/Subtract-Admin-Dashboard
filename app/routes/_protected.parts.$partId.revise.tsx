@@ -39,7 +39,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     .select({
       id: parts.id,
       partName: parts.partName,
-      customerId: parts.customerId,
+      customerId: parts.customerAccountId,
       partFileUrl: parts.partFileUrl,
     })
     .from(parts)
@@ -154,7 +154,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (part.customerId) {
       await createEvent({
         entityType: "customer",
-        entityId: part.customerId.toString(),
+        entityId: part.customerId,
         eventType: "cad_revision_uploaded",
         eventCategory: "document",
         title: `CAD revised: ${part.partName || "Part"}`,

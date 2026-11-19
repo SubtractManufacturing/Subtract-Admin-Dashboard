@@ -1,15 +1,30 @@
 import { json, LoaderFunctionArgs, ActionFunctionArgs, redirect, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import { useLoaderData, useFetcher, Link } from "@remix-run/react";
 import { getVendor, updateVendor, archiveVendor, getVendorOrders, getVendorStats, getVendorWithAttachments } from "~/lib/vendors";
-import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, linkAttachmentToVendor, unlinkAttachmentFromVendor, type AttachmentEventContext } from "~/lib/attachments";
-import type { Customer } from "~/lib/db/schema";
+import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, linkAttachmentToAccount, unlinkAttachmentFromAccount, isReferencedByLegacyLinks, type AttachmentEventContext } from "~/lib/attachments";
+import {
+  accountIdForLegacyId,
+  listOrganizationAddresses,
+  listOrganizationContacts,
+  resolveFinalAccountId,
+  siblingAccounts,
+} from "~/lib/organizations/accounts.server";
+import { handleOrganizationIntent, isOrganizationIntent } from "~/lib/organizations/page-actions.server";
+import { profileInputFromForm } from "~/lib/organizations/profile";
+import { isUuid } from "~/lib/organizations/types";
+import { authorize } from "~/lib/authorization/authorize";
+import { findDuplicateContacts } from "~/lib/customer-merge.server";
+import { createCustomer } from "~/lib/customers";
+import { ContactsSection } from "~/components/organizations/ContactsSection";
+import { AddressesSection } from "~/components/organizations/AddressesSection";
+import type { Customer } from "~/lib/organizations/types";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { uploadFile, generateFileKey, deleteFile, getDownloadUrl } from "~/lib/s3.server";
 import Button from "~/components/shared/Button";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import { Notes } from "~/components/shared/Notes";
-import { InputField as FormField, PhoneInputField } from "~/components/shared/FormField";
+import { InputField as FormField, PhoneInputField, SelectField } from "~/components/shared/FormField";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import ToggleSlider from "~/components/shared/ToggleSlider";
 import { EventTimeline } from "~/components/EventTimeline";
@@ -24,8 +39,8 @@ import {
 type VendorOrder = {
   id: number;
   orderNumber: string;
-  customerId: number | null;
-  vendorId: number | null;
+  customerAccountId: string | null;
+  vendorAccountId: string | null;
   status: string;
   totalPrice: string | null;
   vendorPay: string | null;
@@ -36,27 +51,64 @@ type VendorOrder = {
 import { useState, useEffect } from "react";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { user, userDetails, headers } = await requireAuth(request);
+  const { user, userDetails, actor, headers } = await requireAuth(request);
   
   const vendorId = params.vendorId;
   if (!vendorId) {
     throw new Response("Vendor ID is required", { status: 400 });
   }
 
-  const vendor = await getVendorWithAttachments(parseInt(vendorId));
+  // Links from before ADR-0013 used the integer Vendor id.
+  if (/^\d+$/.test(vendorId)) {
+    const accountId = await accountIdForLegacyId("vendor", Number(vendorId));
+    if (accountId) throw redirect(`/vendors/${accountId}`, { status: 301, headers });
+    throw new Response("Vendor not found", { status: 404 });
+  }
+  if (!isUuid(vendorId)) {
+    throw new Response("Vendor not found", { status: 404 });
+  }
+
+  const vendor = await getVendorWithAttachments(vendorId);
   if (!vendor) {
     throw new Response("Vendor not found", { status: 404 });
   }
 
-  const [orders, stats, notes, events] = await Promise.all([
+  // A Vendor whose Organization was merged away leads to the survivor's Vendor page.
+  if (vendor.isArchived && vendor.mergedIntoOrganizationId) {
+    const survivorId = await resolveFinalAccountId(vendor.id);
+    if (survivorId && survivorId !== vendor.id) {
+      throw redirect(`/vendors/${survivorId}`, { headers });
+    }
+  }
+
+  const canMerge = authorize(actor, "organization.merge").allowed;
+  const [orders, stats, notes, events, contacts, addresses, siblings, duplicateContacts] = await Promise.all([
     getVendorOrders(vendor.id),
     getVendorStats(vendor.id),
-    getNotes("vendor", vendor.id.toString()),
-    getEventsByEntity("vendor", vendor.id.toString(), 10),
+    getNotes("vendor", vendor.id),
+    getEventsByEntity("vendor", vendor.id, 10),
+    listOrganizationContacts(vendor.organizationId),
+    listOrganizationAddresses(vendor.organizationId),
+    siblingAccounts(vendor.organizationId),
+    canMerge ? findDuplicateContacts(vendor.organizationId) : Promise.resolve([]),
   ]);
+  const customerAccount = siblings.find((account) => account.type === "customer" && !account.isArchived) ?? null;
 
   return withAuthHeaders(
-    json({ vendor, orders, stats, notes, user, userDetails, events }),
+    json({
+      vendor,
+      orders,
+      stats,
+      notes,
+      user,
+      userDetails,
+      events,
+      contacts,
+      addresses,
+      customerAccountId: customerAccount?.id ?? null,
+      duplicateContacts,
+      canMerge,
+    }),
     headers
   );
 }
@@ -71,7 +123,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Vendor ID is required" }, { status: 400 });
   }
 
-  const vendor = await getVendor(parseInt(vendorId));
+  const vendor = await getVendor(vendorId);
   if (!vendor) {
     return json({ error: "Vendor not found" }, { status: 404 });
   }
@@ -125,8 +177,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         source: "user_upload",
       }, eventContext);
 
-      // Link to vendor
-      await linkAttachmentToVendor(vendor.id, attachment.id, eventContext);
+      // Files belong to the Organization (ADR-0013).
+      await linkAttachmentToAccount(vendor, attachment.id, eventContext);
 
       if (formData.get("_noRedirect")) {
         return json({ success: true, attachmentId: attachment.id });
@@ -145,66 +197,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = formData.get("intent");
 
   try {
+    if (isOrganizationIntent(intent)) {
+      return withAuthHeaders(
+        await handleOrganizationIntent(intent, formData, vendor, {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        }),
+        headers,
+      );
+    }
+
     switch (intent) {
+      case "addCustomerAccount": {
+        // The same Organization also buys from us (ADR-0013).
+        const customer = await createCustomer(
+          {},
+          { userId: user?.id, userEmail: user?.email || userDetails?.name || undefined },
+          { organizationId: vendor.organizationId },
+        );
+        return redirect(`/customers/${customer.id}`);
+      }
+
       case "updateVendor": {
-        const displayName = formData.get("displayName") as string;
-        const companyName = formData.get("companyName") as string;
-        const contactName = formData.get("contactName") as string;
-        const title = formData.get("title") as string;
-        const email = formData.get("email") as string;
-        const phone = formData.get("phone") as string;
-        const isPrimaryContact = formData.get("isPrimaryContact") === "true";
-        const address = formData.get("address") as string;
-        const discordId = formData.get("discordId") as string;
-        const paymentTerms = formData.get("paymentTerms") as string;
-        const notes = formData.get("notes") as string;
-
-        // Billing address fields
-        const billingAddressLine1 = formData.get("billingAddressLine1") as string;
-        const billingAddressLine2 = formData.get("billingAddressLine2") as string;
-        const billingCity = formData.get("billingCity") as string;
-        const billingState = formData.get("billingState") as string;
-        const billingPostalCode = formData.get("billingPostalCode") as string;
-        const billingCountry = formData.get("billingCountry") as string;
-
-        // Shipping address fields
-        const shippingAddressLine1 = formData.get("shippingAddressLine1") as string;
-        const shippingAddressLine2 = formData.get("shippingAddressLine2") as string;
-        const shippingCity = formData.get("shippingCity") as string;
-        const shippingState = formData.get("shippingState") as string;
-        const shippingPostalCode = formData.get("shippingPostalCode") as string;
-        const shippingCountry = formData.get("shippingCountry") as string;
-
         const eventContext = {
           userId: user?.id,
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const updated = await updateVendor(vendor.id, {
-          displayName,
-          companyName: companyName || null,
-          contactName: contactName || null,
-          title: title || null,
-          email: email || null,
-          phone: phone || null,
-          isPrimaryContact,
-          address: address || null,
-          discordId: discordId || null,
-          paymentTerms: paymentTerms || null,
-          notes: notes || null,
-          billingAddressLine1: billingAddressLine1 || null,
-          billingAddressLine2: billingAddressLine2 || null,
-          billingCity: billingCity || null,
-          billingState: billingState || null,
-          billingPostalCode: billingPostalCode || null,
-          billingCountry: billingCountry || null,
-          shippingAddressLine1: shippingAddressLine1 || null,
-          shippingAddressLine2: shippingAddressLine2 || null,
-          shippingCity: shippingCity || null,
-          shippingState: shippingState || null,
-          shippingPostalCode: shippingPostalCode || null,
-          shippingCountry: shippingCountry || null,
-        }, eventContext);
+        // Only the fields the form posted change (ADR-0013 partial writes).
+        const updated = await updateVendor(vendor.id, profileInputFromForm(formData), eventContext);
 
         return withAuthHeaders(json({ vendor: updated }), headers);
       }
@@ -220,7 +241,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "getNotes": {
-        const notes = await getNotes("vendor", vendor.id.toString());
+        const notes = await getNotes("vendor", vendor.id);
         return withAuthHeaders(json({ notes }), headers);
       }
 
@@ -239,7 +260,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const note = await createNote({
           entityType: "vendor",
-          entityId: vendor.id.toString(),
+          entityId: vendor.id,
           content,
           createdBy,
         }, noteEventContext);
@@ -301,8 +322,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         };
         const authorizedAttachment = await authorizeAttachmentDeletion({
           attachmentId,
-          entityType: "vendor",
-          entityId: vendor.id,
+          entityType: "organization",
+          entityId: vendor.organizationId,
           eventContext,
         });
         if (!authorizedAttachment) {
@@ -310,13 +331,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         // Unlink from vendor first
-        await unlinkAttachmentFromVendor(vendor.id, attachmentId, eventContext);
+        await unlinkAttachmentFromAccount(vendor, attachmentId, eventContext);
 
-        // Delete from S3
-        await deleteFile(authorizedAttachment.s3Key);
-
-        // Delete database record
-        await deleteAttachment(attachmentId, eventContext);
+        // Files the legacy link tables still reference stay until deployment 2 (ADR-0013).
+        if (!(await isReferencedByLegacyLinks(attachmentId))) {
+          await deleteFile(authorizedAttachment.s3Key);
+          await deleteAttachment(attachmentId, eventContext);
+        }
 
         // Return a redirect to refresh the page
         return redirect(`/vendors/${vendorId}`);
@@ -351,7 +372,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function VendorDetails() {
-  const { vendor, orders, stats, notes, user, userDetails, events } = useLoaderData<typeof loader>();
+  const { vendor, orders, stats, notes, user, userDetails, events, contacts, addresses, customerAccountId, duplicateContacts, canMerge } = useLoaderData<typeof loader>();
   const [isEditingCompanyInfo, setIsEditingCompanyInfo] = useState(false);
   const [isEditingContactInfo, setIsEditingContactInfo] = useState(false);
   const [isEditingBillingAddress, setIsEditingBillingAddress] = useState(false);
@@ -396,13 +417,10 @@ export default function VendorDetails() {
     const billingAddress = extractBillingAddress(vendor);
     const formData = new FormData();
     formData.append("intent", "updateVendor");
-    formData.append("displayName", vendor.displayName);
-    formData.append("companyName", vendor.companyName || "");
     formData.append("contactName", vendor.contactName || "");
     formData.append("title", vendor.title || "");
     formData.append("email", vendor.email || "");
     formData.append("phone", vendor.phone || "");
-    formData.append("isPrimaryContact", vendor.isPrimaryContact ? "true" : "false");
     formData.append("paymentTerms", vendor.paymentTerms || "");
     formData.append("discordId", vendor.discordId || "");
     formData.append("address", vendor.address || "");
@@ -426,13 +444,10 @@ export default function VendorDetails() {
     const shippingAddress = extractShippingAddress(vendor);
     const formData = new FormData();
     formData.append("intent", "updateVendor");
-    formData.append("displayName", vendor.displayName);
-    formData.append("companyName", vendor.companyName || "");
     formData.append("contactName", vendor.contactName || "");
     formData.append("title", vendor.title || "");
     formData.append("email", vendor.email || "");
     formData.append("phone", vendor.phone || "");
-    formData.append("isPrimaryContact", vendor.isPrimaryContact ? "true" : "false");
     formData.append("paymentTerms", vendor.paymentTerms || "");
     formData.append("discordId", vendor.discordId || "");
     formData.append("address", vendor.address || "");
@@ -605,7 +620,7 @@ export default function VendorDetails() {
             {/* Company Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Company Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Organization</h3>
                 {!isEditingCompanyInfo && (
                   <Button size="sm" onClick={() => setIsEditingCompanyInfo(true)}>
                     Edit
@@ -616,30 +631,20 @@ export default function VendorDetails() {
                 {isEditingCompanyInfo ? (
                   <updateFetcher.Form onSubmit={handleSaveCompanyInfo} data-editing="company-info">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={vendor.displayName} />
-                      <input type="hidden" name="contactName" value={vendor.contactName || ""} />
-                      <input type="hidden" name="title" value={vendor.title || ""} />
-                      <input type="hidden" name="email" value={vendor.email || ""} />
-                      <input type="hidden" name="phone" value={vendor.phone || ""} />
-                      <input type="hidden" name="isPrimaryContact" value={vendor.isPrimaryContact ? "true" : "false"} />
-                      <input type="hidden" name="address" value={vendor.address || ""} />
-                      <input type="hidden" name="notes" value={vendor.notes || ""} />
-                      <input type="hidden" name="billingAddressLine1" value={vendor.billingAddressLine1 || ""} />
-                      <input type="hidden" name="billingAddressLine2" value={vendor.billingAddressLine2 || ""} />
-                      <input type="hidden" name="billingCity" value={vendor.billingCity || ""} />
-                      <input type="hidden" name="billingState" value={vendor.billingState || ""} />
-                      <input type="hidden" name="billingPostalCode" value={vendor.billingPostalCode || ""} />
-                      <input type="hidden" name="billingCountry" value={vendor.billingCountry || ""} />
-                      <input type="hidden" name="shippingAddressLine1" value={vendor.shippingAddressLine1 || ""} />
-                      <input type="hidden" name="shippingAddressLine2" value={vendor.shippingAddressLine2 || ""} />
-                      <input type="hidden" name="shippingCity" value={vendor.shippingCity || ""} />
-                      <input type="hidden" name="shippingState" value={vendor.shippingState || ""} />
-                      <input type="hidden" name="shippingPostalCode" value={vendor.shippingPostalCode || ""} />
-                      <input type="hidden" name="shippingCountry" value={vendor.shippingCountry || ""} />
                       <FormField
-                        label="Company Name"
-                        name="companyName"
-                        defaultValue={vendor.companyName || ""}
+                        label="Name"
+                        name="name"
+                        defaultValue={vendor.name}
+                        required
+                      />
+                      <SelectField label="Type" name="kind" defaultValue={vendor.kind}>
+                        <option value="business">Business</option>
+                        <option value="individual">Individual (one-person shop)</option>
+                      </SelectField>
+                      <FormField
+                        label="Website"
+                        name="website"
+                        defaultValue={vendor.website || ""}
                       />
                       <FormField
                         label="Payment Terms"
@@ -663,8 +668,12 @@ export default function VendorDetails() {
                 ) : (
                   <div className="space-y-4">
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Company Name</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.companyName || "--"}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Name</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Type</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.kind === "business" ? "Business" : "Individual"}</p>
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Payment Terms</p>
@@ -675,8 +684,19 @@ export default function VendorDetails() {
                       <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.discordId || "--"}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Vendor ID</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">VEN-{vendor.id.toString().padStart(5, '0')}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Customer</p>
+                      {customerAccountId ? (
+                        <Link to={`/customers/${customerAccountId}`} className="text-blue-600 hover:underline dark:text-blue-400">
+                          Also a Customer: view Customer page
+                        </Link>
+                      ) : (
+                        <updateFetcher.Form method="post">
+                          <input type="hidden" name="intent" value="addCustomerAccount" />
+                          <Button type="submit" size="sm" variant="secondary">
+                            Make this a Customer too
+                          </Button>
+                        </updateFetcher.Form>
+                      )}
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Status</p>
@@ -694,7 +714,7 @@ export default function VendorDetails() {
             {/* Contact Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Contact Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Primary Contact</h3>
                 {!isEditingContactInfo && (
                   <Button size="sm" onClick={() => setIsEditingContactInfo(true)}>
                     Edit
@@ -705,24 +725,6 @@ export default function VendorDetails() {
                 {isEditingContactInfo ? (
                   <updateFetcher.Form onSubmit={handleSaveContactInfo} data-editing="contact-info">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={vendor.displayName} />
-                      <input type="hidden" name="companyName" value={vendor.companyName || ""} />
-                      <input type="hidden" name="paymentTerms" value={vendor.paymentTerms || ""} />
-                      <input type="hidden" name="discordId" value={vendor.discordId || ""} />
-                      <input type="hidden" name="address" value={vendor.address || ""} />
-                      <input type="hidden" name="notes" value={vendor.notes || ""} />
-                      <input type="hidden" name="billingAddressLine1" value={vendor.billingAddressLine1 || ""} />
-                      <input type="hidden" name="billingAddressLine2" value={vendor.billingAddressLine2 || ""} />
-                      <input type="hidden" name="billingCity" value={vendor.billingCity || ""} />
-                      <input type="hidden" name="billingState" value={vendor.billingState || ""} />
-                      <input type="hidden" name="billingPostalCode" value={vendor.billingPostalCode || ""} />
-                      <input type="hidden" name="billingCountry" value={vendor.billingCountry || ""} />
-                      <input type="hidden" name="shippingAddressLine1" value={vendor.shippingAddressLine1 || ""} />
-                      <input type="hidden" name="shippingAddressLine2" value={vendor.shippingAddressLine2 || ""} />
-                      <input type="hidden" name="shippingCity" value={vendor.shippingCity || ""} />
-                      <input type="hidden" name="shippingState" value={vendor.shippingState || ""} />
-                      <input type="hidden" name="shippingPostalCode" value={vendor.shippingPostalCode || ""} />
-                      <input type="hidden" name="shippingCountry" value={vendor.shippingCountry || ""} />
                       <FormField
                         label="Contact Name"
                         name="contactName"
@@ -744,18 +746,6 @@ export default function VendorDetails() {
                         name="phone"
                         defaultValue={vendor.phone || ""}
                       />
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id="isPrimaryContact"
-                          name="isPrimaryContact"
-                          defaultChecked={vendor.isPrimaryContact}
-                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                        />
-                        <label htmlFor="isPrimaryContact" className="text-sm text-gray-700 dark:text-gray-300">
-                          Primary Contact
-                        </label>
-                      </div>
                       <div className="flex justify-between items-center">
                         <div className="flex gap-2">
                           <Button type="submit" variant="primary" size="sm">Save</Button>
@@ -783,10 +773,7 @@ export default function VendorDetails() {
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Phone</p>
                       <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.phone || "--"}</p>
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Primary Contact</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{vendor.isPrimaryContact ? "Yes" : "No"}</p>
-                    </div>
+
                   </div>
                 )}
               </div>
@@ -818,23 +805,6 @@ export default function VendorDetails() {
                 {isEditingBillingAddress ? (
                   <updateFetcher.Form onSubmit={handleSaveBillingAddress} data-editing="billing-address">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={vendor.displayName} />
-                      <input type="hidden" name="companyName" value={vendor.companyName || ""} />
-                      <input type="hidden" name="contactName" value={vendor.contactName || ""} />
-                      <input type="hidden" name="title" value={vendor.title || ""} />
-                      <input type="hidden" name="email" value={vendor.email || ""} />
-                      <input type="hidden" name="phone" value={vendor.phone || ""} />
-                      <input type="hidden" name="isPrimaryContact" value={vendor.isPrimaryContact ? "true" : "false"} />
-                      <input type="hidden" name="paymentTerms" value={vendor.paymentTerms || ""} />
-                      <input type="hidden" name="discordId" value={vendor.discordId || ""} />
-                      <input type="hidden" name="address" value={vendor.address || ""} />
-                      <input type="hidden" name="notes" value={vendor.notes || ""} />
-                      <input type="hidden" name="shippingAddressLine1" value={vendor.shippingAddressLine1 || ""} />
-                      <input type="hidden" name="shippingAddressLine2" value={vendor.shippingAddressLine2 || ""} />
-                      <input type="hidden" name="shippingCity" value={vendor.shippingCity || ""} />
-                      <input type="hidden" name="shippingState" value={vendor.shippingState || ""} />
-                      <input type="hidden" name="shippingPostalCode" value={vendor.shippingPostalCode || ""} />
-                      <input type="hidden" name="shippingCountry" value={vendor.shippingCountry || ""} />
                       <FormField
                         label="Address Line 1"
                         name="billingAddressLine1"
@@ -893,7 +863,7 @@ export default function VendorDetails() {
             {/* Shipping Address */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Shipping Address</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Default Shipping Address</h3>
                 {!isEditingShippingAddress && (
                   <Button size="sm" onClick={() => setIsEditingShippingAddress(true)}>
                     Edit
@@ -904,23 +874,6 @@ export default function VendorDetails() {
                 {isEditingShippingAddress ? (
                   <updateFetcher.Form onSubmit={handleSaveShippingAddress} data-editing="shipping-address">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={vendor.displayName} />
-                      <input type="hidden" name="companyName" value={vendor.companyName || ""} />
-                      <input type="hidden" name="contactName" value={vendor.contactName || ""} />
-                      <input type="hidden" name="title" value={vendor.title || ""} />
-                      <input type="hidden" name="email" value={vendor.email || ""} />
-                      <input type="hidden" name="phone" value={vendor.phone || ""} />
-                      <input type="hidden" name="isPrimaryContact" value={vendor.isPrimaryContact ? "true" : "false"} />
-                      <input type="hidden" name="paymentTerms" value={vendor.paymentTerms || ""} />
-                      <input type="hidden" name="discordId" value={vendor.discordId || ""} />
-                      <input type="hidden" name="address" value={vendor.address || ""} />
-                      <input type="hidden" name="notes" value={vendor.notes || ""} />
-                      <input type="hidden" name="billingAddressLine1" value={vendor.billingAddressLine1 || ""} />
-                      <input type="hidden" name="billingAddressLine2" value={vendor.billingAddressLine2 || ""} />
-                      <input type="hidden" name="billingCity" value={vendor.billingCity || ""} />
-                      <input type="hidden" name="billingState" value={vendor.billingState || ""} />
-                      <input type="hidden" name="billingPostalCode" value={vendor.billingPostalCode || ""} />
-                      <input type="hidden" name="billingCountry" value={vendor.billingCountry || ""} />
                       {isAddressComplete(extractBillingAddress(vendor)) && (
                         <div className="mb-4">
                           <Button
@@ -987,6 +940,21 @@ export default function VendorDetails() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Contacts and addresses of the Organization (ADR-0013) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <ContactsSection
+              contacts={contacts}
+              duplicatePairs={duplicateContacts}
+              canMerge={canMerge}
+              returnTo={`/vendors/${vendor.id}`}
+            />
+            <AddressesSection
+              addresses={addresses}
+              billingAddressId={vendor.billingAddressId}
+              accountLabel="Vendor"
+            />
           </div>
 
           {/* Order History */}

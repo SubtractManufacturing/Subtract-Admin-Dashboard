@@ -1,3 +1,4 @@
+import { uuidField } from "~/lib/organizations/types";
 import { json } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, Link } from "@remix-run/react";
 import { useState, useEffect } from "react";
@@ -121,12 +122,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
         const orderData: OrderInput = {
           orderNumber,
-          customerId: formData.get("customerId")
-            ? parseInt(formData.get("customerId") as string)
-            : null,
-          vendorId: formData.get("vendorId")
-            ? parseInt(formData.get("vendorId") as string)
-            : null,
+          customerAccountId: uuidField(formData.get("customerId")),
+          vendorAccountId: uuidField(formData.get("vendorId")),
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
           vendorPay: "0", // Will be set properly when line items are added
           ...(deliveryFields?.deliveryDate !== undefined && {
@@ -163,12 +160,8 @@ export async function action({ request }: ActionFunctionArgs) {
         });
 
         const orderData: OrderInput = {
-          customerId: formData.get("customerId")
-            ? parseInt(formData.get("customerId") as string)
-            : null,
-          vendorId: formData.get("vendorId")
-            ? parseInt(formData.get("vendorId") as string)
-            : null,
+          customerAccountId: uuidField(formData.get("customerId")),
+          vendorAccountId: uuidField(formData.get("vendorId")),
           status: (formData.get("status") as OrderInput["status"]) || "Pending",
           vendorPay: vendorPayAmount, // Store as dollar amount
           ...(deliveryFields?.deliveryDate !== undefined && {
@@ -758,7 +751,7 @@ export default function Orders() {
           <SelectField
             label="Customer"
             name="customerId"
-            defaultValue={editingOrder?.customerId?.toString() || ""}
+            defaultValue={editingOrder?.customerAccountId || ""}
           >
             <option value="">Select a customer...</option>
             {customers.map((customer: Customer) => (
@@ -771,7 +764,7 @@ export default function Orders() {
           <SelectField
             label="Vendor"
             name="vendorId"
-            defaultValue={editingOrder?.vendorId?.toString() || ""}
+            defaultValue={editingOrder?.vendorAccountId || ""}
           >
             <option value="">Select a vendor...</option>
             {vendors.map((vendor: Vendor) => (

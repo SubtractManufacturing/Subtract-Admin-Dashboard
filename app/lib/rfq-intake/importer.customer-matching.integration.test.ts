@@ -1,6 +1,8 @@
 /**
- * Intake Customer resolution through the importer's import seam.
- * Requires DATABASE_URL pointing at a migrated Postgres instance.
+ * Intake Customer resolution through the importer's import seam (ADR-0012,
+ * ADR-0013): incoming emails match active Contacts and resolve to their
+ * Organizations' customer accounts.
+ * Requires DATABASE_URL pointing at a disposable database synced with db:push.
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -8,14 +10,22 @@ import { eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "../db";
 import {
+  accounts,
   actionItems,
-  customerEmailAliases,
-  customers,
+  contactEmailAliases,
+  organizationContacts,
   orders,
   quotes,
   users,
 } from "../db/schema";
-import { mergeCustomers } from "../customer-merge.server";
+import { mergeOrganizations } from "../customer-merge.server";
+import {
+  archiveAccount,
+  listOrganizationContacts,
+  loadAccountRecord,
+} from "../organizations/accounts.server";
+import type { AccountProfileInput } from "../organizations/types";
+import { createTestCustomer, createTestVendor, deleteTestOrganizations } from "~/test/seed-organizations";
 import wordpressManifest from "./fixtures/wordpress-manifest.json";
 import { createRfqImporter } from "./importer";
 import { createPostgresRfqPersistence } from "./postgres.server";
@@ -29,10 +39,17 @@ const persistence = createPostgresRfqPersistence({
 });
 
 const createdQuoteIds: number[] = [];
-const createdCustomerIds: number[] = [];
+const createdOrganizationIds: string[] = [];
 const createdUserIds: string[] = [];
 const receiptNumbers: string[] = [];
 const mergeActorId = `intake-merge-actor-${tag}`;
+const mergeActor = {
+  kind: "staff" as const,
+  userId: mergeActorId,
+  email: `${mergeActorId}@example.invalid`,
+  name: null,
+  role: "Admin" as const,
+};
 
 type Contact = {
   email: string;
@@ -42,42 +59,43 @@ type Contact = {
   phone?: string | null;
 };
 
+let clock = Date.parse("2025-01-01T00:00:00Z");
+
 async function seedCustomer(input: {
   email: string | null;
   aliases?: string[];
-  displayName?: string;
-  companyName?: string | null;
+  name?: string;
+  kind?: "business" | "individual";
   contactName?: string | null;
   phone?: string | null;
   isArchived?: boolean;
 }) {
-  const [customer] = await db
-    .insert(customers)
-    .values({
-      displayName: input.displayName ?? `Seed ${randomUUID().slice(0, 6)}`,
-      email: input.email,
-      companyName: input.companyName ?? null,
-      contactName: input.contactName ?? null,
-      phone: input.phone ?? null,
-      isArchived: input.isArchived ?? false,
-    })
-    .returning();
-  createdCustomerIds.push(customer.id);
-  const aliasEmails = input.aliases ?? [];
-  if (aliasEmails.length > 0) {
-    await db.insert(customerEmailAliases).values(
-      aliasEmails.map((email) => ({ customerId: customer.id, email })),
-    );
+  clock += 1000;
+  const profile: AccountProfileInput = {
+    name: input.name ?? `Seed ${randomUUID().slice(0, 6)}`,
+    kind: input.kind ?? "individual",
+    contactName: input.contactName ?? null,
+    email: input.email,
+    phone: input.phone ?? null,
+  };
+  const customer = await createTestCustomer(profile, { now: new Date(clock) });
+  createdOrganizationIds.push(customer.organizationId);
+  if ((input.aliases ?? []).length > 0 && customer.primaryContactId) {
+    await db
+      .insert(contactEmailAliases)
+      .values(input.aliases!.map((email) => ({ contactId: customer.primaryContactId!, email })))
+      .onConflictDoNothing();
   }
+  if (input.isArchived) await archiveAccount(customer.id);
   return customer;
 }
 
-async function seedQuoteFor(customerId: number, createdAt: Date) {
+async function seedQuoteFor(customerId: string, createdAt: Date) {
   const [quote] = await db
     .insert(quotes)
     .values({
       quoteNumber: `T${randomUUID().slice(0, 10)}`,
-      customerId,
+      customerAccountId: customerId,
       status: "RFQ",
       createdAt,
       updatedAt: createdAt,
@@ -87,12 +105,12 @@ async function seedQuoteFor(customerId: number, createdAt: Date) {
   return quote.id;
 }
 
-async function seedOrderFor(customerId: number, createdAt: Date) {
+async function seedOrderFor(customerId: string, createdAt: Date) {
   const [order] = await db
     .insert(orders)
     .values({
       orderNumber: `T${randomUUID().slice(0, 10)}`,
-      customerId,
+      customerAccountId: customerId,
       createdAt,
       updatedAt: createdAt,
     })
@@ -151,17 +169,27 @@ async function submitRfq(contact: Contact) {
   }
   createdQuoteIds.push(outcome.quoteId);
   const [quote] = await db
-    .select({ id: quotes.id, customerId: quotes.customerId })
+    .select({ id: quotes.id, customerId: quotes.customerAccountId })
     .from(quotes)
     .where(eq(quotes.id, outcome.quoteId));
-  return { quoteId: quote.id, customerId: quote.customerId };
+  if (quote.customerId) {
+    const [account] = await db
+      .select({ organizationId: accounts.organizationId })
+      .from(accounts)
+      .where(eq(accounts.id, quote.customerId));
+    if (account) createdOrganizationIds.push(account.organizationId);
+  }
+  return { quoteId: quote.id, customerId: quote.customerId! };
 }
 
+/** Active customer accounts whose Organization lists a Contact with this primary email. */
 async function customersWithEmail(email: string) {
-  return db
-    .select({ id: customers.id })
-    .from(customers)
-    .where(eq(sql`lower(trim(${customers.email}))`, email));
+  return db.execute(sql`
+    select distinct a.id from accounts a
+    join organization_contacts oc on oc.organization_id = a.organization_id and not oc.is_archived
+    join contacts c on c.id = oc.contact_id
+    where a.type = 'customer' and not a.is_archived and lower(trim(c.email)) = ${email}
+  `) as unknown as Promise<Array<{ id: string }>>;
 }
 
 async function reviewItemsFor(quoteId: number) {
@@ -180,7 +208,6 @@ describe("RFQ intake Customer resolution", () => {
 
   afterAll(async () => {
     const quoteIds = [...new Set(createdQuoteIds)];
-    const customerIds = [...new Set(createdCustomerIds)];
     if (quoteIds.length > 0) {
       for (const quoteId of quoteIds) {
         const id = String(quoteId);
@@ -200,12 +227,10 @@ describe("RFQ intake Customer resolution", () => {
     if (quoteIds.length > 0) {
       await db.delete(quotes).where(inArray(quotes.id, quoteIds));
     }
-    if (customerIds.length > 0) {
-      await db.execute(sql`delete from event_logs where entity_type = 'customer' and entity_id in ${customerIds.map(String)}`);
-      await db.execute(sql`delete from orders where customer_id in ${customerIds}`);
-      await db.execute(sql`delete from customer_email_aliases where customer_id in ${customerIds}`);
-      await db.update(customers).set({ mergedIntoCustomerId: null }).where(inArray(customers.id, customerIds));
-      await db.delete(customers).where(inArray(customers.id, customerIds));
+    const orgIds = [...new Set(createdOrganizationIds)];
+    if (orgIds.length > 0) {
+      await db.execute(sql`delete from orders where customer_account_id in (select id from accounts where organization_id in ${orgIds})`);
+      await deleteTestOrganizations(orgIds);
     }
     if (createdUserIds.length > 0) {
       await db.delete(users).where(inArray(users.id, createdUserIds));
@@ -248,17 +273,13 @@ describe("RFQ intake Customer resolution", () => {
     });
 
     const { customerId } = await submitRfq({ email });
-    createdCustomerIds.push(customerId);
 
     expect(customerId).not.toBe(archived.id);
-    const [fresh] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, customerId));
+    const fresh = await loadAccountRecord("customer", customerId);
     expect(fresh).toMatchObject({ email, isArchived: false });
   });
 
-  it("creates a new Customer with its email as an alias when nothing matches", async () => {
+  it("creates a business Organization, its Contact and a customer account when nothing matches", async () => {
     const email = emailFor("brand-new");
 
     const { customerId } = await submitRfq({
@@ -268,31 +289,40 @@ describe("RFQ intake Customer resolution", () => {
       company: "Navy Yard",
       phone: "5550100",
     });
-    createdCustomerIds.push(customerId);
 
-    const [created] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, customerId));
+    const created = await loadAccountRecord("customer", customerId);
     expect(created).toMatchObject({
-      displayName: "Navy Yard - Grace Hopper",
+      kind: "business",
+      displayName: "Navy Yard",
       companyName: "Navy Yard",
       contactName: "Grace Hopper",
       email,
       phone: "+15550100",
     });
     const aliases = await db
-      .select({ email: customerEmailAliases.email })
-      .from(customerEmailAliases)
-      .where(eq(customerEmailAliases.customerId, customerId));
+      .select({ email: contactEmailAliases.email })
+      .from(contactEmailAliases)
+      .where(eq(contactEmailAliases.contactId, created!.primaryContactId!));
     expect(aliases).toEqual([{ email }]);
   });
 
-  it("fills only the blank company, contact name and phone of a single match", async () => {
+  it("creates an individual Organization when the form gave no company", async () => {
+    const email = emailFor("individual-new");
+    const { customerId } = await submitRfq({ email, firstName: "Ada", lastName: "Lovelace", company: null });
+    expect(await loadAccountRecord("customer", customerId)).toMatchObject({
+      kind: "individual",
+      displayName: "Ada Lovelace",
+      companyName: null,
+      contactName: "Ada Lovelace",
+    });
+  });
+
+  it("fills only the blank name and phone of the matched Contact and never changes the Organization", async () => {
     const email = emailFor("single-fill");
     const existing = await seedCustomer({
       email,
-      companyName: null,
+      name: "Existing Person",
+      kind: "individual",
       contactName: "Existing Contact",
       phone: null,
     });
@@ -306,12 +336,10 @@ describe("RFQ intake Customer resolution", () => {
     });
 
     expect(customerId).toBe(existing.id);
-    const [after] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, existing.id));
+    const after = await loadAccountRecord("customer", existing.id);
     expect(after).toMatchObject({
-      companyName: "Acme Corp",
+      kind: "individual",
+      displayName: "Existing Person",
       contactName: "Existing Contact",
       phone: "+15550199",
     });
@@ -321,7 +349,8 @@ describe("RFQ intake Customer resolution", () => {
     const email = emailFor("single-keep");
     const existing = await seedCustomer({
       email,
-      companyName: "Original Co",
+      name: "Original Co",
+      kind: "business",
       contactName: "Original Contact",
       phone: "+15550000",
     });
@@ -334,10 +363,7 @@ describe("RFQ intake Customer resolution", () => {
       phone: "5550199",
     });
 
-    const [after] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, existing.id));
+    const after = await loadAccountRecord("customer", existing.id);
     expect(after).toMatchObject({
       companyName: "Original Co",
       contactName: "Original Contact",
@@ -363,7 +389,7 @@ describe("RFQ intake Customer resolution", () => {
       expect(items[0].status).toBe("active");
       expect(items[0].metadata).toMatchObject({
         quoteId,
-        candidateCustomerIds: [quiet.id, withOldQuote.id, withRecentOrder.id],
+        candidateCustomerIds: [quiet.id, withOldQuote.id, withRecentOrder.id].sort(),
         attachedCustomerId: withRecentOrder.id,
       });
       expect(items[0].title).toContain("Review Customer match");
@@ -397,7 +423,7 @@ describe("RFQ intake Customer resolution", () => {
       expect(customerId).toBe(byAlias.id);
       const [item] = await reviewItemsFor(quoteId);
       expect(item.metadata).toMatchObject({
-        candidateCustomerIds: [byPrimary.id, byAlias.id],
+        candidateCustomerIds: [byPrimary.id, byAlias.id].sort(),
       });
     });
   });
@@ -411,20 +437,51 @@ describe("RFQ intake Customer resolution", () => {
       id: mergeActorId,
       email: `${mergeActorId}@example.invalid`,
       role: "Admin",
-    });
+    }).onConflictDoNothing();
     createdUserIds.push(mergeActorId);
 
-    await mergeCustomers(
-      { survivorId: survivor.id, mergedId: mergedAway.id },
-      { userId: mergeActorId, email: `${mergeActorId}@example.invalid`, role: "Admin" },
+    await mergeOrganizations(
+      { survivorId: survivor.organizationId, mergedId: mergedAway.organizationId },
+      mergeActor,
     );
-    const { customerId } = await submitRfq({ email: mergedEmail });
+    const { customerId, quoteId } = await submitRfq({ email: mergedEmail });
 
+    // The merged-away person is now a Contact of the survivor.
     expect(customerId).toBe(survivor.id);
-    expect(
-      (await db.select({ isArchived: customers.isArchived }).from(customers).where(eq(customers.id, mergedAway.id)))[0]
-        .isArchived,
-    ).toBe(true);
+    expect(await reviewItemsFor(quoteId)).toHaveLength(0);
+    expect((await loadAccountRecord("customer", mergedAway.id))?.isArchived).toBe(true);
+    const contacts = await listOrganizationContacts(survivor.organizationId);
+    expect(contacts.map((contact) => contact.email).sort()).toEqual([mergedEmail, survivorEmail].sort());
+  });
+
+  it("raises a review when one Contact belongs to two customer Organizations", async () => {
+    const email = emailFor("shared-contact");
+    const first = await seedCustomer({ email, name: `First ${tag}`, kind: "business" });
+    const second = await seedCustomer({ email: null, name: `Second ${tag}`, kind: "business" });
+    await db.insert(organizationContacts).values({
+      organizationId: second.organizationId,
+      contactId: first.primaryContactId!,
+      isPrimary: true,
+    });
+    await seedQuoteFor(second.id, new Date("2026-05-01T00:00:00Z"));
+
+    const { quoteId, customerId } = await submitRfq({ email });
+
+    expect(customerId).toBe(second.id);
+    const [item] = await reviewItemsFor(quoteId);
+    expect(item.metadata).toMatchObject({ candidateCustomerIds: [first.id, second.id].sort() });
+  });
+
+  it("adds a customer account to a Vendor's Organization when its Contact sends an RFQ", async () => {
+    const email = emailFor("vendor-buys");
+    const vendor = await createTestVendor({ name: `Shop ${tag}`, kind: "business", contactName: "Sam", email });
+    createdOrganizationIds.push(vendor.organizationId);
+
+    const { customerId } = await submitRfq({ email });
+
+    const customer = await loadAccountRecord("customer", customerId);
+    expect(customer?.organizationId).toBe(vendor.organizationId);
+    expect(customer?.contactName).toBe("Sam");
   });
 
   it("raises no review item when exactly one Customer matches", async () => {

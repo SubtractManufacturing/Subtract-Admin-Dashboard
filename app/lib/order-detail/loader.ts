@@ -97,8 +97,8 @@ export type OrderLoaderDeps = {
 /** An Order can go on the job board only while it has no shop. */
 export const isJobBoardEligible = (order: {
   status: string;
-  vendorId: number | null;
-}) => order.status === "Pending" && order.vendorId == null;
+  vendorAccountId: string | null;
+}) => order.status === "Pending" && order.vendorAccountId == null;
 
 export async function loadOrderDetail(
   input: { orderNumber: string | undefined } & OrderAuth,
@@ -115,8 +115,8 @@ export async function loadOrderDetail(
   }
 
   const [customer, vendor, vendors, notes, lineItems] = await Promise.all([
-    order.customerId ? deps.directory.customer(order.customerId) : null,
-    order.vendorId ? deps.directory.vendor(order.vendorId) : null,
+    order.customerAccountId ? deps.directory.customer(order.customerAccountId) : null,
+    order.vendorAccountId ? deps.directory.vendor(order.vendorAccountId) : null,
     deps.directory.vendors(),
     deps.notes("order", order.id.toString()),
     deps.orders.lineItems(order.id),
@@ -138,7 +138,7 @@ export async function loadOrderDetail(
   );
 
   const [customerParts, trackingNumbers] = await Promise.all([
-    order.customerId ? deps.parts.forCustomer(order.customerId) : [],
+    order.customerAccountId ? deps.parts.forCustomer(order.customerAccountId) : [],
     deps.orders.trackingNumbers(order.id),
   ]);
   const parts = await deps.parts.hydrateThumbnails(customerParts);

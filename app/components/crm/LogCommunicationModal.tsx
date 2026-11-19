@@ -10,17 +10,25 @@ import {
 } from "~/lib/crm-constants";
 
 type CustomerOption = {
-  id: number;
+  id: string;
   displayName: string;
   email?: string | null;
+};
+
+type ContactOption = {
+  id: string;
+  name: string | null;
+  email: string | null;
 };
 
 type Props = {
   isOpen: boolean;
   onClose: () => void;
   customers: CustomerOption[];
-  defaultCustomerId?: number | null;
+  defaultCustomerId?: string | null;
   lockCustomer?: boolean;
+  /** Contacts of the locked Customer; lets staff say who they spoke to. */
+  contacts?: ContactOption[];
 };
 
 export default function LogCommunicationModal({
@@ -29,12 +37,14 @@ export default function LogCommunicationModal({
   customers,
   defaultCustomerId = null,
   lockCustomer = false,
+  contacts = [],
 }: Props) {
   const fetcher = useFetcher<{ error?: string; success?: boolean }>();
   const [customerId, setCustomerId] = useState(
     defaultCustomerId ? String(defaultCustomerId) : "",
   );
   const [method, setMethod] = useState<CommunicationMethod | "">("");
+  const [contactId, setContactId] = useState("");
   const [note, setNote] = useState("");
   // Remix keeps fetcher.data after success; only close for a submit in this open session.
   const submittedThisOpenRef = useRef(false);
@@ -43,6 +53,7 @@ export default function LogCommunicationModal({
     if (!isOpen) return;
     setCustomerId(defaultCustomerId ? String(defaultCustomerId) : "");
     setMethod("");
+    setContactId("");
     setNote("");
   }, [isOpen, defaultCustomerId]);
 
@@ -84,6 +95,7 @@ export default function LogCommunicationModal({
       >
         <input type="hidden" name="intent" value="create" />
         <input type="hidden" name="customerId" value={customerId} />
+        <input type="hidden" name="contactId" value={lockCustomer ? contactId : ""} />
 
         {lockCustomer ? (
           <div>
@@ -101,7 +113,7 @@ export default function LogCommunicationModal({
             value={customerId}
             onChange={setCustomerId}
             options={customers.map((customer) => ({
-              value: customer.id.toString(),
+              value: customer.id,
               label: customer.displayName,
               secondaryLabel: customer.email || undefined,
             }))}
@@ -109,6 +121,30 @@ export default function LogCommunicationModal({
             required
             emptyMessage="No customers found"
           />
+        )}
+
+        {lockCustomer && contacts.length > 1 && (
+          <div>
+            <label
+              htmlFor="crm-contact"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+            >
+              Contact (optional)
+            </label>
+            <select
+              id="crm-contact"
+              value={contactId}
+              onChange={(event) => setContactId(event.target.value)}
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            >
+              <option value="">Not recorded</option>
+              {contacts.map((contact) => (
+                <option key={contact.id} value={contact.id}>
+                  {contact.name || contact.email || "Unnamed contact"}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
 
         <div>

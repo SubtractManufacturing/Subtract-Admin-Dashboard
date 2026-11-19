@@ -21,7 +21,8 @@ interface CreatePaymentLinkParams {
   quoteId: number;
   quoteNumber: string;
   totalDollars: string;
-  customerId: number;
+  /** Customer account uuid (ADR-0013); stored in the payment link metadata. */
+  customerId: string | null;
 }
 
 interface PaymentLinkResult {
@@ -62,7 +63,7 @@ export async function createQuotePaymentLink(
     metadata: {
       quoteId: params.quoteId.toString(),
       quoteNumber: params.quoteNumber,
-      customerId: params.customerId.toString(),
+      ...(params.customerId ? { customerId: params.customerId } : {}),
     },
   };
 

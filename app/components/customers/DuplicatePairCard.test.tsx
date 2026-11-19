@@ -4,16 +4,21 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CustomerSummaryView, DuplicatePairView } from "~/lib/customer-merge-view";
+import { testUuid } from "~/test/ids";
 import { DuplicatePairCard } from "./DuplicatePairCard";
 
 const customer = (
-  id: number,
+  n: number,
   displayName: string,
   overrides: Partial<CustomerSummaryView> = {},
 ): CustomerSummaryView => ({
-  id,
+  id: testUuid(n),
+  kind: "business",
   displayName,
   companyName: null,
+  customerAccountId: testUuid(100 + n),
+  vendorAccountId: null,
+  contacts: [],
   contactName: null,
   email: `${displayName.toLowerCase()}@example.com`,
   phone: null,
@@ -46,7 +51,7 @@ describe("DuplicatePairCard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Review merging Quiet into Busy" }));
 
-    expect(onReview).toHaveBeenCalledWith(2, 1);
+    expect(onReview).toHaveBeenCalledWith(testUuid(2), testUuid(1));
   });
 
   it("lets staff swap which Customer is kept before reviewing", () => {
@@ -56,7 +61,7 @@ describe("DuplicatePairCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Keep Quiet instead" }));
     fireEvent.click(screen.getByRole("button", { name: "Review merging Busy into Quiet" }));
 
-    expect(onReview).toHaveBeenCalledWith(1, 2);
+    expect(onReview).toHaveBeenCalledWith(testUuid(1), testUuid(2));
   });
 
   it("lists every signal the pair shares", () => {
@@ -74,5 +79,17 @@ describe("DuplicatePairCard", () => {
 
     expect(screen.getByText("Same company: acme")).toBeVisible();
     expect(screen.getByText("Same phone: 5551234")).toBeVisible();
+  });
+
+  it("labels the shared email domain signal and links each side to its page", () => {
+    render(
+      <DuplicatePairCard
+        pair={pair({ reasons: [{ kind: "domain", value: "acme.com" }] })}
+        onReview={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Same email domain: acme.com")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Quiet" })).toHaveAttribute("href", `/customers/${testUuid(101)}`);
   });
 });

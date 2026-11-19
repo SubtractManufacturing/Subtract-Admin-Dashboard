@@ -3,12 +3,27 @@ import { useLoaderData, Link, useFetcher, useRevalidator } from "@remix-run/reac
 import { useState, useEffect, type ReactElement } from "react";
 import { Eye } from "lucide-react";
 import { getCustomer, updateCustomer, archiveCustomer, getCustomerOrders, getCustomerQuotes, getCustomerStats, getCustomerWithAttachments, type CustomerEventContext, type CustomerQuote } from "~/lib/customers";
-import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToCustomer, unlinkAttachmentFromCustomer, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
-import type { Vendor, Part, Customer } from "~/lib/db/schema";
+import {
+  accountIdForLegacyId,
+  listOrganizationAddresses,
+  listOrganizationContacts,
+  resolveFinalAccountId,
+  siblingAccounts,
+} from "~/lib/organizations/accounts.server";
+import { handleOrganizationIntent, isOrganizationIntent } from "~/lib/organizations/page-actions.server";
+import { profileInputFromForm } from "~/lib/organizations/profile";
+import { isUuid } from "~/lib/organizations/types";
+import { authorize } from "~/lib/authorization/authorize";
+import { findDuplicateContacts } from "~/lib/customer-merge.server";
+import { createVendor } from "~/lib/vendors";
+import { ContactsSection } from "~/components/organizations/ContactsSection";
+import { AddressesSection } from "~/components/organizations/AddressesSection";
+import { authorizeAttachmentDeletion, getAttachment, createAttachment, deleteAttachment, deleteAttachmentByS3Key, linkAttachmentToAccount, unlinkAttachmentFromAccount, isReferencedByLegacyLinks, linkAttachmentToPart, type AttachmentEventContext } from "~/lib/attachments";
+import type { Part } from "~/lib/db/schema";
+import type { Customer, Vendor } from "~/lib/organizations/types";
 import { getNotes, createNote, updateNote, archiveNote, type NoteEventContext } from "~/lib/notes";
 import { getPartsByCustomerId, createPart, updatePart, archivePart, getPart, type PartInput, type PartEventContext } from "~/lib/parts";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
-import { resolveFinalCustomerId } from "~/lib/customer-match-review.server";
 import { tryPartAssetAdminAction } from "~/lib/part-asset-admin.server";
 import { canUserUploadMesh, canUserUploadCadRevision, isFeatureEnabled, FEATURE_FLAGS } from "~/lib/featureFlags";
 import { getBananaModelUrls } from "~/lib/developerSettings";
@@ -16,7 +31,7 @@ import { uploadFile, generateFileKey, deleteFile, getDownloadUrl, getDownloadUrl
 import { formatAddress, extractBillingAddress, extractShippingAddress } from "~/lib/address-utils";
 import Breadcrumbs from "~/components/Breadcrumbs";
 import Button from "~/components/shared/Button";
-import { InputField as FormField, PhoneInputField } from "~/components/shared/FormField";
+import { InputField as FormField, PhoneInputField, SelectField } from "~/components/shared/FormField";
 import { Notes } from "~/components/shared/Notes";
 import { AttachmentsSection } from "~/components/shared/AttachmentsSection";
 import ToggleSlider from "~/components/shared/ToggleSlider";
@@ -48,22 +63,32 @@ type CustomerOrder = {
 };
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { user, userDetails, headers } = await requireAuth(request);
+  const { user, userDetails, actor, headers } = await requireAuth(request);
   
   const customerId = params.customerId;
   if (!customerId) {
     throw new Response("Customer ID is required", { status: 400 });
   }
 
-  const customer = await getCustomerWithAttachments(parseInt(customerId));
+  // Links from before ADR-0013 used the integer Customer id.
+  if (/^\d+$/.test(customerId)) {
+    const accountId = await accountIdForLegacyId("customer", Number(customerId));
+    if (accountId) throw redirect(`/customers/${accountId}`, { status: 301, headers });
+    throw new Response("Customer not found", { status: 404 });
+  }
+  if (!isUuid(customerId)) {
+    throw new Response("Customer not found", { status: 404 });
+  }
+
+  const customer = await getCustomerWithAttachments(customerId);
   if (!customer) {
     throw new Response("Customer not found", { status: 404 });
   }
 
   // Old links and bookmarks to a merged-away Customer lead to its survivor.
-  if (customer.isArchived && customer.mergedIntoCustomerId) {
-    const survivorId = await resolveFinalCustomerId(customer.id);
-    if (survivorId) {
+  if (customer.isArchived && customer.mergedIntoOrganizationId) {
+    const survivorId = await resolveFinalAccountId(customer.id);
+    if (survivorId && survivorId !== customer.id) {
       throw redirect(
         `/customers/${survivorId}?mergedFrom=${encodeURIComponent(customer.displayName)}`,
         { headers },
@@ -71,19 +96,27 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     }
   }
   const mergedFrom = new URL(request.url).searchParams.get("mergedFrom");
+  const canMerge = authorize(actor, "organization.merge").allowed;
+  const [contacts, addresses, siblings, duplicateContacts] = await Promise.all([
+    listOrganizationContacts(customer.organizationId),
+    listOrganizationAddresses(customer.organizationId),
+    siblingAccounts(customer.organizationId),
+    canMerge ? findDuplicateContacts(customer.organizationId) : Promise.resolve([]),
+  ]);
+  const vendorAccount = siblings.find((account) => account.type === "vendor" && !account.isArchived) ?? null;
 
   // Get customer data in parallel
   const [orders, quotes, stats, notes, rawParts, canUploadMesh, events, canRevise, bananaEnabled, communicationsResult] = await Promise.all([
     getCustomerOrders(customer.id),
     getCustomerQuotes(customer.id),
     getCustomerStats(customer.id),
-    getNotes("customer", customer.id.toString()),
+    getNotes("customer", customer.id),
     getPartsByCustomerId(customer.id),
     canUserUploadMesh(userDetails.role),
-    getEventsByEntity("customer", customer.id.toString(), 10),
+    getEventsByEntity("customer", customer.id, 10),
     canUserUploadCadRevision(userDetails?.role),
     isFeatureEnabled(FEATURE_FLAGS.BANANA_FOR_SCALE),
-    listCustomerCommunications({ customerId: customer.id, pageSize: 5 }),
+    listCustomerCommunications({ organizationId: customer.organizationId, pageSize: 5 }),
   ]);
 
   // Get banana model URL if feature is enabled
@@ -182,6 +215,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       bananaModelUrl,
       communications: communicationsResult.items,
       communicationsTotalCount: communicationsResult.totalCount,
+      contacts,
+      addresses,
+      vendorAccountId: vendorAccount?.id ?? null,
+      duplicateContacts,
+      canMerge,
     }),
     headers
   );
@@ -245,7 +283,7 @@ async function handlePartsAction(
       };
 
       const part = await createPart({
-        customerId: customer.id,
+        customerAccountId: customer.id,
         partName,
         material: material || null,
         tolerance: tolerance || null,
@@ -447,7 +485,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Customer ID is required" }, { status: 400 });
   }
 
-  const customer = await getCustomer(parseInt(customerId));
+  const customer = await getCustomer(customerId);
   if (!customer) {
     return json({ error: "Customer not found" }, { status: 404 });
   }
@@ -510,8 +548,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         source: "user_upload",
       }, eventContext);
 
-      // Link to customer
-      await linkAttachmentToCustomer(customer.id, attachment.id, eventContext);
+      // Files belong to the Organization (ADR-0013).
+      await linkAttachmentToAccount(customer, attachment.id, eventContext);
 
       if (formData.get("_noRedirect")) {
         return json({ success: true, attachmentId: attachment.id });
@@ -539,62 +577,35 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return partAssetAdminResponse;
     }
 
+    if (isOrganizationIntent(intent)) {
+      return withAuthHeaders(
+        await handleOrganizationIntent(intent, formData, customer, {
+          userId: user?.id,
+          userEmail: user?.email || userDetails?.name || undefined,
+        }),
+        headers,
+      );
+    }
+
     switch (intent) {
+      case "addVendorAccount": {
+        // The same Organization also acts as a Vendor (ADR-0013).
+        const vendor = await createVendor(
+          {},
+          { userId: user?.id, userEmail: user?.email || userDetails?.name || undefined },
+          { organizationId: customer.organizationId },
+        );
+        return redirect(`/vendors/${vendor.id}`);
+      }
+
       case "updateCustomer": {
-        const displayName = formData.get("displayName") as string;
-        const companyName = formData.get("companyName") as string;
-        const contactName = formData.get("contactName") as string;
-        const title = formData.get("title") as string;
-        const email = formData.get("email") as string;
-        const phone = formData.get("phone") as string;
-        const isPrimaryContact = formData.get("isPrimaryContact") === "true";
-
-        // Billing address
-        const billingAddressLine1 = formData.get("billingAddressLine1") as string;
-        const billingAddressLine2 = formData.get("billingAddressLine2") as string;
-        const billingCity = formData.get("billingCity") as string;
-        const billingState = formData.get("billingState") as string;
-        const billingPostalCode = formData.get("billingPostalCode") as string;
-        const billingCountry = formData.get("billingCountry") as string;
-
-        // Shipping address
-        const shippingAddressLine1 = formData.get("shippingAddressLine1") as string;
-        const shippingAddressLine2 = formData.get("shippingAddressLine2") as string;
-        const shippingCity = formData.get("shippingCity") as string;
-        const shippingState = formData.get("shippingState") as string;
-        const shippingPostalCode = formData.get("shippingPostalCode") as string;
-        const shippingCountry = formData.get("shippingCountry") as string;
-
-        // Business terms
-        const paymentTerms = formData.get("paymentTerms") as string;
-
         const eventContext: CustomerEventContext = {
           userId: user?.id,
           userEmail: user?.email || userDetails?.name || undefined,
         };
 
-        const updated = await updateCustomer(customer.id, {
-          displayName,
-          companyName: companyName || null,
-          contactName: contactName || null,
-          title: title || null,
-          email: email || null,
-          phone: phone || null,
-          isPrimaryContact,
-          billingAddressLine1: billingAddressLine1 || null,
-          billingAddressLine2: billingAddressLine2 || null,
-          billingCity: billingCity || null,
-          billingState: billingState || null,
-          billingPostalCode: billingPostalCode || null,
-          billingCountry: billingCountry || "US",
-          shippingAddressLine1: shippingAddressLine1 || null,
-          shippingAddressLine2: shippingAddressLine2 || null,
-          shippingCity: shippingCity || null,
-          shippingState: shippingState || null,
-          shippingPostalCode: shippingPostalCode || null,
-          shippingCountry: shippingCountry || "US",
-          paymentTerms: paymentTerms || null,
-        }, eventContext);
+        // Only the fields the form posted change (ADR-0013 partial writes).
+        const updated = await updateCustomer(customer.id, profileInputFromForm(formData), eventContext);
 
         return withAuthHeaders(json({ customer: updated }), headers);
       }
@@ -610,7 +621,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }
 
       case "getNotes": {
-        const notes = await getNotes("customer", customer.id.toString());
+        const notes = await getNotes("customer", customer.id);
         return withAuthHeaders(json({ notes }), headers);
       }
 
@@ -629,7 +640,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
         const note = await createNote({
           entityType: "customer",
-          entityId: customer.id.toString(),
+          entityId: customer.id,
           content,
           createdBy,
         }, noteEventContext);
@@ -691,8 +702,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
         };
         const authorizedAttachment = await authorizeAttachmentDeletion({
           attachmentId,
-          entityType: "customer",
-          entityId: customer.id,
+          entityType: "organization",
+          entityId: customer.organizationId,
           eventContext,
         });
         if (!authorizedAttachment) {
@@ -700,13 +711,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
         }
 
         // Unlink from customer first
-        await unlinkAttachmentFromCustomer(customer.id, attachmentId, eventContext);
+        await unlinkAttachmentFromAccount(customer, attachmentId, eventContext);
 
-        // Delete from S3
-        await deleteFile(authorizedAttachment.s3Key);
-
-        // Delete database record
-        await deleteAttachment(attachmentId, eventContext);
+        // Files the legacy link tables still reference stay until deployment 2 (ADR-0013).
+        if (!(await isReferencedByLegacyLinks(attachmentId))) {
+          await deleteFile(authorizedAttachment.s3Key);
+          await deleteAttachment(attachmentId, eventContext);
+        }
 
         // Return a redirect to refresh the page
         return redirect(`/customers/${customerId}`);
@@ -761,7 +772,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 }
 
 export default function CustomerDetails() {
-  const { customer, mergedFrom, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl, communications, communicationsTotalCount } = useLoaderData<typeof loader>();
+  const { customer, mergedFrom, orders, quotes, stats, notes, parts, user, userDetails, canUploadMesh, events, canRevise, bananaEnabled, bananaModelUrl, communications, communicationsTotalCount, contacts, addresses, vendorAccountId, duplicateContacts, canMerge } = useLoaderData<typeof loader>();
   const partAssetAdminAction = usePartAssetAdminAccess()
     ? `/customers/${customer.id}`
     : undefined;
@@ -857,13 +868,10 @@ export default function CustomerDetails() {
     // Submit the update
     const formData = new FormData();
     formData.append("intent", "updateCustomer");
-    formData.append("displayName", customer.displayName);
-    formData.append("companyName", customer.companyName || '');
     formData.append("contactName", customer.contactName || '');
     formData.append("title", customer.title || '');
     formData.append("email", customer.email || '');
     formData.append("phone", customer.phone || '');
-    formData.append("isPrimaryContact", customer.isPrimaryContact ? 'true' : 'false');
 
     // Billing address
     formData.append("billingAddressLine1", customer.billingAddressLine1 || '');
@@ -887,13 +895,10 @@ export default function CustomerDetails() {
     // Copy shipping address fields to billing
     const formData = new FormData();
     formData.append("intent", "updateCustomer");
-    formData.append("displayName", customer.displayName);
-    formData.append("companyName", customer.companyName || '');
     formData.append("contactName", customer.contactName || '');
     formData.append("title", customer.title || '');
     formData.append("email", customer.email || '');
     formData.append("phone", customer.phone || '');
-    formData.append("isPrimaryContact", customer.isPrimaryContact ? 'true' : 'false');
     formData.append("paymentTerms", customer.paymentTerms || '');
 
     // Billing address (copied from shipping)
@@ -1180,7 +1185,7 @@ export default function CustomerDetails() {
             {/* Company Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Company Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Organization</h3>
                 {!isEditingInfo && (
                   <Button size="sm" onClick={() => setIsEditingInfo(true)}>
                     Edit
@@ -1191,29 +1196,28 @@ export default function CustomerDetails() {
                 {isEditingInfo ? (
                   <updateFetcher.Form onSubmit={handleSaveInfo} data-editing="info">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={customer.displayName} />
-                      <input type="hidden" name="email" value={customer.email || ""} />
-                      <input type="hidden" name="phone" value={customer.phone || ""} />
-                      <input type="hidden" name="title" value={customer.title || ""} />
-                      <input type="hidden" name="isPrimaryContact" value={customer.isPrimaryContact ? "true" : "false"} />
-                      <input type="hidden" name="billingAddressLine1" value={customer.billingAddressLine1 || ""} />
-                      <input type="hidden" name="billingAddressLine2" value={customer.billingAddressLine2 || ""} />
-                      <input type="hidden" name="billingCity" value={customer.billingCity || ""} />
-                      <input type="hidden" name="billingState" value={customer.billingState || ""} />
-                      <input type="hidden" name="billingPostalCode" value={customer.billingPostalCode || ""} />
-                      <input type="hidden" name="billingCountry" value={customer.billingCountry || "US"} />
-                      <input type="hidden" name="shippingAddressLine1" value={customer.shippingAddressLine1 || ""} />
-                      <input type="hidden" name="shippingAddressLine2" value={customer.shippingAddressLine2 || ""} />
-                      <input type="hidden" name="shippingCity" value={customer.shippingCity || ""} />
-                      <input type="hidden" name="shippingState" value={customer.shippingState || ""} />
-                      <input type="hidden" name="shippingPostalCode" value={customer.shippingPostalCode || ""} />
-                      <input type="hidden" name="shippingCountry" value={customer.shippingCountry || "US"} />
 
                       <FormField
-                        label="Company Name"
-                        name="companyName"
-                        defaultValue={customer.companyName || ""}
+                        label="Name"
+                        name="name"
+                        defaultValue={customer.name}
                         placeholder="Acme Manufacturing"
+                        required
+                      />
+                      <SelectField label="Type" name="kind" defaultValue={customer.kind}>
+                        <option value="business">Business</option>
+                        <option value="individual">Individual</option>
+                      </SelectField>
+                      <FormField
+                        label="Website"
+                        name="website"
+                        defaultValue={customer.website || ""}
+                        placeholder="acme.com"
+                      />
+                      <PhoneInputField
+                        label="Main phone"
+                        name="organizationPhone"
+                        defaultValue={customer.organizationPhone || ""}
                       />
                       <FormField
                         label="Payment Terms"
@@ -1233,13 +1237,21 @@ export default function CustomerDetails() {
                 ) : (
                   <div className="space-y-4">
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Company Name</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.companyName || customer.displayName}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Name</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.name}</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Customer ID</p>
-                      <p className="text-lg text-gray-900 dark:text-gray-100">CUST-{customer.id.toString().padStart(5, '0')}</p>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Type</p>
+                      <p className="text-lg text-gray-900 dark:text-gray-100">{customer.kind === "business" ? "Business" : "Individual"}</p>
                     </div>
+                    {(customer.website || customer.organizationPhone) && (
+                      <div>
+                        <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Website / main phone</p>
+                        <p className="text-lg text-gray-900 dark:text-gray-100">
+                          {[customer.website, customer.organizationPhone].filter(Boolean).join(" · ")}
+                        </p>
+                      </div>
+                    )}
                     <div>
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Payment Terms</p>
                       <p className="text-lg text-gray-900 dark:text-gray-100">{customer.paymentTerms || "--"}</p>
@@ -1247,6 +1259,21 @@ export default function CustomerDetails() {
                     <div>
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Status</p>
                       <p className="text-lg text-gray-900 dark:text-gray-100">{customer.isArchived ? 'Inactive' : 'Active'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Vendor</p>
+                      {vendorAccountId ? (
+                        <Link to={`/vendors/${vendorAccountId}`} className="text-blue-600 hover:underline dark:text-blue-400">
+                          Also a Vendor: view Vendor page
+                        </Link>
+                      ) : (
+                        <updateFetcher.Form method="post">
+                          <input type="hidden" name="intent" value="addVendorAccount" />
+                          <Button type="submit" size="sm" variant="secondary">
+                            Make this a Vendor too
+                          </Button>
+                        </updateFetcher.Form>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1256,7 +1283,7 @@ export default function CustomerDetails() {
             {/* Contact Information */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Contact Information</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Primary Contact</h3>
                 {!isEditingContact && (
                   <Button size="sm" onClick={() => setIsEditingContact(true)}>
                     Edit
@@ -1267,21 +1294,6 @@ export default function CustomerDetails() {
                 {isEditingContact ? (
                   <updateFetcher.Form onSubmit={handleSaveContact} data-editing="contact">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={customer.displayName} />
-                      <input type="hidden" name="companyName" value={customer.companyName || ""} />
-                      <input type="hidden" name="paymentTerms" value={customer.paymentTerms || ""} />
-                      <input type="hidden" name="billingAddressLine1" value={customer.billingAddressLine1 || ""} />
-                      <input type="hidden" name="billingAddressLine2" value={customer.billingAddressLine2 || ""} />
-                      <input type="hidden" name="billingCity" value={customer.billingCity || ""} />
-                      <input type="hidden" name="billingState" value={customer.billingState || ""} />
-                      <input type="hidden" name="billingPostalCode" value={customer.billingPostalCode || ""} />
-                      <input type="hidden" name="billingCountry" value={customer.billingCountry || "US"} />
-                      <input type="hidden" name="shippingAddressLine1" value={customer.shippingAddressLine1 || ""} />
-                      <input type="hidden" name="shippingAddressLine2" value={customer.shippingAddressLine2 || ""} />
-                      <input type="hidden" name="shippingCity" value={customer.shippingCity || ""} />
-                      <input type="hidden" name="shippingState" value={customer.shippingState || ""} />
-                      <input type="hidden" name="shippingPostalCode" value={customer.shippingPostalCode || ""} />
-                      <input type="hidden" name="shippingCountry" value={customer.shippingCountry || "US"} />
 
                       <FormField
                         label="Contact Name"
@@ -1307,18 +1319,6 @@ export default function CustomerDetails() {
                         name="phone"
                         defaultValue={customer.phone || ""}
                       />
-                      <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id="isPrimaryContact"
-                          name="isPrimaryContact"
-                          defaultChecked={customer.isPrimaryContact}
-                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                        />
-                        <label htmlFor="isPrimaryContact" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
-                          Primary Contact
-                        </label>
-                      </div>
                       <div className="flex justify-between items-center">
                         <div className="flex gap-2">
                           <Button type="submit" variant="primary" size="sm">Save</Button>
@@ -1346,14 +1346,6 @@ export default function CustomerDetails() {
                       <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Phone</p>
                       <p className="text-lg text-gray-900 dark:text-gray-100">{customer.phone || "--"}</p>
                     </div>
-                    {customer.isPrimaryContact && (
-                      <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
-                        <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        <span className="text-sm font-medium">Primary Contact</span>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -1388,20 +1380,6 @@ export default function CustomerDetails() {
                 {isEditingBillingAddress ? (
                   <updateFetcher.Form onSubmit={handleSaveBillingAddress} data-editing="billing">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={customer.displayName} />
-                      <input type="hidden" name="companyName" value={customer.companyName || ""} />
-                      <input type="hidden" name="contactName" value={customer.contactName || ""} />
-                      <input type="hidden" name="title" value={customer.title || ""} />
-                      <input type="hidden" name="email" value={customer.email || ""} />
-                      <input type="hidden" name="phone" value={customer.phone || ""} />
-                      <input type="hidden" name="isPrimaryContact" value={customer.isPrimaryContact ? "true" : "false"} />
-                      <input type="hidden" name="paymentTerms" value={customer.paymentTerms || ""} />
-                      <input type="hidden" name="shippingAddressLine1" value={customer.shippingAddressLine1 || ""} />
-                      <input type="hidden" name="shippingAddressLine2" value={customer.shippingAddressLine2 || ""} />
-                      <input type="hidden" name="shippingCity" value={customer.shippingCity || ""} />
-                      <input type="hidden" name="shippingState" value={customer.shippingState || ""} />
-                      <input type="hidden" name="shippingPostalCode" value={customer.shippingPostalCode || ""} />
-                      <input type="hidden" name="shippingCountry" value={customer.shippingCountry || "US"} />
 
                       <FormField
                         label="Address Line 1"
@@ -1469,7 +1447,7 @@ export default function CustomerDetails() {
             {/* Shipping Address */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700">
               <div className="bg-gray-100 dark:bg-gray-700 px-6 py-4 border-b border-gray-200 dark:border-gray-600 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Shipping Address</h3>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Default Shipping Address</h3>
                 <div className="flex gap-2">
                   {extractBillingAddress(customer).line1 && !isEditingShippingAddress && (
                     <Button
@@ -1492,20 +1470,6 @@ export default function CustomerDetails() {
                 {isEditingShippingAddress ? (
                   <updateFetcher.Form onSubmit={handleSaveShippingAddress} data-editing="shipping">
                     <div className="space-y-4">
-                      <input type="hidden" name="displayName" value={customer.displayName} />
-                      <input type="hidden" name="companyName" value={customer.companyName || ""} />
-                      <input type="hidden" name="contactName" value={customer.contactName || ""} />
-                      <input type="hidden" name="title" value={customer.title || ""} />
-                      <input type="hidden" name="email" value={customer.email || ""} />
-                      <input type="hidden" name="phone" value={customer.phone || ""} />
-                      <input type="hidden" name="isPrimaryContact" value={customer.isPrimaryContact ? "true" : "false"} />
-                      <input type="hidden" name="paymentTerms" value={customer.paymentTerms || ""} />
-                      <input type="hidden" name="billingAddressLine1" value={customer.billingAddressLine1 || ""} />
-                      <input type="hidden" name="billingAddressLine2" value={customer.billingAddressLine2 || ""} />
-                      <input type="hidden" name="billingCity" value={customer.billingCity || ""} />
-                      <input type="hidden" name="billingState" value={customer.billingState || ""} />
-                      <input type="hidden" name="billingPostalCode" value={customer.billingPostalCode || ""} />
-                      <input type="hidden" name="billingCountry" value={customer.billingCountry || "US"} />
 
                       <FormField
                         label="Address Line 1"
@@ -1569,6 +1533,21 @@ export default function CustomerDetails() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Contacts and addresses of the Organization (ADR-0013) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <ContactsSection
+              contacts={contacts}
+              duplicatePairs={duplicateContacts}
+              canMerge={canMerge}
+              returnTo={`/customers/${customer.id}`}
+            />
+            <AddressesSection
+              addresses={addresses}
+              billingAddressId={customer.billingAddressId}
+              accountLabel="Customer"
+            />
           </div>
 
           {/* Quote History */}
@@ -1955,6 +1934,7 @@ export default function CustomerDetails() {
         ]}
         defaultCustomerId={customer.id}
         lockCustomer
+        contacts={contacts}
       />
 
       {/* Parts Modal */}

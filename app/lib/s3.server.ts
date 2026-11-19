@@ -242,7 +242,7 @@ export async function getFileInfo(key: string) {
   }
 }
 
-export function generateFileKey(orderId: number, fileName: string): string {
+export function generateFileKey(orderId: number | string, fileName: string): string {
   const timestamp = Date.now()
   const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_')
   return `orders/${orderId}/${timestamp}-${sanitizedFileName}`

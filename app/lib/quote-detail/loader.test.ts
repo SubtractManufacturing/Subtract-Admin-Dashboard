@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, expect, it, vi } from "vitest";
 import { loadQuoteDetail, type QuoteLoaderDeps } from "./loader";
 import type { PartViewPorts } from "./part-view";
@@ -24,8 +25,8 @@ function fakeDeps(quote: ReturnType<typeof makeQuote> | null = makeQuote()) {
       convertedOrder: vi.fn(async () => ({ id: 77, orderNumber: "26Z00077" })),
     },
     directory: {
-      customer: vi.fn(async () => ({ id: 3, displayName: "Acme" })),
-      vendor: vi.fn(async () => ({ id: 9, displayName: "Shop" })),
+      customer: vi.fn(async () => ({ id: testUuid(3), displayName: "Acme" })),
+      vendor: vi.fn(async () => ({ id: testUuid(9), displayName: "Shop" })),
       customers: vi.fn(async () => []),
       vendors: vi.fn(async () => []),
     },
@@ -98,17 +99,17 @@ describe("loadQuoteDetail", () => {
   });
 
   it("loads the customer and vendor only when the quote has them", async () => {
-    const without = fakeDeps(makeQuote({ customerId: null as never, vendorId: null }));
+    const without = fakeDeps(makeQuote({ customerAccountId: null, vendorAccountId: null }));
     const data = await load(without);
     expect(data.customer).toBeNull();
     expect(data.vendor).toBeNull();
     expect(without.directory.customer).not.toHaveBeenCalled();
     expect(without.directory.vendor).not.toHaveBeenCalled();
 
-    const withBoth = fakeDeps(makeQuote({ customerId: 3, vendorId: 9 }));
+    const withBoth = fakeDeps(makeQuote({ customerAccountId: testUuid(3), vendorAccountId: testUuid(9) }));
     await load(withBoth);
-    expect(withBoth.directory.customer).toHaveBeenCalledWith(3);
-    expect(withBoth.directory.vendor).toHaveBeenCalledWith(9);
+    expect(withBoth.directory.customer).toHaveBeenCalledWith(testUuid(3));
+    expect(withBoth.directory.vendor).toHaveBeenCalledWith(testUuid(9));
   });
 
   it("returns each part with its signed view fields", async () => {
@@ -149,7 +150,7 @@ describe("loadQuoteDetail", () => {
   });
 
   it("prepares the send composer from the quote when outbound email is on", async () => {
-    const deps = fakeDeps(makeQuote({ quoteNumber: "Q-0005", customerId: 3 }));
+    const deps = fakeDeps(makeQuote({ quoteNumber: "Q-0005", customerAccountId: testUuid(3) }));
     deps.flags.outboundEmail.mockResolvedValue(true);
     const data = await load(deps);
     expect(data.quoteSendEmailReady).toBe(true);

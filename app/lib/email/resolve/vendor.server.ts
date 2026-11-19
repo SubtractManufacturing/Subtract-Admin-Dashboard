@@ -1,4 +1,5 @@
 import { getVendor } from "~/lib/vendors";
+import { isUuid } from "~/lib/organizations/types";
 import type { NormalizedAddress, ResolvedTokenMap } from "./types";
 import { formatAddress } from "./formatters";
 
@@ -6,8 +7,8 @@ import { formatAddress } from "./formatters";
  * Resolve merge tokens for a standalone vendor entity send.
  */
 export async function resolveVendorTokens(entityId: string): Promise<ResolvedTokenMap> {
-  const vendorId = parseInt(entityId, 10);
-  if (!Number.isFinite(vendorId) || vendorId <= 0) {
+  const vendorId = entityId.trim();
+  if (!isUuid(vendorId)) {
     throw new Error(`Invalid vendor id: ${entityId}`);
   }
 

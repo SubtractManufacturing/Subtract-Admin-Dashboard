@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { orderConfirmationEmailHandler } from "./order-confirmation-email.server";
 import { EMAIL_CONTEXT } from "~/lib/email/email-context-registry";
@@ -17,7 +18,7 @@ vi.mock("~/lib/orders", () => ({
 }));
 
 vi.mock("~/lib/customers", () => ({
-  getCustomer: (id: number) => mockGetCustomer(id),
+  getCustomer: (id: string) => mockGetCustomer(id),
 }));
 
 const auth: EmailEnqueueAuth = {
@@ -34,7 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetOrder.mockResolvedValue({
     id: 1,
-    customerId: 10,
+    customerAccountId: testUuid(10),
   });
   mockGetCustomer.mockResolvedValue({ email: "c@example.com" });
   mockHasBlocking.mockResolvedValue(false);

@@ -28,6 +28,10 @@ These topics emerged from the [architecture review](../architecture-map.md). Wri
 | ADR-0009 | **CAD/mesh pipeline interface** | Five+ modules + queue handler for one conceptual pipeline | End-to-end behavior hard to trace and test |
 | ADR-0010 | **Route testing strategy** | Zero route tests; 36 tests mostly in email | Refactor safety before god route extraction |
 
+## Proposed ADRs
+
+- [ADR-0013: Organizations, contacts, and customer and vendor accounts](0013-organizations-contacts-accounts.md) — replaces `customers` and `vendors` with uuid-keyed Organizations, Contacts, typed Accounts (customer or vendor), and addresses; one-to-one backfill; cutover in two deployments; Organization and Contact merge. Roadmap #196 step 2.
+
 ## Accepted ADRs
 
 - [ADR-0011: WordPress RFQ intake module](0011-wordpress-rfq-intake.md) — deep importer interface, adapters, ledger-owned retries, and single-import Worker topology.

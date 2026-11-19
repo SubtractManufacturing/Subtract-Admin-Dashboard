@@ -12,7 +12,7 @@ type Props = {
   preview: MergePreviewView;
   onConfirm: (choices: Record<string, MergeFieldChoice>) => void;
   onCancel: () => void;
-  /** Flip which Customer is kept. Omit to hide the swap button. */
+  /** Flip which Organization is kept. Omit to hide the swap button. */
   onSwap?: () => void;
   isSubmitting?: boolean;
   error?: string | null;
@@ -52,6 +52,11 @@ function CustomerCard({
       <p className="truncate text-sm text-gray-600 dark:text-gray-400">
         {[customer.companyName, customer.email].filter(Boolean).join(" · ") || "No details"}
       </p>
+      {customer.contacts.length > 0 && (
+        <p className="truncate text-xs text-gray-600 dark:text-gray-400" title={customer.contacts.map((c) => c.name || c.email).join(", ")}>
+          Contacts: {customer.contacts.map((c) => c.name || c.email || "Unnamed").join(", ")}
+        </p>
+      )}
       <p className="text-xs text-gray-500 dark:text-gray-400">
         {`${plural(customer.quoteCount, "Quote")} · ${plural(customer.orderCount, "Order")}`}
       </p>
@@ -73,41 +78,46 @@ export function CustomerMergeReview({
     Object.fromEntries(
       preview.conflicts
         .filter((conflict) => !conflict.requiresExplicitChoice)
-        .map((conflict) => [conflict.field, "survivor" as const]),
+        .map((conflict) => [conflict.field, conflict.defaultChoice ?? ("survivor" as const)]),
     ),
   );
   const canConfirm = preview.conflicts.every((conflict) => choices[conflict.field]);
 
-  // Only record the choices that differ from the default so the event log stays readable.
-  const submit = () => {
-    const explicit = Object.fromEntries(
-      Object.entries(choices).filter(
-        ([field, choice]) =>
-          choice === "merged" ||
-          preview.conflicts.find((conflict) => conflict.field === field)
-            ?.requiresExplicitChoice,
-      ),
-    );
-    onConfirm(explicit);
-  };
+  // Every conflict's choice is sent, so the server never has to guess a default.
+  const submit = () => onConfirm(choices);
 
-  // Customers keep their sides when swapped, so the lower id is always first.
+  // Organizations keep their sides when swapped, so the lower id is always first.
   const [first, second] =
     preview.survivor.id < preview.merged.id
       ? [preview.survivor, preview.merged]
       : [preview.merged, preview.survivor];
   const { counts } = preview;
   const moving = [
+    plural(counts.contacts, "Contact") +
+      (preview.contactsAlreadyLinked > 0 ? ` (${preview.contactsAlreadyLinked} already on both)` : ""),
+    plural(counts.addresses, "address", "addresses"),
     plural(counts.quotes, "Quote"),
     plural(counts.orders, "Order"),
     plural(counts.parts, "Part"),
+    ...(counts.vendorQuotes + counts.vendorOrders > 0
+      ? [plural(counts.vendorQuotes, "vendor Quote"), plural(counts.vendorOrders, "vendor Order")]
+      : []),
     plural(counts.attachments, "Attachment") +
       (preview.attachmentsAlreadyLinked > 0
         ? ` (${preview.attachmentsAlreadyLinked} already linked to both)`
         : ""),
     plural(counts.communications, "communication"),
     plural(counts.notes, "Note"),
+    plural(counts.events, "history entry", "history entries"),
   ];
+  const accountLines = (preview.accounts ?? [])
+    .filter((account) => account.mode !== "none")
+    .map((account) => {
+      const label = account.type === "customer" ? "Customer" : "Vendor";
+      return account.mode === "fold"
+        ? `${label} account: folded into ${preview.survivor.displayName}'s ${label} account.`
+        : `${label} account: becomes ${preview.survivor.displayName}'s ${label} account (same link).`;
+    });
 
   return (
     <div className="space-y-6">
@@ -120,7 +130,7 @@ export function CustomerMergeReview({
           pointsToFirst={first.id === preview.survivor.id}
           onClick={onSwap}
           disabled={isSubmitting}
-          label="Swap which Customer is kept"
+          label="Swap which one is kept"
         />
         <CustomerCard
           customer={second}
@@ -133,6 +143,13 @@ export function CustomerMergeReview({
         <strong>{preview.survivor.displayName}</strong> and archived. This cannot be
         undone from the app.
       </p>
+      {accountLines.length > 0 && (
+        <ul aria-label="Accounts" className="list-disc pl-5 text-sm text-gray-700 dark:text-gray-300">
+          {accountLines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
 
       {preview.conflicts.length > 0 && (
         <section aria-labelledby="merge-conflicts-heading">
@@ -238,7 +255,7 @@ export function CustomerMergeReview({
           disabled={!canConfirm || isSubmitting}
           onClick={submit}
         >
-          Merge Customers
+          Merge
         </Button>
       </div>
     </div>

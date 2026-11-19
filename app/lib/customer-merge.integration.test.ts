@@ -1,1007 +1,478 @@
 /**
- * Customer merge module (duplicate suggestions, preview, merge).
- * Requires DATABASE_URL pointing at a migrated Postgres instance.
+ * Integration tests: Organization and Contact merging, duplicate suggestions
+ * and Customer match reviews on the ADR-0013 model.
+ *
+ * Requires DATABASE_URL pointing at a disposable database synced with db:push.
  */
 import { randomUUID } from "node:crypto";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq, inArray, sql } from "drizzle-orm";
 
 import { getActionItemsForUser, resolveActionItem } from "./action-items.server";
+import type { Actor } from "./authorization/authorize";
 import {
   findDuplicatePairs,
-  getActiveCustomerSummaries,
-  mergeCustomers,
+  findDuplicateContacts,
+  getActiveOrganizationSummaries,
+  mergeContacts,
+  mergeOrganizations,
   pairsAmong,
+  previewContactMerge,
   previewMerge,
-  type DuplicatePair,
-  type MergeActor,
 } from "./customer-merge.server";
-import { resolveFinalCustomerId } from "./customer-match-review.server";
-import type { DuplicateReasonKind } from "./customer-merge-view";
+import { CustomerMergeError } from "./customer-merge-error";
 import { db } from "./db";
 import {
+  accounts,
   actionItems,
+  addresses,
   attachments,
-  customerAttachments,
-  customerCommunications,
-  customerEmailAliases,
-  customers,
+  contactEmailAliases,
+  contacts,
   eventLogs,
   notes,
   orders,
+  organizationAttachments,
+  organizationCommunications,
+  organizationContacts,
+  organizations,
   parts,
   quotes,
   users,
 } from "./db/schema";
+import {
+  addAddress,
+  addContact,
+  archiveAccount,
+  listOrganizationAddresses,
+  listOrganizationContacts,
+  loadAccountRecord,
+  resolveFinalAccountId,
+} from "./organizations/accounts.server";
+import type { AccountProfileInput, VendorRecord } from "./organizations/types";
+import { createTestCustomer, createTestVendor, deleteTestOrganizations } from "~/test/seed-organizations";
 
 const tag = randomUUID().slice(0, 8);
-const emailFor = (name: string) => `${name}-${tag}@example.invalid`;
-
 const adminId = `merge-admin-${tag}`;
-const admin: MergeActor = {
-  userId: adminId,
-  email: `${adminId}@example.invalid`,
-  role: "Admin",
-};
+const userId = `merge-user-${tag}`;
+const admin: Actor = { kind: "staff", userId: adminId, email: `${adminId}@example.test`, name: null, role: "Admin" };
+const plainUser: Actor = { kind: "staff", userId, email: `${userId}@example.test`, name: null, role: "User" };
 
-const createdCustomerIds: number[] = [];
-const createdActionItemIds: string[] = [];
-const createdAttachmentIds: string[] = [];
+const orgIds: string[] = [];
+const quoteIds: number[] = [];
+const orderIds: number[] = [];
+const partIds: string[] = [];
+const attachmentIds: string[] = [];
+const itemIds: string[] = [];
 
-type SeedCustomer = {
-  title?: string | null;
-  paymentTerms?: string | null;
-  billing?: Partial<{
-    line1: string; line2: string; city: string; state: string; postal: string; country: string;
-  }>;
-  shipping?: Partial<{
-    line1: string; line2: string; city: string; state: string; postal: string; country: string;
-  }>;
-  displayName?: string;
-  email?: string | null;
-  aliases?: string[];
-  companyName?: string | null;
-  contactName?: string | null;
-  phone?: string | null;
-  isArchived?: boolean;
-};
+const emailAt = (local: string, domain = `${tag}.example.test`) => `${local}@${domain}`;
 
-async function seedCustomer(input: SeedCustomer = {}) {
-  const [customer] = await db
-    .insert(customers)
+async function customer(input: AccountProfileInput & { name: string }) {
+  const record = await createTestCustomer({ kind: "business", ...input });
+  orgIds.push(record.organizationId);
+  return record;
+}
+
+async function vendor(input: AccountProfileInput & { name: string }) {
+  const record = await createTestVendor({ kind: "business", ...input });
+  orgIds.push(record.organizationId);
+  return record;
+}
+
+async function quoteFor(account: VendorRecord, vendorAccount?: VendorRecord) {
+  const [row] = await db
+    .insert(quotes)
     .values({
-      displayName: input.displayName ?? `Seed ${tag} ${randomUUID().slice(0, 6)}`,
-      email: input.email ?? null,
-      companyName: input.companyName ?? null,
-      contactName: input.contactName ?? null,
-      phone: input.phone ?? null,
-      title: input.title ?? null,
-      paymentTerms: input.paymentTerms ?? null,
-      billingAddressLine1: input.billing?.line1 ?? null,
-      billingAddressLine2: input.billing?.line2 ?? null,
-      billingCity: input.billing?.city ?? null,
-      billingState: input.billing?.state ?? null,
-      billingPostalCode: input.billing?.postal ?? null,
-      ...(input.billing?.country ? { billingCountry: input.billing.country } : {}),
-      shippingAddressLine1: input.shipping?.line1 ?? null,
-      shippingAddressLine2: input.shipping?.line2 ?? null,
-      shippingCity: input.shipping?.city ?? null,
-      shippingState: input.shipping?.state ?? null,
-      shippingPostalCode: input.shipping?.postal ?? null,
-      ...(input.shipping?.country ? { shippingCountry: input.shipping.country } : {}),
-      isArchived: input.isArchived ?? false,
+      quoteNumber: `MQ-${randomUUID().slice(0, 10)}`,
+      customerAccountId: account.id,
+      vendorAccountId: vendorAccount?.id ?? null,
     })
-    .returning();
-  createdCustomerIds.push(customer.id);
-  if (input.aliases?.length) {
-    await db.insert(customerEmailAliases).values(
-      input.aliases.map((email) => ({ customerId: customer.id, email })),
-    );
-  }
-  return customer;
+    .returning({ id: quotes.id });
+  quoteIds.push(row.id);
+  return row.id;
 }
 
-type SeedHistory = {
-  quotes?: number;
-  orders?: number;
-  parts?: number;
-  communications?: number;
-  notes?: number;
-};
-
-async function seedHistory(customerId: number, history: SeedHistory) {
-  for (let i = 0; i < (history.quotes ?? 0); i++) {
-    await db.insert(quotes).values({
-      quoteNumber: `T${randomUUID().slice(0, 10)}`,
-      customerId,
-    });
-  }
-  for (let i = 0; i < (history.orders ?? 0); i++) {
-    await db.insert(orders).values({
-      orderNumber: `T${randomUUID().slice(0, 10)}`,
-      customerId,
-    });
-  }
-  for (let i = 0; i < (history.parts ?? 0); i++) {
-    await db.insert(parts).values({ customerId, partName: `Part ${i}` });
-  }
-  for (let i = 0; i < (history.communications ?? 0); i++) {
-    await db.insert(customerCommunications).values({
-      customerId,
-      method: "call",
-      note: `Call ${i}`,
-      createdBy: adminId,
-    });
-  }
-  for (let i = 0; i < (history.notes ?? 0); i++) {
-    await db.insert(notes).values({
-      entityType: "customer",
-      entityId: String(customerId),
-      content: `Note ${i}`,
-      createdBy: adminId,
-    });
-  }
+async function orderFor(account: VendorRecord) {
+  const [row] = await db
+    .insert(orders)
+    .values({ orderNumber: `MO-${randomUUID().slice(0, 10)}`, customerAccountId: account.id })
+    .returning({ id: orders.id });
+  orderIds.push(row.id);
+  return row.id;
 }
 
-async function seedAttachment(customerIds: number[]) {
-  const [attachment] = await db
+async function attachmentOn(...orgs: VendorRecord[]) {
+  const [row] = await db
     .insert(attachments)
-    .values({
-      s3Bucket: "integration-test",
-      s3Key: `customer-merge/${tag}/${randomUUID()}.pdf`,
-      fileName: "spec.pdf",
-      contentType: "application/pdf",
-    })
+    .values({ s3Bucket: "b", s3Key: `${tag}/${randomUUID()}`, fileName: "nda.pdf", contentType: "application/pdf" })
     .returning({ id: attachments.id });
-  createdAttachmentIds.push(attachment.id);
-  await db.insert(customerAttachments).values(
-    customerIds.map((customerId) => ({ customerId, attachmentId: attachment.id })),
-  );
-  return attachment.id;
+  attachmentIds.push(row.id);
+  for (const org of orgs) {
+    await db.insert(organizationAttachments).values({ organizationId: org.organizationId, attachmentId: row.id });
+  }
+  return row.id;
 }
 
-async function recordCounts(customerId: number) {
-  const [row] = await db.execute<Record<string, number>>(sql`
-    select
-      (select count(*)::int from quotes where customer_id = ${customerId}) quotes,
-      (select count(*)::int from orders where customer_id = ${customerId}) orders,
-      (select count(*)::int from parts where customer_id = ${customerId}) parts,
-      (select count(*)::int from customer_communications where customer_id = ${customerId}) communications,
-      (select count(*)::int from notes where entity_type = 'customer' and entity_id = ${String(customerId)}) notes,
-      (select count(*)::int from customer_attachments where customer_id = ${customerId}) attachments
-  `);
-  return row;
-}
-
-async function customerRow(id: number) {
-  const [row] = await db.select().from(customers).where(eq(customers.id, id));
-  return row;
-}
-
-async function aliasesOf(id: number) {
-  const rows = await db
-    .select({ email: customerEmailAliases.email })
-    .from(customerEmailAliases)
-    .where(eq(customerEmailAliases.customerId, id));
-  return rows.map((row) => row.email).sort();
-}
-
-/** Every suggested pair, so tests can find theirs among whatever else the database holds. */
-async function allPairs(kinds?: DuplicateReasonKind[]) {
-  return (await findDuplicatePairs({ kinds })).pairs;
-}
-
-function pairOf(pairs: DuplicatePair[], x: number, y: number) {
+function pairOf<T extends { a: { id: string }; b: { id: string } }>(pairs: T[], x: VendorRecord, y: VendorRecord) {
   return pairs.find(
     (pair) =>
-      (pair.a.id === x && pair.b.id === y) || (pair.a.id === y && pair.b.id === x),
+      (pair.a.id === x.organizationId && pair.b.id === y.organizationId) ||
+      (pair.a.id === y.organizationId && pair.b.id === x.organizationId),
   );
 }
 
-function pairsInvolving(pairs: DuplicatePair[], customerId: number) {
-  return pairs.filter((pair) => pair.a.id === customerId || pair.b.id === customerId);
+async function previewThenMerge(survivor: VendorRecord, merged: VendorRecord, choices = {}) {
+  const preview = await previewMerge({ survivorId: survivor.organizationId, mergedId: merged.organizationId });
+  return mergeOrganizations(
+    {
+      survivorId: survivor.organizationId,
+      mergedId: merged.organizationId,
+      choices,
+      expected: { survivorUpdatedAt: preview.survivorUpdatedAt, mergedUpdatedAt: preview.mergedUpdatedAt },
+    },
+    admin,
+  );
 }
 
-describe("customer merge module", () => {
-  beforeAll(async () => {
-    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
-    await db.insert(users).values({
-      id: adminId,
-      email: admin.email!,
-      role: "Admin",
-    });
+beforeAll(async () => {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  await db.insert(users).values([
+    { id: adminId, email: admin.kind === "staff" ? admin.email : "", role: "Admin" },
+    { id: userId, email: `${userId}@example.test`, role: "User" },
+  ]);
+});
+
+afterAll(async () => {
+  if (itemIds.length) await db.delete(actionItems).where(inArray(actionItems.id, itemIds));
+  if (quoteIds.length) await db.delete(quotes).where(inArray(quotes.id, quoteIds));
+  if (orderIds.length) await db.delete(orders).where(inArray(orders.id, orderIds));
+  if (partIds.length) await db.delete(parts).where(inArray(parts.id, partIds));
+  await db.delete(organizationCommunications).where(inArray(organizationCommunications.createdBy, [adminId, userId]));
+  await deleteTestOrganizations(orgIds);
+  if (attachmentIds.length) await db.delete(attachments).where(inArray(attachments.id, attachmentIds));
+  await db.delete(eventLogs).where(inArray(eventLogs.userId, [adminId, userId]));
+  await db.delete(users).where(inArray(users.id, [adminId, userId]));
+});
+
+describe("duplicate suggestions", () => {
+  it("pairs Organizations whose Contacts share an email after normalization", async () => {
+    const a = await customer({ name: `Email A ${tag}`, email: ` ${emailAt("jane").toUpperCase()} ` });
+    const b = await customer({ name: `Email B ${tag}`, email: emailAt("jane") });
+    const pair = pairOf((await findDuplicatePairs()).pairs, a, b);
+    expect(pair?.reasons).toContainEqual({ kind: "email", value: emailAt("jane") });
   });
 
-  afterAll(async () => {
-    const ids = [...new Set(createdCustomerIds)];
-    if (ids.length > 0) {
-      if (createdActionItemIds.length > 0) {
-        await db.delete(actionItems).where(inArray(actionItems.id, createdActionItemIds));
-      }
-      await db.execute(sql`delete from event_logs where entity_type = 'customer' and entity_id in ${ids.map(String)}`);
-      await db.execute(sql`delete from customer_attachments where customer_id in ${ids}`);
-      if (createdAttachmentIds.length > 0) {
-        await db.delete(attachments).where(inArray(attachments.id, createdAttachmentIds));
-      }
-      await db.execute(sql`delete from customer_communications where customer_id in ${ids}`);
-      await db.execute(sql`delete from notes where entity_type = 'customer' and entity_id in ${ids.map(String)}`);
-      await db.execute(sql`delete from quotes where customer_id in ${ids}`);
-      await db.execute(sql`delete from orders where customer_id in ${ids}`);
-      await db.execute(sql`delete from parts where customer_id in ${ids}`);
-      await db.delete(customerEmailAliases).where(inArray(customerEmailAliases.customerId, ids));
-      await db.update(customers).set({ mergedIntoCustomerId: null }).where(inArray(customers.id, ids));
-      await db.delete(customers).where(inArray(customers.id, ids));
-    }
-    await db.delete(users).where(eq(users.id, adminId));
+  it("suggests two people at one business domain, the strongest hint they are one company", async () => {
+    const domain = `widgets-${tag}.example.com`;
+    const jane = await customer({ name: `Jane ${tag}`, kind: "individual", contactName: "Jane", email: `jane@${domain}` });
+    const bob = await customer({ name: `Bob ${tag}`, kind: "individual", contactName: "Bob", email: `bob@${domain}` });
+    const pair = pairOf((await findDuplicatePairs({ kinds: ["domain"] })).pairs, jane, bob);
+    expect(pair?.reasons).toEqual([{ kind: "domain", value: domain }]);
+    expect(pair?.score).toBe(50);
   });
 
-  describe("finding duplicates", () => {
-    it("pairs Customers whose emails match after normalization", async () => {
-      const email = emailFor("dup-primary");
-      const a = await seedCustomer({ email });
-      const b = await seedCustomer({ email: `  ${email.toUpperCase()}.` });
-      const unrelated = await seedCustomer({ email: emailFor("dup-unrelated") });
-
-      const pairs = await allPairs();
-
-      const pair = pairOf(pairs, a.id, b.id);
-      expect(pair?.reasons).toEqual([{ kind: "email", value: email }]);
-      expect(pair?.score).toBeGreaterThanOrEqual(100);
-      expect(pairsInvolving(pairs, unrelated.id)).toEqual([]);
-    });
-
-    it("lists each pair once, lowest id first", async () => {
-      const email = emailFor("dup-order");
-      const a = await seedCustomer({ email });
-      const b = await seedCustomer({ email });
-
-      const matching = (await allPairs()).filter(
-        (pair) => pair.a.id === a.id || pair.b.id === a.id,
-      );
-
-      expect(matching).toHaveLength(1);
-      expect([matching[0].a.id, matching[0].b.id]).toEqual([a.id, b.id]);
-    });
-
-    it("counts an alias that coincides with another Customer's primary email", async () => {
-      const email = emailFor("dup-alias");
-      const holder = await seedCustomer({
-        email: emailFor("dup-alias-holder"),
-        aliases: [email],
-      });
-      const other = await seedCustomer({ email });
-
-      expect(pairOf(await allPairs(), holder.id, other.id)?.reasons).toEqual([
-        { kind: "email", value: email },
-      ]);
-    });
-
-    it("suggests each pair separately instead of chaining Customers into one group", async () => {
-      const first = emailFor("chain-1");
-      const second = emailFor("chain-2");
-      const a = await seedCustomer({ email: first });
-      const b = await seedCustomer({ email: first, aliases: [second] });
-      const c = await seedCustomer({ email: second });
-
-      const pairs = await allPairs();
-
-      expect(pairOf(pairs, a.id, b.id)).toBeDefined();
-      expect(pairOf(pairs, b.id, c.id)).toBeDefined();
-      expect(pairOf(pairs, a.id, c.id)).toBeUndefined();
-    });
-
-    it("excludes archived Customers", async () => {
-      const email = emailFor("dup-archived");
-      const active = await seedCustomer({ email });
-      await seedCustomer({ email, isArchived: true });
-
-      expect(pairsInvolving(await allPairs(), active.id)).toEqual([]);
-    });
-
-    it("summarises each Customer with name, contact details, record counts and last activity", async () => {
-      const email = emailFor("dup-summary");
-      const a = await seedCustomer({
-        email,
-        displayName: `Summary A ${tag}`,
-        companyName: "Summary Co",
-        phone: "+15550001",
-      });
-      const b = await seedCustomer({ email });
-      await db.insert(quotes).values([
-        { quoteNumber: `T${randomUUID().slice(0, 10)}`, customerId: a.id, createdAt: new Date("2026-03-01T00:00:00Z") },
-        { quoteNumber: `T${randomUUID().slice(0, 10)}`, customerId: a.id, createdAt: new Date("2026-04-01T00:00:00Z") },
-      ]);
-      await db.insert(orders).values({
-        orderNumber: `T${randomUUID().slice(0, 10)}`,
-        customerId: a.id,
-        createdAt: new Date("2026-05-01T00:00:00Z"),
-      });
-
-      const pair = pairOf(await allPairs(), a.id, b.id);
-      const summaryA = pair?.a.id === a.id ? pair.a : pair?.b;
-      const summaryB = pair?.a.id === b.id ? pair.a : pair?.b;
-
-      expect(summaryA).toMatchObject({
-        displayName: `Summary A ${tag}`,
-        companyName: "Summary Co",
-        email,
-        phone: "+15550001",
-        quoteCount: 2,
-        orderCount: 1,
-        lastActivityAt: new Date("2026-05-01T00:00:00Z"),
-      });
-      expect(summaryB).toMatchObject({
-        quoteCount: 0,
-        orderCount: 0,
-        lastActivityAt: null,
-      });
-    });
-
-    describe("other match types", () => {
-      it("suggests Customers sharing a normalized company name", async () => {
-        const a = await seedCustomer({ companyName: `Acme   Widgets, Inc. ${tag}` });
-        const b = await seedCustomer({ companyName: `acme widgets inc ${tag}` });
-        const other = await seedCustomer({ companyName: `Other Co ${tag}` });
-
-        const pairs = await allPairs();
-
-        expect(pairOf(pairs, a.id, b.id)?.reasons).toEqual([
-          { kind: "company", value: `acme widgets inc ${tag}` },
-        ]);
-        expect(pairsInvolving(pairs, other.id)).toEqual([]);
-      });
-
-      it("suggests Customers sharing the same phone digits despite formatting", async () => {
-        const digits = `1555${tag.replace(/\D/g, "").padEnd(6, "7").slice(0, 6)}`;
-        const a = await seedCustomer({ phone: `+${digits}` });
-        const b = await seedCustomer({ phone: digits.replace(/(\d)(\d{3})(\d{3})(\d+)/, "$1 ($2) $3-$4") });
-
-        expect(pairOf(await allPairs(), a.id, b.id)?.reasons).toEqual([
-          { kind: "phone", value: digits },
-        ]);
-      });
-
-      it("suggests Customers sharing an identical contact name", async () => {
-        const name = `Pat Quincy ${tag}`;
-        const a = await seedCustomer({ contactName: name });
-        const b = await seedCustomer({ contactName: `  ${name.toUpperCase()}  ` });
-
-        expect(pairOf(await allPairs(), a.id, b.id)?.reasons).toEqual([
-          { kind: "name", value: name.toLowerCase() },
-        ]);
-      });
-
-      it("excludes archived Customers", async () => {
-        const company = `Archived Co ${tag}`;
-        const active = await seedCustomer({ companyName: company });
-        await seedCustomer({ companyName: company, isArchived: true });
-
-        expect(pairsInvolving(await allPairs(), active.id)).toEqual([]);
-      });
-    });
-
-    describe("ranking and filters", () => {
-      it("ranks an email match above company, phone and name matches", async () => {
-        const company = `Rank Co ${tag}`;
-        const email = emailFor("rank-email");
-        const emailPair = [await seedCustomer({ email }), await seedCustomer({ email })];
-        const companyPair = [
-          await seedCustomer({ companyName: company }),
-          await seedCustomer({ companyName: company }),
-        ];
-
-        const pairs = await allPairs();
-        const emailIndex = pairs.indexOf(pairOf(pairs, emailPair[0].id, emailPair[1].id)!);
-        const companyIndex = pairs.indexOf(pairOf(pairs, companyPair[0].id, companyPair[1].id)!);
-
-        expect(emailIndex).toBeGreaterThanOrEqual(0);
-        expect(emailIndex).toBeLessThan(companyIndex);
-      });
-
-      it("scores a pair higher the more signals it shares", async () => {
-        const company = `Stack Co ${tag}`;
-        const name = `Stack Person ${tag}`;
-        const both = [
-          await seedCustomer({ companyName: company, contactName: name }),
-          await seedCustomer({ companyName: company, contactName: name }),
-        ];
-        const one = [
-          await seedCustomer({ companyName: `${company} solo` }),
-          await seedCustomer({ companyName: `${company} solo` }),
-        ];
-
-        const pairs = await allPairs();
-
-        expect(pairOf(pairs, both[0].id, both[1].id)!.score).toBeGreaterThan(
-          pairOf(pairs, one[0].id, one[1].id)!.score,
-        );
-      });
-
-      it("requires a pair to share every selected signal", async () => {
-        const company = `Filter Co ${tag}`;
-        const email = emailFor("filter-both");
-        const both = [
-          await seedCustomer({ email, companyName: company }),
-          await seedCustomer({ email, companyName: company }),
-        ];
-        const emailOnly = [
-          await seedCustomer({ email: emailFor("filter-email-only") }),
-          await seedCustomer({ email: emailFor("filter-email-only") }),
-        ];
-        const companyOnly = [
-          await seedCustomer({ companyName: `${company} only` }),
-          await seedCustomer({ companyName: `${company} only` }),
-        ];
-
-        const emailFilter = await allPairs(["email"]);
-        expect(pairOf(emailFilter, both[0].id, both[1].id)).toBeDefined();
-        expect(pairOf(emailFilter, emailOnly[0].id, emailOnly[1].id)).toBeDefined();
-        expect(pairOf(emailFilter, companyOnly[0].id, companyOnly[1].id)).toBeUndefined();
-
-        const emailAndCompany = await allPairs(["email", "company"]);
-        expect(pairOf(emailAndCompany, both[0].id, both[1].id)).toBeDefined();
-        expect(pairOf(emailAndCompany, emailOnly[0].id, emailOnly[1].id)).toBeUndefined();
-        expect(pairOf(emailAndCompany, companyOnly[0].id, companyOnly[1].id)).toBeUndefined();
-      });
-
-      it("pages the best matches and reports totals and per-signal counts", async () => {
-        for (const name of ["page-one", "page-two"]) {
-          const email = emailFor(name);
-          await seedCustomer({ email });
-          await seedCustomer({ email });
-        }
-
-        const all = await findDuplicatePairs();
-        const firstPage = await findDuplicatePairs({ limit: 1 });
-        const secondPage = await findDuplicatePairs({ limit: 1, offset: 1 });
-
-        expect(firstPage.total).toBe(all.total);
-        expect(firstPage.pairs).toHaveLength(1);
-        expect(firstPage.pairs[0]).toEqual(all.pairs[0]);
-        expect(secondPage.pairs[0]).toEqual(all.pairs[1]);
-        expect(all.kindCounts.email).toBeGreaterThanOrEqual(1);
-        const filtered = await findDuplicatePairs({ kinds: ["email"] });
-        expect(filtered.kindCounts).toEqual(all.kindCounts);
-        expect(filtered.total).toBe(all.kindCounts.email);
-      });
-
-      it("ignores a company shared by too many Customers to be meaningful", async () => {
-        const company = `Generic Co ${tag}`;
-        const crowd = [];
-        for (let i = 0; i < 26; i++) crowd.push(await seedCustomer({ companyName: company }));
-
-        expect(pairsInvolving(await allPairs(), crowd[0].id)).toEqual([]);
-      });
-    });
-
-    describe("candidates from an Action Item", () => {
-      it("pairs every active candidate even when they share nothing", async () => {
-        const a = await seedCustomer({ email: emailFor("cand-a") });
-        const b = await seedCustomer({ email: emailFor("cand-b") });
-        const shared = emailFor("cand-shared");
-        const c = await seedCustomer({ email: shared });
-        const d = await seedCustomer({ email: shared });
-
-        const pairs = pairsAmong(await getActiveCustomerSummaries([a.id, b.id, c.id, d.id]));
-
-        expect(pairs).toHaveLength(6);
-        expect(pairOf(pairs, a.id, b.id)?.reasons).toEqual([]);
-        expect(pairOf(pairs, c.id, d.id)?.reasons).toEqual([{ kind: "email", value: shared }]);
-        expect([pairs[0].a.id, pairs[0].b.id]).toEqual([c.id, d.id]);
-      });
-    });
+  it("never treats a free mailbox provider as a shared domain", async () => {
+    const x = await customer({ name: `Free X ${tag}`, email: `x-${tag}@gmail.com` });
+    const y = await customer({ name: `Free Y ${tag}`, email: `y-${tag}@gmail.com` });
+    expect(pairOf((await findDuplicatePairs()).pairs, x, y)).toBeUndefined();
   });
 
-  describe("Customer match review Action Items", () => {
-    async function seedReviewItem(candidateIds: number[]) {
-      const [item] = await db
-        .insert(actionItems)
-        .values({
-          type: "customer_match_review",
-          title: `Review Customer match ${tag}`,
-          description: "Several Customers match",
-          entityType: "quote",
-          entityId: "0",
-          metadata: { candidateCustomerIds: candidateIds },
-        })
-        .returning();
-      createdActionItemIds.push(item.id);
-      return item.id;
-    }
+  it("matches company names, phones and contact names, and ranks email above them", async () => {
+    const one = await customer({ name: `Acme ${tag} Inc.`, phone: "(555) 010-1234", contactName: `Pat ${tag}` });
+    const two = await customer({ name: `ACME ${tag} inc`, phone: "555.010.1234", contactName: `pat ${tag}` });
+    const pair = pairOf((await findDuplicatePairs()).pairs, one, two);
+    expect(pair?.reasons.map((reason) => reason.kind).sort()).toEqual(["company", "name", "phone"]);
+    expect(pair?.score).toBe(35 + 45 + 30);
+  });
 
-    async function statusOf(itemId: string) {
-      const [row] = await db
-        .select({ status: actionItems.status, resolution: actionItems.resolution })
-        .from(actionItems)
-        .where(eq(actionItems.id, itemId));
-      return row;
-    }
+  it("excludes archived Organizations", async () => {
+    const live = await customer({ name: `Live ${tag}`, email: emailAt("archived-dupe") });
+    const gone = await customer({ name: `Gone ${tag}`, email: emailAt("archived-dupe") });
+    await archiveAccount(gone.id);
+    expect(pairOf((await findDuplicatePairs()).pairs, live, gone)).toBeUndefined();
+  });
 
-    it("resolves once its candidates are merged into one Customer", async () => {
-      const a = await seedCustomer({ email: emailFor("review-merge") });
-      const b = await seedCustomer({ email: emailFor("review-merge") });
-      const itemId = await seedReviewItem([a.id, b.id]);
+  it("scopes suggestions to Vendors, or to both Customers and Vendors", async () => {
+    const buyer = await customer({ name: `Both Ways ${tag}`, email: emailAt("both") });
+    const shop = await vendor({ name: `Both Ways ${tag} Shop`, email: emailAt("both") });
+    expect(pairOf((await findDuplicatePairs({ scope: "customers" })).pairs, buyer, shop)).toBeUndefined();
+    expect(pairOf((await findDuplicatePairs({ scope: "vendors" })).pairs, buyer, shop)).toBeUndefined();
+    const pair = pairOf((await findDuplicatePairs({ scope: "all" })).pairs, buyer, shop);
+    expect(pair).toBeDefined();
+    expect([pair!.a.vendorAccountId, pair!.b.vendorAccountId]).toContain(shop.id);
+  });
 
-      await mergeCustomers({ survivorId: a.id, mergedId: b.id }, admin);
+  it("pairs Action Item candidates even when they share nothing, resolving legacy ids too", async () => {
+    const a = await customer({ name: `Cand A ${tag}` });
+    const b = await customer({ name: `Cand B ${tag}` });
+    const summaries = await getActiveOrganizationSummaries([a.id, b.id, a.id]);
+    expect(summaries.map((s) => s.id).sort()).toEqual([a.organizationId, b.organizationId].sort());
+    expect(pairsAmong(summaries)).toHaveLength(1);
+  });
+});
 
-      expect(await statusOf(itemId)).toMatchObject({ status: "resolved" });
+describe("Organization merge", () => {
+  it("makes two people at one company one Customer with two Contacts", async () => {
+    const domain = `twopeople-${tag}.example.com`;
+    const acme = await customer({ name: `Two People ${tag}`, contactName: "Jane", email: `jane@${domain}`, paymentTerms: "Net 30" });
+    const bob = await customer({ name: `Bob Individual ${tag}`, kind: "individual", contactName: "Bob", email: `bob@${domain}` });
+    const quoteId = await quoteFor(bob);
+    const orderId = await orderFor(bob);
+    const [part] = await db.insert(parts).values({ partName: "p", customerAccountId: bob.id }).returning({ id: parts.id });
+    partIds.push(part.id);
+    const [note] = await db
+      .insert(notes)
+      .values({ entityType: "customer", entityId: bob.id, content: "note", createdBy: adminId })
+      .returning({ id: notes.id });
+    await db.insert(organizationCommunications).values({
+      organizationId: bob.organizationId,
+      method: "call",
+      note: "called",
+      createdBy: adminId,
     });
 
-    it("stays open while some candidates remain distinct Customers", async () => {
-      const email = emailFor("review-partial");
-      const [a, b, c] = [
-        await seedCustomer({ email }),
-        await seedCustomer({ email }),
-        await seedCustomer({ email }),
-      ];
-      const itemId = await seedReviewItem([a.id, b.id, c.id]);
+    const preview = await previewMerge({ survivorId: acme.organizationId, mergedId: bob.organizationId });
+    expect(preview.counts).toMatchObject({ quotes: 1, orders: 1, parts: 1, contacts: 1, communications: 1, notes: 1 });
+    expect(preview.accounts).toEqual([
+      { type: "customer", mode: "fold" },
+      { type: "vendor", mode: "none" },
+    ]);
+    expect(preview.retainedEmails).toEqual([`bob@${domain}`, `jane@${domain}`]);
 
-      await mergeCustomers({ survivorId: a.id, mergedId: b.id }, admin);
+    const result = await previewThenMerge(acme, bob);
+    expect(result.survivorCustomerAccountId).toBe(acme.id);
 
-      expect(await statusOf(itemId)).toMatchObject({ status: "active" });
+    const [quote] = await db.select().from(quotes).where(eq(quotes.id, quoteId));
+    const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
+    const [movedPart] = await db.select().from(parts).where(eq(parts.id, part.id));
+    const [movedNote] = await db.select().from(notes).where(eq(notes.id, note.id));
+    expect(quote.customerAccountId).toBe(acme.id);
+    expect(order.customerAccountId).toBe(acme.id);
+    expect(movedPart.customerAccountId).toBe(acme.id);
+    expect(movedNote.entityId).toBe(acme.id);
+
+    const people = await listOrganizationContacts(acme.organizationId);
+    expect(people.map((c) => [c.name, c.isPrimary])).toEqual([
+      ["Jane", true],
+      ["Bob", false],
+    ]);
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, bob.organizationId));
+    expect(org).toMatchObject({ isArchived: true, mergedIntoOrganizationId: acme.organizationId });
+    expect((await loadAccountRecord("customer", bob.id))?.isArchived).toBe(true);
+    expect(await resolveFinalAccountId(bob.id)).toBe(acme.id);
+    expect((await loadAccountRecord("customer", acme.id))?.paymentTerms).toBe("Net 30");
+
+    const [event] = await db
+      .select()
+      .from(eventLogs)
+      .where(and(eq(eventLogs.entityId, acme.id), eq(eventLogs.eventType, "organizations_merged")));
+    expect(event.metadata).toMatchObject({ survivorOrganizationId: acme.organizationId, counts: { quotes: 1 } });
+  });
+
+  it("lets an individual join a business, defaulting to the business's name and kind", async () => {
+    const solo = await customer({ name: `Solo ${tag}`, kind: "individual", contactName: `Solo ${tag}` });
+    const biz = await customer({ name: `Big Co ${tag}`, kind: "business" });
+    const preview = await previewMerge({ survivorId: solo.organizationId, mergedId: biz.organizationId });
+    expect(preview.conflicts.find((c) => c.field === "kind")?.defaultChoice).toBe("merged");
+
+    await previewThenMerge(solo, biz);
+    const after = await loadAccountRecord("customer", solo.id);
+    expect(after).toMatchObject({ kind: "business", displayName: `Big Co ${tag}` });
+  });
+
+  it("moves an account the survivor lacks, keeping its id: a Customer and a Vendor become one business", async () => {
+    const buyer = await customer({ name: `Dual ${tag}`, email: emailAt("dual-buyer") });
+    const shop = await vendor({ name: `Dual ${tag} Machining`, email: emailAt("dual-shop"), discordId: "42" });
+    const vendorQuote = await quoteFor(buyer, shop);
+
+    const preview = await previewMerge({ survivorId: buyer.organizationId, mergedId: shop.organizationId });
+    expect(preview.accounts).toEqual([
+      { type: "customer", mode: "none" },
+      { type: "vendor", mode: "move" },
+    ]);
+    await previewThenMerge(buyer, shop);
+
+    const movedVendor = await loadAccountRecord("vendor", shop.id);
+    expect(movedVendor).toMatchObject({ organizationId: buyer.organizationId, isArchived: false, discordId: "42" });
+    const [quote] = await db.select().from(quotes).where(eq(quotes.id, vendorQuote));
+    expect(quote.vendorAccountId).toBe(shop.id);
+  });
+
+  it("collapses a Contact already on both, keeps one default shipping address, and links shared files once", async () => {
+    const keep = await customer({ name: `Keep ${tag}`, shippingAddressLine1: "1 Keep St", shippingCity: "A" });
+    const fold = await customer({ name: `Fold ${tag}`, shippingAddressLine1: "2 Fold Rd", shippingCity: "B" });
+    await db.insert(organizationContacts).values({ organizationId: fold.organizationId, contactId: (await addKeepContact(keep)) });
+    const shared = await attachmentOn(keep, fold);
+    const own = await attachmentOn(fold);
+
+    const preview = await previewMerge({ survivorId: keep.organizationId, mergedId: fold.organizationId });
+    expect(preview.contactsAlreadyLinked).toBe(1);
+    expect(preview.attachmentsAlreadyLinked).toBe(1);
+    expect(preview.conflicts.map((c) => c.field)).toContain("defaultShippingAddress");
+
+    await previewThenMerge(keep, fold, { defaultShippingAddress: "merged" });
+    const list = await listOrganizationAddresses(keep.organizationId);
+    expect(list.filter((a) => a.isDefaultShipping).map((a) => a.line1)).toEqual(["2 Fold Rd"]);
+    expect(list).toHaveLength(2);
+    const files = await db
+      .select()
+      .from(organizationAttachments)
+      .where(eq(organizationAttachments.organizationId, keep.organizationId));
+    expect(files.map((f) => f.attachmentId).sort()).toEqual([shared, own].sort());
+    const links = await db
+      .select()
+      .from(organizationContacts)
+      .where(and(eq(organizationContacts.organizationId, keep.organizationId), eq(organizationContacts.isArchived, false)));
+    expect(new Set(links.map((l) => l.contactId)).size).toBe(links.length);
+  });
+
+  it("requires an explicit choice when payment terms differ, and applies it", async () => {
+    const a = await customer({ name: `Terms A ${tag}`, paymentTerms: "Net 30" });
+    const b = await customer({ name: `Terms B ${tag}`, paymentTerms: "Net 60" });
+    await expect(previewThenMerge(a, b)).rejects.toMatchObject({ status: 400 });
+    await previewThenMerge(a, b, { customerPaymentTerms: "merged" });
+    expect((await loadAccountRecord("customer", a.id))?.paymentTerms).toBe("Net 60");
+  });
+
+  it("keeps the survivor's billing address unless staff pick the merged one", async () => {
+    const a = await customer({ name: `Bill A ${tag}`, billingAddressLine1: "1 Bill A" });
+    const b = await customer({ name: `Bill B ${tag}`, billingAddressLine1: "2 Bill B" });
+    await previewThenMerge(a, b, { customerBillingAddress: "merged" });
+    expect((await loadAccountRecord("customer", a.id))?.billingAddressLine1).toBe("2 Bill B");
+  });
+
+  describe("safety", () => {
+    it("refuses self-merges, archived sides and already-merged Organizations", async () => {
+      const a = await customer({ name: `Safe A ${tag}` });
+      const b = await customer({ name: `Safe B ${tag}` });
+      await expect(previewMerge({ survivorId: a.organizationId, mergedId: a.organizationId })).rejects.toBeInstanceOf(CustomerMergeError);
+      await previewThenMerge(a, b);
+      await expect(previewMerge({ survivorId: a.organizationId, mergedId: b.organizationId })).rejects.toMatchObject({ status: 409 });
     });
 
-    it("resolves an item whose candidates were already merged the next time it is evaluated", async () => {
-      const a = await seedCustomer({ email: emailFor("review-late") });
-      const b = await seedCustomer({ email: emailFor("review-late") });
-      await mergeCustomers({ survivorId: a.id, mergedId: b.id }, admin);
-      const itemId = await seedReviewItem([a.id, b.id]);
-      expect(await statusOf(itemId)).toMatchObject({ status: "active" });
-
-      const visible = await getActionItemsForUser(adminId);
-
-      expect(visible.some((item) => item.id === itemId)).toBe(false);
-      expect(await statusOf(itemId)).toMatchObject({ status: "resolved" });
-    });
-
-    it("lets Admin or Dev resolve it by hand when the Customers are not duplicates", async () => {
-      const a = await seedCustomer({ email: emailFor("review-manual") });
-      const b = await seedCustomer({ email: emailFor("review-manual") });
-      const itemId = await seedReviewItem([a.id, b.id]);
-
-      await resolveActionItem(itemId, { userId: adminId, role: "Admin" });
-
-      expect(await statusOf(itemId)).toMatchObject({
-        status: "resolved",
-        resolution: "Not duplicates",
-      });
-    });
-
-    it("cannot be resolved by hand by roles that cannot use the merge tool", async () => {
-      const a = await seedCustomer({ email: emailFor("review-user") });
-      const b = await seedCustomer({ email: emailFor("review-user") });
-      const itemId = await seedReviewItem([a.id, b.id]);
-
+    it("refuses when either side changed after the preview", async () => {
+      const a = await customer({ name: `Stale A ${tag}` });
+      const b = await customer({ name: `Stale B ${tag}` });
+      const preview = await previewMerge({ survivorId: a.organizationId, mergedId: b.organizationId });
+      await addContact(b.organizationId, { name: "Late addition" });
       await expect(
-        resolveActionItem(itemId, { userId: adminId, role: "User" }),
+        mergeOrganizations(
+          {
+            survivorId: a.organizationId,
+            mergedId: b.organizationId,
+            expected: { survivorUpdatedAt: preview.survivorUpdatedAt, mergedUpdatedAt: preview.mergedUpdatedAt },
+          },
+          admin,
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("only lets Admin or Dev merge, through authorize()", async () => {
+      const a = await customer({ name: `Auth A ${tag}` });
+      const b = await customer({ name: `Auth B ${tag}` });
+      await expect(
+        mergeOrganizations({ survivorId: a.organizationId, mergedId: b.organizationId }, plainUser),
       ).rejects.toMatchObject({ status: 403 });
-      expect(await statusOf(itemId)).toMatchObject({ status: "active" });
+      await expect(
+        mergeContacts({ survivorId: a.primaryContactId ?? "", mergedId: b.primaryContactId ?? "" }, plainUser),
+      ).rejects.toMatchObject({ status: 403 });
     });
   });
+});
 
-  describe("merging two Customers", () => {
-    it("moves Quotes, Orders, Parts, communications, Notes and Attachments to the survivor", async () => {
-      const survivor = await seedCustomer({ email: emailFor("merge-all-s") });
-      const merged = await seedCustomer({ email: emailFor("merge-all-m") });
-      await seedHistory(survivor.id, { quotes: 1, orders: 1, parts: 1, communications: 1, notes: 1 });
-      await seedHistory(merged.id, { quotes: 2, orders: 3, parts: 1, communications: 2, notes: 2 });
-      await seedAttachment([merged.id]);
-      await seedAttachment([merged.id]);
+async function addKeepContact(keep: VendorRecord) {
+  return addContact(keep.organizationId, { name: `Shared ${tag}`, email: emailAt("shared-person") });
+}
 
-      const result = await mergeCustomers(
-        { survivorId: survivor.id, mergedId: merged.id },
-        admin,
-      );
-
-      expect(result.counts).toEqual({
-        quotes: 2,
-        orders: 3,
-        parts: 1,
-        communications: 2,
-        notes: 2,
-        attachments: 2,
-      });
-      expect(await recordCounts(survivor.id)).toEqual({
-        quotes: 3,
-        orders: 4,
-        parts: 2,
-        communications: 3,
-        notes: 3,
-        attachments: 2,
-      });
-      expect(await recordCounts(merged.id)).toEqual({
-        quotes: 0,
-        orders: 0,
-        parts: 0,
-        communications: 0,
-        notes: 0,
-        attachments: 0,
-      });
+describe("Contact merge", () => {
+  it("turns the same person twice into one Contact with both emails and both Organizations", async () => {
+    const first = await customer({ name: `Person Org 1 ${tag}`, contactName: "Jane Doe", email: emailAt("jane.one") });
+    const second = await customer({ name: `Person Org 2 ${tag}`, contactName: "Jane D.", email: emailAt("jane.two"), phone: "555" });
+    await db.insert(organizationCommunications).values({
+      organizationId: second.organizationId,
+      contactId: second.primaryContactId,
+      method: "email",
+      note: "hi",
+      createdBy: adminId,
     });
 
-    it("links an Attachment already on both Customers once instead of failing", async () => {
-      const survivor = await seedCustomer({ email: emailFor("merge-att-s") });
-      const merged = await seedCustomer({ email: emailFor("merge-att-m") });
-      await seedAttachment([survivor.id, merged.id]);
-      await seedAttachment([merged.id]);
+    const preview = await previewContactMerge({ survivorId: first.primaryContactId!, mergedId: second.primaryContactId! });
+    expect(preview.retainedEmails).toEqual([emailAt("jane.one"), emailAt("jane.two")]);
+    expect(preview.joinsOrganizations.map((o) => o.id)).toEqual([second.organizationId]);
+    expect(preview.communications).toBe(1);
+    expect(preview.conflicts.map((c) => c.field)).toEqual(["name", "email"]);
 
-      const result = await mergeCustomers(
-        { survivorId: survivor.id, mergedId: merged.id },
-        admin,
-      );
+    await mergeContacts(
+      {
+        survivorId: first.primaryContactId!,
+        mergedId: second.primaryContactId!,
+        choices: { name: "survivor", email: "survivor" },
+        expected: { survivorUpdatedAt: preview.survivorUpdatedAt, mergedUpdatedAt: preview.mergedUpdatedAt },
+      },
+      admin,
+    );
 
-      expect(result.counts.attachments).toBe(1);
-      expect(result.attachmentsAlreadyLinked).toBe(1);
-      expect((await recordCounts(survivor.id)).attachments).toBe(2);
-      expect((await recordCounts(merged.id)).attachments).toBe(0);
-    });
+    const [survivor] = await db.select().from(contacts).where(eq(contacts.id, first.primaryContactId!));
+    const [merged] = await db.select().from(contacts).where(eq(contacts.id, second.primaryContactId!));
+    expect(survivor).toMatchObject({ name: "Jane Doe", phone: "555" });
+    expect(merged).toMatchObject({ isArchived: true, mergedIntoContactId: survivor.id });
+    const aliases = await db.select().from(contactEmailAliases).where(eq(contactEmailAliases.contactId, survivor.id));
+    expect(aliases.map((a) => a.email).sort()).toEqual([emailAt("jane.one"), emailAt("jane.two")]);
+    // The survivor is now the primary Contact of the second Organization too.
+    expect((await loadAccountRecord("customer", second.id))?.contactName).toBe("Jane Doe");
+    const [comm] = await db
+      .select()
+      .from(organizationCommunications)
+      .where(eq(organizationCommunications.organizationId, second.organizationId));
+    expect(comm.contactId).toBe(survivor.id);
+  });
 
-    it("archives the merged Customer with a pointer to the survivor and keeps its emails as aliases", async () => {
-      const survivorEmail = emailFor("merge-alias-s");
-      const mergedEmail = emailFor("merge-alias-m");
-      const extraAlias = emailFor("merge-alias-extra");
-      const survivor = await seedCustomer({ email: survivorEmail });
-      const merged = await seedCustomer({
-        email: `  ${mergedEmail.toUpperCase()} `,
-        aliases: [extraAlias],
-      });
+  it("flags Contacts on one Organization that share an email or name", async () => {
+    const org = await customer({ name: `Dupes ${tag}`, contactName: "Al", email: emailAt("al") });
+    await addContact(org.organizationId, { name: "Albert", email: emailAt("al") });
+    const pairs = await findDuplicateContacts(org.organizationId);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].reason).toBe("email");
+  });
+});
 
-      await mergeCustomers({ survivorId: survivor.id, mergedId: merged.id }, admin);
+describe("Customer match review Action Items", () => {
+  it("resolves once its candidates are merged, and only Admin or Dev resolve by hand", async () => {
+    const a = await customer({ name: `Review A ${tag}` });
+    const b = await customer({ name: `Review B ${tag}` });
+    const c = await customer({ name: `Review C ${tag}` });
+    const [merging] = await db
+      .insert(actionItems)
+      .values({ type: "customer_match_review", title: "r", description: "r", metadata: { candidateCustomerIds: [a.id, b.id] } })
+      .returning({ id: actionItems.id });
+    const [distinct] = await db
+      .insert(actionItems)
+      .values({ type: "customer_match_review", title: "r", description: "r", metadata: { candidateCustomerIds: [a.id, c.id] } })
+      .returning({ id: actionItems.id });
+    itemIds.push(merging.id, distinct.id);
 
-      expect(await customerRow(merged.id)).toMatchObject({
-        isArchived: true,
-        mergedIntoCustomerId: survivor.id,
-      });
-      expect(await customerRow(survivor.id)).toMatchObject({
-        isArchived: false,
-        mergedIntoCustomerId: null,
-      });
-      expect(await aliasesOf(survivor.id)).toEqual(
-        [survivorEmail, mergedEmail, extraAlias].sort(),
-      );
-      expect(await aliasesOf(merged.id)).toEqual([]);
-    });
+    await previewThenMerge(a, b);
+    const [resolved] = await db.select().from(actionItems).where(eq(actionItems.id, merging.id));
+    expect(resolved).toMatchObject({ status: "resolved", resolution: "Customers merged" });
 
-    it("writes one event-log entry with who merged, which Customers and counts moved", async () => {
-      const survivor = await seedCustomer({ email: emailFor("merge-log-s") });
-      const merged = await seedCustomer({ email: emailFor("merge-log-m") });
-      await seedHistory(merged.id, { quotes: 2, notes: 1 });
+    await getActionItemsForUser(adminId);
+    const [stillOpen] = await db.select().from(actionItems).where(eq(actionItems.id, distinct.id));
+    expect(stillOpen.status).toBe("active");
 
-      await mergeCustomers({ survivorId: survivor.id, mergedId: merged.id }, admin);
+    await expect(resolveActionItem(distinct.id, { userId, role: "User" })).rejects.toMatchObject({ status: 403 });
+    await resolveActionItem(distinct.id, { userId: adminId, role: "Admin" });
+    const [byHand] = await db.select().from(actionItems).where(eq(actionItems.id, distinct.id));
+    expect(byHand).toMatchObject({ status: "resolved", resolution: "Not duplicates" });
+  });
 
-      const entries = await db
-        .select()
-        .from(eventLogs)
-        .where(
-          sql`${eventLogs.eventType} = 'customers_merged' and ${eventLogs.entityType} = 'customer' and ${eventLogs.entityId} = ${String(survivor.id)}`,
-        );
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({
-        userId: adminId,
-        userEmail: admin.email,
-        metadata: expect.objectContaining({
-          survivorId: survivor.id,
-          mergedId: merged.id,
-          counts: {
-            quotes: 2,
-            orders: 0,
-            parts: 0,
-            communications: 0,
-            notes: 1,
-            attachments: 0,
-          },
-        }),
-      });
-    });
-
-    it("follows merge pointers through a chain to the final active Customer", async () => {
-      const a = await seedCustomer({ email: emailFor("chain-a") });
-      const b = await seedCustomer({ email: emailFor("chain-b") });
-      const c = await seedCustomer({ email: emailFor("chain-c") });
-
-      await mergeCustomers({ survivorId: b.id, mergedId: a.id }, admin);
-      expect(await resolveFinalCustomerId(a.id)).toBe(b.id);
-
-      await mergeCustomers({ survivorId: c.id, mergedId: b.id }, admin);
-      expect(await resolveFinalCustomerId(a.id)).toBe(c.id);
-      expect(await resolveFinalCustomerId(b.id)).toBe(c.id);
-      expect(await resolveFinalCustomerId(c.id)).toBe(c.id);
-      expect(await aliasesOf(c.id)).toEqual(
-        [emailFor("chain-a"), emailFor("chain-b"), emailFor("chain-c")].sort(),
-      );
-    });
-
-    it("does not resolve a Customer that was archived without being merged", async () => {
-      const archived = await seedCustomer({ isArchived: true });
-
-      expect(await resolveFinalCustomerId(archived.id)).toBeNull();
-      expect(await resolveFinalCustomerId(2_000_000_000)).toBeNull();
-    });
-
-    describe("field resolution", () => {
-      it("auto-fills blank survivor fields and addresses from the merged Customer", async () => {
-        const survivor = await seedCustomer({ email: emailFor("fill-s") });
-        const merged = await seedCustomer({
-          email: emailFor("fill-m"),
-          companyName: "Filled Co",
-          contactName: "Fill Person",
-          title: "Buyer",
-          phone: "+15550123",
-          paymentTerms: "Net 30",
-          billing: { line1: "1 Main St", city: "Austin", state: "TX", postal: "78701" },
-          shipping: { line1: "9 Dock Rd", city: "Dallas", state: "TX", postal: "75001" },
-        });
-
-        const preview = await previewMerge({ survivorId: survivor.id, mergedId: merged.id });
-        expect(preview.conflicts).toEqual([
-          expect.objectContaining({ field: "displayName" }),
-          expect.objectContaining({ field: "email" }),
-        ]);
-        expect(preview.autoFills.map((fill) => fill.field).sort()).toEqual(
-          [
-            "billingAddress",
-            "companyName",
-            "contactName",
-            "paymentTerms",
-            "phone",
-            "shippingAddress",
-            "title",
-          ].sort(),
-        );
-
-        await mergeCustomers({ survivorId: survivor.id, mergedId: merged.id }, admin);
-
-        expect(await customerRow(survivor.id)).toMatchObject({
-          companyName: "Filled Co",
-          contactName: "Fill Person",
-          title: "Buyer",
-          phone: "+15550123",
-          paymentTerms: "Net 30",
-          billingAddressLine1: "1 Main St",
-          billingCity: "Austin",
-          shippingAddressLine1: "9 Dock Rd",
-          shippingCity: "Dallas",
-        });
-      });
-
-      it("keeps the survivor's value on a conflict by default and takes the merged value when chosen", async () => {
-        const survivor = await seedCustomer({
-          email: emailFor("conf-s"),
-          displayName: `Survivor Name ${tag}`,
-          companyName: "Survivor Co",
-          phone: "+15550001",
-        });
-        const merged = await seedCustomer({
-          email: emailFor("conf-m"),
-          displayName: `Merged Name ${tag}`,
-          companyName: "Merged Co",
-          phone: "+15550002",
-        });
-
-        const preview = await previewMerge({ survivorId: survivor.id, mergedId: merged.id });
-        expect(preview.conflicts).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              field: "companyName",
-              survivorValue: "Survivor Co",
-              mergedValue: "Merged Co",
-              requiresExplicitChoice: false,
-            }),
-          ]),
-        );
-
-        await mergeCustomers(
-          {
-            survivorId: survivor.id,
-            mergedId: merged.id,
-            choices: { phone: "merged", email: "merged" },
-          },
-          admin,
-        );
-
-        expect(await customerRow(survivor.id)).toMatchObject({
-          displayName: `Survivor Name ${tag}`,
-          companyName: "Survivor Co",
-          phone: "+15550002",
-          email: emailFor("conf-m"),
-        });
-      });
-
-      it("resolves a conflicting address as one unit", async () => {
-        const survivor = await seedCustomer({
-          email: emailFor("addr-s"),
-          billing: { line1: "1 Survivor St", city: "Austin", state: "TX", postal: "78701" },
-        });
-        const merged = await seedCustomer({
-          email: emailFor("addr-m"),
-          billing: {
-            line1: "2 Merged Ave",
-            line2: "Suite 5",
-            city: "Boston",
-            state: "MA",
-            postal: "02110",
-            country: "CA",
-          },
-        });
-
-        await mergeCustomers(
-          {
-            survivorId: survivor.id,
-            mergedId: merged.id,
-            choices: { billingAddress: "merged" },
-          },
-          admin,
-        );
-
-        expect(await customerRow(survivor.id)).toMatchObject({
-          billingAddressLine1: "2 Merged Ave",
-          billingAddressLine2: "Suite 5",
-          billingCity: "Boston",
-          billingState: "MA",
-          billingPostalCode: "02110",
-          billingCountry: "CA",
-        });
-      });
-
-      it("never lets two addresses be half-and-half when only one has a line 2", async () => {
-        const survivor = await seedCustomer({
-          email: emailFor("half-s"),
-          billing: { line1: "1 Same St", line2: "Floor 2", city: "Austin", state: "TX", postal: "78701" },
-        });
-        const merged = await seedCustomer({
-          email: emailFor("half-m"),
-          billing: { line1: "1 Same St", city: "Austin", state: "TX", postal: "78701" },
-        });
-
-        await mergeCustomers({ survivorId: survivor.id, mergedId: merged.id }, admin);
-
-        expect(await customerRow(survivor.id)).toMatchObject({
-          billingAddressLine1: "1 Same St",
-          billingAddressLine2: "Floor 2",
-        });
-      });
-
-      it("refuses to merge when payment terms conflict and no explicit choice was made", async () => {
-        const survivor = await seedCustomer({ email: emailFor("terms-s"), paymentTerms: "Net 30" });
-        const merged = await seedCustomer({ email: emailFor("terms-m"), paymentTerms: "Net 60" });
-
-        const preview = await previewMerge({ survivorId: survivor.id, mergedId: merged.id });
-        expect(preview.conflicts).toContainEqual(
-          expect.objectContaining({ field: "paymentTerms", requiresExplicitChoice: true }),
-        );
-        await expect(
-          mergeCustomers({ survivorId: survivor.id, mergedId: merged.id }, admin),
-        ).rejects.toMatchObject({ status: 400 });
-        expect((await customerRow(merged.id)).isArchived).toBe(false);
-
-        await mergeCustomers(
-          {
-            survivorId: survivor.id,
-            mergedId: merged.id,
-            choices: { paymentTerms: "merged" },
-          },
-          admin,
-        );
-        expect((await customerRow(survivor.id)).paymentTerms).toBe("Net 60");
-      });
-    });
-
-    describe("previewing", () => {
-      it("reports what would move and the retained emails without changing anything", async () => {
-        const survivor = await seedCustomer({ email: emailFor("prev-s") });
-        const merged = await seedCustomer({ email: emailFor("prev-m"), aliases: [emailFor("prev-extra")] });
-        await seedHistory(merged.id, { quotes: 1, orders: 2, parts: 3, communications: 1, notes: 2 });
-        await seedAttachment([survivor.id, merged.id]);
-        await seedAttachment([merged.id]);
-
-        const preview = await previewMerge({ survivorId: survivor.id, mergedId: merged.id });
-
-        expect(preview.counts).toEqual({
-          quotes: 1,
-          orders: 2,
-          parts: 3,
-          communications: 1,
-          notes: 2,
-          attachments: 1,
-        });
-        expect(preview.attachmentsAlreadyLinked).toBe(1);
-        expect(preview.retainedEmails).toEqual(
-          [emailFor("prev-s"), emailFor("prev-m"), emailFor("prev-extra")].sort(),
-        );
-        expect((await recordCounts(merged.id)).quotes).toBe(1);
-        expect((await customerRow(merged.id)).isArchived).toBe(false);
-      });
-    });
-
-    describe("safety", () => {
-      it("refuses to merge a Customer into itself", async () => {
-        const only = await seedCustomer({ email: emailFor("self") });
-
-        await expect(
-          mergeCustomers({ survivorId: only.id, mergedId: only.id }, admin),
-        ).rejects.toMatchObject({ status: 400 });
-        expect((await customerRow(only.id)).isArchived).toBe(false);
-      });
-
-      it("refuses archived Customers on either side and an already-merged loser", async () => {
-        const live = await seedCustomer({ email: emailFor("safe-live") });
-        const archived = await seedCustomer({ email: emailFor("safe-arch"), isArchived: true });
-        const mergedAway = await seedCustomer({ email: emailFor("safe-merged") });
-        const target = await seedCustomer({ email: emailFor("safe-target") });
-        await mergeCustomers({ survivorId: target.id, mergedId: mergedAway.id }, admin);
-
-        await expect(
-          mergeCustomers({ survivorId: live.id, mergedId: archived.id }, admin),
-        ).rejects.toMatchObject({ status: 409 });
-        await expect(
-          mergeCustomers({ survivorId: archived.id, mergedId: live.id }, admin),
-        ).rejects.toMatchObject({ status: 409 });
-        await expect(
-          mergeCustomers({ survivorId: live.id, mergedId: mergedAway.id }, admin),
-        ).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already merged/i) });
-        expect((await customerRow(live.id)).isArchived).toBe(false);
-      });
-
-      it("refuses when a Customer changed after the preview was taken", async () => {
-        const survivor = await seedCustomer({ email: emailFor("stale-s") });
-        const merged = await seedCustomer({ email: emailFor("stale-m") });
-        const preview = await previewMerge({ survivorId: survivor.id, mergedId: merged.id });
-
-        await db
-          .update(customers)
-          .set({ companyName: "Changed Meanwhile", updatedAt: new Date(Date.now() + 5000) })
-          .where(eq(customers.id, merged.id));
-
-        await expect(
-          mergeCustomers(
-            {
-              survivorId: survivor.id,
-              mergedId: merged.id,
-              expected: {
-                survivorUpdatedAt: preview.survivorUpdatedAt,
-                mergedUpdatedAt: preview.mergedUpdatedAt,
-              },
-            },
-            admin,
-          ),
-        ).rejects.toMatchObject({ status: 409 });
-        expect((await customerRow(merged.id)).isArchived).toBe(false);
-      });
-
-      it("only lets Admin or Dev merge, even when called directly", async () => {
-        const survivor = await seedCustomer({ email: emailFor("auth-s") });
-        const merged = await seedCustomer({ email: emailFor("auth-m") });
-
-        await expect(
-          mergeCustomers(
-            { survivorId: survivor.id, mergedId: merged.id },
-            { ...admin, role: "User" },
-          ),
-        ).rejects.toMatchObject({ status: 403 });
-        expect((await customerRow(merged.id)).isArchived).toBe(false);
-      });
-
-      it("leaves everything untouched when any step fails", async () => {
-        const survivor = await seedCustomer({ email: emailFor("atomic-s") });
-        const merged = await seedCustomer({ email: emailFor("atomic-m") });
-        await seedHistory(merged.id, { quotes: 2, notes: 1 });
-        // The event log references users, so an unknown actor fails the very
-        // last step after every record has already been moved.
-        const ghostActor: MergeActor = { ...admin, userId: `ghost-${tag}` };
-
-        await expect(
-          mergeCustomers({ survivorId: survivor.id, mergedId: merged.id }, ghostActor),
-        ).rejects.toThrow();
-
-        expect(await recordCounts(merged.id)).toMatchObject({ quotes: 2, notes: 1 });
-        expect(await recordCounts(survivor.id)).toMatchObject({ quotes: 0, notes: 0 });
-        expect(await customerRow(merged.id)).toMatchObject({
-          isArchived: false,
-          mergedIntoCustomerId: null,
-        });
-        expect(await aliasesOf(survivor.id)).toEqual([]);
-        expect(await aliasesOf(merged.id)).toEqual([]);
-      });
-    });
+  it("leaves no addresses behind on the archived Organization", async () => {
+    const a = await customer({ name: `Addr A ${tag}` });
+    const b = await customer({ name: `Addr B ${tag}` });
+    await addAddress(b.organizationId, { line1: "9 Side St" });
+    await previewThenMerge(a, b);
+    const left = await db.select().from(addresses).where(eq(addresses.organizationId, b.organizationId));
+    expect(left).toHaveLength(0);
+    const accountRows = await db.select().from(accounts).where(eq(accounts.organizationId, b.organizationId));
+    expect(accountRows.every((row) => row.isArchived)).toBe(true);
   });
 });

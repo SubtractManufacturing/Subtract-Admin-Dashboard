@@ -1,14 +1,14 @@
 import { db } from "./db/index.js"
 import {
   orders,
-  customers,
-  vendors,
   orderLineItems,
   orderAttachments,
   attachments,
 } from "./db/schema.js"
 import { eq, desc, ne } from 'drizzle-orm'
-import type { Customer, Vendor, OrderLineItem } from "./db/schema.js"
+import type { OrderLineItem } from "./db/schema.js"
+import type { Customer, Vendor } from "./organizations/types.js"
+import { loadAccountRecordMap } from "./organizations/accounts.server.js"
 import { getNextOrderNumber, generateUniqueOrderNumber } from "./number-generator.js"
 import { getOrderAttachments } from "./attachments.js"
 import { createEvent } from "./events.js"
@@ -18,8 +18,8 @@ import { copyFile } from "./s3.server.js"
 export type OrderWithRelations = {
   id: number
   orderNumber: string
-  customerId: number | null
-  vendorId: number | null
+  customerAccountId: string | null
+  vendorAccountId: string | null
   quoteId: number | null
   sourceQuoteId: number | null
   status: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
@@ -41,8 +41,8 @@ export type OrderWithRelations = {
 
 export type OrderInput = {
   orderNumber?: string | null
-  customerId?: number | null
-  vendorId?: number | null
+  customerAccountId?: string | null
+  vendorAccountId?: string | null
   quoteId?: number | null
   status?: 'Pending' | 'Waiting_For_Shop_Selection' | 'In_Production' | 'In_Inspection' | 'Shipped' | 'Delivered' | 'Completed' | 'Cancelled' | 'Archived'
   vendorPay?: string | null
@@ -60,36 +60,51 @@ export type OrderEventContext = {
   userEmail?: string
 }
 
+const ORDER_COLUMNS = {
+  id: orders.id,
+  orderNumber: orders.orderNumber,
+  customerAccountId: orders.customerAccountId,
+  vendorAccountId: orders.vendorAccountId,
+  quoteId: orders.quoteId,
+  sourceQuoteId: orders.sourceQuoteId,
+  status: orders.status,
+  totalPrice: orders.totalPrice,
+  vendorPay: orders.vendorPay,
+  poNumber: orders.poNumber,
+  deliveryDate: orders.deliveryDate,
+  deliveryDateStart: orders.deliveryDateStart,
+  leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
+  ndaRequired: orders.ndaRequired,
+  notes: orders.notes,
+  leadTime: orders.leadTime,
+  createdAt: orders.createdAt,
+  updatedAt: orders.updatedAt,
+}
+
+/** Attach the Customer and Vendor records behind each row's account ids. */
+async function withParties<T extends { customerAccountId: string | null; vendorAccountId: string | null }>(
+  rows: T[],
+): Promise<Array<T & { customer: Customer | null; vendor: Vendor | null }>> {
+  const [customersById, vendorsById] = await Promise.all([
+    loadAccountRecordMap("customer", rows.map((row) => row.customerAccountId)),
+    loadAccountRecordMap("vendor", rows.map((row) => row.vendorAccountId)),
+  ])
+  return rows.map((row) => ({
+    ...row,
+    customer: (row.customerAccountId && customersById.get(row.customerAccountId)) || null,
+    vendor: (row.vendorAccountId && vendorsById.get(row.vendorAccountId)) || null,
+  }))
+}
+
 export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
   try {
-    const result = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        vendorId: orders.vendorId,
-        quoteId: orders.quoteId,
-        sourceQuoteId: orders.sourceQuoteId,
-        status: orders.status,
-        totalPrice: orders.totalPrice,
-        vendorPay: orders.vendorPay,
-        poNumber: orders.poNumber,
-        deliveryDate: orders.deliveryDate,
-        deliveryDateStart: orders.deliveryDateStart,
-        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
-        ndaRequired: orders.ndaRequired,
-        notes: orders.notes,
-        leadTime: orders.leadTime,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-        customer: customers,
-        vendor: vendors
-      })
+    const result = await withParties(
+      await db
+      .select(ORDER_COLUMNS)
       .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(vendors, eq(orders.vendorId, vendors.id))
       .where(ne(orders.status, 'Archived'))
       .orderBy(desc(orders.createdAt))
+    )
 
     // Fetch line items for each order
     const ordersWithLineItems = await Promise.all(
@@ -115,34 +130,13 @@ export async function getOrdersWithRelations(): Promise<OrderWithRelations[]> {
 
 export async function getOrder(id: number): Promise<OrderWithRelations | null> {
   try {
-    const result = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        vendorId: orders.vendorId,
-        quoteId: orders.quoteId,
-        sourceQuoteId: orders.sourceQuoteId,
-        status: orders.status,
-        totalPrice: orders.totalPrice,
-        vendorPay: orders.vendorPay,
-        poNumber: orders.poNumber,
-        deliveryDate: orders.deliveryDate,
-        deliveryDateStart: orders.deliveryDateStart,
-        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
-        ndaRequired: orders.ndaRequired,
-        notes: orders.notes,
-        leadTime: orders.leadTime,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-        customer: customers,
-        vendor: vendors
-      })
+    const result = await withParties(
+      await db
+      .select(ORDER_COLUMNS)
       .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(vendors, eq(orders.vendorId, vendors.id))
       .where(eq(orders.id, id))
       .limit(1)
+    )
 
     return result[0] || null
   } catch (error) {
@@ -152,34 +146,13 @@ export async function getOrder(id: number): Promise<OrderWithRelations | null> {
 
 export async function getOrderByNumber(orderNumber: string): Promise<OrderWithRelations | null> {
   try {
-    const result = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        vendorId: orders.vendorId,
-        quoteId: orders.quoteId,
-        sourceQuoteId: orders.sourceQuoteId,
-        status: orders.status,
-        totalPrice: orders.totalPrice,
-        vendorPay: orders.vendorPay,
-        poNumber: orders.poNumber,
-        deliveryDate: orders.deliveryDate,
-        deliveryDateStart: orders.deliveryDateStart,
-        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
-        ndaRequired: orders.ndaRequired,
-        notes: orders.notes,
-        leadTime: orders.leadTime,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-        customer: customers,
-        vendor: vendors
-      })
+    const result = await withParties(
+      await db
+      .select(ORDER_COLUMNS)
       .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(vendors, eq(orders.vendorId, vendors.id))
       .where(eq(orders.orderNumber, orderNumber))
       .limit(1)
+    )
 
     return result[0] || null
   } catch (error) {
@@ -240,41 +213,20 @@ export async function createOrder(orderData: OrderInput, eventContext?: OrderEve
       metadata: {
         orderNumber,
         status: newOrder.status,
-        customerId: newOrder.customerId,
-        vendorId: newOrder.vendorId
+        customerAccountId: newOrder.customerAccountId,
+        vendorAccountId: newOrder.vendorAccountId
       },
       userId: eventContext?.userId,
       userEmail: eventContext?.userEmail,
     })
 
-    const result = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        vendorId: orders.vendorId,
-        quoteId: orders.quoteId,
-        sourceQuoteId: orders.sourceQuoteId,
-        status: orders.status,
-        totalPrice: orders.totalPrice,
-        vendorPay: orders.vendorPay,
-        poNumber: orders.poNumber,
-        deliveryDate: orders.deliveryDate,
-        deliveryDateStart: orders.deliveryDateStart,
-        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
-        ndaRequired: orders.ndaRequired,
-        notes: orders.notes,
-        leadTime: orders.leadTime,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-        customer: customers,
-        vendor: vendors
-      })
+    const result = await withParties(
+      await db
+      .select(ORDER_COLUMNS)
       .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(vendors, eq(orders.vendorId, vendors.id))
       .where(eq(orders.id, newOrder.id))
       .limit(1)
+    )
 
     return result[0]
   } catch (error) {
@@ -317,14 +269,14 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       changes.newStatus = orderData.status;
       changedFields.push('status');
     }
-    if (orderData.vendorId !== undefined && orderData.vendorId !== currentOrder.vendorId) {
-      changes.previousVendorId = currentOrder.vendorId;
-      changes.newVendorId = orderData.vendorId;
+    if (orderData.vendorAccountId !== undefined && orderData.vendorAccountId !== currentOrder.vendorAccountId) {
+      changes.previousVendorId = currentOrder.vendorAccountId;
+      changes.newVendorId = orderData.vendorAccountId;
       changedFields.push('vendor');
     }
-    if (orderData.customerId !== undefined && orderData.customerId !== currentOrder.customerId) {
-      changes.previousCustomerId = currentOrder.customerId;
-      changes.newCustomerId = orderData.customerId;
+    if (orderData.customerAccountId !== undefined && orderData.customerAccountId !== currentOrder.customerAccountId) {
+      changes.previousCustomerId = currentOrder.customerAccountId;
+      changes.newCustomerId = orderData.customerAccountId;
       changedFields.push('customer');
     }
     if (orderData.deliveryDate !== undefined) {
@@ -388,18 +340,18 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
     }
 
     // Log vendor assignment event for better visibility
-    if (orderData.vendorId && orderData.vendorId !== currentOrder.vendorId) {
+    if (orderData.vendorAccountId && orderData.vendorAccountId !== currentOrder.vendorAccountId) {
       await createEvent({
         entityType: "order",
         entityId: id.toString(),
         eventType: "vendor_assigned",
         eventCategory: "manufacturing",
         title: `Vendor assigned to order`,
-        description: `Vendor ID ${orderData.vendorId} assigned to order #${currentOrder.orderNumber}`,
+        description: `Vendor ${orderData.vendorAccountId} assigned to order #${currentOrder.orderNumber}`,
         metadata: {
           orderNumber: currentOrder.orderNumber,
-          vendorId: orderData.vendorId,
-          previousVendorId: currentOrder.vendorId
+          vendorId: orderData.vendorAccountId,
+          previousVendorId: currentOrder.vendorAccountId
         },
         userId: eventContext?.userId,
         userEmail: eventContext?.userEmail,
@@ -425,34 +377,13 @@ export async function updateOrder(id: number, orderData: Partial<OrderInput>, ev
       })
     }
 
-    const result = await db
-      .select({
-        id: orders.id,
-        orderNumber: orders.orderNumber,
-        customerId: orders.customerId,
-        vendorId: orders.vendorId,
-        quoteId: orders.quoteId,
-        sourceQuoteId: orders.sourceQuoteId,
-        status: orders.status,
-        totalPrice: orders.totalPrice,
-        vendorPay: orders.vendorPay,
-        poNumber: orders.poNumber,
-        deliveryDate: orders.deliveryDate,
-        deliveryDateStart: orders.deliveryDateStart,
-        leadTimeBusinessDaysMin: orders.leadTimeBusinessDaysMin,
-        ndaRequired: orders.ndaRequired,
-        notes: orders.notes,
-        leadTime: orders.leadTime,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-        customer: customers,
-        vendor: vendors
-      })
+    const result = await withParties(
+      await db
+      .select(ORDER_COLUMNS)
       .from(orders)
-      .leftJoin(customers, eq(orders.customerId, customers.id))
-      .leftJoin(vendors, eq(orders.vendorId, vendors.id))
       .where(eq(orders.id, id))
       .limit(1)
+    )
 
     return result[0]
   } catch (error) {
@@ -636,8 +567,8 @@ export async function duplicateOrder(
         .insert(orders)
         .values({
           orderNumber: newOrderNumber,
-          customerId: order.customerId,
-          vendorId: order.vendorId,
+          customerAccountId: order.customerAccountId,
+          vendorAccountId: order.vendorAccountId,
           status: "Pending",
           totalPrice: order.totalPrice,
           vendorPay: order.vendorPay,

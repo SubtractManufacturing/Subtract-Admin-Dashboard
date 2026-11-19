@@ -10,7 +10,8 @@ import { IntakeValidationError } from "./package";
 import {
   actionItems,
   attachments,
-  customers,
+  accounts,
+  organizations,
   eventLogs,
   notes,
   quoteAttachments,
@@ -270,9 +271,10 @@ export function createPostgresRfqPersistence(input: {
         prepared.now,
       );
       const [resolvedCustomer] = await tx
-        .select({ displayName: customers.displayName })
-        .from(customers)
-        .where(eq(customers.id, customerId))
+        .select({ displayName: organizations.name })
+        .from(accounts)
+        .innerJoin(organizations, eq(organizations.id, accounts.organizationId))
+        .where(eq(accounts.id, customerId))
         .limit(1);
       if (!resolvedCustomer) {
         throw new Error("RFQ import customer resolution did not return a Customer");
@@ -311,7 +313,7 @@ export function createPostgresRfqPersistence(input: {
         .insert(quotes)
         .values({
           quoteNumber,
-          customerId,
+          customerAccountId: customerId,
           status: "RFQ",
           subtotal: "0.00",
           total: "0.00",

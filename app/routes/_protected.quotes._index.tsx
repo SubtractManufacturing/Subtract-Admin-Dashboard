@@ -1,3 +1,4 @@
+import { requireUuid, uuidField } from "~/lib/organizations/types";
 import { json } from "@remix-run/node";
 import {
   useLoaderData,
@@ -112,10 +113,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
         const quoteData: QuoteInput = {
           quoteNumber,
-          customerId: parseInt(formData.get("customerId") as string),
-          vendorId: formData.get("vendorId")
-            ? parseInt(formData.get("vendorId") as string)
-            : null,
+          customerAccountId: requireUuid(formData.get("customerId"), "Customer"),
+          vendorAccountId: uuidField(formData.get("vendorId")),
           status: (formData.get("status") as QuoteInput["status"]) || "RFQ",
           expirationDays,
           createdById: user?.id,

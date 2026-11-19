@@ -36,7 +36,7 @@ export async function handleOrderAction({ request, params }: ActionFunctionArgs)
     partAssetAdmin: (fd) =>
       tryPartAssetAdminAction(
         fd,
-        { type: "order", orderId: order.id, customerId: order.customerId },
+        { type: "order", orderId: order.id, customerId: order.customerAccountId },
         { user: { id: user.id }, userDetails, headers: new Headers() },
       ),
   });

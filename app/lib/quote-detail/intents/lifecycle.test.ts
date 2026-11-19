@@ -1,3 +1,4 @@
+import { testUuid } from "~/test/ids";
 import { describe, expect, it, vi } from "vitest";
 import { addBusinessDays } from "~/lib/business-days";
 import type { IntentTable } from "~/lib/route-actions/core";
@@ -139,8 +140,8 @@ describe("updateStatus", () => {
 describe("editing an RFQ", () => {
   it.each([
     ["updateQuote", { expirationDays: "30" }],
-    ["updateCustomer", { customerId: "2" }],
-    ["updateVendor", { vendorId: "3" }],
+    ["updateCustomer", { customerId: testUuid(2) }],
+    ["updateVendor", { vendorId: testUuid(3) }],
     ["updateValidUntil", { validUntil: "2026-12-31" }],
     ["updateEstimatedDelivery", { leadTimeBusinessDaysMin: "3", leadTimeBusinessDaysMax: "5" }],
   ])("%s promotes it to Draft first", async (intent, fields) => {
@@ -155,7 +156,7 @@ describe("editing an RFQ", () => {
 
   it("leaves a Draft alone", async () => {
     const ctx = makeQuoteCtx();
-    await run(ctx, "updateCustomer", { customerId: "2" });
+    await run(ctx, "updateCustomer", { customerId: testUuid(2) });
     expect(ctx.deps.quotes.update).toHaveBeenCalledTimes(1);
   });
 });
@@ -180,9 +181,9 @@ describe("header fields", () => {
   });
 
   it("clears the vendor when none is posted", async () => {
-    const ctx = makeQuoteCtx({ quote: { vendorId: 4 } });
+    const ctx = makeQuoteCtx({ quote: { vendorAccountId: testUuid(4) } });
     await run(ctx, "updateVendor", { vendorId: "" });
-    expect(ctx.deps.quotes.update).toHaveBeenCalledWith(7, { vendorId: null }, ctx.actor);
+    expect(ctx.deps.quotes.update).toHaveBeenCalledWith(7, { vendorAccountId: null }, ctx.actor);
   });
 
   it("derives the delivery window from business days after today", async () => {

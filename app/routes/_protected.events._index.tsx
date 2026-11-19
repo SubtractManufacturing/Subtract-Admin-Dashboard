@@ -475,12 +475,12 @@ export default function EventsPage() {
       }
       case "customer": {
         const customer = customers.find(
-          (c: {id: number; displayName: string}) => c.id.toString() === event.entityId
+          (c: {id: string; displayName: string}) => c.id === event.entityId
         );
         return customer ? customer.displayName : `Customer #${event.entityId}`;
       }
       case "vendor": {
-        const vendor = vendors.find((v: {id: number; displayName: string}) => v.id.toString() === event.entityId);
+        const vendor = vendors.find((v: {id: string; displayName: string}) => v.id === event.entityId);
         return vendor ? vendor.displayName : `Vendor #${event.entityId}`;
       }
       case "part": {

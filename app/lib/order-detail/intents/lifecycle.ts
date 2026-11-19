@@ -2,6 +2,7 @@
  * Order lifecycle intents: status, header info, vendor, NDA flag, restore and
  * duplicate. Moving to Shipped is not here; it requires tracking (see tracking.ts).
  */
+import { isUuid } from "~/lib/organizations/types";
 import { redirect } from "@remix-run/node";
 import { resolveOrderDeliveryFromForm } from "~/lib/order-delivery";
 import type { OrderInput } from "~/lib/orders";
@@ -78,11 +79,11 @@ export const lifecycleIntents: IntentTable<Ctx> = {
 
   async updateVendor(ctx, formData) {
     const raw = formData.get("vendorId");
-    const vendorId = raw ? parseInt(String(raw), 10) : null;
-    if (vendorId !== null && Number.isNaN(vendorId)) return badRequest("Invalid vendor ID");
+    const vendorId = raw ? String(raw).trim() : null;
+    if (vendorId !== null && !isUuid(vendorId)) return badRequest("Invalid vendor ID");
 
     // Null removes the vendor.
-    await ctx.deps.orders.update(ctx.order.id, { vendorId }, ctx.actor);
+    await ctx.deps.orders.update(ctx.order.id, { vendorAccountId: vendorId }, ctx.actor);
     return redirectToOrder(ctx.order);
   },
 

@@ -14,6 +14,17 @@ import {
   resetRfqImportForRetryByReceiptKey,
 } from "./postgres.server";
 import { MemoryStorage } from "./test-support/memory-storage";
+import { deleteTestOrganizations } from "~/test/seed-organizations";
+
+/** Remove the Organizations intake created for a test email. */
+async function deleteOrganizationsWithContactEmail(email: string) {
+  const rows = (await db.execute(sql`
+    select distinct oc.organization_id as id from organization_contacts oc
+    join contacts c on c.id = oc.contact_id
+    where lower(c.email) = ${email}
+  `)) as unknown as Array<{ id: string }>;
+  await deleteTestOrganizations(rows.map((row) => row.id));
+}
 
 describe("RFQ importer with Postgres persistence", () => {
   const postgresRfqPersistence = createPostgresRfqPersistence({
@@ -58,8 +69,7 @@ describe("RFQ importer with Postgres persistence", () => {
       await db.execute(sql`delete from attachments where s3_key like ${`rfq-intake-archives/${receiptNumber}%`}`);
       await db.execute(sql`delete from rfq_import_ledger where receipt_number = ${receiptNumber}`);
       await db.delete(quotes).where(eq(quotes.id, quoteId));
-      await db.execute(sql`delete from customer_email_aliases where customer_id in (select id from customers where lower(email) = ${email})`);
-      await db.execute(sql`delete from customers where lower(email) = ${email}`);
+      await deleteOrganizationsWithContactEmail(email);
     }
     await db.execute(sql`delete from action_items where entity_type = 'rfq_import' and entity_id = ${receiptKey}`);
     await db.execute(sql`delete from event_logs where entity_type = 'rfq_import' and entity_id = ${receiptKey}`);
@@ -164,7 +174,11 @@ describe("RFQ importer with Postgres persistence", () => {
         (select count(*)::int from quote_part_drawings qpd join quote_parts qp on qp.id = qpd.quote_part_id where qp.quote_id = q.id) drawing_count,
         (select count(*)::int from quote_attachments qa join attachments a on a.id = qa.attachment_id where qa.quote_id = q.id and a.is_protected) archive_count,
         (select content from notes where entity_type = 'quote' and entity_id = q.id::text limit 1) note_content
-      from quotes q join customers c on c.id = q.customer_id where q.id = ${quoteId!}
+      from quotes q
+      join accounts a on a.id = q.customer_account_id
+      join organization_contacts oc on oc.organization_id = a.organization_id and oc.is_primary
+      join contacts c on c.id = oc.contact_id
+      where q.id = ${quoteId!}
     `);
     const [metadataRow] = await db.execute<{ creation_metadata: { contact?: { email?: string } } | null }>(sql`
       select creation_metadata from quotes where id = ${quoteId!}
@@ -545,10 +559,7 @@ describe("RFQ importer with Postgres persistence", () => {
           sql`delete from attachments where s3_key like ${`rfq-intake-archives/${v2ReceiptNumber}%`}`,
         );
         await db.execute(sql`delete from quotes where id = ${v2QuoteId}`);
-        await db.execute(
-          sql`delete from customer_email_aliases where customer_id in (select id from customers where lower(email) = ${v2Email})`,
-        );
-        await db.execute(sql`delete from customers where lower(email) = ${v2Email}`);
+        await deleteOrganizationsWithContactEmail(v2Email);
       }
     }
   });

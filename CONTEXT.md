@@ -5,26 +5,42 @@ Internal admin application for Subtract Manufacturing operations: CRM, quoting, 
 ## Language
 
 **Customer**:
-A person or organization that receives quotes and places orders. Stored with structured billing and shipping addresses.
-_Avoid_: Client, buyer, account
+An Organization with an Account of type `customer`: a business, or an individual buyer stored as a thin Organization with one Contact. Receives Quotes and places Orders. See [ADR-0013](docs/adr/0013-organizations-contacts-accounts.md).
+_Avoid_: Client, buyer, account (on its own)
+
+**Organization**:
+The shared record for a business (`kind = business`) or an individual buyer (`kind = individual`). It holds Contacts, addresses, attachments, and communications, and has a customer account, a vendor account, or both. Staff see it as a Customer or a Vendor; it has no page of its own yet.
+_Avoid_: Company (in code), tenant
+
+**Contact**:
+A person at one or more Organizations, with a primary email, aliases, phone, and title. A Contact is a CRM record, not an authenticated user.
+_Avoid_: User (that is a staff login), member
+
+**Account**:
+A role an Organization plays, stored in `accounts` with `type` `customer` or `vendor` (at most one of each per Organization). Holds payment terms and a fixed billing address; vendor accounts also hold the Discord id. Quotes, Orders, and Parts reference a customer account; Quotes and Orders reference a vendor account when a Vendor is assigned. "Customer account" and "vendor account" mean an Account of that type.
+_Avoid_: Profile, using "account" for a staff login
 
 **Email alias**:
-A normalized email a Customer is known by, stored in `customer_email_aliases` (the primary email is kept there too). RFQ intake matches an incoming email against primary emails and aliases of active Customers. Normalization is `normalizeEmail`; plus-tags and gmail dots are never stripped.
+A normalized email a Contact is known by, stored in `contact_email_aliases` (the primary email is kept there too). RFQ intake matches an incoming email against primary emails and aliases of active Contacts, then uses their Organization's customer account. Normalization is `normalizeEmail`; plus-tags and gmail dots are never stripped.
 _Avoid_: Secondary email, alternate email
 
-**Customer merge**:
-Combining two Customers: the survivor receives every record of the merged Customer and its emails as aliases, and the merged Customer is soft-archived with `mergedIntoCustomerId` pointing at the survivor. Chains resolve to the final active survivor. Available to Admin and Dev at `/customers/merge`.
-_Avoid_: Delete duplicate, dedupe (as a verb for hard deletion)
+**Organization merge**:
+Folding one Organization into another: its Contacts join the survivor (shared ones collapse), its addresses move, each of its accounts folds into the survivor's account of that type or becomes it, and its files, communications, Notes and Event logs move. The merged Organization is soft-archived with `merged_into_organization_id`; chains resolve to the final active survivor. This is how two people at one company become one Customer with two Contacts. Admin and Dev only, at `/customers/merge` (`organization.merge`).
+_Avoid_: Customer merge (merging happens at the Organization), delete duplicate, dedupe
+
+**Contact merge**:
+Combining two Contacts that are the same person: emails become aliases of the survivor, Organization links combine, and the merged Contact is archived with `merged_into_contact_id`. Offered from the Customer and Vendor pages (`contact.merge`).
+_Avoid_: Merging a person with a company (that is an Organization merge)
 
 **Duplicate suggestion**:
-A pair of active Customers the merge tool suggests reviewing, with the signals they share (same email or alias, phone digits, company name, or contact name) and a score that adds those signals up (email counts most). Suggestions are ranked best first and can be filtered to pairs that share every selected signal. Nothing is stored: suggestions are recomputed on each visit, and a pair that is not a duplicate is simply left unmerged.
+A pair of active Organizations the merge tool suggests reviewing, with the signals they share (same email or alias, same business email domain, phone digits, company name, or contact name) and a score that adds those signals up (email counts most). Free mailbox domains never count as a shared domain. Suggestions can be scoped to Customers, Vendors, or both, are ranked best first, and can be filtered to pairs that share every selected signal. Nothing is stored: suggestions are recomputed on each visit, and a pair that is not a duplicate is simply left unmerged.
 _Avoid_: Duplicate group (suggestions are pairs, never chained groups), Customer match (that is the Action Item below)
 
 **Customer match review**:
-An Action Item raised when an RFQ matched several active Customers. It links into the merge tool and resolves itself once the candidates are merged or no longer active; an Admin or Dev resolves it by hand ("Not duplicates") when the Customers are genuinely distinct.
+An Action Item raised when an RFQ email matched Contacts of several active customer accounts. It links into the merge tool and resolves itself once the candidates are merged or no longer active; an Admin or Dev resolves it by hand ("Not duplicates") when the Customers are genuinely distinct.
 
 **Vendor**:
-A shop or supplier that fulfills production work. May be assigned to quotes and orders.
+An Organization with an Account of type `vendor`: a shop or supplier that fulfills production work. May be assigned to quotes and orders.
 _Avoid_: Supplier (unless referring to external procurement), shop (use only for production context)
 
 **Job Board**:
@@ -80,11 +96,11 @@ The CAD file a Part is on now. Older revisions remain on the Part.
 _Avoid_: Latest model, part file
 
 **Attachment**:
-An S3-backed file linked polymorphically to customers, vendors, quotes, or orders. May be user upload, generated PDF, or system artifact.
+An S3-backed file linked to an Organization (whichever role it acts in), a Quote, or an Order. May be user upload, generated PDF, or system artifact.
 _Avoid_: File, document (unless PDF context)
 
 **Note**:
-A normalized text entry on an entity (quote, order, customer, vendor) stored in the `notes` table. Replaces legacy JSON notes on the `orders.notes` column.
+A normalized text entry on an entity (quote, order, customer account, vendor account) stored in the `notes` table. Replaces legacy JSON notes on the `orders.notes` column.
 _Avoid_: order-notes (legacy module name), comment
 
 **Outbound email**:
@@ -132,7 +148,9 @@ _Avoid_: Background job (generic), cron
 | Concept | Primary location |
 |---------|------------------|
 | Quote CRUD + conversion | `app/lib/quotes.ts`, `app/routes/_protected.quotes.$quoteId.tsx` |
-| Customer merge and duplicate detection | `app/lib/customer-merge.server.ts`, `app/routes/_protected.customers.merge.tsx` |
+| Customers, Vendors, Contacts, addresses | `app/lib/organizations/accounts.server.ts`, `app/lib/customers.ts`, `app/lib/vendors.ts` |
+| Organization and Contact merge, duplicate detection | `app/lib/customer-merge.server.ts`, `app/routes/_protected.customers.merge.tsx` |
+| Legacy backfill and reconciliation (ADR-0013 deployment 1) | `scripts/sql/organizations-backfill.sql`, `app/lib/organizations/reconciliation.server.ts` |
 | Email normalization | `app/lib/email-normalize.ts` |
 | Intake Customer resolution | `app/lib/rfq-intake/customer-resolution.server.ts` |
 | Order CRUD | `app/lib/orders.ts`, `app/routes/_protected.orders.$orderId.tsx` |

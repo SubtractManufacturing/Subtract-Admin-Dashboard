@@ -85,7 +85,7 @@ export const checkoutAddressIntents: IntentTable<Ctx> = {
     const result = await ctx.deps.checkoutAddresses.importQuick({
       orderId: ctx.order.id,
       sourceQuoteId: ctx.order.sourceQuoteId ?? null,
-      customerId: ctx.order.customerId ?? null,
+      customerId: ctx.order.customerAccountId ?? null,
       actor: ctx.actor,
     });
     return json(result);
@@ -95,7 +95,7 @@ export const checkoutAddressIntents: IntentTable<Ctx> = {
     const result = await ctx.deps.checkoutAddresses.applyChoices({
       orderId: ctx.order.id,
       sourceQuoteId: ctx.order.sourceQuoteId ?? null,
-      customerId: ctx.order.customerId ?? null,
+      customerId: ctx.order.customerAccountId ?? null,
       billingChoice: choice(formData, "billingChoice"),
       shippingChoice: choice(formData, "shippingChoice"),
       phoneChoice: choice(formData, "phoneChoice"),

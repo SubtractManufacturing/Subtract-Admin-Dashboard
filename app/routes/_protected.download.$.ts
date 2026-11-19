@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { requireStaff } from "~/lib/auth.server";
 import { assertAuthorized } from "~/lib/authorization/authorize";
+import { isUuid } from "~/lib/organizations/types";
 import { downloadAccess } from "~/lib/authorization/downloads";
 import { downloadFromS3 } from "~/lib/s3.server";
 import { getAttachment } from "~/lib/attachments";
@@ -84,10 +85,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       const buffer = Buffer.from(templateBody, "utf-8");
       return createDownloadResponse(buffer, templateFilename, "text/csv");
     }
+    // Customer and vendor account uuids (ADR-0013).
     const ids = idsParam
       .split(",")
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => !isNaN(n));
+      .map((s) => s.trim())
+      .filter((value) => isUuid(value));
     if (ids.length === 0) {
       return new Response("No valid IDs provided", { status: 400 });
     }
@@ -135,7 +137,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 async function handleExportCustomers(
-  ids: number[],
+  ids: string[],
   format: string,
   userId?: string,
   userEmail?: string
@@ -181,7 +183,7 @@ async function handleExportCustomers(
 }
 
 async function handleExportVendors(
-  ids: number[],
+  ids: string[],
   format: string,
   userId?: string,
   userEmail?: string

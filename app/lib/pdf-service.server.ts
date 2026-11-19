@@ -6,12 +6,11 @@ import { db } from "./db";
 import {
   quoteAttachments,
   orderAttachments,
-  customerAttachments,
-  vendorAttachments,
   type AttachmentDocumentKind,
 } from "./db/schema";
 
-export type EntityType = "quote" | "order" | "customer" | "vendor";
+/** Generated PDFs belong to Quotes and Orders. */
+export type EntityType = "quote" | "order";
 
 export interface GenerateDocumentPdfOptions {
   entityType: EntityType;
@@ -131,18 +130,6 @@ async function linkAttachmentToEntity(
     case "order":
       await db.insert(orderAttachments).values({
         orderId: entityId,
-        attachmentId,
-      });
-      break;
-    case "customer":
-      await db.insert(customerAttachments).values({
-        customerId: entityId,
-        attachmentId,
-      });
-      break;
-    case "vendor":
-      await db.insert(vendorAttachments).values({
-        vendorId: entityId,
         attachmentId,
       });
       break;

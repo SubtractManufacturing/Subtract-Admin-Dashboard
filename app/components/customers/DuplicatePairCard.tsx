@@ -5,13 +5,14 @@ import { MergeDirectionArrow } from "~/components/customers/MergeDirectionArrow"
 import {
   REASON_LABELS,
   defaultSurvivorId,
+  organizationHref,
   type CustomerSummaryView,
   type DuplicatePairView,
 } from "~/lib/customer-merge-view";
 
 type Props = {
   pair: DuplicatePairView;
-  onReview: (survivorId: number, mergedId: number) => void;
+  onReview: (survivorId: string, mergedId: string) => void;
 };
 
 const plural = (count: number, singular: string) =>
@@ -28,12 +29,16 @@ function CustomerPanel({
   customer: CustomerSummaryView;
   side: "keep" | "merge";
 }) {
+  const otherContacts = customer.contacts.length - (customer.contactName || customer.email ? 1 : 0);
   const details: Array<[string, string | null]> = [
-    ["Company", customer.companyName],
+    ["Kind", customer.kind === "business" ? "Business" : "Individual"],
     ["Contact", customer.contactName],
     ["Email", customer.email],
     ["Phone", customer.phone],
+    ["Others", otherContacts > 0 ? plural(otherContacts, "more Contact") : null],
   ];
+  const href = organizationHref(customer);
+  const roles = [customer.customerAccountId && "Customer", customer.vendorAccountId && "Vendor"].filter(Boolean).join(" · ");
   return (
     <div
       className={`min-w-0 rounded-lg border p-4 transition-colors duration-300 ${
@@ -52,7 +57,7 @@ function CustomerPanel({
         {side === "keep" ? "Keep" : "Merge in"}
       </span>
       <a
-        href={`/customers/${customer.id}`}
+        href={href ?? undefined}
         target="_blank"
         rel="noreferrer"
         className="block truncate font-semibold text-gray-900 hover:underline dark:text-gray-100"
@@ -60,6 +65,7 @@ function CustomerPanel({
       >
         {customer.displayName}
       </a>
+      {roles && <p className="text-xs text-gray-500 dark:text-gray-400">{roles}</p>}
       <dl className="mt-2 space-y-0.5 text-sm">
         {details
           .filter(([, value]) => value)

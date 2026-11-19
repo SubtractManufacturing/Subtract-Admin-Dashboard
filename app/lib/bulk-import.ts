@@ -1,11 +1,23 @@
 /**
  * Bulk import parsing, validation, and existing-entity resolution.
  * Match key: email (primary), then displayName (fallback).
+ *
+ * The CSV columns are unchanged by ADR-0013. Each row maps to an
+ * Organization (displayName/companyName), its primary Contact (contactName,
+ * title, email, phone), its account (paymentTerms, vendor fields) and its
+ * billing and default shipping addresses. `isPrimaryContact` is accepted and
+ * ignored: the row's person is always the primary Contact.
  */
 
 import { db } from "./db";
-import { customers, vendors } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { accounts, organizations, type AccountType } from "./db/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { normalizeEmail } from "./email-normalize";
+import {
+  activeAccountIdsForContacts,
+  findActiveContactIdsByEmail,
+} from "./organizations/accounts.server";
+import { organizationFromLegacy } from "./organizations/profile";
 import type { CustomerInput } from "./customers";
 import type { VendorInput } from "./vendors";
 
@@ -16,7 +28,7 @@ export type BulkImportPreviewRow = {
   rowIndex: number;
   data: ImportRowCustomer | ImportRowVendor;
   match: "new" | "existing";
-  existingId?: number;
+  existingId?: string;
   error?: string;
 };
 
@@ -136,13 +148,6 @@ function getString(value: unknown): string | null {
   return s === "" ? null : s;
 }
 
-function getBool(value: unknown): boolean {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "boolean") return value;
-  const s = String(value).toLowerCase();
-  return s === "true" || s === "1" || s === "yes";
-}
-
 export function validateCustomerRow(
   row: Record<string, unknown>,
   rowIndex: number
@@ -158,7 +163,6 @@ export function validateCustomerRow(
     title: getString(row.title),
     email: getString(row.email),
     phone: getString(row.phone),
-    isPrimaryContact: getBool(row.isPrimaryContact),
     billingAddressLine1: getString(row.billingAddressLine1),
     billingAddressLine2: getString(row.billingAddressLine2),
     billingCity: getString(row.billingCity),
@@ -191,46 +195,53 @@ export function validateVendorRow(
   return { ok: true, data };
 }
 
-/** Match by email first; if no email or no match, match by displayName. */
-export async function resolveExistingCustomer(
+/**
+ * Match by email first (a Contact's primary email or alias, normalized); if no
+ * email or no match, match the Organization name the row maps to.
+ */
+async function resolveExistingAccount(
+  type: AccountType,
   email: string | null,
-  displayName: string
-): Promise<{ id: number } | null> {
-  if (email) {
-    const byEmail = await db
-      .select({ id: customers.id })
-      .from(customers)
-      .where(eq(customers.email, email))
-      .limit(1);
-    if (byEmail[0]) return byEmail[0];
+  displayName: string,
+  companyName: string | null = null,
+): Promise<{ id: string } | null> {
+  const normalized = normalizeEmail(email);
+  if (normalized) {
+    const contactIds = await findActiveContactIdsByEmail(db, normalized);
+    const [byEmail] = await activeAccountIdsForContacts(db, type, contactIds);
+    if (byEmail) return { id: byEmail };
   }
-  const byDisplayName = await db
-    .select({ id: customers.id })
-    .from(customers)
-    .where(eq(customers.displayName, displayName))
+  const { name } = organizationFromLegacy({ displayName, companyName });
+  const [byName] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .innerJoin(organizations, eq(organizations.id, accounts.organizationId))
+    .where(
+      and(
+        eq(accounts.type, type),
+        eq(accounts.isArchived, false),
+        eq(organizations.isArchived, false),
+        sql`lower(${organizations.name}) = lower(${name})`,
+      ),
+    )
     .limit(1);
-  return byDisplayName[0] ?? null;
+  return byName ?? null;
 }
 
-/** Match by email first; if no email or no match, match by displayName. */
+export async function resolveExistingCustomer(
+  email: string | null,
+  displayName: string,
+  companyName: string | null = null,
+): Promise<{ id: string } | null> {
+  return resolveExistingAccount("customer", email, displayName, companyName);
+}
+
 export async function resolveExistingVendor(
   email: string | null,
-  displayName: string
-): Promise<{ id: number } | null> {
-  if (email) {
-    const byEmail = await db
-      .select({ id: vendors.id })
-      .from(vendors)
-      .where(eq(vendors.email, email))
-      .limit(1);
-    if (byEmail[0]) return byEmail[0];
-  }
-  const byDisplayName = await db
-    .select({ id: vendors.id })
-    .from(vendors)
-    .where(eq(vendors.displayName, displayName))
-    .limit(1);
-  return byDisplayName[0] ?? null;
+  displayName: string,
+  companyName: string | null = null,
+): Promise<{ id: string } | null> {
+  return resolveExistingAccount("vendor", email, displayName, companyName);
 }
 
 export async function getImportPreview(
@@ -254,8 +265,8 @@ export async function getImportPreview(
       continue;
     }
     const email = entityType === "customers" ? (validated.data as CustomerInput).email : (validated.data as VendorInput).email;
-    const displayName = validated.data.displayName;
-    const existing = await resolve(email ?? null, displayName);
+    const displayName = validated.data.displayName ?? "";
+    const existing = await resolve(email ?? null, displayName, validated.data.companyName ?? null);
     preview.push({
       rowIndex: i,
       data: row as ImportRowCustomer,

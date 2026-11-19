@@ -10,7 +10,7 @@ import { getDownloadUrl } from "./s3.server.js"
 export type { Part }
 
 export type PartInput = {
-  customerId?: number | null
+  customerAccountId?: string | null
   partName?: string | null
   notes?: string | null
   material?: string | null
@@ -106,7 +106,7 @@ export async function createPart(partData: PartInput, eventContext?: PartEventCo
       description: `Created part: ${newPart.partName || "Unnamed"}`,
       metadata: {
         partName: newPart.partName,
-        customerId: newPart.customerId,
+        customerAccountId: newPart.customerAccountId,
         material: newPart.material,
         tolerance: newPart.tolerance,
         finishing: newPart.finishing
@@ -190,7 +190,7 @@ export async function deletePart(id: string, eventContext?: PartEventContext): P
         description: `Deleted part: ${part.partName || "Unnamed"}`,
         metadata: {
           partName: part.partName,
-          customerId: part.customerId
+          customerAccountId: part.customerAccountId
         },
         userId: eventContext?.userId,
         userEmail: eventContext?.userEmail
@@ -222,7 +222,7 @@ export async function archivePart(id: string, eventContext?: PartEventContext): 
         description: `Archived part: ${part.partName || "Unnamed"}`,
         metadata: {
           partName: part.partName,
-          customerId: part.customerId
+          customerAccountId: part.customerAccountId
         },
         userId: eventContext?.userId,
         userEmail: eventContext?.userEmail
@@ -233,14 +233,14 @@ export async function archivePart(id: string, eventContext?: PartEventContext): 
   }
 }
 
-export async function getPartsByCustomerId(customerId: number): Promise<Part[]> {
+export async function getPartsByCustomerId(customerId: string): Promise<Part[]> {
   try {
     const result = await db
       .select()
       .from(parts)
       .where(
         and(
-          eq(parts.customerId, customerId),
+          eq(parts.customerAccountId, customerId),
           eq(parts.isArchived, false)
         )
       )
