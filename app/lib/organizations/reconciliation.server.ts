@@ -58,7 +58,21 @@ async function rows<T extends Row>(query: ReturnType<typeof sql>): Promise<T[]> 
 
 const text = (value: unknown) => blankToNull(typeof value === "string" ? value : value == null ? null : String(value));
 const same = (a: unknown, b: unknown) => (text(a) ?? "") === (text(b) ?? "");
-const time = (value: unknown) => (value instanceof Date ? value.getTime() : value ? new Date(String(value)).getTime() : 0);
+/**
+ * Raw SQL returns `timestamp` (without time zone) columns as strings. They
+ * hold UTC, like drizzle's own timestamp mapping assumes, so parse them as UTC
+ * rather than local time.
+ */
+export function parseDbTimestamp(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  if (value === null || value === undefined || value === "") return null;
+  const raw = String(value).trim();
+  const hasZone = /([zZ]|[+-]\d{2}(:?\d{2})?)$/.test(raw);
+  const iso = raw.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
+  const parsed = new Date(hasZone ? iso : `${iso}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+const time = (value: unknown) => parseDbTimestamp(value)?.getTime() ?? 0;
 
 type Org = {
   id: string;
@@ -114,7 +128,7 @@ export async function runReconciliation(): Promise<ReconciliationReport> {
     rows<{ contact_id: string; email: string }>(sql`select contact_id, email from contact_email_aliases`),
     rows<{ at: Date }>(sql`select min(created_at) as at from event_logs where entity_type = 'system' and entity_id = 'organizations_backfill'`),
   ]);
-  const cutoverAt = cutoverRows[0]?.at ? new Date(cutoverRows[0].at) : null;
+  const cutoverAt = parseDbTimestamp(cutoverRows[0]?.at);
   const cutover = cutoverAt?.getTime() ?? Number.POSITIVE_INFINITY;
 
   const orgById = new Map(orgRows.map((org) => [org.id, org]));

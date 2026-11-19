@@ -180,7 +180,7 @@ export function compareOrganizations(
   if (survivor.kind !== merged.kind) {
     out.conflicts.push({
       field: "kind",
-      label: "Kind",
+      label: "Type",
       survivorValue: KIND_LABELS[survivor.kind],
       mergedValue: KIND_LABELS[merged.kind],
       requiresExplicitChoice: false,
