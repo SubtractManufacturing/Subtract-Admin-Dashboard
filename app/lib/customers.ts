@@ -51,7 +51,7 @@ export type CustomerEventContext = {
 export type CustomerQuote = {
   id: number
   quoteNumber: string
-  customerId: number
+  customerId: number | null
   vendorId: number | null
   status: string
   total: string | null

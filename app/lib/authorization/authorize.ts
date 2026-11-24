@@ -49,6 +49,11 @@ const POLICY = {
   "download.mesh": { roles: ALL_STAFF, resourceType: "part" },
   "export.customers": { roles: ELEVATED_STAFF },
   "export.vendors": { roles: ELEVATED_STAFF },
+  // Staged cutover to Organizations (ADR-0014): the status page with Check and
+  // the review list, running Sync, and saving a review.
+  "cutover.view": { roles: ELEVATED_STAFF },
+  "cutover.sync": { roles: ELEVATED_STAFF },
+  "cutover.review": { roles: ELEVATED_STAFF },
 } as const satisfies Record<string, ActionPolicy>;
 
 export type Action = keyof typeof POLICY;

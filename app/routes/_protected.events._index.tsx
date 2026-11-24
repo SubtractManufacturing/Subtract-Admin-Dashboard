@@ -17,14 +17,16 @@ import { getVendors } from "~/lib/vendors";
 import { getOrdersWithRelations, restoreOrder } from "~/lib/orders";
 import { restoreQuote } from "~/lib/quotes";
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
+import { authorize } from "~/lib/authorization/authorize";
 import { canUserAccessEvents } from "~/lib/featureFlags";
+import { CUTOVER_EVENT_ENTITY } from "~/lib/organizations/stage.server";
 
 import Button from "~/components/shared/Button";
 import Modal from "~/components/shared/Modal";
 import { tableStyles } from "~/utils/tw-styles";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { user, userDetails, headers } = await requireAuth(request);
+  const { user, userDetails, actor, headers } = await requireAuth(request);
 
   // Check if user has access to events
   const hasAccess = await canUserAccessEvents(userDetails?.role);
@@ -53,7 +55,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (endDate) filters.endDate = new Date(endDate);
 
   try {
-    const { events, totalCount } = await getRecentEvents(filters);
+    // Staged cutover (ADR-0014): its Sync and stage events are for Admin and
+    // Dev. Everyone else gets the list exactly as it was.
+    const { events, totalCount } = await getRecentEvents(
+      authorize(actor, "cutover.view").allowed
+        ? filters
+        : { ...filters, excludeEntity: CUTOVER_EVENT_ENTITY },
+    );
     const [customers, vendors, orders] = await Promise.all([
       getCustomers(),
       getVendors(),

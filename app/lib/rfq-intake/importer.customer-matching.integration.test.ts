@@ -154,6 +154,7 @@ async function submitRfq(contact: Contact) {
     .select({ id: quotes.id, customerId: quotes.customerId })
     .from(quotes)
     .where(eq(quotes.id, outcome.quoteId));
+  if (quote.customerId === null) throw new Error("The imported Quote has no Customer");
   return { quoteId: quote.id, customerId: quote.customerId };
 }
 

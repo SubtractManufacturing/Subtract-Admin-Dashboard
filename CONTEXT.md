@@ -5,11 +5,23 @@ Internal admin application for Subtract Manufacturing operations: CRM, quoting, 
 ## Language
 
 **Customer**:
-A person or organization that receives quotes and places orders. Stored with structured billing and shipping addresses.
-_Avoid_: Client, buyer, account
+An Organization with an Account of type `customer`: a business, or an individual buyer stored as a thin Organization with one Contact. Receives Quotes and places Orders. See [ADR-0013](docs/adr/0013-organizations-contacts-accounts.md).
+_Avoid_: Client, buyer, account (on its own)
+
+**Organization**:
+The shared record for a business (`kind = business`) or an individual buyer (`kind = individual`). It holds Contacts, addresses, attachments, and communications, and has a customer account, a vendor account, or both. Staff see it as a Customer or a Vendor; it has no page of its own yet.
+_Avoid_: Company (in code), tenant
+
+**Contact**:
+A person at one or more Organizations, with a primary email, aliases, phone, and title. A Contact is a CRM record, not an authenticated user.
+_Avoid_: User (that is a staff login), member
+
+**Account**:
+A role an Organization plays, stored in `accounts` with `type` `customer` or `vendor` (at most one of each per Organization). Holds payment terms and a fixed billing address; vendor accounts also hold the Discord id. Quotes, Orders, and Parts reference a customer account; Quotes and Orders reference a vendor account when a Vendor is assigned. "Customer account" and "vendor account" mean an Account of that type.
+_Avoid_: Profile, using "account" for a staff login
 
 **Email alias**:
-A normalized email a Customer is known by, stored in `customer_email_aliases` (the primary email is kept there too). RFQ intake matches an incoming email against primary emails and aliases of active Customers. Normalization is `normalizeEmail`; plus-tags and gmail dots are never stripped.
+A normalized email a Contact is known by, stored in `contact_email_aliases` (the primary email is kept there too). RFQ intake matches an incoming email against primary emails and aliases of active Contacts, then uses their Organization's customer account. Normalization is `normalizeEmail`; plus-tags and gmail dots are never stripped.
 _Avoid_: Secondary email, alternate email
 
 **Customer merge**:
@@ -23,8 +35,31 @@ _Avoid_: Duplicate group (suggestions are pairs, never chained groups), Customer
 **Customer match review**:
 An Action Item raised when an RFQ matched several active Customers. It links into the merge tool and resolves itself once the candidates are merged or no longer active; an Admin or Dev resolves it by hand ("Not duplicates") when the Customers are genuinely distinct.
 
+**Staged cutover**:
+How Customers and Vendors move to Organizations ([ADR-0014](docs/adr/0014-staged-cutover-to-organizations.md)), in four stages. **Shadow**: staff use the old app while the new tables are filled as a copy. **Switch**: staff use the new app, limited to what the old tables can hold, and every save writes both. **Unlock**: the new features turn on and the old tables stop being written; the only one-way step. **Clean up**: the old tables are dropped.
+_Avoid_: Migration (that is a schema change), deployment 1 / deployment 2 (ADR-0013's replaced plan)
+
+**Sync**:
+The Shadow-stage action that makes the new records equal to what the mapping gives for every old Customer and Vendor row. Repeatable, and it never changes an old row.
+_Avoid_: Backfill (Sync also carries later edits), import
+
+**Check**:
+The row-by-row comparison of old rows and new records, shown on the cutover status page. "0 differences" is the precondition for Switch and for Unlock.
+_Avoid_: Reconciliation (ADR-0013's replaced page)
+
+**Double save**:
+During Switch, writing the new tables and the old ones in one transaction, so the previous release can be put back without losing data.
+_Avoid_: Dual write (as a permanent design), mirror
+
+**Review list**:
+The cutover status page's list of old Customers and Vendors beside the Organization, type, and Contact each becomes, where an Admin or Dev corrects company and contact names before Switch.
+
+**Planned merge**:
+A group of records an Admin or Dev has approved as one Organization on the cutover's groups list. Nothing is merged until Unlock applies the plan.
+_Avoid_: Auto-merge (every group is approved by a person)
+
 **Vendor**:
-A shop or supplier that fulfills production work. May be assigned to quotes and orders.
+An Organization with an Account of type `vendor`: a shop or supplier that fulfills production work. May be assigned to quotes and orders.
 _Avoid_: Supplier (unless referring to external procurement), shop (use only for production context)
 
 **Job Board**:
