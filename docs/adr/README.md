@@ -28,10 +28,16 @@ These topics emerged from the [architecture review](../architecture-map.md). Wri
 | ADR-0009 | **CAD/mesh pipeline interface** | Five+ modules + queue handler for one conceptual pipeline | End-to-end behavior hard to trace and test |
 | ADR-0010 | **Route testing strategy** | Zero route tests; 36 tests mostly in email | Refactor safety before god route extraction |
 
+## Proposed ADRs
+
+None.
+
 ## Accepted ADRs
 
 - [ADR-0011: WordPress RFQ intake module](0011-wordpress-rfq-intake.md) — deep importer interface, adapters, ledger-owned retries, and single-import Worker topology.
 - [ADR-0012: Customer matching at intake and merge-by-archive](0012-customer-matching-and-merge.md) — email-only normalized alias matching, no Customer created when a match exists, merge by archiving with a pointer.
+- [ADR-0013: Organizations, contacts, and customer and vendor accounts](0013-organizations-contacts-accounts.md) — replaces `customers` and `vendors` with uuid-keyed Organizations, Contacts, typed Accounts (customer or vendor), and addresses; Organization and Contact merge. Rolled out by ADR-0014. Roadmap #196 step 2.
+- [ADR-0014: Staged cutover to Organizations](0014-staged-cutover-to-organizations.md) — rolls ADR-0013 out in four stages (Shadow, Switch, Unlock, Clean up); the old tables stay complete and current until Unlock, so the previous release can be put back without losing data.
 
 ## Accepted (from existing docs and conventions)
 
