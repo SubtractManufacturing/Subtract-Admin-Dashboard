@@ -132,3 +132,5 @@ CLAUDE.md
 
 # Local git worktrees
 /.worktrees
+# Cutover browser run output
+scripts/e2e-cutover/shots/
