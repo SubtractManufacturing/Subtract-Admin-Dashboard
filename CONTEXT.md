@@ -35,6 +35,29 @@ _Avoid_: Duplicate group (suggestions are pairs, never chained groups), Customer
 **Customer match review**:
 An Action Item raised when an RFQ matched several active Customers. It links into the merge tool and resolves itself once the candidates are merged or no longer active; an Admin or Dev resolves it by hand ("Not duplicates") when the Customers are genuinely distinct.
 
+**Staged cutover**:
+How Customers and Vendors move to Organizations ([ADR-0014](docs/adr/0014-staged-cutover-to-organizations.md)), in four stages. **Shadow**: staff use the old app while the new tables are filled as a copy. **Switch**: staff use the new app, limited to what the old tables can hold, and every save writes both. **Unlock**: the new features turn on and the old tables stop being written; the only one-way step. **Clean up**: the old tables are dropped.
+_Avoid_: Migration (that is a schema change), deployment 1 / deployment 2 (ADR-0013's replaced plan)
+
+**Sync**:
+The Shadow-stage action that makes the new records equal to what the mapping gives for every old Customer and Vendor row. Repeatable, and it never changes an old row.
+_Avoid_: Backfill (Sync also carries later edits), import
+
+**Check**:
+The row-by-row comparison of old rows and new records, shown on the cutover status page. "0 differences" is the precondition for Switch and for Unlock.
+_Avoid_: Reconciliation (ADR-0013's replaced page)
+
+**Double save**:
+During Switch, writing the new tables and the old ones in one transaction, so the previous release can be put back without losing data.
+_Avoid_: Dual write (as a permanent design), mirror
+
+**Review list**:
+The cutover status page's list of old Customers and Vendors beside the Organization, type, and Contact each becomes, where an Admin or Dev corrects company and contact names before Switch.
+
+**Planned merge**:
+A group of records an Admin or Dev has approved as one Organization on the cutover's groups list. Nothing is merged until Unlock applies the plan.
+_Avoid_: Auto-merge (every group is approved by a person)
+
 **Vendor**:
 An Organization with an Account of type `vendor`: a shop or supplier that fulfills production work. May be assigned to quotes and orders.
 _Avoid_: Supplier (unless referring to external procurement), shop (use only for production context)

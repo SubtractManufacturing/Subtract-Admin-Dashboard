@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed
+Accepted (2026-11-23) for the model, ids, merging, and intake.
+
+[ADR-0014](0014-staged-cutover-to-organizations.md) replaces how the cutover is rolled out: the sections **Backfill** (where the backfill runs), **Cutover in two deployments**, and **Reconciliation page** below, and the fix-forward rule. Nothing here is on `master` yet; PR #202 holds the new-model code and becomes ADR-0014's Switch release.
 
 Amends [ADR-0012](0012-customer-matching-and-merge.md): email aliases move from Customers to Contacts, and merging moves to Organizations and Contacts. Intake matching rules are unchanged. A later ADR (roadmap step 3) replaces ADR-0012 in full.
 
