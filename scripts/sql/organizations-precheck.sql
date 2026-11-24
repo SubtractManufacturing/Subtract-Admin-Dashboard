@@ -6,7 +6,9 @@
 -- rows that look wrong. Flagged rows sort first. Fix them in the app (the
 -- Customer and Vendor forms, or Settings > bulk import with "modify").
 --
--- The free mailbox list mirrors app/lib/organizations/free-email-domains.ts.
+-- The free mailbox list mirrors app/lib/organizations/free-email-domains.ts and
+-- the rules mirror app/lib/organizations/mapping.ts, which the review list uses.
+-- review.serial.integration.test.ts runs this file and fails when they disagree.
 
 SELECT
   r.kind, r.id, r.display_name, r.company_name, r.contact_name, r.email,
@@ -20,12 +22,19 @@ FROM (
   UNION ALL
   SELECT 'vendor', id, display_name, company_name, contact_name, email, is_archived FROM vendors
 ) r
+CROSS JOIN (
+  -- The characters JavaScript's String.prototype.trim() removes, so "blank"
+  -- means the same here as in app/lib/organizations/mapping.ts.
+  SELECT string_agg(chr(code), '') AS chars
+  FROM unnest(ARRAY[9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198,
+                    8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279]) AS code
+) ws
 CROSS JOIN LATERAL (
   SELECT
-    nullif(btrim(r.company_name), '') AS company,
-    nullif(btrim(r.contact_name), '') AS person,
-    nullif(btrim(r.display_name), '') AS shown,
-    split_part(lower(btrim(coalesce(r.email, ''))), '@', 2) AS domain
+    nullif(btrim(r.company_name, ws.chars), '') AS company,
+    nullif(btrim(r.contact_name, ws.chars), '') AS person,
+    nullif(btrim(r.display_name, ws.chars), '') AS shown,
+    split_part(lower(btrim(coalesce(r.email, ''), ws.chars)), '@', 2) AS domain
 ) m
 CROSS JOIN LATERAL (
   SELECT array_remove(ARRAY[
