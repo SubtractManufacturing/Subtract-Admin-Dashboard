@@ -64,7 +64,8 @@ import {
 export type QuoteWithRelations = {
   id: number;
   quoteNumber: string;
-  customerId: number;
+  /** Nullable in the database since the staged cutover (ADR-0014); always set until Unlock. */
+  customerId: number | null;
   vendorId: number | null;
   status:
     | "RFQ"
@@ -1266,7 +1267,7 @@ export async function convertQuoteToOrder(
     );
     await tryAutoFillBlankCustomerFromQuoteCheckout({
       quoteId,
-      customerId: quote.customerId,
+      customerId: quote.customerId!,
       orderId: result.orderId,
       eventContext: {
         userId: context?.userId,
