@@ -26,7 +26,13 @@ const STAFF_WIDE: Action[] = [
   "download.quote",
   "download.mesh",
 ];
-const ADMIN_ONLY: Action[] = ["export.customers", "export.vendors"];
+const ADMIN_ONLY: Action[] = [
+  "export.customers",
+  "export.vendors",
+  "cutover.view",
+  "cutover.sync",
+  "cutover.review",
+];
 
 describe("authorize", () => {
   it("covers every registered action in these tests", () => {
@@ -42,7 +48,7 @@ describe("authorize", () => {
     },
   );
 
-  it("restricts bulk export to Admin and Dev", () => {
+  it("restricts bulk export and the cutover tools to Admin and Dev", () => {
     for (const action of ADMIN_ONLY) {
       expect(authorize(staff("User"), action)).toEqual({
         allowed: false,
