@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { eventLogs, type EventLog as EventLogSchema, type NewEventLog } from "./db/schema";
-import { eq, and, desc, gte, lte, or, like, sql } from "drizzle-orm";
+import { eq, and, desc, gte, lte, not, or, like, sql } from "drizzle-orm";
 
 export type EventLog = EventLogSchema;
 
@@ -29,6 +29,8 @@ export interface EventFilters {
   offset?: number;
   sortOrder?: "asc" | "desc";
   dismissedOnly?: boolean;
+  /** Leave out every event of one entity. */
+  excludeEntity?: { entityType: string; entityId: string };
 }
 
 export async function createEvent(
@@ -133,6 +135,17 @@ export async function getRecentEvents(filters: EventFilters = {}): Promise<{
 
   if (filters.entityId) {
     conditions.push(eq(eventLogs.entityId, filters.entityId));
+  }
+
+  if (filters.excludeEntity) {
+    conditions.push(
+      not(
+        and(
+          eq(eventLogs.entityType, filters.excludeEntity.entityType),
+          eq(eventLogs.entityId, filters.excludeEntity.entityId),
+        )!,
+      ),
+    );
   }
 
   if (filters.eventCategory) {

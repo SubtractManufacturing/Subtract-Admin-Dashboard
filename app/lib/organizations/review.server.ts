@@ -8,6 +8,11 @@
  * `updateVendor`, so it writes the same Event log the Customer form writes.
  * That is the only way the cutover tooling changes an old row. The new tables
  * follow on the next Sync; a save does not run Sync.
+ *
+ * The save is the old app's update, so it has the old app's semantics: no
+ * lock, last write wins. It is narrower than the Customer form, which rewrites
+ * every field: only the fields the reviewer edited are written, and a save
+ * against values that changed since the list was loaded is refused first.
  */
 import { and, eq } from "drizzle-orm";
 
@@ -22,6 +27,7 @@ import {
   reviewFlags,
   type LegacyType,
 } from "./mapping";
+import { getCutoverStage } from "./stage.server";
 
 export type ReviewRow = {
   type: LegacyType;
@@ -166,6 +172,13 @@ export async function saveReview(
   input: ReviewSave,
   actor: ReviewActor,
 ): Promise<ReviewSaveResult> {
+  // A save writes the old row only. That is right in Shadow and nowhere else:
+  // once another release has switched, the old tables are no longer the ones
+  // to correct.
+  if ((await getCutoverStage())?.stage !== "shadow") {
+    throw new ReviewError(409, "The review list saves in the Shadow stage only. Nothing was saved.");
+  }
+
   const table = input.type === "customer" ? customers : vendors;
   const [current] = await db
     .select({

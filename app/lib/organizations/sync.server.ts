@@ -16,7 +16,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import { db } from "../db";
 import {
@@ -63,7 +63,12 @@ const MAX_PASSES = 3;
 
 const CHUNK = 500;
 
-export type SyncErrorCode = "wrong_stage" | "busy" | "data_changed" | "not_converged";
+export type SyncErrorCode =
+  | "wrong_stage"
+  | "busy"
+  | "data_changed"
+  | "blocked"
+  | "not_converged";
 
 /** A Sync that was refused or rolled back. Nothing was changed. */
 export class SyncError extends Error {
@@ -349,6 +354,28 @@ async function applyChanges(tx: Tx, changeSet: ChangeSet): Promise<void> {
     group.rows.push({ id: op.id, accountId: op.target ? resolve(op.target).accountId : null });
     links.set(key, group);
   }
+  // Take every row lock first, without waiting. Staff may be saving one of
+  // these Quotes, Orders or Parts (the Customer merge updates many at once);
+  // a Sync that waited for some rows while holding others could deadlock with
+  // them, and Postgres might then abort the staff member's save. Refusing
+  // here aborts this Sync instead, before it has waited for anything.
+  const idsByTable = new Map<LinkTable, Set<number | string>>();
+  for (const { table, rows } of links.values()) {
+    const ids = idsByTable.get(table) ?? new Set<number | string>();
+    for (const linkRow of rows) ids.add(linkRow.id);
+    idsByTable.set(table, ids);
+  }
+  for (const [table, ids] of idsByTable) {
+    const idType = table === "parts" ? sql.raw("uuid") : sql.raw("integer");
+    for (const part of chunks([...ids])) {
+      await tx.execute(sql`
+        select id from ${sql.identifier(table)}
+        where id in (${sql.join(part.map((id) => sql`${id}::${idType}`), sql`, `)})
+        order by id
+        for no key update nowait
+      `);
+    }
+  }
   for (const { table, column, rows } of links.values()) {
     const idType = table === "parts" ? sql.raw("uuid") : sql.raw("integer");
     for (const part of chunks(rows)) {
@@ -407,6 +434,21 @@ function countByArea(changes: Change[]) {
 
 /** Postgres codes for "someone else changed or holds a row this Sync needs". */
 const CONCURRENCY_CODES = new Set(["40001", "40P01", "55P03"]);
+/** Foreign-key and unique violations: a record Sync did not expect is in the way. */
+const CONSTRAINT_CODES = new Set(["23503", "23505"]);
+
+function postgresError(error: unknown): { code?: string; constraint?: string } {
+  for (const candidate of [error, (error as { cause?: unknown })?.cause]) {
+    const { code, constraint_name: constraint } = (candidate ?? {}) as {
+      code?: unknown;
+      constraint_name?: unknown;
+    };
+    if (typeof code === "string") {
+      return { code, constraint: typeof constraint === "string" ? constraint : undefined };
+    }
+  }
+  return {};
+}
 
 /**
  * Run Sync. Throws {@link SyncError} when it is refused or rolled back; in
@@ -502,12 +544,17 @@ export async function runSync(actor: SyncActor): Promise<SyncResult> {
     );
   } catch (error) {
     if (error instanceof SyncError) throw error;
-    const code = (error as { code?: unknown; cause?: { code?: unknown } })?.code
-      ?? (error as { cause?: { code?: unknown } })?.cause?.code;
-    if (typeof code === "string" && CONCURRENCY_CODES.has(code)) {
+    const { code, constraint } = postgresError(error);
+    if (code && CONCURRENCY_CODES.has(code)) {
       throw new SyncError(
         "data_changed",
-        "Someone changed a record while Sync was running. Nothing was changed; run Sync again.",
+        "Someone was changing a record Sync needed. Nothing was changed; run Sync again.",
+      );
+    }
+    if (code && CONSTRAINT_CODES.has(code)) {
+      throw new SyncError(
+        "blocked",
+        `Sync ran into a record it did not expect${constraint ? ` (${constraint})` : ""}. Nothing was changed; a developer has to look.`,
       );
     }
     throw error;
@@ -531,6 +578,8 @@ export async function getLastSync(): Promise<LastSync | null> {
         eq(eventLogs.entityType, CUTOVER_EVENT_ENTITY.entityType),
         eq(eventLogs.entityId, CUTOVER_EVENT_ENTITY.entityId),
         eq(eventLogs.eventType, SYNC_RAN_EVENT),
+        // Sync always records who ran it; an entry without a user is not one of its own.
+        isNotNull(eventLogs.userId),
       ),
     )
     .orderBy(desc(eventLogs.createdAt))

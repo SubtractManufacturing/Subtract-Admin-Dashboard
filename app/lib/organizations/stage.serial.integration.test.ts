@@ -6,15 +6,18 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "../db";
 import { cutoverState, eventLogs } from "../db/schema";
 import { getEnv } from "../env.server";
+import { getRecentEvents } from "../events";
 import { createCutoverFixture } from "~/test/cutover-fixtures";
+import { saveReview } from "./review.server";
 import {
   CUTOVER_EVENT_ENTITY,
+  CutoverUnlockedError,
   getCutoverStage,
   getLastStageChange,
   recordShadowStage,
@@ -39,6 +42,15 @@ async function stageEvents() {
     );
 }
 
+/** Sync's own records among the given events (there may be none). */
+const syncEvents = (events: Array<{ entityType: string; entityId: string; eventType: string }>) =>
+  events.filter(
+    (event) =>
+      event.entityType === CUTOVER_EVENT_ENTITY.entityType &&
+      event.entityId === CUTOVER_EVENT_ENTITY.entityId &&
+      event.eventType !== STAGE_CHANGED_EVENT,
+  ).length;
+
 /** Runs the real startup step as its own process, as `prestart` does. */
 function startupStep(overrides: Record<string, string>) {
   const env: NodeJS.ProcessEnv = { ...process.env, ...overrides };
@@ -57,8 +69,10 @@ beforeAll(async () => {
   await fixture.seedUser();
 });
 
+const backToShadow = () => setCutoverStage("shadow", { actor: fixture.actor, source: "user" });
+
 afterAll(async () => {
-  await recordShadowStage();
+  await backToShadow();
   await fixture.cleanup();
 });
 
@@ -101,17 +115,56 @@ describe("the stage row", () => {
     });
   });
 
-  it("goes back to Shadow from any stage when this release starts", async () => {
+  it("goes back to Shadow from Switch when this release starts", async () => {
+    await setCutoverStage("switch", { actor: fixture.actor, source: "user" });
+    expect(await recordShadowStage()).toEqual({ changed: true, from: "switch", to: "shadow" });
+    expect(await getCutoverStage()).toMatchObject({ stage: "shadow", changedBy: null });
+    expect((await getLastStageChange())?.metadata).toEqual({
+      from: "switch",
+      to: "shadow",
+      source: "release_start",
+    });
+  });
+
+  it("refuses to leave Unlocked: there is no way back from Unlock but a restore", async () => {
+    await setCutoverStage("unlocked", { actor: fixture.actor, source: "user" });
+    const before = await getCutoverStage();
+    const events = (await stageEvents()).length;
+
+    await expect(recordShadowStage()).rejects.toBeInstanceOf(CutoverUnlockedError);
+    expect(await getCutoverStage()).toEqual(before);
+    expect(await stageEvents()).toHaveLength(events);
+    await backToShadow();
+  });
+
+  it("keeps cutover events out of an Event list that asks for that", async () => {
+    await setCutoverStage("switch", { actor: fixture.actor, source: "user" });
+    await backToShadow();
+    const all = await getRecentEvents({ limit: 500 });
+    const without = await getRecentEvents({ limit: 500, excludeEntity: CUTOVER_EVENT_ENTITY });
+    const isCutover = (event: { entityType: string; entityId: string }) =>
+      event.entityType === CUTOVER_EVENT_ENTITY.entityType && event.entityId === CUTOVER_EVENT_ENTITY.entityId;
+    expect(all.events.filter(isCutover).length).toBeGreaterThan(0);
+    expect(without.events.filter(isCutover)).toEqual([]);
+    expect(without.totalCount).toBe(all.totalCount - (await stageEvents()).length - syncEvents(all.events));
+  });
+
+  it("lets the review list save in Shadow only", async () => {
+    const customer = await fixture.seedCustomer({ displayName: `Stage ${fixture.tag}` });
+    const seen = { displayName: customer.displayName, companyName: null, contactName: null };
     for (const stage of ["switch", "unlocked"] as const) {
       await setCutoverStage(stage, { actor: fixture.actor, source: "user" });
-      expect(await recordShadowStage()).toEqual({ changed: true, from: stage, to: "shadow" });
-      expect(await getCutoverStage()).toMatchObject({ stage: "shadow", changedBy: null });
-      expect((await getLastStageChange())?.metadata).toEqual({
-        from: stage,
-        to: "shadow",
-        source: "release_start",
-      });
+      await expect(
+        saveReview({ type: "customer", id: customer.id, seen, changes: { companyName: "Late Co" } }, fixture.actor),
+      ).rejects.toMatchObject({ name: "ReviewError", status: 409 });
     }
+    await backToShadow();
+    const [row] = await db.execute<{ company_name: string | null; marks: number }>(sql`
+      select company_name,
+             (select count(*)::int from cutover_review_marks where legacy_type = 'customer' and legacy_id = ${customer.id}) as marks
+      from customers where id = ${customer.id}`);
+    expect(row).toEqual({ company_name: null, marks: 0 });
+    await saveReview({ type: "customer", id: customer.id, seen, changes: { companyName: "Late Co" } }, fixture.actor);
   });
 
   it("holds exactly one row", async () => {
@@ -155,5 +208,20 @@ describe("the startup step", () => {
     expect(failure?.code).toBe(1);
     expect(failure?.stderr).toContain("Refusing to start");
     expect((await getCutoverStage())?.stage).toBe("shadow");
+  }, 60_000);
+
+  it("refuses at once when the stage is Unlocked, and leaves it Unlocked", async () => {
+    await setCutoverStage("unlocked", { actor: fixture.actor, source: "user" });
+    const started = Date.now();
+    // The default wait budget (two minutes) must not apply here.
+    const failure = await startupStep({}).then(
+      () => null,
+      (error: { code?: number; stderr?: string }) => error,
+    );
+    expect(failure?.code).toBe(1);
+    expect(failure?.stderr).toContain("The cutover stage is Unlocked");
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect((await getCutoverStage())?.stage).toBe("unlocked");
+    await backToShadow();
   }, 60_000);
 });

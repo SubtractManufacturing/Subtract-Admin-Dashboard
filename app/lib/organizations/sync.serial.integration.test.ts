@@ -98,7 +98,8 @@ async function expectCopyMatchesMapping(type: "customer" | "vendor", id: number)
   expect(copy.links).toHaveLength(1);
   expect(copy.links[0]).toMatchObject({ isPrimary: true, isArchived: false, role: null });
   expect(copy.contact).toMatchObject({ ...mapped.contact, mergedIntoContactId: null });
-  expect(copy.aliases).toEqual(mapped.aliases);
+  if (type === "customer") expect(copy.aliases).toEqual(mapped.aliases);
+  else expect(copy.aliases).toEqual(expect.arrayContaining(mapped.aliases));
   expect(copy.account).toMatchObject({
     ...mapped.account,
     organizationId: copy.organization.id,
@@ -314,6 +315,22 @@ describe("Sync and the old tables", () => {
     expect(syncEventsAfter).toHaveLength(syncEventsBefore.length + 1);
     const last = await getLastSync();
     expect(last).toMatchObject({ userEmail: actor.email, applied: result.applied, notFixable: 0 });
+
+    // An entry anyone could add by hand (no user on it) is not taken for a Sync.
+    const [forged] = await db
+      .insert(eventLogs)
+      .values({
+        entityType: "system",
+        entityId: "cutover",
+        eventType: SYNC_RAN_EVENT,
+        eventCategory: "system",
+        title: "Not a Sync",
+        userEmail: "someone@example.invalid",
+        metadata: { applied: 999 },
+      })
+      .returning();
+    expect(await getLastSync()).toEqual(last);
+    await db.delete(eventLogs).where(eq(eventLogs.id, forged.id));
   });
 });
 
@@ -529,6 +546,20 @@ describe("Sync follows the old app", () => {
   });
 });
 
+describe("Vendor aliases", () => {
+  it("keeps the previous email of a Vendor as an alias (ADR-0014: extra Vendor aliases stay)", async () => {
+    const vendor = await fixture.seedVendor({ email: `first-${tag}@example.invalid` });
+    await runSync(actor);
+    await updateVendor(vendor.id, { email: `second-${tag}@example.invalid` });
+    expect((await runCheck()).differences.map((d) => d.area).sort()).toEqual(["alias", "contact"]);
+    await runSync(actor);
+    await expectNoDifferences();
+    const copy = (await readCopy("vendor", vendor.id))!;
+    expect(copy.contact?.email).toBe(`second-${tag}@example.invalid`);
+    expect(copy.aliases).toEqual([`first-${tag}@example.invalid`, `second-${tag}@example.invalid`]);
+  });
+});
+
 describe("Sync repairs what it can identify", () => {
   it("adds addresses an old row gains, keeps their ids afterwards, and recreates a lost Contact", async () => {
     const customer = await fixture.seedCustomer(
@@ -597,9 +628,84 @@ describe("what Sync refuses", () => {
       expect(await snapshotNewData()).toEqual(before);
     }
     expect((await getCutoverStage())?.stage).toBe("unlocked");
-    await recordShadowStage();
+    await setCutoverStage("shadow", { actor, source: "user" });
     await runSync(actor);
     expect(await readCopy("customer", customer.id)).not.toBeNull();
+  });
+
+  it("gives way at once when staff hold a Quote it needs, and changes nothing", async () => {
+    const from = await fixture.seedCustomer();
+    const to = await fixture.seedCustomer();
+    const quote = await fixture.seedQuote(from.id);
+    const other = await fixture.seedQuote(from.id);
+    await runSync(actor);
+    await db.update(quotes).set({ customerId: to.id }).where(inArray(quotes.id, [quote.id, other.id]));
+    const before = await snapshotNewData();
+
+    // Someone's save is in flight on one of the two Quotes Sync has to repoint.
+    await db.transaction(async (tx) => {
+      await tx.update(quotes).set({ rejectionReason: "held" }).where(eq(quotes.id, other.id));
+      const started = Date.now();
+      const error = await runSync(actor).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(SyncError);
+      expect(error).toMatchObject({ code: "data_changed" });
+      // NOWAIT, not the 800 ms lock timeout and not a deadlock.
+      expect(Date.now() - started).toBeLessThan(700);
+      tx.rollback();
+    }).catch((error: unknown) => {
+      if (!(error instanceof Error) || !/rollback/i.test(error.message)) throw error;
+    });
+    expect(await snapshotNewData()).toEqual(before);
+
+    await runSync(actor);
+    await expectNoDifferences();
+  });
+
+  it("holds back the removal of a copy something still depends on, and repairs the rest", async () => {
+    const doomed = await fixture.seedCustomer();
+    const heir = await fixture.seedCustomer();
+    const bystander = await fixture.seedCustomer({ companyName: `Before ${tag}` });
+    const quote = await fixture.seedQuote(doomed.id);
+    await runSync(actor);
+    const doomedCopy = (await readCopy("customer", doomed.id))!;
+    const heirCopy = (await readCopy("customer", heir.id))!;
+
+    // The Quote moves to the heir and the old Customer is deleted, while the
+    // heir's copy is in a shape Sync does not repair (a second Contact).
+    await db.update(quotes).set({ customerId: heir.id }).where(eq(quotes.id, quote.id));
+    await deleteCustomer(doomed.id);
+    const [stray] = await db.insert(contacts).values({ name: "Stray Person" }).returning();
+    const [link] = await db
+      .insert(organizationContacts)
+      .values({ organizationId: heirCopy.organization.id, contactId: stray.id })
+      .returning();
+    await updateCustomer(bystander.id, { companyName: `After ${tag}` });
+
+    try {
+      const report = await runCheck();
+      expect(report.differences.filter((d) => !d.fixable).map((d) => d.area).sort()).toEqual(["extra", "link", "structure"]);
+      expect(report.differences.find((d) => d.area === "extra")?.detail).toMatch(/not removed yet: a Quote, Order or Part/);
+
+      // Before the fix this aborted the whole Sync on a foreign key.
+      const result = await runSync(actor);
+      expect(result).toMatchObject({ passes: 1, notFixable: 3 });
+      expect((await readCopy("customer", bystander.id))?.organization.name).toBe(`After ${tag}`);
+      expect(await db.select().from(accounts).where(eq(accounts.id, doomedCopy.account.id))).toHaveLength(1);
+      const [quoteRow] = await db.select().from(quotes).where(eq(quotes.id, quote.id));
+      expect(quoteRow.customerAccountId).toBe(doomedCopy.account.id);
+    } finally {
+      await db.delete(organizationContacts).where(eq(organizationContacts.id, link.id));
+      await db.delete(contacts).where(eq(contacts.id, stray.id));
+    }
+
+    // With the heir repaired, the Quote moves and the orphan goes, in one pass.
+    const result = await runSync(actor);
+    expect(result).toMatchObject({ passes: 1, notFixable: 0 });
+    await expectNoDifferences();
+    const [quoteRow] = await db.select().from(quotes).where(eq(quotes.id, quote.id));
+    expect(quoteRow.customerAccountId).toBe(heirCopy.account.id);
+    expect(await db.select().from(accounts).where(eq(accounts.id, doomedCopy.account.id))).toEqual([]);
+    expect((await readCopy("customer", heir.id))?.account.id).toBe(heirCopy.account.id);
   });
 
   it("does not run beside another Sync", async () => {

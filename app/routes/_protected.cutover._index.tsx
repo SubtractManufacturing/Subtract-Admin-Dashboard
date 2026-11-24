@@ -218,7 +218,7 @@ export default function CutoverStatus() {
               <p className="font-semibold">0 differences. Old and new are equal.</p>
             </div>
           ) : (
-            <div role="alert" data-testid="check-headline" className="mt-4 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+            <div role="status" data-testid="check-headline" className="mt-4 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
               <div>
                 <p className="font-semibold">{plural(check.total, "difference")}.</p>

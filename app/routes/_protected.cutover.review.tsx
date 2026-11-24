@@ -126,12 +126,22 @@ function ReviewRowForm({
 }) {
   const key = rowKey(row);
   const fetcher = useFetcher<typeof action>();
+  // True between this row's own save and the reload that follows it.
+  const savedByThisRow = useRef(false);
   const [values, setValues] = useState<FormValues>(() => valuesOf(row));
+  const [replaced, setReplaced] = useState(false);
+  const latest = useRef(values);
+  latest.current = values;
 
   // The old row changed underneath (a save here, or someone in the app):
-  // show what is stored now.
+  // show what is stored now, and say so if that replaced something typed.
   useEffect(() => {
-    setValues(valuesOf(row));
+    const now = valuesOf(row);
+    const typed = latest.current;
+    const differs = (Object.keys(now) as Array<keyof FormValues>).some((field) => typed[field] !== now[field]);
+    setReplaced(differs && !savedByThisRow.current);
+    savedByThisRow.current = false;
+    setValues(now);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row.displayName, row.companyName, row.contactName]);
 
@@ -156,11 +166,14 @@ function ReviewRowForm({
   useEffect(() => {
     if (fetcher.state !== "idle" || !fetcher.data || handled.current === fetcher.data) return;
     handled.current = fetcher.data;
+    savedByThisRow.current = false;
     if (fetcher.data.ok && lastIntent.current === "save") onReviewed(key);
   }, [fetcher.state, fetcher.data, key, onReviewed]);
 
-  const set = (field: keyof FormValues, value: string) =>
+  const set = (field: keyof FormValues, value: string) => {
+    setReplaced(false);
     setValues((current) => ({ ...current, [field]: value }));
+  };
   const apply = (fields: ReviewSuggestionFields) =>
     setValues((current) => ({
       ...current,
@@ -171,6 +184,8 @@ function ReviewRowForm({
   const save = () => {
     onTouched(key);
     lastIntent.current = "save";
+    savedByThisRow.current = true;
+    setReplaced(false);
     const changes: Partial<FormValues> = {};
     for (const field of dirty) changes[field] = values[field];
     fetcher.submit(
@@ -214,7 +229,6 @@ function ReviewRowForm({
         <Link
           to={row.type === "customer" ? `/customers/${row.id}` : `/vendors/${row.id}`}
           className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
-          tabIndex={-1}
         >
           {label} #{row.id}
         </Link>
@@ -250,7 +264,7 @@ function ReviewRowForm({
         </label>
       ))}
 
-      <div className="min-w-0" data-testid="result" aria-live="polite">
+      <div className="min-w-0" data-testid="result">
         <p className="flex flex-wrap items-center gap-1.5">
           <span
             data-testid="result-kind"
@@ -298,7 +312,7 @@ function ReviewRowForm({
         ) : null}
       </div>
 
-      {(flags.length > 0 || suggestions.length > 0 || nameHint || (fetcher.data && !fetcher.data.ok)) && (
+      {(flags.length > 0 || suggestions.length > 0 || nameHint || replaced || (fetcher.data && !fetcher.data.ok)) && (
         <div className="flex flex-wrap items-center gap-1.5 lg:col-span-5 lg:col-start-2">
           {flags.map((flag) => (
             <span key={flag} data-testid="flag" data-flag={flag} className={`${chip} bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100`}>
@@ -331,6 +345,11 @@ function ReviewRowForm({
           {fetcher.data && !fetcher.data.ok && (
             <span role="alert" data-testid="row-error" className="text-sm font-medium text-red-700 dark:text-red-300">
               {fetcher.data.error}
+            </span>
+          )}
+          {replaced && !(fetcher.data && !fetcher.data.ok) && (
+            <span role="status" data-testid="row-replaced" className="text-sm font-medium text-amber-700 dark:text-amber-300">
+              This record was changed elsewhere. The row now shows the current values; what you typed was not saved.
             </span>
           )}
         </div>

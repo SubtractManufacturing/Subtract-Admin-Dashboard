@@ -21,10 +21,10 @@ import { FREE_EMAIL_DOMAINS } from "./free-email-domains";
 import {
   BUSINESS_WORDS,
   REVIEW_FLAGS,
-  blankToNull,
   mapLegacyNames,
   reviewFlags,
 } from "./mapping";
+import { recordShadowStage } from "./stage.server";
 import {
   clearReview,
   loadReviewRows,
@@ -80,6 +80,9 @@ beforeAll(async () => {
     throw new Error("DATABASE_URL is not set; point it at a disposable database.");
   }
   await fixture.seedUser();
+  // A review saves in Shadow only. Recording Shadow is what every start of
+  // this release does, and it changes nothing when the stage is Shadow already.
+  await recordShadowStage();
 });
 
 afterAll(async () => {
@@ -163,8 +166,7 @@ describe("the precheck query and the review list", () => {
       const names = mapLegacyNames(fromList);
       const context = JSON.stringify(seenOf(fromList));
       expect(names.kind, context).toBe(fromSql.becomes_type);
-      // The query shows an empty name as NULL; the copy keeps the blank column.
-      expect(blankToNull(names.organizationName), context).toBe(fromSql.becomes_organization);
+      expect(names.organizationName, context).toBe(fromSql.becomes_organization);
       expect(names.contactName, context).toBe(fromSql.becomes_contact);
       const flags = reviewFlags(fromList);
       expect(flags.map((flag) => REVIEW_FLAGS[flag]), context).toEqual(fromSql.flags);

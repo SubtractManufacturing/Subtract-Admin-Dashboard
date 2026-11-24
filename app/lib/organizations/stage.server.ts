@@ -55,13 +55,33 @@ export type StageChange = {
 };
 
 /**
+ * This release was started against a database that is past Unlock. The old
+ * tables stopped being written at Unlock, so this release would serve stale
+ * data, and recording Shadow would let a Sync overwrite the live tables. The
+ * only way back from Unlock is a restore (ADR-0014).
+ */
+export class CutoverUnlockedError extends Error {
+  constructor() {
+    super(
+      "The cutover stage is Unlocked. This release only works on the old Customer and Vendor tables, which are no longer current. It will not start; restore the database from before Unlock to go back.",
+    );
+    this.name = "CutoverUnlockedError";
+  }
+}
+
+/**
  * Set the stage. Writes the row and an Event log in one transaction, and only
  * when the value actually changes, so calling it with the current stage is a
  * no-op.
  */
 export async function setCutoverStage(
   stage: CutoverStage,
-  options: { actor: StageActor | null; source: StageChangeSource },
+  options: {
+    actor: StageActor | null;
+    source: StageChangeSource;
+    /** Stages this change must not leave. */
+    refuseFrom?: readonly CutoverStage[];
+  },
 ): Promise<StageChange> {
   return db.transaction(async (tx) => {
     // Insert first so two processes starting together cannot both see "no row".
@@ -80,6 +100,7 @@ export async function setCutoverStage(
         .for("update");
       from = current.stage;
       if (from === stage) return { changed: false, from, to: stage };
+      if (options.refuseFrom?.includes(from)) throw new CutoverUnlockedError();
       await tx
         .update(cutoverState)
         .set({
@@ -114,9 +135,16 @@ export async function setCutoverStage(
  * This release serves the old tables only, so every start of it records the
  * stage as Shadow (ADR-0014 "The status page"). That is what turns a redeploy
  * of this release into a complete rollback from Switch.
+ *
+ * Unlock is the one stage there is no way back from: it throws
+ * {@link CutoverUnlockedError} and leaves the stage alone.
  */
 export function recordShadowStage(): Promise<StageChange> {
-  return setCutoverStage("shadow", { actor: null, source: "release_start" });
+  return setCutoverStage("shadow", {
+    actor: null,
+    source: "release_start",
+    refuseFrom: ["unlocked"],
+  });
 }
 
 /** The most recent stage change, for the status page. */

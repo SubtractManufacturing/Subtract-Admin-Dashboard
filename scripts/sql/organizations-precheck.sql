@@ -13,7 +13,7 @@
 SELECT
   r.kind, r.id, r.display_name, r.company_name, r.contact_name, r.email,
   CASE WHEN m.company IS NOT NULL THEN 'business' ELSE 'individual' END AS becomes_type,
-  coalesce(m.company, m.shown) AS becomes_organization,
+  coalesce(m.company, m.shown, r.display_name) AS becomes_organization,
   coalesce(m.person, CASE WHEN m.company IS NULL OR m.shown IS DISTINCT FROM m.company THEN m.shown END)
     AS becomes_contact,
   f.flags

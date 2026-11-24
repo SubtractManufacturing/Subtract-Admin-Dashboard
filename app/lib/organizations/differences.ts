@@ -17,6 +17,16 @@
  * - It never repairs a shape it does not expect (a record with no old row, a
  *   second Contact, an extra address). Those are reported as not fixable so a
  *   developer looks before anything is removed.
+ *
+ * Outside the comparison, on purpose:
+ * - `updated_at` on every new record. The old row has one timestamp and its
+ *   copy has several records; Sync sets it when it writes and never compares.
+ * - `created_at` on aliases, file links and addresses. Their identity is the
+ *   email, the attachment and the role; Sync copies the time when it creates
+ *   the row and does not reconcile it afterwards.
+ * - Extra aliases on a Vendor's Contact (ADR-0014: Vendors have no aliases in
+ *   the old tables, and extra ones stay in the new tables). That includes the
+ *   previous email of a Vendor whose email changed.
  */
 import type {
   Account,
@@ -497,6 +507,10 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
         ? pointed
         : undefined;
 
+    const unclaimed = active.filter(
+      (address) => address.id !== billingRow?.id && address.id !== shippingRow?.id,
+    );
+
     const addressSlots: Array<[AddressRole, Address | undefined, MappedAddress | null]> = [
       ["billing", billingRow, mapped.billingAddress],
       ["shipping", shippingRow, mapped.shippingAddress],
@@ -505,6 +519,10 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
       if (wanted && existing) {
         fields("address", `The ${role} address`, "addresses", existing.id, existing, wanted, ADDRESS_FIELD_LABELS);
       } else if (wanted) {
+        // An address nobody claims may be this one with its pointer lost.
+        // Creating another would give the address a new id; a developer
+        // decides instead (the unclaimed address is reported below).
+        if (unclaimed.length > 0) continue;
         changes.push({
           ...at,
           area: "address",
@@ -543,12 +561,18 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
         { billingAddressId: "billing address" },
       );
     }
-    for (const address of active) {
-      if (address.id === billingRow?.id || address.id === shippingRow?.id) continue;
+    const missingRoles = addressSlots
+      .filter(([, existing, wanted]) => wanted && !existing)
+      .map(([role]) => role);
+    for (const address of unclaimed) {
       changes.push({
         ...at,
         area: "structure",
-        detail: `Organization ${org.id} has an address (${address.id}) that is neither its billing nor its default shipping address`,
+        detail:
+          `Organization ${org.id} has an address (${address.id}) that is neither its billing nor its default shipping address` +
+          (missingRoles.length > 0
+            ? `; the ${missingRoles.join(" and ")} address is missing and is not created while this one is unexplained`
+            : ""),
         fixable: false,
         op: null,
       });
@@ -731,6 +755,8 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
   // -------------------------------------------------------------------------
   // Merge pointers
   // -------------------------------------------------------------------------
+  /** Existing Organizations whose merge pointer this pass sets or clears. */
+  const repointed = new Set<string>();
   for (const [key, { type, row }] of oldRows) {
     const state = partyState.get(key);
     if (state === "broken") continue;
@@ -744,6 +770,7 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
 
     if (targetKey === null) {
       if (actual === null) continue;
+      repointed.add(parties.get(key)!.organizationId);
       changes.push({
         ...at,
         area: "merge",
@@ -766,6 +793,8 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
     }
     const expected = parties.get(targetKey)?.organizationId ?? null;
     if (expected !== null && actual === expected) continue;
+    const existing = parties.get(key);
+    if (existing) repointed.add(existing.organizationId);
     changes.push({
       ...at,
       area: "merge",
@@ -778,6 +807,8 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
   // -------------------------------------------------------------------------
   // Quote, Order and Part links follow the old id
   // -------------------------------------------------------------------------
+  /** Accounts a Quote, Order or Part will still point at after this pass. */
+  const heldAccounts = new Set<string>();
   const link = (
     table: LinkTable,
     column: LinkColumn,
@@ -813,6 +844,7 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
     };
     const state = partyState.get(key);
     if (state === undefined || state === "broken") {
+      if (actual !== null) heldAccounts.add(actual);
       // The account that carries the legacy id is still the right target.
       const known = accountByKey.get(key)?.id;
       if (known && actual === known) return;
@@ -825,7 +857,10 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
       return;
     }
     const expected = parties.get(key)?.accountId ?? null;
-    if (expected !== null && actual === expected) return;
+    if (expected !== null && actual === expected) {
+      heldAccounts.add(actual);
+      return;
+    }
     changes.push({
       ...at,
       detail:
@@ -857,24 +892,52 @@ export function computeChanges(snapshot: Snapshot): ChangeSet {
   // -------------------------------------------------------------------------
   // New records with no old row
   // -------------------------------------------------------------------------
+  // The copy of an old row that was deleted: an Organization with one legacy
+  // id that no old row has. Nothing else can be its source, so Sync removes
+  // it, unless something Sync is not changing in this pass still depends on it.
   const orphanOrganizations = new Set<string>();
+  const blockedOrphans = new Map<string, string>();
+  for (const org of snapshot.organizations) {
+    const keys = organizationKeys(org);
+    if (keys.length !== 1 || oldRows.has(keys[0])) continue;
+    orphanOrganizations.add(org.id);
+    const own = accountsByOrganization.get(org.id) ?? [];
+    if (own.some((account) => accountKeys(account).some((key) => oldRows.has(key)))) {
+      blockedOrphans.set(org.id, "it holds the account of an old row that still exists");
+    } else if (own.some((account) => heldAccounts.has(account.id))) {
+      blockedOrphans.set(org.id, "a Quote, Order or Part that Sync cannot repoint yet still uses its account");
+    }
+  }
+  // A merge pointer at an orphan must be one this pass moves, or belong to
+  // another copy that is removed too.
+  for (let settled = false; !settled; ) {
+    settled = true;
+    for (const org of snapshot.organizations) {
+      const target = org.mergedIntoOrganizationId;
+      if (!target || !orphanOrganizations.has(target) || blockedOrphans.has(target)) continue;
+      if (repointed.has(org.id)) continue;
+      if (orphanOrganizations.has(org.id) && !blockedOrphans.has(org.id)) continue;
+      blockedOrphans.set(target, `Organization ${org.id} is marked as merged into it`);
+      settled = false;
+    }
+  }
   for (const org of snapshot.organizations) {
     const keys = organizationKeys(org);
     if (keys.length === 1 && oldRows.has(keys[0])) continue;
     if (keys.length === 1) {
-      // The copy of an old row that was deleted. Nothing else can be its
-      // source, so Sync removes it.
       const [type, id] = keys[0].split(":") as [LegacyType, string];
-      orphanOrganizations.add(org.id);
+      const blocked = blockedOrphans.get(org.id);
       changes.push({
         area: "extra",
         legacyType: type,
         legacyId: Number(id),
         name: org.name,
         href: null,
-        detail: `Organization ${org.id} is the copy of ${noun(type)} ${id}, which no longer exists`,
-        fixable: true,
-        op: { kind: "deleteCopy", organizationId: org.id },
+        detail:
+          `Organization ${org.id} is the copy of ${noun(type)} ${id}, which no longer exists` +
+          (blocked ? `. It is not removed yet: ${blocked}` : ""),
+        fixable: !blocked,
+        op: blocked ? null : { kind: "deleteCopy", organizationId: org.id },
       });
       continue;
     }

@@ -697,6 +697,14 @@ async function main() {
   check("it reports recording Shadow", /Stage recorded as Shadow/.test(startup.output), startup.output);
   equal("the stage row says shadow", (await one(sql`select stage from cutover_state`))?.stage, "shadow");
 
+  // Past Unlock there is no way back but a restore: the same step refuses.
+  await sql`update cutover_state set stage = 'unlocked'`;
+  const refused = await runStartupStep(url);
+  equal("past Unlock the startup step exits 1", refused.code, 1);
+  check("and says why", /The cutover stage is Unlocked/.test(refused.output), refused.output);
+  equal("and leaves the stage Unlocked", (await one(sql`select stage from cutover_state`))?.stage, "unlocked");
+  await sql`update cutover_state set stage = 'shadow'`;
+
   const app = await startApp(url);
   const browser = await launchBrowser();
   let crashed = null;

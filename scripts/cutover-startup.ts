@@ -11,11 +11,17 @@
  * non-zero and the process it guards does not start. It keeps trying for a
  * while first, because a worker container can start before the web container
  * has run the migration that creates `cutover_state`.
+ *
+ * Past Unlock it refuses at once: the old tables are no longer current, and
+ * the only way back is a restore.
  */
 import "dotenv/config";
 
 import { client } from "../app/lib/db/client";
-import { recordShadowStage } from "../app/lib/organizations/stage.server";
+import {
+  CutoverUnlockedError,
+  recordShadowStage,
+} from "../app/lib/organizations/stage.server";
 
 const RETRY_EVERY_MS = 2_000;
 
@@ -36,6 +42,7 @@ async function main(): Promise<void> {
       );
       return;
     } catch (error) {
+      if (error instanceof CutoverUnlockedError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       if (Date.now() >= deadline) {
         throw new Error(`could not record the cutover stage: ${message}`);

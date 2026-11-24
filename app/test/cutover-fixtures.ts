@@ -19,6 +19,7 @@ import {
   customerEmailAliases,
   customers,
   cutoverReviewMarks,
+  cutoverState,
   eventLogs,
   notes,
   orders,
@@ -258,6 +259,7 @@ export function createCutoverFixture(prefix: string) {
       // Sync, stage and review events this fixture's user caused.
       await db.delete(eventLogs).where(eq(eventLogs.userId, userId));
       await db.delete(cutoverReviewMarks).where(eq(cutoverReviewMarks.reviewedBy, userId));
+      await db.update(cutoverState).set({ changedBy: null }).where(eq(cutoverState.changedBy, userId));
       await db.delete(users).where(eq(users.id, userId));
     },
   };

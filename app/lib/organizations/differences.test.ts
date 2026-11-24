@@ -335,6 +335,108 @@ describe("computeChanges", () => {
     expect(changes[0]).toMatchObject({ legacyType: "customer", legacyId: 2 });
   });
 
+  it("does not create an address beside one nobody claims (its pointer may just be lost)", () => {
+    const snapshot = copied({ customers: [customer(1, { billingAddressLine1: "1 Main St" })] });
+    // The billing row is there, but the account no longer points at it.
+    snapshot.addresses = [address(900, snapshot.organizations[0].id)];
+    const { changes } = computeChanges(snapshot);
+    expect(changes).toEqual([
+      expect.objectContaining({
+        area: "structure",
+        fixable: false,
+        op: null,
+        detail: expect.stringContaining("the billing address is missing and is not created"),
+      }),
+    ]);
+  });
+
+  describe("the copy of a deleted old row", () => {
+    /** Customer 2 was deleted; its copy is still there. */
+    function withOrphan() {
+      const snapshot = copied({ customers: [customer(1), customer(2)] });
+      snapshot.customers = [snapshot.customers[0]];
+      return snapshot;
+    }
+    const orphanChange = (snapshot: Snapshot) =>
+      computeChanges(snapshot).changes.find((change) => change.area === "extra")!;
+
+    it("is removed when nothing depends on it", () => {
+      expect(orphanChange(withOrphan())).toMatchObject({ fixable: true, op: { kind: "deleteCopy" } });
+    });
+
+    it("is removed together with a Quote link that this pass moves away", () => {
+      const snapshot = withOrphan();
+      snapshot.quotes = [
+        { id: 1, quoteNumber: "Q1", customerId: 1, vendorId: null, customerAccountId: snapshot.accounts[1].id, vendorAccountId: null },
+      ];
+      const { changes } = computeChanges(snapshot);
+      expect(changes.map((change) => [change.area, change.fixable])).toEqual([
+        ["link", true],
+        ["extra", true],
+      ]);
+    });
+
+    it("stays while a Quote Sync cannot repoint still uses its account", () => {
+      const snapshot = withOrphan();
+      // The Quote now belongs to Customer 1, whose copy has a second Contact.
+      snapshot.quotes = [
+        { id: 1, quoteNumber: "Q1", customerId: 1, vendorId: null, customerAccountId: snapshot.accounts[1].id, vendorAccountId: null },
+      ];
+      snapshot.contacts.push({ ...snapshot.contacts[0], id: uuid(997) });
+      snapshot.organizationContacts.push({
+        ...snapshot.organizationContacts[0],
+        id: uuid(996),
+        contactId: uuid(997),
+        isPrimary: false,
+      });
+      const { changes } = computeChanges(snapshot);
+      expect(changes.filter((change) => change.fixable)).toEqual([]);
+      expect(orphanChange(snapshot)).toMatchObject({
+        fixable: false,
+        op: null,
+        detail: expect.stringContaining("not removed yet: a Quote, Order or Part"),
+      });
+    });
+
+    it("stays when it holds the account of an old row that still exists", () => {
+      const snapshot = withOrphan();
+      // Customer 1's account sits on the orphan Organization.
+      snapshot.accounts[0].organizationId = snapshot.organizations[1].id;
+      const { changes } = computeChanges(snapshot);
+      expect(changes.filter((change) => change.fixable)).toEqual([]);
+      expect(orphanChange(snapshot).detail).toContain("it holds the account of an old row that still exists");
+    });
+
+    it("stays while a record Sync is not changing is marked as merged into it", () => {
+      const snapshot = withOrphan();
+      snapshot.organizations.push({
+        ...snapshot.organizations[0],
+        id: uuid(950),
+        name: "Loose",
+        legacyCustomerId: null,
+        mergedIntoOrganizationId: snapshot.organizations[1].id,
+      });
+      expect(orphanChange(snapshot)).toMatchObject({
+        fixable: false,
+        detail: expect.stringContaining(`Organization ${uuid(950)} is marked as merged into it`),
+      });
+    });
+
+    it("is removed when the pointer at it is one this pass clears, or belongs to another removed copy", () => {
+      const snapshot = copied({ customers: [customer(1), customer(2), customer(3)] });
+      snapshot.customers = [snapshot.customers[0]];
+      const [one, two, three] = snapshot.organizations;
+      one.mergedIntoOrganizationId = two.id; // cleared by this pass: Customer 1 is not merged
+      three.mergedIntoOrganizationId = two.id; // another orphan
+      const { changes } = computeChanges(snapshot);
+      expect(changes.map((change) => [change.area, change.fixable, change.op?.kind])).toEqual([
+        ["merge", true, "setMergePointer"],
+        ["extra", true, "deleteCopy"],
+        ["extra", true, "deleteCopy"],
+      ]);
+    });
+  });
+
   it("follows the old ids on Quotes, Orders and Parts, including a cleared one", () => {
     const snapshot = copied({ customers: [customer(1), customer(2)], vendors: [vendor(1)] });
     const [first, second, shop] = snapshot.accounts;
