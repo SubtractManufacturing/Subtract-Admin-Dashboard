@@ -254,6 +254,10 @@ export const vendors = pgTable(
 //
 // Staged cutover (ADR-0014): in Shadow these tables are a copy of `customers`
 // and `vendors`, written only by Sync. Nothing else reads or writes them yet.
+//
+// They hold names, emails and addresses, so each has row-level security
+// enabled with no policy, like `action_items`: the app's own database role
+// reads and writes them, and nothing reaches them through Supabase's Data API.
 // ---------------------------------------------------------------------------
 
 export const organizationKindEnum = pgEnum("organization_kind", [
@@ -296,7 +300,7 @@ export const organizations = pgTable(
       table.legacyVendorId,
     ),
   }),
-);
+).enableRLS();
 
 /** A person. A Contact is a CRM record, not an authenticated user. */
 export const contacts = pgTable(
@@ -320,7 +324,7 @@ export const contacts = pgTable(
       .on(sql`lower(trim(${table.email}))`)
       .where(sql`${table.isArchived} = false and ${table.email} is not null`),
   }),
-);
+).enableRLS();
 
 /** Which Contacts belong to which Organizations. */
 export const organizationContacts = pgTable(
@@ -350,7 +354,7 @@ export const organizationContacts = pgTable(
       .on(table.organizationId)
       .where(sql`${table.isPrimary} = true and ${table.isArchived} = false`),
   }),
-);
+).enableRLS();
 
 /**
  * Every normalized email a Contact is known by (see `normalizeEmail`),
@@ -370,7 +374,7 @@ export const contactEmailAliases = pgTable(
     pk: primaryKey({ columns: [table.contactId, table.email] }),
     emailIdx: index("contact_email_aliases_email_idx").on(table.email),
   }),
-);
+).enableRLS();
 
 /** Addresses of an Organization; at most one active default shipping address. */
 export const addresses = pgTable(
@@ -398,7 +402,7 @@ export const addresses = pgTable(
       .on(table.organizationId)
       .where(sql`${table.isDefaultShipping} = true and ${table.isArchived} = false`),
   }),
-);
+).enableRLS();
 
 /** A role an Organization plays: a customer account or a vendor account. */
 export const accounts = pgTable(
@@ -441,7 +445,7 @@ export const accounts = pgTable(
       sql`(${table.legacyCustomerId} is null or ${table.type} = 'customer') and (${table.legacyVendorId} is null or ${table.type} = 'vendor')`,
     ),
   }),
-);
+).enableRLS();
 
 export const quotes = pgTable("quotes", {
   id: serial("id").primaryKey(),
@@ -502,6 +506,12 @@ export const quotes = pgTable("quotes", {
   }),
   customerAccountTypeCheck: check("quotes_customer_account_type_check", sql`${table.customerAccountType} = 'customer'`),
   vendorAccountTypeCheck: check("quotes_vendor_account_type_check", sql`${table.vendorAccountType} = 'vendor'`),
+  // Stands in for the NOT NULL `customer_id` had: a Quote always has a
+  // Customer, by its old id until Unlock and by its account afterwards.
+  customerPresentCheck: check(
+    "quotes_customer_present_check",
+    sql`${table.customerId} is not null or ${table.customerAccountId} is not null`,
+  ),
   customerAccountIdx: index("quotes_customer_account_idx").on(table.customerAccountId),
   vendorAccountIdx: index("quotes_vendor_account_idx").on(table.vendorAccountId),
 }));
@@ -912,7 +922,7 @@ export const organizationAttachments = pgTable(
   (table) => ({
     pk: primaryKey({ columns: [table.organizationId, table.attachmentId] }),
   }),
-);
+).enableRLS();
 
 /** Logged calls, texts and emails with an Organization, optionally one Contact. */
 export const organizationCommunications = pgTable(
@@ -940,7 +950,7 @@ export const organizationCommunications = pgTable(
       table.createdAt,
     ),
   }),
-);
+).enableRLS();
 
 // ---------------------------------------------------------------------------
 // Staged cutover bookkeeping (ADR-0014). Temporary: dropped in Clean up.
@@ -966,6 +976,12 @@ export const cutoverState = pgTable(
   {
     id: integer("id").primaryKey().default(1),
     stage: cutoverStageEnum("stage").notNull(),
+    /**
+     * For the Switch release, which ships no migration: raised while Unlock
+     * runs so every web and worker process holds off. This release never
+     * reads or writes it.
+     */
+    maintenanceGate: boolean("maintenance_gate").default(false).notNull(),
     changedAt: timestamp("changed_at").defaultNow().notNull(),
     /** The staff user who changed the stage; null when a release start recorded it. */
     changedBy: text("changed_by").references(() => users.id),
@@ -1057,10 +1073,11 @@ export const plannedMergeMembers = pgTable(
     legacyId: integer("legacy_id").notNull(),
     isSurvivor: boolean("is_survivor").default(false).notNull(),
     /**
-     * The member's record as it was when the plan was approved. Unlock
-     * compares it with the record then; any difference holds the plan back.
+     * The member's record as it was when the plan was approved (null until
+     * then). Unlock compares it with the record then; any difference holds
+     * the plan back.
      */
-    approvedFingerprint: text("approved_fingerprint").notNull(),
+    approvedFingerprint: text("approved_fingerprint"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
