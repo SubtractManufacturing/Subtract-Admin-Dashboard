@@ -17,7 +17,14 @@ export default defineConfig({
     // Load .env before each worker's module graph is built
     setupFiles: ["dotenv/config"],
     include: ["app/**/*.test.ts", "app/**/*.test.tsx", "app/**/*.integration.test.ts"],
-    exclude: ["**/node_modules/**", "**/build/**"],
+    // `*.serial.integration.test.ts` files run the cutover's Sync, which works
+    // on every Customer and Vendor row. They run on their own, one file at a
+    // time, through vitest.serial.config.ts (`npm run test:serial`).
+    exclude: [
+      "**/node_modules/**",
+      "**/build/**",
+      "**/*.serial.integration.test.ts",
+    ],
     pool: "forks",
     coverage: {
       provider: "v8",
