@@ -23,18 +23,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url)
   const sortBy = parseCustomerSortBy(url.searchParams.get("sort"))
   // Staged cutover (ADR-0014): Admin and Dev get a link to its status page.
-  const canViewCutover = authorize(actor, "cutover.view").allowed
+  // The key is left out for everyone else, so their page data is what it was.
+  const cutoverLink = authorize(actor, "cutover.view").allowed
+    ? { canViewCutover: true as const }
+    : {}
   
   try {
     const customers = await getCustomers({ sortBy })
     return withAuthHeaders(
-      json({ customers, sortBy, user, userDetails, canViewCutover }),
+      json({ customers, sortBy, user, userDetails, ...cutoverLink }),
       headers
     )
   } catch (error) {
     console.error("Customers loader error:", error)
     return withAuthHeaders(
-      json({ customers: [], sortBy, user, userDetails, canViewCutover }),
+      json({ customers: [], sortBy, user, userDetails, ...cutoverLink }),
       headers
     )
   }
@@ -92,7 +95,9 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers, sortBy, userDetails, canViewCutover } = useLoaderData<typeof loader>()
+  const loaderData = useLoaderData<typeof loader>()
+  const { customers, sortBy, userDetails } = loaderData
+  const canViewCutover = "canViewCutover" in loaderData && loaderData.canViewCutover === true
   const canMerge = userDetails?.role === "Admin" || userDetails?.role === "Dev"
   const fetcher = useFetcher()
   const navigate = useNavigate()

@@ -8,7 +8,6 @@ import { requireAuth, withAuthHeaders } from "~/lib/auth.server";
 import { assertAuthorized } from "~/lib/authorization/authorize";
 import {
   REVIEW_FLAGS,
-  blankToNull,
   firstNameFromEmail,
   mapLegacyNames,
   reviewFlags,
@@ -148,8 +147,8 @@ function ReviewRowForm({
     preview.contactName !== storedPreview.contactName;
   const flags = reviewFlags({ ...values, email: row.email });
   const suggestions = reviewSuggestions({ ...values, email: row.email });
-  const nameHint =
-    blankToNull(values.contactName) === null ? firstNameFromEmail(row.email) : null;
+  // Only where the Contact would otherwise have no name at all.
+  const nameHint = preview.contactName === null ? firstNameFromEmail(row.email) : null;
 
   const busy = fetcher.state !== "idle";
   const handled = useRef<unknown>(null);
@@ -423,9 +422,9 @@ export default function CutoverReview() {
         <div className="sticky top-0 z-10 space-y-3 rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div>
             <p className="text-sm font-semibold text-gray-900 dark:text-gray-100" data-testid="progress">
-              {reviewed} of {rows.length} reviewed
-              <span className="ml-2 font-normal text-gray-600 dark:text-gray-400" data-testid="progress-flagged">
-                {flaggedLeft} of {flagged.length} flagged rows still to review
+              {reviewed} of {rows.length} reviewed.{" "}
+              <span className="font-normal text-gray-600 dark:text-gray-400" data-testid="progress-flagged">
+                {flaggedLeft} of {flagged.length} flagged rows still to review.
               </span>
             </p>
             <div
