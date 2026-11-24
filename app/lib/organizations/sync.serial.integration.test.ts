@@ -529,6 +529,64 @@ describe("Sync follows the old app", () => {
   });
 });
 
+describe("Sync repairs what it can identify", () => {
+  it("adds addresses an old row gains, keeps their ids afterwards, and recreates a lost Contact", async () => {
+    const customer = await fixture.seedCustomer(
+      { companyName: `Grow Co ${tag}`, contactName: "Pat Example", email: `grow-${tag}@example.invalid` },
+      [`grow-alias-${tag}@example.invalid`],
+    );
+    await runSync(actor);
+    const bare = (await readCopy("customer", customer.id))!;
+    expect(bare.addresses).toEqual([]);
+
+    await updateCustomer(customer.id, {
+      billingAddressLine1: "1 Main St",
+      billingCity: "Springfield",
+      shippingAddressLine1: "2 Dock Rd",
+    });
+    expect((await runCheck()).differences.map((d) => d.detail).sort()).toEqual([
+      "The billing address is missing",
+      "The shipping address is missing",
+    ]);
+    await runSync(actor);
+    await expectNoDifferences();
+    const grown = (await readCopy("customer", customer.id))!;
+    expect(grown.billingAddress).toMatchObject({ label: "Billing", line1: "1 Main St", isDefaultShipping: false });
+    expect(grown.shippingAddress).toMatchObject({ label: "Shipping", line1: "2 Dock Rd", isDefaultShipping: true });
+
+    // An edit to an address keeps the address row.
+    await updateCustomer(customer.id, { billingCity: "Shelbyville", shippingAddressLine2: "Bay 2" });
+    await runSync(actor);
+    await expectNoDifferences();
+    const edited = (await readCopy("customer", customer.id))!;
+    expect(edited.billingAddress).toMatchObject({ id: grown.billingAddress!.id, city: "Shelbyville" });
+    expect(edited.shippingAddress).toMatchObject({ id: grown.shippingAddress!.id, line2: "Bay 2" });
+
+    // A billing pointer that aims at the shipping address gets an address of its own again.
+    await db.update(accounts).set({ billingAddressId: edited.shippingAddress!.id }).where(eq(accounts.id, edited.account.id));
+    await db.delete(addresses).where(eq(addresses.id, edited.billingAddress!.id));
+    expect((await runCheck()).differences.map((d) => d.detail)).toEqual(["The billing address is missing"]);
+    await runSync(actor);
+    await expectNoDifferences();
+
+    // A copy whose Contact is gone gets one back, with its aliases; the other ids stay.
+    await db.delete(organizationContacts).where(eq(organizationContacts.organizationId, bare.organization.id));
+    await db.execute(sql`delete from contact_email_aliases where contact_id = ${bare.contact!.id}`);
+    await db.delete(contacts).where(eq(contacts.id, bare.contact!.id));
+    const report = await runCheck();
+    expect(report.notFixable).toBe(0);
+    expect(report.differences.map((d) => d.area).sort()).toEqual(["alias", "alias", "contact"]);
+    await runSync(actor);
+    await expectNoDifferences();
+    const repaired = (await readCopy("customer", customer.id))!;
+    expect(repaired.organization.id).toBe(bare.organization.id);
+    expect(repaired.account.id).toBe(bare.account.id);
+    expect(repaired.contact).toMatchObject({ name: "Pat Example", email: `grow-${tag}@example.invalid` });
+    expect(repaired.aliases).toEqual([`grow-${tag}@example.invalid`, `grow-alias-${tag}@example.invalid`].sort());
+    await expectCopyMatchesMapping("customer", customer.id);
+  });
+});
+
 describe("what Sync refuses", () => {
   it("does not run unless the stage is Shadow", async () => {
     const customer = await fixture.seedCustomer();
