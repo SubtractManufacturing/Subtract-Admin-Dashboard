@@ -8,7 +8,7 @@
 --
 -- The free mailbox list mirrors app/lib/organizations/free-email-domains.ts and
 -- the rules mirror app/lib/organizations/mapping.ts, which the review list uses.
--- review.serial.integration.test.ts runs this file and fails when they disagree.
+-- review.integration.test.ts runs this file and fails when they disagree.
 
 SELECT
   r.kind, r.id, r.display_name, r.company_name, r.contact_name, r.email,

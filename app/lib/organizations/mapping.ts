@@ -8,7 +8,7 @@
  * it must stay pure: no database, no I/O, no server-only imports.
  *
  * `scripts/sql/organizations-precheck.sql` repeats the name rules and the
- * flags as a read-only query; `review.serial.integration.test.ts` runs that
+ * flags as a read-only query; `review.integration.test.ts` runs that
  * file and fails when it and this module disagree.
  */
 import { normalizeEmail } from "../email-normalize";

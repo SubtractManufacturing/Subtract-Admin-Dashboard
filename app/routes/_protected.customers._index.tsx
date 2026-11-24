@@ -7,6 +7,7 @@ import { Archive, ArrowUpDown } from "lucide-react"
 import { getCustomers, createCustomer, updateCustomer, archiveCustomer } from "~/lib/customers"
 import type { Customer, CustomerInput, CustomerEventContext } from "~/lib/customers"
 import { requireAuth, withAuthHeaders } from "~/lib/auth.server"
+import { authorize } from "~/lib/authorization/authorize"
 import { parseCustomerSortBy } from "~/lib/customer-sort"
 
 import SearchHeader from "~/components/SearchHeader"
@@ -18,20 +19,22 @@ import { InputField, PhoneInputField } from "~/components/shared/FormField"
 import { listCardStyles } from "~/utils/tw-styles"
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { user, userDetails, headers } = await requireAuth(request)
+  const { user, userDetails, actor, headers } = await requireAuth(request)
   const url = new URL(request.url)
   const sortBy = parseCustomerSortBy(url.searchParams.get("sort"))
+  // Staged cutover (ADR-0014): Admin and Dev get a link to its status page.
+  const canViewCutover = authorize(actor, "cutover.view").allowed
   
   try {
     const customers = await getCustomers({ sortBy })
     return withAuthHeaders(
-      json({ customers, sortBy, user, userDetails }),
+      json({ customers, sortBy, user, userDetails, canViewCutover }),
       headers
     )
   } catch (error) {
     console.error("Customers loader error:", error)
     return withAuthHeaders(
-      json({ customers: [], sortBy, user, userDetails }),
+      json({ customers: [], sortBy, user, userDetails, canViewCutover }),
       headers
     )
   }
@@ -89,7 +92,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Customers() {
-  const { customers, sortBy, userDetails } = useLoaderData<typeof loader>()
+  const { customers, sortBy, userDetails, canViewCutover } = useLoaderData<typeof loader>()
   const canMerge = userDetails?.role === "Admin" || userDetails?.role === "Dev"
   const fetcher = useFetcher()
   const navigate = useNavigate()
@@ -181,6 +184,14 @@ export default function Customers() {
                 className="whitespace-nowrap text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
               >
                 Find duplicates
+              </Link>
+            )}
+            {canViewCutover && (
+              <Link
+                to="/cutover"
+                className="whitespace-nowrap text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400"
+              >
+                Cutover status
               </Link>
             )}
             <Button onClick={handleAdd}>Add Customer</Button>
